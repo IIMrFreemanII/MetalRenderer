@@ -46,6 +46,8 @@ final class PhysicsWorld {
     static let maxRounds = 64
     static let maxColours = 32
     static let leftover: UInt32 = 0xFFFF_FFFE
+    /// GPUPhysicsPair.pad from `link` with fractured objects: only one of the pair's bodies lists it (PhysicsCPU.link).
+    static let oneSided: UInt32 = 0xFFFF_FFFD
     /// The contacts are found again every this many substeps.
     static let contactRefresh = 4
     static let stepLength: Float = 1.0 / 60
@@ -200,6 +202,10 @@ final class PhysicsWorld {
     private(set) var weldStarts: [UInt32] = [0]
     private(set) var weldList: [SIMD2<UInt32>] = []
     var fractureState: [GPUFractureState] = []
+    /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
+    /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
+    /// them overlap than a body keeps partners.
+    var shapeBoxes: [SIMD4<Float>] = []
     var fractureCommands: [GPUFractureCommand] = []
     /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
     var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
@@ -550,6 +556,20 @@ final class PhysicsWorld {
         guard fractures else { return }
         while fractureNodes.count < bodies.count { fractureNodes.append(GPUFractureNode()) }
         fractureState = [GPUFractureState](repeating: GPUFractureState(), count: bodies.count)
+        shapeBoxes = shapes.flatMap { shape -> [SIMD4<Float>] in
+            let kind = PhysicsShapeKind(rawValue: shape.info.x)
+            let first = Int(shape.info.y), end = first + Int(shape.info.z)
+            guard kind != .plane && kind != .heightfield && end > first else {
+                return [.zero, SIMD4(repeating: shape.comPosition.w)]   // (its sphere's)
+            }
+            var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+            for k in first..<end {
+                let q = samples[k]
+                lo = simd_min(lo, PhysicsMath.xyz(q) - q.w)
+                hi = simd_max(hi, PhysicsMath.xyz(q) + q.w)
+            }
+            return [SIMD4((lo + hi) / 2, 0), SIMD4((hi - lo) / 2, 0)]
+        }
         var lists = [[SIMD2<UInt32>]](repeating: [], count: bodies.count)
         for (w, weld) in welds.enumerated() {
             lists[Int(weld.info.x)].append(SIMD2(weld.info.y, UInt32(w)))

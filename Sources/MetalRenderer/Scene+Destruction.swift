@@ -246,10 +246,12 @@ extension Scene {
         destructionRig = rig
 
         if settings.demo && preview == nil && settings.massive {
-            // The building's ground floor blasted at two corners, then shot at.
+            // The building's ground floor blasted at its corners, the front left and the back right first, then the
+            // others: the storeys above lose their footing and come down.
             let step = { (t: Float) in Int(t / PhysicsWorld.stepLength) }
-            world.command(.blast, origin: [-3, 1, -12.2], radius: 2.2, magnitude: 14, at: step(2.5), steps: 6)
-            world.command(.blast, origin: [3, 1, -12.2], radius: 2.2, magnitude: 14, at: step(3.5), steps: 6)
+            for (x, z, t) in [(Float(-3), Float(-12.2), Float(2.5)), (3, -17.8, 2.5), (3, -12.2, 3.5), (-3, -17.8, 3.5)] {
+                world.command(.blast, origin: [x, 1, z], radius: 2.2, magnitude: 14, at: step(t), steps: 6)
+            }
         }
         if settings.demo && preview == nil {
             let step = { (t: Float) in Int(t / PhysicsWorld.stepLength) }

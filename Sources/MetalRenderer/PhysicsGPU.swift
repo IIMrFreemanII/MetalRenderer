@@ -107,6 +107,7 @@ final class PhysicsGPU {
     /// addresses) and what they point at.
     private let fractureNodes: MTLBuffer
     private let fractureState: MTLBuffer
+    private let shapeBoxes: MTLBuffer
     private let welds: MTLBuffer
     private let initialWelds: MTLBuffer
     private let weldStarts: MTLBuffer
@@ -191,7 +192,9 @@ final class PhysicsGPU {
         order = try buffer([UInt32](), "physicsOrder", length: n * k * 4)
         won = try buffer([UInt32](), "physicsWon", length: n * k * 4)
         live = try buffer([UInt32](), "physicsLive", length: n * k * 4)
-        colouring = try buffer([UInt32](repeating: 0, count: PhysicsWorld.maxColours + 3), "physicsColouring")
+        // (Where each colour starts, the end, the colours, how many are left over; with fractured objects, the
+        // left-over pairs' colours: where each starts, the end, how many: physColourPairs.)
+        colouring = try buffer([UInt32](repeating: 0, count: 2 * PhysicsWorld.maxColours + 5), "physicsColouring")
         snapshots = try (0..<slots).map { try buffer(poses, "physicsSnapshot\($0)") }
         grabs = try (0..<slots).map { try buffer([GPUPhysicsGrab()], "physicsGrab\($0)") }
         let np = world.particles.count
@@ -235,6 +238,7 @@ final class PhysicsGPU {
         self.sdfResources = sdfResources
         fractureNodes = try buffer(world.fractureNodes, "physicsFractureNodes")
         fractureState = try buffer(world.fractureState, "physicsFractureState")
+        shapeBoxes = try buffer(world.shapeBoxes.isEmpty ? [SIMD4<Float>.zero] : world.shapeBoxes, "physicsShapeBoxes")
         welds = try buffer(world.initialWelds, "physicsWelds")
         initialWelds = try buffer(world.initialWelds, "physicsInitialWelds")
         weldStarts = try buffer(world.weldStarts, "physicsWeldStarts")
@@ -350,7 +354,8 @@ final class PhysicsGPU {
             enc.setBuffer(particleHeads, offset: 0, index: 2)
             enc.setBuffer(particleNext, offset: 0, index: 3)
             dispatch(enc, pipelines[.physicsParticleInsert], particleCount)
-            enc.setComputePipelineState(pipelines[.physicsPairs])
+            let pairing = pipelines[world.fractures ? .physicsFracturePairs : .physicsPairs]
+            enc.setComputePipelineState(pairing)
             enc.setBuffer(bodies, offset: 0, index: 1)
             enc.setBuffer(statics, offset: 0, index: 2)
             enc.setBuffer(staticBounds, offset: 0, index: 3)
@@ -359,13 +364,15 @@ final class PhysicsGPU {
             enc.setBuffer(next, offset: 0, index: 6)
             enc.setBuffer(pairs, offset: 0, index: 7)
             enc.setBuffer(pairCounts, offset: 0, index: 8)
-            dispatch(enc, pipelines[.physicsPairs], count)
-            enc.setComputePipelineState(pipelines[.physicsLink])
+            if world.fractures { enc.setBuffer(shapeBoxes, offset: 0, index: 9) }
+            dispatch(enc, pairing, count)
+            let linking = pipelines[world.fractures ? .physicsFractureLink : .physicsLink]
+            enc.setComputePipelineState(linking)
             enc.setBuffer(bodies, offset: 0, index: 1)
             enc.setBuffer(pairs, offset: 0, index: 2)
             enc.setBuffer(pairCounts, offset: 0, index: 3)
             enc.setBuffer(wake, offset: 0, index: 4)
-            dispatch(enc, pipelines[.physicsLink], count)
+            dispatch(enc, linking, count)
             // The particles' neighbours and colliders (through the bodies' grid).
             enc.setComputePipelineState(pipelines[.physicsParticleNeighbours])
             enc.setBuffer(particles[0], offset: 0, index: 1)
@@ -450,6 +457,13 @@ final class PhysicsGPU {
     /// The fracture states and welds as the GPU has them (tests).
     func readFractureState() -> [GPUFractureState] {
         Array(UnsafeBufferPointer(start: fractureState.contents().bindMemory(to: GPUFractureState.self, capacity: count), count: count))
+    }
+    /// Each body's pair entries (`maxPairs` each), how many it uses, and their contacts (`maxContacts` an entry): tests.
+    func readPairs() -> (pairs: [GPUPhysicsPair], counts: [UInt32], contacts: [GPUPhysicsContact]) {
+        let n = count * PhysicsWorld.maxPairs, m = n * PhysicsWorld.maxContacts
+        return (Array(UnsafeBufferPointer(start: pairs.contents().bindMemory(to: GPUPhysicsPair.self, capacity: n), count: n)),
+                Array(UnsafeBufferPointer(start: pairCounts.contents().bindMemory(to: UInt32.self, capacity: count), count: count)),
+                Array(UnsafeBufferPointer(start: contacts.contents().bindMemory(to: GPUPhysicsContact.self, capacity: m), count: m)))
     }
     func readWelds() -> [GPUFractureWeld] {
         let n = world.initialWelds.count

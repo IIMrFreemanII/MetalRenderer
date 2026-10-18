@@ -132,7 +132,10 @@ final class DestructionTests: XCTestCase {
         XCTAssertEqual(c.moved, 0)
     }
 
-    func testAShotMakesAHoleNotAHeap() {
+    /// A shot breaks the wall where it hits: the pieces there come free, and most of the wall stands. (It doesn't
+    /// knock them out: the shot meets the wall whole, held by the ground, in the step it breaks, and stops. Once the
+    /// cracked wall's pieces crept out of it over the next seconds, a heap rocking: no longer.)
+    func testAShotBreaksTheWallWhereItHits() {
         let s = scene()
         let f = wall(s)
         _ = ball(s, from: [0.3, 1.4, 4], at: [0.3, 1.4, 0], speed: 15, mass: 120)
@@ -140,12 +143,18 @@ final class DestructionTests: XCTestCase {
         w.finish()
         run(w, 0.4)
         let hit = census(w, f)
+        var freed = 0
+        for k in f.tree.nodes.indices where w.bodies[f.firstBody + k].info.y & PhysicsWorld.disabledBit == 0 {
+            let i = f.firstBody + k
+            let held = (Int(w.weldStarts[i])..<Int(w.weldStarts[i + 1])).contains { w.welds[Int(w.weldList[$0].y)].info.z == 0 }
+            if w.bodies[i].position.w > 0 && !held { freed += 1 }
+        }
         run(w, 2.6)
         let later = census(w, f)
         let leaves = f.tree.leaves
-        print("shot: \(f.tree.nodes.count) nodes (\(leaves) leaves, \(f.tree.welds.count) welds); 0.4 s: \(hit.enabled) enabled, \(hit.moved) moved, \(hit.broken) welds broken; 3 s: \(later.enabled) enabled, \(later.moved) moved, \(later.broken) broken")
+        print("shot: \(f.tree.nodes.count) nodes (\(leaves) leaves, \(f.tree.welds.count) welds); 0.4 s: \(hit.enabled) enabled, \(freed) free, \(hit.broken) welds broken; 3 s: \(later.enabled) enabled, \(later.moved) moved, \(later.broken) broken")
         XCTAssertGreaterThan(hit.enabled, 1, "the wall broke")
-        XCTAssertGreaterThan(later.moved, 0, "pieces were knocked out")
+        XCTAssertGreaterThan(freed, 0, "the pieces at the hit came free")
         XCTAssertLessThan(Float(later.moved), 0.5 * Float(later.enabled), "most of the wall still stands")
     }
 
@@ -194,6 +203,200 @@ final class DestructionTests: XCTestCase {
 
     private static let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+
+    /// The massive setting's building through its demo on the GPU, a line every half second: the building's live and
+    /// sleeping pieces, their speeds and kinetic energy, the heap's height and reach, pieces faded, bodies with full pair
+    /// lists, one-sided pair entries, the deepest contact. (A heap that never settled: DESTRUCTION_SETTLE=1.)
+    func testTheBuildingSettles() throws {
+        guard ProcessInfo.processInfo.environment["DESTRUCTION_SETTLE"] != nil else { throw XCTSkip("set DESTRUCTION_SETTLE=1") }
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
+        let pipelines = try Pipelines(device: device, source: DestructionTests.shaders, lightTypes: 0x3F, stats: false)
+        var settings = SceneSettings(kind: .destruction)
+        settings.destruction.massive = true
+        settings.destruction.statues = false
+        settings.physics.backend = .gpu
+        let s = Scene(settings)
+        let w = s.physics!
+        let sdf = try SDFBuffers(device: device, scene: s)
+        let gpu = try PhysicsGPU(device: device, world: w, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
+        let building = w.initialBodies.indices.filter {
+            w.initialBodies[$0].info.y & PhysicsWorld.pieceBit != 0 && w.initialBodies[$0].position.z < -11.5
+        }
+        let seconds = Float(ProcessInfo.processInfo.environment["DESTRUCTION_SECONDS"] ?? "") ?? 20
+        let half = Int(0.5 / PhysicsWorld.stepLength)
+        var peak: Float = 0
+        print("settle: \(building.count) building bodies of \(w.bodies.count)")
+        for k in 1...Int(seconds * 2) {
+            let cmd = queue.makeCommandBuffer()!
+            let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+            gpu.encodeSteps(Metal3Pass(enc: enc), pipelines: pipelines, steps: half)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            XCTAssertNil(cmd.error)
+            let bodies = gpu.readBodies(), state = gpu.readFractureState(), (pairs, counts, contacts) = gpu.readPairs()
+            var live = 0, asleep = 0, faded = 0, energy: Float = 0, fastest: Float = 0, speeds: Float = 0
+            var heights: [Float] = [], reaches: [Float] = []
+            for i in building {
+                let b = bodies[i]
+                if b.info.y & PhysicsWorld.disabledBit != 0 {
+                    if w.fractureNodes[i].extra.z > 0 && state[i].direction.w <= 0 { faded += 1 }
+                    continue
+                }
+                live += 1
+                if b.info.y & PhysicsWorld.asleep != 0 { asleep += 1 }
+                let v = length(PhysicsMath.xyz(b.velocity))
+                speeds += v
+                fastest = max(fastest, v)
+                if b.position.w > 0 { energy += 0.5 * v * v / b.position.w }
+                heights.append(b.position.y)
+                reaches.append(length(SIMD2(b.position.x, b.position.z + 15)))
+            }
+            peak = max(peak, energy)
+            heights.sort()
+            reaches.sort()
+            func at(_ a: [Float], _ q: Float) -> Float { a.isEmpty ? 0 : a[min(Int(Float(a.count) * q), a.count - 1)] }
+            // Pieces held by a live weld, against the loose ones: how many of each sleep.
+            let welds = gpu.readWelds()
+            var welded = 0, weldedAsleep = 0, loose = 0, looseAsleep = 0
+            for i in building where bodies[i].info.y & PhysicsWorld.disabledBit == 0 && bodies[i].position.w > 0 {
+                let held = (Int(w.weldStarts[i])..<Int(w.weldStarts[i + 1])).contains { welds[Int(w.weldList[$0].y)].info.z == 0 }
+                let sleeps = bodies[i].info.y & PhysicsWorld.asleep != 0
+                if held { welded += 1; if sleeps { weldedAsleep += 1 } } else { loose += 1; if sleeps { looseAsleep += 1 } }
+            }
+            print("settle welded \(weldedAsleep)/\(welded) asleep, loose \(looseAsleep)/\(loose); " + heapLine(bodies, building, centre: [0, -15]))
+            var full = 0, oneSided = 0, deepest: Float = 0
+            for i in building where bodies[i].info.y & PhysicsWorld.disabledBit == 0 {
+                let n = Int(counts[i])
+                if n == PhysicsWorld.maxPairs { full += 1 }
+                for e in i * PhysicsWorld.maxPairs..<i * PhysicsWorld.maxPairs + n {
+                    if pairs[e].link == PhysicsWorld.none { oneSided += 1; continue }
+                    guard pairs[e].link == UInt32(e) else { continue }
+                    for c in 0..<Int(pairs[e].contacts) { deepest = min(deepest, contacts[e * PhysicsWorld.maxContacts + c].normal.w) }
+                }
+            }
+            print(String(format: "settle t %4.1f: live %4d asleep %4d (%3.0f%%) mean %.3f max %.2f m/s energy %8.1f J (%5.1f%% of peak) height %.2f reach %.2f faded %3d full %3d one-sided %4d deepest %.3f",
+                         Float(k) * 0.5, live, asleep, 100 * Float(asleep) / Float(max(live, 1)), speeds / Float(max(live, 1)), fastest,
+                         energy, 100 * energy / max(peak, 1e-6), at(heights, 0.95), at(reaches, 0.9), faded, full, oneSided, deepest))
+        }
+        // The end: the deepest contacts and the fastest pieces, what they are and what they touch.
+        let bodies = gpu.readBodies(), (pairs, counts, contacts) = gpu.readPairs(), welds = gpu.readWelds()
+        func describe(_ i: Int) -> String {
+            let b = bodies[i], node = w.fractureNodes[i]
+            var live = 0
+            for k in Int(w.weldStarts[i])..<Int(w.weldStarts[i + 1]) where welds[Int(w.weldList[k].y)].info.z == 0 { live += 1 }
+            return String(format: "%d (%@, r %.2f, v %.2f w %.2f y %.2f, %d live welds, %@)", i, node.info.z > 0 ? "inner" : "leaf",
+                          b.invInertia.w, length(PhysicsMath.xyz(b.velocity)), length(PhysicsMath.xyz(b.angular)), b.position.y, live,
+                          b.position.w == 0 ? "held" : b.info.y & PhysicsWorld.asleep != 0 ? "asleep" : "awake")
+        }
+        var deep: [(Float, Int, UInt32, UInt32)] = []
+        for i in building where bodies[i].info.y & PhysicsWorld.disabledBit == 0 {
+            for e in i * PhysicsWorld.maxPairs..<i * PhysicsWorld.maxPairs + Int(counts[i]) where pairs[e].link == UInt32(e) {
+                for c in 0..<Int(pairs[e].contacts) where contacts[e * PhysicsWorld.maxContacts + c].lambda.w != 1 {
+                    deep.append((contacts[e * PhysicsWorld.maxContacts + c].normal.w, i, pairs[e].partner, pairs[e].contacts))
+                }
+            }
+        }
+        deep.sort { $0.0 < $1.0 }
+        print("deep contacts under 2 cm: \(deep.filter { $0.0 < -0.02 }.count)")
+        for (d, i, partner, n) in deep.prefix(6) {
+            print(String(format: "deep %.3f (%d contacts): ", d, n) + describe(i) + " with "
+                  + (partner & PhysicsWorld.staticBit != 0 ? "static \(partner & ~PhysicsWorld.staticBit)" : describe(Int(partner))))
+        }
+        let fastest = building.filter { bodies[$0].info.y & PhysicsWorld.disabledBit == 0 }
+            .sorted { length(PhysicsMath.xyz(bodies[$0].velocity)) > length(PhysicsMath.xyz(bodies[$1].velocity)) }
+        for i in fastest.prefix(6) {
+            print("fast " + describe(i) + ", pairs \(counts[i])")
+            for e in i * PhysicsWorld.maxPairs..<i * PhysicsWorld.maxPairs + Int(counts[i]) {
+                let q = pairs[e], owner = Int(q.link == PhysicsWorld.none ? UInt32(e) : q.link)
+                let n = Int(pairs[owner].contacts)
+                let deepest = (0..<n).map { contacts[owner * PhysicsWorld.maxContacts + $0].normal.w }.min() ?? 0
+                let weld = n == 1 && contacts[owner * PhysicsWorld.maxContacts].lambda.w == 1
+                guard n > 0 else { continue }
+                print(String(format: "    %@ %d contacts%@ %.3f", q.link == PhysicsWorld.none ? "ONE-SIDED" : "", n, weld ? " (weld)" : "", deepest)
+                      + " " + (q.partner & PhysicsWorld.staticBit != 0 ? "static \(q.partner & ~PhysicsWorld.staticBit)" : describe(Int(q.partner))))
+            }
+        }
+    }
+
+    /// A line of a heap's state: how many of `ids` sleep, their mean and top speed, the heap's height (95th percentile)
+    /// and reach about `centre` (90th, across).
+    private func heapLine(_ bodies: [GPUPhysicsBody], _ ids: [Int], centre: SIMD2<Float>) -> String {
+        var asleep = 0, live = 0, speeds: Float = 0, fastest: Float = 0, heights: [Float] = [], reaches: [Float] = []
+        for i in ids where bodies[i].info.y & PhysicsWorld.disabledBit == 0 {
+            let b = bodies[i], v = length(PhysicsMath.xyz(b.velocity))
+            live += 1
+            if b.info.y & PhysicsWorld.asleep != 0 { asleep += 1 }
+            speeds += v
+            fastest = max(fastest, v)
+            heights.append(b.position.y)
+            reaches.append(length(SIMD2(b.position.x, b.position.z) - centre))
+        }
+        heights.sort()
+        reaches.sort()
+        func at(_ a: [Float], _ q: Float) -> Float { a.isEmpty ? 0 : a[min(Int(Float(a.count) * q), a.count - 1)] }
+        var each = ids.filter { bodies[$0].info.y & PhysicsWorld.disabledBit == 0 }.map { length(PhysicsMath.xyz(bodies[$0].velocity)) }
+        each.sort()
+        let stills = ids.map { bodies[$0].prevPosition.w }.sorted()
+        return String(format: "asleep %3.0f%% mean %.3f p50 %.3f p90 %.3f max %.2f m/s still p50 %.2f s height %.2f reach %.2f",
+                      100 * Float(asleep) / Float(max(live, 1)), speeds / Float(max(live, 1)), at(each, 0.5), at(each, 0.9), fastest,
+                      at(stills, 0.5), at(heights, 0.95), at(reaches, 0.9))
+    }
+
+    /// 196 loose concrete shards (a 20 cm slab's Voronoi cells, freed: no welds, nothing to break) dropped four deep,
+    /// on the CPU and the GPU: asleep in 8 s, still a heap. They once rocked on (the edge walk of the narrow phase,
+    /// on a cell's distance, ended somewhere new each step), crept flat and never slept.
+    func testALooseHeapSettles() throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
+        let pipelines = try Pipelines(device: device, source: DestructionTests.shaders, lightTypes: 0x3F, stats: false)
+        func heap() -> (Scene, [Int]) {
+            let s = scene()
+            let w = s.physicsWorld()
+            var r = FractureRecipe.defaults(.concrete)
+            r.counts = [150]
+            var ids: [Int] = []
+            for slab in 0..<2 {
+                r.seed = 7 + UInt64(slab)
+                let tree = FractureTree(recipe: r, cell: ConvexCell(box: [-1.5, -0.1, -1.2], [1.5, 0.1, 1.2]))
+                for (k, node) in tree.nodes.enumerated() where node.isLeaf && k > 0 && ids.count < 196 {
+                    let n = ids.count
+                    let at = SIMD3<Float>(Float(n % 7) - 3, 0.5 + Float(n / 49) * 0.45, Float((n / 7) % 7) - 3) * SIMD3(0.45, 1, 0.45)
+                    let spin = rotate(Float(n) * 2.39996, normalize(SIMD3<Float>(sin(Float(n)), 1, cos(Float(n) * 1.7))))
+                    let shape = SDFShape(.cell(planes: node.cell.planes { _ in true }, lo: node.cell.bounds.lo, hi: node.cell.bounds.hi))
+                    let sdf = s.addSDFShape(shape)
+                    ids.append(w.bodies.count)
+                    w.addPiece(sdf: sdf, shape, build: PhysicsWorld.pieceShape(node.cell, sdf: sdf),
+                               transform: translate(at) * spin * translate(-node.cell.centroid), instance: 0, material: .concrete)
+                }
+            }
+            for i in ids { w.bodies[i].info.y |= PhysicsWorld.pieceBit }   // (freed pieces of nothing: roots that never break)
+            w.fractureNodes = [GPUFractureNode](repeating: GPUFractureNode(), count: w.bodies.count)
+            w.finish()
+            return (s, ids)
+        }
+        let (cs, ids) = heap(), (gs, _) = heap()
+        let cw = cs.physics!, gw = gs.physics!
+        let sdf = try SDFBuffers(device: device, scene: gs)
+        let gpu = try PhysicsGPU(device: device, world: gw, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
+        run(cw, 8)
+        for _ in 0..<8 {
+            let cmd = queue.makeCommandBuffer()!
+            let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+            gpu.encodeSteps(Metal3Pass(enc: enc), pipelines: pipelines, steps: Int(1 / PhysicsWorld.stepLength))
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            XCTAssertNil(cmd.error)
+        }
+        for (name, bodies) in [("CPU", cw.bodies), ("GPU", gpu.readBodies())] {
+            let asleep = ids.filter { bodies[$0].info.y & PhysicsWorld.asleep != 0 }.count
+            let heights = ids.map { bodies[$0].position.y }.sorted()
+            let top = heights[heights.count * 95 / 100]
+            print("loose heap on the \(name) at 8 s: \(asleep) of \(ids.count) asleep, " + heapLine(bodies, ids, centre: .zero))
+            XCTAssertGreaterThanOrEqual(asleep, ids.count * 95 / 100, "the \(name)'s heap sleeps")
+            XCTAssertGreaterThan(top, 0.33, "the \(name)'s heap is a heap, not a layer")
+        }
+    }
 
     /// The GPU's steps against the CPU's through a shot's break: the same step, the same pieces, about the same places
     /// (a weld near its strength breaks on one and not the other, from float rounding: they part, as a pile does).

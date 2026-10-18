@@ -260,7 +260,10 @@ extension PhysicsWorld {
         }
         // Two flat-sided shapes: the deepest point of each one's surface inside the other, found by stepping down the
         // other's field and back onto the surface. It catches what corners miss: an edge across an edge, a face on a face.
-        if PhysicsWorld.flat(shapes[sa].info.x) && PhysicsWorld.flat(shapes[sb].info.x) {
+        // (Not for a fractured object's pieces: on a cell's distance, the largest of its planes', whose gradient jumps at
+        // every edge, the walk ended somewhere new each step with a normal off the patch's, which tipped the pair's
+        // normal, and a heap of pieces rocked, crept flat and never slept. Their samples run along their edges.)
+        if PhysicsWorld.flat(shapes[sa].info.x) && PhysicsWorld.flat(shapes[sb].info.x) && (a.info.y | b.info.y) & PhysicsWorld.pieceBit == 0 {
             var start = (pa.position + pb.position) * 0.5
             if let deepest = manifold.points.min(by: { $0.separation < $1.separation }) { start = deepest.middle }
             let step0 = 0.25 * min(ra, rb)

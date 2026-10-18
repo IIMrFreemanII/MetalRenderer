@@ -16,8 +16,14 @@ README's "Destruction" section is the design; this is where things stand and wha
 - glTF models cut piece by piece (`MeshCutter`), colliders = baked grid ∩ cell.
 - Scene, settings, tools (1/2/3 + `DestructionOverlay`), Fracture Editor (Shift-F), `FractureStore`, bench modes
   `destruction`, `destructiontimes`, `destructionpreview`, `destructionmassive`, `destructiondemo`.
-- Scenes without fractures are bit-identical to before (physics scene checked against a baseline build): keep fracture
-  code in its own kernels/functions. A branch inside `physPushPair` or the pose kernel changed the GPU's rounding.
+- Scenes without fractures are bit-identical to before (physics, ragdolls, shapes checked against a baseline build): keep
+  fracture code in its own kernels/functions. A branch inside `physPushPair` or the pose kernel changed the GPU's rounding.
+- Heaps settle (Oct 19, after "the building video looks unstable": its rubble never settled): no edge walk in the narrow
+  phase between pieces, partners by box overlap (`physicsFracturePairsKernel`, `shapeBoxes`), one-sided pairs kept
+  (`physicsFractureLinkKernel`) and the left-over pairs coloured into extra colours by thread 0
+  (`physColourPairs`, `extra`). The building demo blasts all four ground-floor corners (two no longer brought it down:
+  part of the old collapse was pieces sinking through each other's dropped contacts). Measure with
+  `DESTRUCTION_SETTLE=1 swift test ... --filter DestructionTests/testTheBuildingSettles` (and `testALooseHeapSettles`).
 
 ## Not done / not checked
 
@@ -34,8 +40,18 @@ README's "Destruction" section is the design; this is where things stand and wha
 - Traps found: XPBD weld forces from one substep are huge (λ/h²), so loads are averaged; welds snapped shut from a cm
   flung pieces; a wall anchored by one course of bricks slid off as a slab; position-pass impulses alone cap at
   pushSpeed (3 m/s), so the velocity pass's impulse counts too.
+- Heap traps: the SDF edge walk rocked flat cells (a loose heap of 196 slept 20 % → 100 % without it); rolling
+  resistance, damping slow pieces, a lower push cap, looser sleep and denser edge samples did nothing; a slab's full
+  pair list dropped the pieces on it (one-sided: about 1,600 a step); solving those one after another on thread 0 took
+  0.4 s a step, and scanning every entry on one thread for them 10 ms.
+- What it cost the courtyard's look: cracked pieces no longer creep out of a wall, so a shot cracks a wall and stops
+  (the ball meets the held root whole in the step it breaks). Tried and dropped: a held piece giving way past its
+  threshold (the shot went on, and the welded rest of the wall fell as a slab), sibling knocks not counting.
 
 ## Next
+
+- Shots that knock pieces out: break within the step (or redo a step that broke something) so the projectile meets the
+  pieces, not the whole held root; then welds that let a hole open without the wall around it falling as a slab.
 
 - Hand test, then M4 Max timings (`METALRENDERER_BENCH=destruction`, `destructionmassive`).
 - Glass cracking at the hit point (a runtime radial pattern into the pre-made pool) if wanted.
