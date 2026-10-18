@@ -853,8 +853,10 @@ kernel void particlePoseKernel(constant ParticleStep&          s         [[buffe
     b[3] = hi.x; b[4] = hi.y; b[5] = hi.z;
 }
 
-// After the pose: every record and box it didn't fill holds nothing (a box far away), up to the pool's size, so
-// what an earlier frame left isn't lit or met. Clears the other pair of counters for the next pose.
+// After the pose: every record and box it didn't fill holds nothing (an inactive box: NaN, which the builds leave
+// out), up to the pool's size, so what an earlier frame left isn't lit or met. Clears the other pair of counters for
+// the next pose. (Not a box far away: with hardware ray tracing (M3 on) one at 1e30 in the structure made every ray
+// meet nearly every box, the M4 Max's particle layer 12 ms against 0.6 and some frames' GPU work faulted.)
 kernel void particlePoseTailKernel(constant ParticleStep&          s         [[buffer(0)]],
                                    device ParticleCounts&          c         [[buffer(14)]],
                                    device ParticleRender*          render    [[buffer(23)]],
@@ -871,8 +873,8 @@ kernel void particlePoseTailKernel(constant ParticleStep&          s         [[b
     if (i < casters || (i >= s.casterBound && i < s.casterBound + others)) return;
     render[i].centerRadius = float4(0.0f);
     device float* b = boxes + 6 * i;
-    b[0] = 1.0e30f; b[1] = 1.0e30f; b[2] = 1.0e30f;
-    b[3] = 1.0e30f; b[4] = 1.0e30f; b[5] = 1.0e30f;
+    b[0] = NAN; b[1] = NAN; b[2] = NAN;
+    b[3] = NAN; b[4] = NAN; b[5] = NAN;
 }
 
 // MARK: - Trails

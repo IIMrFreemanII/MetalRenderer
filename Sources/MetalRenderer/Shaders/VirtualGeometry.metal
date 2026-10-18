@@ -100,8 +100,10 @@ kernel void vgCutKernel(constant VGParams&           p           [[buffer(0)]],
 }
 
 // Metal's box (MTLAxisAlignedBoundingBox: min, max) and its primitive data (ClusterBox) for every slot of the cut:
-// a selected cluster's box in world space with its instance's world -> object rows, an empty slot a point far away
-// (the structure is built over all `capacity` of them every frame: its size is set when the build is encoded).
+// a selected cluster's box in world space with its instance's world -> object rows, an empty slot an inactive (NaN)
+// box (the structure is built over all `capacity` of them every frame: its size is set when the build is encoded).
+// (Empty slots were a point at 1e30: with hardware ray tracing that made every ray meet nearly every box, the M4
+// Max's gallery in clusters mode 278 ms a frame against 19.)
 kernel void vgBoxesKernel(constant VGParams&          p          [[buffer(0)]],
                           device const InstanceData*  instances  [[buffer(4)]],
                           device const uint*          counters   [[buffer(5)]],
@@ -112,7 +114,7 @@ kernel void vgBoxesKernel(constant VGParams&          p          [[buffer(0)]],
                           uint gid [[thread_position_in_grid]])
 {
     if (gid >= p.capacity) return;
-    float3 lo = float3(1.0e30f), hi = float3(1.0e30f);
+    float3 lo = float3(NAN), hi = float3(NAN);
     ClusterBox b;
     b.index = gid;
     b.mask = 0u;   // an empty slot: no ray's mask meets it

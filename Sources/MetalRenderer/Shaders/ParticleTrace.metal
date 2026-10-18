@@ -4,7 +4,7 @@
 
 // Every particle is a box in one of two primitive structures, rebuilt every frame (ParticlesGPU.Build): the shadow
 // casters' (the pool's first slots) and the others' (shadow rays don't look through those). Its slot in the pool is
-// its primitive id (plus the casters' count in the others'), and an empty slot is a box far away. The structures are
+// its primitive id (plus the casters' count in the others'), and an empty slot is an inactive (NaN) box. The structures are
 // separate from the scene's TLAS,
 // so rays that don't look for particles never meet them, and the queries here run up to the opaque hit's distance.
 // A box holds a billboard that each ray computes for itself (particleBillboard): a disc square to the ray, or a quad

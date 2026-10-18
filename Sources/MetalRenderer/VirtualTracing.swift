@@ -37,8 +37,9 @@ final class VirtualTracing {
             clusters = nil
         }
         written = [Int](repeating: -1, count: slots)
-        // One triangle far away, for the descriptors that point at nothing yet.
-        let far: [SIMD4<Float>] = [SIMD4(1e30, 1e30, 1e30, 0), SIMD4(1e30, 1e30, 1e30, 0), SIMD4(1e30, 1e30, 1e30, 0)]
+        // One inactive triangle (NaN), for the descriptors that point at nothing yet. (Not one far away: its instance
+        // would stretch the top-level structure to it, which hardware traversal pays for at every ray.)
+        let far = [SIMD4<Float>](repeating: SIMD4(.nan, .nan, .nan, 0), count: 3)
         guard let vertices = far.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }) else {
             throw RendererError.resourceCreation("buffer vgPlaceholder")
         }

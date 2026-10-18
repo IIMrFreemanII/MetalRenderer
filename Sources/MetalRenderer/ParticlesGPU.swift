@@ -136,7 +136,7 @@ final class ParticlesGPU {
         stepParams = try (0..<slots).map {
             try buffer((ParticlesGPU.maxStepsPerFrame + 2) * MemoryLayout<GPUParticleStep>.stride, "particleSteps\($0)")
         }
-        // The structures: a box a pool slot (a dead one far away), no primitive data (its id is its slot, less the
+        // The structures: a box a pool slot (a dead one inactive: NaN), no primitive data (its id is its slot, less the
         // part's first). Each part has a scratch range of its own, so the two builds may run side by side.
         var render: [MTLBuffer] = [], boxes: [MTLBuffer] = [], parts: [(casters: Part?, others: Part?)] = []
         var scratchBytes = 16
