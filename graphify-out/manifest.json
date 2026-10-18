@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792266465.452337,
-    "seen": 1792266475.9788392,
-    "ast_hash": "9c0cb9ae404d96720081438c801d150d",
+    "mtime": 1792284906.2994368,
+    "seen": 1792284916.760865,
+    "ast_hash": "9d87b420f30ee66019d7f1347706d4f4",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -240,9 +240,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene.swift": {
-    "mtime": 1792262893.4715037,
-    "seen": 1792262909.545745,
-    "ast_hash": "f4755f5aa6fbaafcc7308bcc5c82bb54",
+    "mtime": 1792283931.7339096,
+    "seen": 1792284916.760732,
+    "ast_hash": "f55c6224c025bf0ff9d63a91a4994e55",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings.swift": {
@@ -366,15 +366,15 @@
     "semantic_hash": ""
   },
   ".claude/skills/performance/SKILL.md": {
-    "mtime": 1791324903.387891,
-    "seen": 1792207888.985659,
-    "ast_hash": "d24d8c2583ee91eab05ac007e6f8ce3a",
+    "mtime": 1792284498.0547774,
+    "seen": 1792284916.7608519,
+    "ast_hash": "51ea8bc0a428ab8ae4e48ac89586c243",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/cpu-swift.md": {
-    "mtime": 1792077779.2934515,
-    "seen": 1792207888.985659,
-    "ast_hash": "b1243907349752ca91a3d74ccae1c56a",
+    "mtime": 1792284874.5457861,
+    "seen": 1792284916.7608519,
+    "ast_hash": "ed33c9eb2b9b41321fc76c7fd3596f60",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/gpu-metal.md": {
@@ -894,9 +894,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SceneBuffers.swift": {
-    "mtime": 1792099155.128976,
-    "seen": 1792207888.9855602,
-    "ast_hash": "225b387d138978021b88d4618bce7480",
+    "mtime": 1792283931.7336957,
+    "seen": 1792284916.760732,
+    "ast_hash": "053be8c40e5aa391121ad5a9fed733d5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SectionFile.swift": {
@@ -1026,9 +1026,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PlantTracing.swift": {
-    "mtime": 1792099155.128609,
-    "seen": 1792207888.9855318,
-    "ast_hash": "7625ffb802f07686501bba39a87d340f",
+    "mtime": 1792284906.2988374,
+    "seen": 1792284916.760698,
+    "ast_hash": "82505daab697b6a66777f10f47088327",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SDFBuffers.swift": {
@@ -3849,6 +3849,18 @@
     "mtime": 1792262892.5066144,
     "seen": 1792262909.5458272,
     "ast_hash": "3b87c6b68089d45f270eb88f25f54079",
+    "semantic_hash": ""
+  },
+  "Tools/perf/hotcalls.py": {
+    "mtime": 1792284377.5121045,
+    "seen": 1792284916.76084,
+    "ast_hash": "7d5a9fc1a0bf81c722beecb5b67113ac",
+    "semantic_hash": ""
+  },
+  "Tools/perf/hot-functions.txt": {
+    "mtime": 1792284403.81297,
+    "seen": 1792284916.7608662,
+    "ast_hash": "d3b72d16e53a985a3670040fdec3279a",
     "semantic_hash": ""
   }
 }
