@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792404811.9198687,
-    "seen": 1792404867.6533928,
-    "ast_hash": "cee33b600818b0fee777310a071bf152",
+    "mtime": 1792420569.8569179,
+    "seen": 1792420605.548173,
+    "ast_hash": "01b079abed37adf1f4ba1b06c3a8c063",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -414,9 +414,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Pipelines.swift": {
-    "mtime": 1792356813.6192544,
-    "seen": 1792396149.432811,
-    "ast_hash": "b77667c90e3071fd7a6d13e25e430495",
+    "mtime": 1792418912.9143896,
+    "seen": 1792420605.547874,
+    "ast_hash": "56b6a3372040875aedb4fc5144410c14",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/SettingsEnv.swift": {
@@ -990,15 +990,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Physics.swift": {
-    "mtime": 1792402118.9370842,
-    "seen": 1792404867.6530812,
-    "ast_hash": "e46b39217de9f7ecdb65f9e45e816d57",
+    "mtime": 1792416122.9572303,
+    "seen": 1792420605.547862,
+    "ast_hash": "e6f2bb71a5dbd90328d094cf0d8801fe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsCPU.swift": {
-    "mtime": 1792403910.729745,
-    "seen": 1792404867.6530821,
-    "ast_hash": "d20d3d7b34cafc8c652c1b945c16004b",
+    "mtime": 1792415611.506071,
+    "seen": 1792420605.547863,
+    "ast_hash": "bec341253105327fccf1efc84866646f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsCollide.swift": {
@@ -1008,9 +1008,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsGPU.swift": {
-    "mtime": 1792392668.4691455,
-    "seen": 1792396149.4328058,
-    "ast_hash": "f95e27844cd22b68489ec32c5e802119",
+    "mtime": 1792418912.9147475,
+    "seen": 1792420605.547868,
+    "ast_hash": "9fcbdfc2a000b9706e9009fbd5bf1288",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/PhysicsHair.swift": {
@@ -1104,9 +1104,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Physics.metal": {
-    "mtime": 1792388404.0618603,
-    "seen": 1792396149.4328918,
-    "ast_hash": "1deddc69c1e80ea1cc4e3dcbce8fe549",
+    "mtime": 1792418893.075875,
+    "seen": 1792420605.54797,
+    "ast_hash": "bf34031c81c299dcdd942221fe1e5e2c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
@@ -3858,9 +3858,9 @@
     "semantic_hash": ""
   },
   "Tools/perf/hot-functions.txt": {
-    "mtime": 1792403910.7299592,
-    "seen": 1792404867.653394,
-    "ast_hash": "fb23086a21d921e06db947d86c78eef4",
+    "mtime": 1792419617.3874853,
+    "seen": 1792420605.548175,
+    "ast_hash": "0c14ccfd687f94881c046509d14b19b0",
     "semantic_hash": ""
   },
   ".claude/skills/data-oriented/scripts/profile.py": {
@@ -3894,9 +3894,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark+Destruction.swift": {
-    "mtime": 1792393427.419623,
-    "seen": 1792396149.432686,
-    "ast_hash": "18ebc64595f1fcb3325cde7059c84909",
+    "mtime": 1792417609.2938993,
+    "seen": 1792420605.547724,
+    "ast_hash": "52664f524fbe8a44555479ba97bd430a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DestructionOverlay.swift": {
@@ -3984,9 +3984,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/destruction-handoff.md": {
-    "mtime": 1792388404.058375,
-    "seen": 1792396149.433032,
-    "ast_hash": "ce6cbfd9891c90357c87a92425bd49a6",
+    "mtime": 1792420588.959914,
+    "seen": 1792420605.5481339,
+    "ast_hash": "0d403d60a627c4b71f2fb58be77c36d8",
     "semantic_hash": ""
   },
   "Sources/CPhysicsAtomics/atomics.c": {
@@ -4014,9 +4014,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/cpu-physics-threads-handoff.md": {
-    "mtime": 1792404838.6919816,
-    "seen": 1792404867.6533508,
-    "ast_hash": "2efcf621113315bbeefd2c9663cd8e6e",
+    "mtime": 1792420588.9593754,
+    "seen": 1792420605.5481331,
+    "ast_hash": "fc1bf0b1f65a4d8cba6a0fbaa2763e24",
     "semantic_hash": ""
   }
 }

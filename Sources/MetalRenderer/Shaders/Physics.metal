@@ -15,6 +15,7 @@ constant uint PHYS_PAIRS = 16, PHYS_CONTACTS = 4;   // PhysicsWorld.maxPairs, ma
 constant uint PHYS_COLOURS = 32, PHYS_ROUNDS = 64;  // PhysicsWorld.maxColours, maxRounds
 constant uint PHYS_LEFTOVER = 0xFFFFFFFEu;          // PhysicsWorld.leftover
 constant uint PHYS_ONE_SIDED = 0xFFFFFFFDu;         // PhysicsWorld.oneSided
+constant uint PHYS_IDLE = 0xFFFFFFFCu;              // PhysicsWorld.idlePair
 constant uint PHYS_SDF = 0, PHYS_SPHERE = 1, PHYS_CAPSULE = 2, PHYS_BOX = 3, PHYS_PLANE = 4, PHYS_HEIGHTFIELD = 5;   // PhysicsShapeKind
 constant uint PHYS_REFINE_STEPS = 6;
 constant float PHYS_GRADIENT_STEP = 1e-3f;
@@ -709,18 +710,38 @@ inline bool physStirs(PhysicsBody b, constant PhysicsParams& p) {
     return w > 0.0f && rate * min(sqrt(b.position.w / w), PHYS_GYRATION) > p.rolling.w;
 }
 
+// With fractured objects (PhysicsWorld.fallen, rubbleWake): rubble is a piece more than this from where it began.
+constant float PHYS_FALLEN = 0.5f, PHYS_RUBBLE_WAKE = 10.0f;
+
+// PhysicsCPU.rubble: body b (its first position `initial`) is a piece that came down.
+inline bool physRubble(PhysicsBody b, float4 initial) {
+    return (b.info.y & PHYS_PIECE) != 0 && physDistance2(b.position.xyz, initial.xyz) > PHYS_FALLEN * PHYS_FALLEN;
+}
+
+// PhysicsCPU.rubbleStirs: moving body o, which went at `motion` over the last step, wakes a sleeper it touches.
+inline bool physRubbleStirs(PhysicsBody o, float4 motion, bool rubble, constant PhysicsParams& p) {
+    if (!physMoves(o) || !(motion.x > p.rolling.z || motion.y > p.rolling.w)) return false;
+    return !rubble || motion.z != 0.0f || motion.x > PHYS_RUBBLE_WAKE * p.rolling.z || motion.y > PHYS_RUBBLE_WAKE * p.rolling.w;
+}
+
 // Each entry's owner (PhysicsCPU.link), and whether the body wakes (PhysicsCPU.wake): something it touches stirs.
 // `oneSided` (with fractured objects): a pair only one of its bodies lists (the other's list is full: a slab in a
 // heap touches more pieces than it has room for) is that one's, marked to be solved one after another after the
 // colours (PhysicsCPU.link); without it, the piece sank into the slab and was pushed out again, and the heap stirred.
+// With fractured objects (`sleep`: each body's sleep state, physSettleHeap), by its partners' motion over the last
+// step, rubble only for a hit or a partner moving on (PhysicsCPU.wake).
 inline void physLink(constant PhysicsParams& p, device const PhysicsBody* bodies, device PhysicsPair* pairs,
-                     device const uint* counts, device uint* wake, uint i, bool oneSided)
+                     device const uint* counts, device uint* wake, uint i, bool oneSided, device const float4* sleep)
 {
     if (i >= p.counts.x) return;
     bool asleep = (bodies[i].info.y & PHYS_ASLEEP) != 0, wakes = false;
+    bool rubble = oneSided && asleep && physRubble(bodies[i], sleep[4 * i + 3]);
     for (uint n = 0; n < counts[i]; ++n) {
         uint e = i * PHYS_PAIRS + n, partner = pairs[e].partner;
-        if (asleep && !wakes && (partner & PHYS_STATIC) == 0) wakes = physStirs(bodies[partner], p);
+        if (asleep && !wakes && (partner & PHYS_STATIC) == 0) {
+            PhysicsBody o = bodies[partner];
+            wakes = oneSided && (o.info.y & PHYS_KINEMATIC) == 0 ? physRubbleStirs(o, sleep[4 * partner + 2], rubble, p) : physStirs(o, p);
+        }
         if (oneSided) pairs[e].pad = PHYS_NONE;
         if ((partner & PHYS_STATIC) != 0) { pairs[e].link = e; continue; }
         if (partner > i) {   // the owner keeps it only if the partner has it too (PhysicsCPU.link)
@@ -749,7 +770,7 @@ kernel void physicsLinkKernel(constant PhysicsParams&   p      [[buffer(0)]],
                               device uint*              wake   [[buffer(4)]],
                               uint i [[thread_position_in_grid]])
 {
-    physLink(p, bodies, pairs, counts, wake, i, false);
+    physLink(p, bodies, pairs, counts, wake, i, false, nullptr);
 }
 
 // ...with fractured objects: one-sided pairs kept.
@@ -758,9 +779,10 @@ kernel void physicsFractureLinkKernel(constant PhysicsParams&   p      [[buffer(
                                       device PhysicsPair*       pairs  [[buffer(2)]],
                                       device const uint*        counts [[buffer(3)]],
                                       device uint*              wake   [[buffer(4)]],
+                                      device const float4*      sleep  [[buffer(5)]],
                                       uint i [[thread_position_in_grid]])
 {
-    physLink(p, bodies, pairs, counts, wake, i, true);
+    physLink(p, bodies, pairs, counts, wake, i, true, sleep);
 }
 
 inline PhysicsBody physPartner(uint code, device const PhysicsBody* bodies, device const PhysicsBody* statics) {
@@ -885,22 +907,11 @@ struct PhysicsGroup {
 // A SIMD group per entry: an owned entry's contacts (PhysicsCPU.narrowPhase), at the start of a step and again every
 // PhysicsWorld.contactRefresh substeps. The entry is the same for all of a
 // group's lanes, so a group that has nothing to do leaves together.
-kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]],
-                                device const PhysicsBody*  bodies   [[buffer(1)]],
-                                device const PhysicsBody*  statics  [[buffer(2)]],
-                                device const PhysicsShape* shapes   [[buffer(3)]],
-                                device const float4*       samples  [[buffer(4)]],
-                                device const SDFScene&     sdf      [[buffer(5)]],
-                                device PhysicsPair*        pairs    [[buffer(6)]],
-                                device const uint*         counts   [[buffer(7)]],
-                                device PhysicsContact*     contacts [[buffer(8)]],
-                                constant PhysicsGroup&     group    [[buffer(9)]],
-                                device const uint*         weldStarts [[buffer(10)]],   // per body, into weldList
-                                device const uint2*        weldList [[buffer(11)]],     // (partner, weld), by partner
-                                device const PhysicsFractureWeld* welds [[buffer(12)]],
-                                uint t [[thread_position_in_grid]],
-                                ushort lane [[thread_index_in_simdgroup]],
-                                ushort lanes [[threads_per_simdgroup]])
+inline void physNarrowEntry(constant PhysicsParams& p, device const PhysicsBody* bodies, device const PhysicsBody* statics,
+                           device const PhysicsShape* shapes, device const float4* samples, device const SDFScene& sdf,
+                           device PhysicsPair* pairs, device const uint* counts, device PhysicsContact* contacts,
+                           constant PhysicsGroup& group, device const uint* weldStarts, device const uint2* weldList,
+                           device const PhysicsFractureWeld* welds, uint t, ushort lane, ushort lanes)
 {
     uint e = t / lanes, i = e / PHYS_PAIRS, n = e % PHYS_PAIRS;
     if (i >= p.counts.x || n >= counts[i] || pairs[e].link != e) return;
@@ -944,6 +955,69 @@ kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]
         out.lambda = float4(0.0f);
         contacts[e * PHYS_CONTACTS + c] = out;
     }
+}
+
+kernel void physicsNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]],
+                                device const PhysicsBody*  bodies   [[buffer(1)]],
+                                device const PhysicsBody*  statics  [[buffer(2)]],
+                                device const PhysicsShape* shapes   [[buffer(3)]],
+                                device const float4*       samples  [[buffer(4)]],
+                                device const SDFScene&     sdf      [[buffer(5)]],
+                                device PhysicsPair*        pairs    [[buffer(6)]],
+                                device const uint*         counts   [[buffer(7)]],
+                                device PhysicsContact*     contacts [[buffer(8)]],
+                                constant PhysicsGroup&     group    [[buffer(9)]],
+                                device const uint*         weldStarts [[buffer(10)]],   // per body, into weldList
+                                device const uint2*        weldList [[buffer(11)]],     // (partner, weld), by partner
+                                device const PhysicsFractureWeld* welds [[buffer(12)]],
+                                uint t [[thread_position_in_grid]],
+                                ushort lane [[thread_index_in_simdgroup]],
+                                ushort lanes [[threads_per_simdgroup]])
+{
+    physNarrowEntry(p, bodies, statics, shapes, samples, sdf, pairs, counts, contacts, group, weldStarts, weldList, welds, t, lane, lanes);
+}
+
+// ...with fractured objects: at a step's start, a pair neither of whose bodies moves (one woken or held moves), not a
+// weld, has no contacts found (PhysicsCPU.idle: no colour, no solve; a sleeping heap's pairs were most of the step).
+kernel void physicsFractureNarrowKernel(constant PhysicsParams&    p        [[buffer(0)]],
+                                device const PhysicsBody*  bodies   [[buffer(1)]],
+                                device const PhysicsBody*  statics  [[buffer(2)]],
+                                device const PhysicsShape* shapes   [[buffer(3)]],
+                                device const float4*       samples  [[buffer(4)]],
+                                device const SDFScene&     sdf      [[buffer(5)]],
+                                device PhysicsPair*        pairs    [[buffer(6)]],
+                                device const uint*         counts   [[buffer(7)]],
+                                device PhysicsContact*     contacts [[buffer(8)]],
+                                constant PhysicsGroup&     group    [[buffer(9)]],
+                                device const uint*         weldStarts [[buffer(10)]],   // per body, into weldList
+                                device const uint2*        weldList [[buffer(11)]],     // (partner, weld), by partner
+                                device const PhysicsFractureWeld* welds [[buffer(12)]],
+                                device const uint*         wake     [[buffer(13)]],
+                                constant PhysicsGrab&      grab     [[buffer(14)]],
+                                uint t [[thread_position_in_grid]],
+                                ushort lane [[thread_index_in_simdgroup]],
+                                ushort lanes [[threads_per_simdgroup]])
+{
+    uint e = t / lanes, i = e / PHYS_PAIRS, n = e % PHYS_PAIRS;
+    if (i >= p.counts.x || n >= counts[i] || pairs[e].link != e) return;
+    uint code = pairs[e].partner, held = grab.target.w > 0.0f ? grab.body : PHYS_NONE;
+    bool still = group.first == 0 && !physMoves(bodies[i]) && wake[i] == 0 && i != held
+                 && ((code & PHYS_STATIC) != 0 || (!physMoves(bodies[code]) && wake[code] == 0 && code != held));
+    if (still) {
+        bool welded = false;
+        if ((code & PHYS_STATIC) == 0 && (bodies[i].info.y & bodies[code].info.y & PHYS_PIECE) != 0) {
+            for (uint k = weldStarts[i], end = weldStarts[i + 1]; k < end; ++k) {
+                if (weldList[k].x != code) continue;
+                welded = welds[weldList[k].y].info.z == 0;
+                break;
+            }
+        }
+        if (!welded) {
+            if (lane == 0) pairs[e].contacts = 0;
+            return;
+        }
+    }
+    physNarrowEntry(p, bodies, statics, shapes, samples, sdf, pairs, counts, contacts, group, weldStarts, weldList, welds, t, lane, lanes);
 }
 
 // MARK: - Substeps
@@ -1458,10 +1532,20 @@ inline uint physColoursAround(device const PhysicsPair* pairs, device const uint
 // body in each at most once: colouring[PHYS_COLOURS + 3 + c] where colour c starts, then how many there are), and
 // only what is left after those is solved one pair after another. A heap of pieces left thousands: one thread took
 // 0.4 s a step.
+// With fractured objects (PhysicsCPU.idle): pair e neither of whose bodies moves this step (one woken, `wake`, or
+// held moves), not a weld: no colour, and the rounds pass it by (pad = PHYS_IDLE).
+inline bool physIdle(device const PhysicsPair* pairs, device const PhysicsBody* bodies, device const uint* wake,
+                     constant PhysicsGrab& grab, device const PhysicsContact* contacts, uint e) {
+    uint i = e / PHYS_PAIRS, code = pairs[e].partner, held = grab.target.w > 0.0f ? grab.body : PHYS_NONE;
+    if (physMoves(bodies[i]) || wake[i] != 0 || i == held || contacts[e * PHYS_CONTACTS].lambda.w == 1.0f) return false;
+    return (code & PHYS_STATIC) != 0 || !(physMoves(bodies[code]) || wake[code] != 0 || code == held);
+}
+
 inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts, device uint* order, device uint* won,
                             device uint* live, device uint* colouring, threadgroup atomic_uint* tally,
                             threadgroup atomic_uint* perColour, uint entries, uint t, uint width, bool extra, uint bodies,
-                            threadgroup uint* scratch) {
+                            threadgroup uint* scratch, device const PhysicsBody* bodyRecords, device const uint* wake,
+                            constant PhysicsGrab& grab, device const PhysicsContact* contacts) {
     if (t == 0) atomic_store_explicit(&tally[0], 0u, memory_order_relaxed);
     for (uint c = t; c < PHYS_COLOURS; c += width) atomic_store_explicit(&perColour[c], 0u, memory_order_relaxed);
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -1470,6 +1554,7 @@ inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts
         bool oneSided = pairs[e].pad == PHYS_ONE_SIDED;
         pairs[e].pad = PHYS_NONE;
         if (!physLive(pairs, counts, e)) continue;
+        if (extra && physIdle(pairs, bodyRecords, wake, grab, contacts, e)) { pairs[e].pad = PHYS_IDLE; continue; }
         if (oneSided) pairs[e].pad = PHYS_LEFTOVER;
         live[atomic_fetch_add_explicit(&tally[0], 1u, memory_order_relaxed)] = e;
     }
@@ -1562,7 +1647,8 @@ inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts
             uint i = e / PHYS_PAIRS, code = pairs[e].partner;
             bool both = (code & PHYS_STATIC) == 0;
             uint used = won[i] | (both ? won[code] : 0u);
-            if (used == 0xFFFFFFFFu) { ++rest; continue; }   // (still left over)
+            // (Still left over: their list, in entry order, after the bodies' colours; `won` has an entry a pair.)
+            if (used == 0xFFFFFFFFu) { if (bodies + rest < entries) won[bodies + rest++] = e; continue; }
             uint c = ctz(~used);
             won[i] |= 1u << c;
             if (both) won[code] |= 1u << c;
@@ -1601,6 +1687,27 @@ inline bool physStill(PhysicsBody b, float4 position, float4 rotation, constant 
     if (!(sine > 1e-9f)) return true;
     float w = physTurnWeight(b, turn / sine);
     return !(w > 0.0f) || 2.0f * sine * min(sqrt(b.position.w / w), PHYS_GYRATION) < p.sleep.y * p.grid.w;
+}
+
+// PhysicsCPU.near: rubble b has stayed near its anchor (`position`, `rotation`) for the sleep time's worth of speed.
+inline bool physNear(PhysicsBody b, float4 position, float4 rotation, constant PhysicsParams& p) {
+    float moved = length(b.position.xyz - position.xyz);
+    if (!(moved < p.sleep.x * p.sleep.z)) return false;
+    float3 turn = quatMul(b.rotation, physConj(rotation)).xyz;
+    float sine = length(turn);
+    if (!(sine > 1e-9f)) return true;
+    float w = physTurnWeight(b, turn / sine);
+    return !(w > 0.0f) || 2.0f * sine * min(sqrt(b.position.w / w), PHYS_GYRATION) < p.sleep.y * p.sleep.z;
+}
+
+// PhysicsCPU.motion: how fast body b's mass went over a step from (`position`, `rotation`) in h.
+inline float4 physMotion(PhysicsBody b, float4 position, float4 rotation, float h) {
+    float moved = length(b.position.xyz - position.xyz);
+    float3 turn = quatMul(b.rotation, physConj(rotation)).xyz;
+    float sine = length(turn);
+    if (!(sine > 1e-9f)) return float4(moved / h, 0.0f, 0.0f, 0.0f);
+    float w = physTurnWeight(b, turn / sine);
+    return float4(moved / h, w > 0.0f ? 2.0f * sine * min(sqrt(b.position.w / w), PHYS_GYRATION) / h : 0.0f, 0.0f, 0.0f);
 }
 
 // MARK: - Particles' substeps
@@ -1841,6 +1948,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
                                   device const uint2*       ragdolls [[buffer(27)]],   // first body, count
                                   device const PhysicsTables& tables [[buffer(28)]],   // the tets, their colours, welds, fracture
                                   device float4*            flesh [[buffer(30)]],   // PhysicsFleshHeader, then its parts
+                                  device float4*            sleep [[buffer(29)]],   // with fractured objects: physSettleHeap
                                   uint t [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]])
 {
@@ -1850,7 +1958,22 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     threadgroup atomic_uint tally[2], perColour[PHYS_COLOURS];
     threadgroup uint scratch[1024];   // (physColourPairs: each thread's left-over pairs)
     bool fractured = tables.flags.x != 0;
-    if (group.first == 0) physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width, fractured, n, scratch);
+    if (group.first == 0) {
+        // A ragdoll wakes whole (PhysicsCPU.wake): if any of its bodies is awake, woken or held, the rest wake. (Before
+        // the colours: with fractured objects, a pair of bodies that wake takes one, PhysicsCPU.idle.)
+        for (uint r = t; r < p.cloth.w; r += width) {
+            uint first = ragdolls[r].x, end = first + ragdolls[r].y;
+            bool any = false;
+            for (uint i = first; i < end && !any; ++i) {
+                any = physMoves(bodies[i]) || wake[i] != 0 || (grab.target.w > 0.0f && grab.body == i);
+            }
+            if (!any) continue;
+            for (uint i = first; i < end; ++i) if ((bodies[i].info.y & PHYS_ASLEEP) != 0) wake[i] = 1;
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+        physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width, fractured, n, scratch,
+                        bodies, wake, grab, contacts);
+    }
     uint colours = colouring[PHYS_COLOURS + 1];
     bool leftovers = colouring[PHYS_COLOURS + 2] != 0;
     device const uint* starts = colouring;
@@ -1860,17 +1983,6 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         for (uint i = t; i < n; i += width) {
             start[2 * i] = bodies[i].position;
             start[2 * i + 1] = bodies[i].rotation;
-        }
-        // A ragdoll wakes whole (PhysicsCPU.wake): if any of its bodies is awake, woken or held, the rest wake.
-        threadgroup_barrier(mem_flags::mem_device);
-        for (uint r = t; r < p.cloth.w; r += width) {
-            uint first = ragdolls[r].x, end = first + ragdolls[r].y;
-            bool any = false;
-            for (uint i = first; i < end && !any; ++i) {
-                any = physMoves(bodies[i]) || wake[i] != 0 || (grab.target.w > 0.0f && grab.body == i);
-            }
-            if (!any) continue;
-            for (uint i = first; i < end; ++i) if ((bodies[i].info.y & PHYS_ASLEEP) != 0) wake[i] = 1;
         }
         threadgroup_barrier(mem_flags::mem_device);
     }
@@ -1930,10 +2042,13 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         }
         if (leftovers) {
             if (t == 0) {
-                for (uint e = 0; e < entries; ++e) {
-                    if (!physLeftover(pairs, e)) continue;
-                    if (tables.flags.x != 0) physPushFracturePair(p, bodies, statics, pairs, contacts, e, tables);
-                    else physPushPair(p, bodies, statics, pairs, contacts, e);
+                if (fractured) {   // (their list: physColourPairs. A scan of every entry, a substep, took a second a step)
+                    for (uint r = 0; r < colouring[PHYS_COLOURS + 2]; ++r) physPushFracturePair(p, bodies, statics, pairs, contacts, won[n + r], tables);
+                } else {
+                    for (uint e = 0; e < entries; ++e) {
+                        if (!physLeftover(pairs, e)) continue;
+                        physPushPair(p, bodies, statics, pairs, contacts, e);
+                    }
                 }
             }
             threadgroup_barrier(mem_flags::mem_device);
@@ -1955,10 +2070,13 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
         }
         if (leftovers) {
             if (t == 0) {
-                for (uint e = 0; e < entries; ++e) {
-                    if (!physLeftover(pairs, e)) continue;
-                    if (tables.flags.x != 0) physKickFracturePair(p, bodies, statics, pairs, contacts, e, tables);
-                    else physKickPair(p, bodies, statics, pairs, contacts, e);
+                if (fractured) {
+                    for (uint r = 0; r < colouring[PHYS_COLOURS + 2]; ++r) physKickFracturePair(p, bodies, statics, pairs, contacts, won[n + r], tables);
+                } else {
+                    for (uint e = 0; e < entries; ++e) {
+                        if (!physLeftover(pairs, e)) continue;
+                        physKickPair(p, bodies, statics, pairs, contacts, e);
+                    }
                 }
             }
             threadgroup_barrier(mem_flags::mem_device);
@@ -1971,9 +2089,32 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     if (group.last == 0) return;
     // PhysicsCPU.settle: the timers, then who sleeps (a sleeping body's timer is past the sleep time, so a partner
     // falling asleep beside it reads the same either way).
+    // With fractured objects (PhysicsCPU.settle): rubble is still while it stays near where its still time began
+    // (`sleep`: its anchor's position and rotation, its motion over this step, its first position, four a body).
     for (uint i = t; i < n; i += width) {
         PhysicsBody b = bodies[i];
-        if (physMoves(b)) bodies[i].prevPosition.w = physStill(b, start[2 * i], start[2 * i + 1], p) ? b.prevPosition.w + p.grid.w : 0.0f;
+        if (!fractured) {
+            if (physMoves(b)) bodies[i].prevPosition.w = physStill(b, start[2 * i], start[2 * i + 1], p) ? b.prevPosition.w + p.grid.w : 0.0f;
+            continue;
+        }
+        device float4* st = sleep + 4 * i;
+        if (!physMoves(b)) { st[2] = float4(0.0f); continue; }
+        float4 motion = physMotion(b, start[2 * i], start[2 * i + 1], p.grid.w);
+        float timer = b.prevPosition.w;
+        if (!physRubble(b, st[3])) {
+            timer = physStill(b, start[2 * i], start[2 * i + 1], p) ? timer + p.grid.w : 0.0f;
+            st[0] = b.position;
+            st[1] = b.rotation;
+        } else if (timer > 0.0f && physNear(b, st[0], st[1], p)) {
+            timer += p.grid.w;
+        } else {
+            if (timer > 0.0f && timer <= p.sleep.z * 0.5f) motion.z = 1.0f;   // (it moves on: PhysicsCPU.settle)
+            timer = p.grid.w;
+            st[0] = b.position;
+            st[1] = b.rotation;
+        }
+        st[2] = motion;
+        bodies[i].prevPosition.w = timer;
     }
     threadgroup_barrier(mem_flags::mem_device);
     // Who may sleep, into `wake` (free until the next step's link kernel writes it)...
@@ -2481,9 +2622,11 @@ kernel void physicsFractureResetKernel(constant PhysicsFractureParams&     fp   
                                        device PhysicsFractureWeld*         welds    [[buffer(3)]],
                                        device const PhysicsFractureWeld*   initial  [[buffer(4)]],
                                        device uint4*                       clock    [[buffer(5)]],
+                                       device float4*                      sleep    [[buffer(6)]],
                                        uint i [[thread_position_in_grid]])
 {
     if (i < fp.counts.x) {
+        sleep[4 * i + 2] = float4(0.0f);   // (no motion before the first step: PhysicsWorld.reset)
         PhysicsFractureState s;
         s.strain = float4(0.0f);
         s.impact = float4(0.0f);

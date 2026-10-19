@@ -60,6 +60,9 @@ where things stand and what to do next.
   | massive | ddd80465606fa8f1 |
   | 3 buildings (7 s; added on `claude/cpu-physics-big-worlds`, from main at 58d9774) | bc8fb68c4820d793 |
 
+  On `claude/island-sleep` the three destruction worlds sleep differently (by design), so their digests changed:
+  destruction ad62f99b2283e8ec, massive b82dacdd35e4458a, 3 buildings d39bc03a98fa0a7a. The other six are as above.
+
 - Related suites in release pass: BuildingWorkshop, Fluid, Destruction, Hair, Muscle, PhysicsThreads, Physics, Ragdoll,
   ProjectGraph, SettingsTable, SoftBody, Terrain, KernelVariants.
 - `CharacterHairTests.testCapsFollowTheStyle` fails, as it already does on main.
@@ -117,8 +120,8 @@ What did nothing, or got worse:
    past the margin. Check `SDFShape.join` and float max with signed zeros.
 2. Colour stages: about 44 a substep, each about 5 µs to hand out. Islands, or a cheaper barrier, would help. Within
    an island the colours keep their order, and islands are independent.
-3. Rubble that never sleeps is physics behaviour (see the destruction handoff). It would change the numbers, so it
-   isn't for this work.
+3. Rubble that never slept: done on `claude/island-sleep` (README "Heaps that sleep"). Three buildings settling: CPU
+   step 66 → 20 ms at 25 s; GPU physics 67 → 47 ms (its single-threadgroup substeps are the GPU's limit now).
 4. Spin and power tuning: a shorter spin, or none when a stage is tiny.
 5. With 3 buildings the frame thread's remaining 5 ms is the renderer's per-instance work (`useResources`,
    `_arrayForceCast` in the instance writer), not physics.

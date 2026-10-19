@@ -64,3 +64,36 @@ README's "Destruction" section is the design; this is where things stand and wha
 - Hand test, then M4 Max timings (`METALRENDERER_BENCH=destruction`, `destructionmassive`).
 - Glass cracking at the hit point (a runtime radial pattern into the pre-made pool) if wanted.
 - A broad phase that doesn't size its grid from the biggest root (the tower's 2 m): leaves pay for it.
+
+## Heaps that sleep (branch `claude/island-sleep`)
+
+In worlds with fractured objects, rubble sleeps and wakes by its own rules. The design is in the README under
+"Heaps that sleep".
+
+The traps:
+- **Per-step speed tests:** the heap's pieces creep at about 1 cm/s, 2°/s, and some rock past the wake speed. Any test
+  of a single step's speed restarts their timers or wakes their neighbours.
+- **Structures:** a standing or sagging structure must keep the old rules. A drift window let a sagging building sleep
+  and delayed the collapse by a second. A high wake speed for everything kept the building up altogether.
+- **Rubble by welds or by root:** neither works. A whole wall has no welds and rests on floors, and a welded chunk
+  lying in the heap is rubble. Use the distance from where the piece began (`fallen`).
+- **Freshly woken bodies:** their timer restarts, so "moved on" must mean leaving a window it was in, and only
+  quickly (within a quarter second). Otherwise wakes cascade.
+- **Idle pairs:** they must be marked (pad = idlePair) so the colouring's rounds pass them by. Unmarked, they blocked
+  their neighbours' rounds, the building's welds were solved as leftovers, and it never fell.
+- **GPU leftovers:** thread 0 scanned every entry for them in each pass: about a second a step whenever any were left.
+  They are now a list in `won` after the bodies' colour masks.
+
+Tried and dropped:
+- the minimum timer over K contact hops (blocked by a few creepers);
+- 32 partners a body (it helped a little: 838 awake instead of 1,041).
+
+Measuring:
+- The probe used across this work printed awake/asleep/woken a second for one or three buildings. Rebuild it from the
+  README numbers if needed.
+- `testTheBuildingSettles` (`DESTRUCTION_SETTLE=1`) is the GPU's.
+- The benchmark is `destructioncpu`'s settling rows, which start at 10 s.
+
+Next:
+- **GPU:** its substeps run in one threadgroup over every body, which is now the limit (47 ms).
+- **CPU:** a sleeping body still runs its broad-phase query each step.
