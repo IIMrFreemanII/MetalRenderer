@@ -14,6 +14,10 @@ static inline bool cpa_cas(intptr_t *p, intptr_t expected, intptr_t desired) {
     return atomic_compare_exchange_weak_explicit((_Atomic intptr_t *)p, &expected, desired,
                                                  memory_order_acq_rel, memory_order_acquire);
 }
+/// A 32-bit wrapping add (the liquids' fixed-point sums: integers, so the same total in any order).
+static inline int32_t cpa_add32(int32_t *p, int32_t v) {
+    return atomic_fetch_add_explicit((_Atomic int32_t *)p, v, memory_order_relaxed);
+}
 /// A spinning thread's hint to the core (arm64's yield, x86's pause).
 static inline void cpa_pause(void) {
 #if defined(__aarch64__)

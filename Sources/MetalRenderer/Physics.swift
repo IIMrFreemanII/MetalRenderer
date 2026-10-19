@@ -207,6 +207,8 @@ final class PhysicsWorld {
     var fractureState: [GPUFractureState] = []
     /// A flag a body for the CPU step's stages (PhysicsCPU.swift: who wakes, who sleeps, who came free), kept.
     var wakeFlags: [UInt8] = []
+    /// The particles as a substep's Jacobi pass found them (solveParticles), kept.
+    var particleSnapshot: [GPUPhysicsParticle] = []
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.

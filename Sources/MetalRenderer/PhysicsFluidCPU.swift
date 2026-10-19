@@ -1,18 +1,96 @@
 import Foundation
 import simd
 
+import CPhysicsAtomics
+
+/// What a liquid's substep reads of the world, and where it adds what it pushes the bodies by, from any thread
+/// (raw buffers: nothing counted, nothing the world's arrays are reached through while the workers run).
+struct FluidContext {
+    let bodies: UnsafeBufferPointer<GPUPhysicsBody>
+    let statics: UnsafeBufferPointer<GPUPhysicsBody>
+    let staticBounds: UnsafeBufferPointer<AABB>
+    let shapes: PhysicsShapes
+    /// Per body, its linear then angular impulse this group (fixed point), added to with atomic adds: integers, so the
+    /// same total in any order, as the GPU's are.
+    let impulses: UnsafeMutablePointer<SIMD4<Int32>>
+
+    /// Collider `code` (a static's index | staticBit, or a body's), as MSL fluidCollider reads it.
+    @inline(__always) func collider(_ code: UInt32) -> GPUPhysicsBody {
+        code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : bodies[Int(code)]
+    }
+
+    /// Whether `x` may be within `r` of collider `code`: its box (a plane: its half space), a body's sphere.
+    @inline(__always) func near(_ code: UInt32, _ x: SIMD3<Float>, _ r: Float) -> Bool {
+        if code & PhysicsWorld.staticBit != 0 {
+            let s = Int(code & ~PhysicsWorld.staticBit), st = statics[s]
+            if shapes.shapes[Int(st.info.x)].info.x == PhysicsShapeKind.plane.rawValue {
+                let n = PhysicsMath.qrot(st.rotation, SIMD3(0, 1, 0))
+                return dot(x - PhysicsMath.xyz(st.position), n) < r
+            }
+            let box = staticBounds[s]
+            let nearest = simd_clamp(x, box.lo, box.hi)
+            return length_squared(x - nearest) < r * r
+        }
+        let b = bodies[Int(code)], reach = b.invInertia.w + r
+        return length_squared(x - PhysicsMath.xyz(b.position)) < reach * reach
+    }
+
+    /// Adds impulse `j` at `x` to body `code`'s accumulator, if it is a dynamic body (fixed point).
+    @inline(__always) func impulse(_ code: UInt32, _ j: SIMD3<Float>, at x: SIMD3<Float>) {
+        guard code & PhysicsWorld.staticBit == 0 else { return }
+        let b = bodies[Int(code)]
+        guard b.position.w > 0, b.info.y & PhysicsWorld.kinematicBit == 0 else { return }
+        let l = cross(x - PhysicsMath.xyz(b.position), j)
+        let i = Int(code)
+        FluidContext.add(impulses + 2 * i, SIMD4(PhysicsWorld.fixed(j, FluidWorld.impulseScale), 0))
+        FluidContext.add(impulses + 2 * i + 1, SIMD4(PhysicsWorld.fixed(l, FluidWorld.impulseScale), 0))
+    }
+
+    /// `v` added to `*to`, each part atomically (wrapping, as `&+=`).
+    @inline(__always) static func add(_ to: UnsafeMutablePointer<SIMD4<Int32>>, _ v: SIMD4<Int32>) {
+        UnsafeMutableRawPointer(to).withMemoryRebound(to: Int32.self, capacity: 4) { w in
+            if v.x != 0 { _ = cpa_add32(w, v.x) }
+            if v.y != 0 { _ = cpa_add32(w + 1, v.y) }
+            if v.z != 0 { _ = cpa_add32(w + 2, v.z) }
+            if v.w != 0 { _ = cpa_add32(w + 3, v.w) }
+        }
+    }
+
+    /// A particle at `x` (radius `r`, from `start` this substep) pushed out of the colliders it is inside, one after
+    /// another, sliding with `friction` against their surfaces' motion (MSL fluidPushOut). `mass` > 0: what it pushes
+    /// back on each dynamic body over `h`.
+    @inline(__always) func pushOut(_ x: SIMD3<Float>, start: SIMD3<Float>, r: Float, h: Float, friction: Float, mass: Float,
+                                   colliders: UnsafeBufferPointer<UInt32>) -> SIMD3<Float> {
+        var y = x
+        let cap = FluidWorld.topSpeed * h
+        for code in colliders where near(code, y, r) {
+            let b = collider(code), pose = PhysicsWorld.Pose(b), shape = Int(b.info.x)
+            let local = pose.toBody(y)
+            let depth = shapes.distance(shape: shape, local) - r
+            guard depth < 0 else { continue }
+            let n = pose.direction(shapes.gradient(shape: shape, local))
+            let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), y - pose.position)
+            let push = PhysicsWorld.particlePush(n, min(-depth, cap), (y - start) - surface * h, friction)
+            y += push
+            if mass > 0 { impulse(code, -push * (mass / h), at: y) }
+        }
+        return y
+    }
+}
+
 /// The liquids' step on the CPU: the reference Shaders/Fluid.metal is checked against, kernel by kernel, in its order.
 /// The sums many GPU threads add to are integers here too (FluidWorld's fixed point), added in whatever order: the
-/// same numbers.
+/// same numbers. Each kernel's particles (or grid nodes) on PhysicsPool's workers.
 extension PhysicsWorld {
     /// One group's liquids (before the group's narrow phase), then their impulses on the bodies.
     func stepFluids() {
         guard let fluid, !fluid.systems.isEmpty else { return }
-        for s in fluid.systems.indices { stepFluid(s) }
+        let shapes = shapeData
+        for s in fluid.systems.indices { stepFluid(s, shapes) }
         applyFluidImpulses()
     }
 
-    private func stepFluid(_ s: Int) {
+    private func stepFluid(_ s: Int, _ shapes: PhysicsShapes) {
         var system = fluid!.systems[s]
         let p = system.params
         let clock = system.clock
@@ -22,9 +100,30 @@ extension PhysicsWorld {
             system.particles.append(PhysicsWorld.pour(p, layer: system.layer, i, clock: clock))
         }
         let near = fluidBodies(p)
-        for _ in 0..<Int(p.counts.y) {
-            if system.solver == .mpm { mpmSubstep(&system, bodies: near) } else { pbfSubstep(&system, bodies: near) }
+        let colliders = system.statics.map { $0 | PhysicsWorld.staticBit } + near   // its statics, then the bodies near it
+        // (The impulses out of the world while the workers add to them: nothing else reaches them through it.)
+        var impulses = fluid!.impulses
+        fluid!.impulses = []
+        bodies.withUnsafeBufferPointer { bodies in
+            statics.withUnsafeBufferPointer { statics in
+                staticBounds.withUnsafeBufferPointer { staticBounds in
+                    impulses.withUnsafeMutableBufferPointer { impulses in
+                        colliders.withUnsafeBufferPointer { colliders in
+                            let c = FluidContext(bodies: bodies, statics: statics, staticBounds: staticBounds, shapes: shapes,
+                                                 impulses: impulses.baseAddress!)
+                            for _ in 0..<Int(p.counts.y) {
+                                if system.solver == .mpm {
+                                    PhysicsWorld.mpmSubstep(&system, c, colliders: colliders)
+                                } else {
+                                    PhysicsWorld.pbfSubstep(&system, c, colliders: colliders)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
+        fluid!.impulses = impulses
         fluid!.systems[s] = system
     }
 
@@ -40,36 +139,6 @@ extension PhysicsWorld {
         return GPUFluidParticle(position: SIMD4(x, 1), velocity: SIMD4(d * p.direction.w, 0))
     }
 
-    // MARK: Colliders
-
-    /// Collider `code` (a static's index | staticBit, or a body's), as MSL fluidCollider reads it.
-    @inline(__always) private func fluidCollider(_ code: UInt32) -> GPUPhysicsBody {
-        code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : bodies[Int(code)]
-    }
-
-    /// Whether `x` may be within `r` of collider `code`: its box (a plane: its half space), a body's sphere.
-    @inline(__always) private func fluidNear(_ code: UInt32, _ x: SIMD3<Float>, _ r: Float) -> Bool {
-        if code & PhysicsWorld.staticBit != 0 { return touchesStatic(Int(code & ~PhysicsWorld.staticBit), centre: x, radius: r) }
-        let b = bodies[Int(code)], reach = b.invInertia.w + r
-        return length_squared(x - PhysicsMath.xyz(b.position)) < reach * reach
-    }
-
-    /// The colliders a liquid's particle meets this group: its statics, then the bodies near it.
-    private func fluidColliders(_ system: FluidSystem, bodies near: [UInt32]) -> [UInt32] {
-        system.statics.map { $0 | PhysicsWorld.staticBit } + near
-    }
-
-    /// Adds impulse `j` at `x` to body `code`'s accumulator, if it is a dynamic body (fixed point).
-    @inline(__always) private func fluidImpulse(_ code: UInt32, _ j: SIMD3<Float>, at x: SIMD3<Float>) {
-        guard code & PhysicsWorld.staticBit == 0 else { return }
-        let b = bodies[Int(code)]
-        guard b.position.w > 0, b.info.y & PhysicsWorld.kinematicBit == 0 else { return }
-        let l = cross(x - PhysicsMath.xyz(b.position), j)
-        let i = Int(code)
-        fluid!.impulses[2 * i] &+= SIMD4(PhysicsWorld.fixed(j, FluidWorld.impulseScale), 0)
-        fluid!.impulses[2 * i + 1] &+= SIMD4(PhysicsWorld.fixed(l, FluidWorld.impulseScale), 0)
-    }
-
     /// `v` x `scale` in fixed point (MSL fluidFixed): rounded to the nearest even, held to 2^30.
     @inline(__always) static func fixed(_ v: SIMD3<Float>, _ scale: Float) -> SIMD3<Int32> {
         let c = simd_clamp(v * scale, SIMD3(repeating: -1_073_741_824), SIMD3(repeating: 1_073_741_824))
@@ -77,27 +146,6 @@ extension PhysicsWorld {
     }
     @inline(__always) static func fixed(_ v: Float, _ scale: Float) -> Int32 {
         Int32(min(max(v * scale, -1_073_741_824), 1_073_741_824).rounded(.toNearestOrEven))
-    }
-
-    /// A particle at `x` (radius `r`, from `start` this substep) pushed out of the colliders it is inside, one after
-    /// another, sliding with `friction` against their surfaces' motion (MSL fluidPushOut). `mass` > 0: what it pushes
-    /// back on each dynamic body over `h`.
-    private func fluidPushOut(_ x: SIMD3<Float>, start: SIMD3<Float>, r: Float, h: Float, friction: Float, mass: Float,
-                              colliders: [UInt32]) -> SIMD3<Float> {
-        var y = x
-        let cap = FluidWorld.topSpeed * h
-        for code in colliders where fluidNear(code, y, r) {
-            let b = fluidCollider(code), pose = Pose(b), shape = Int(b.info.x)
-            let local = pose.toBody(y)
-            let depth = distance(shape: shape, local) - r
-            guard depth < 0 else { continue }
-            let n = pose.direction(gradient(shape: shape, local))
-            let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), y - pose.position)
-            let push = PhysicsWorld.particlePush(n, min(-depth, cap), (y - start) - surface * h, friction)
-            y += push
-            if mass > 0 { fluidImpulse(code, -push * (mass / h), at: y) }
-        }
-        return y
     }
 
     /// Body impulses from the liquids this group, applied (MSL fluidApplyKernel): a sleeping body wakes only when
@@ -156,7 +204,8 @@ extension PhysicsWorld {
 
     /// The neighbours of a particle in cell `c`, in the order the GPU visits them: the 27 cells about it (z, then y,
     /// then x), each cell's particles in order.
-    @inline(__always) private static func forNeighbours(_ c: SIMD3<Int32>, _ p: GPUFluidParams, _ starts: [UInt32], _ body: (Int) -> Void) {
+    @inline(__always) private static func forNeighbours(_ c: SIMD3<Int32>, _ p: GPUFluidParams, _ starts: UnsafeBufferPointer<UInt32>,
+                                                        _ body: (Int) -> Void) {
         for dz: Int32 in -1...1 {
             for dy: Int32 in -1...1 {
                 for dx: Int32 in -1...1 {
@@ -169,22 +218,32 @@ extension PhysicsWorld {
         }
     }
 
-    private func pbfSubstep(_ system: inout FluidSystem, bodies near: [UInt32]) {
+    private static func pbfSubstep(_ system: inout FluidSystem, _ ctx: FluidContext, colliders: UnsafeBufferPointer<UInt32>) {
         let p = system.params, n = system.particles.count
         guard n > 0 else { return }
         let dt = p.gravity.w, h = p.pbf.x, r = p.extra.x, rho0 = p.material.x, volume = 1 / rho0
         let lo = PhysicsMath.xyz(p.lo) + r, hi = PhysicsMath.xyz(p.hi) - r
-        let colliders = fluidColliders(system, bodies: near)
-        // Predict (fluidPredictKernel).
-        var predicted = system.particles.map { q -> SIMD3<Float> in
-            var v = PhysicsMath.xyz(q.velocity) + PhysicsMath.xyz(p.gravity) * dt
-            let speed = length(v)
-            if speed > p.fixed.w { v *= p.fixed.w / speed }
-            return simd_clamp(PhysicsMath.xyz(q.position) + v * dt, lo, hi)
+        let pool = PhysicsPool.shared, most = PhysicsWorld.fluidNeighboursMost
+        // Predict (fluidPredictKernel), and each one's cell.
+        var predicted = [SIMD3<Float>](repeating: .zero, count: n)
+        var keys = [Int](repeating: 0, count: n)
+        system.particles.withUnsafeBufferPointer { q in
+            predicted.withUnsafeMutableBufferPointer { predicted in
+                keys.withUnsafeMutableBufferPointer { keys in
+                    pool.parallel(n, grain: 512) { range in
+                        for i in range {
+                            var v = PhysicsMath.xyz(q[i].velocity) + PhysicsMath.xyz(p.gravity) * dt
+                            let speed = length(v)
+                            if speed > p.fixed.w { v *= p.fixed.w / speed }
+                            predicted[i] = simd_clamp(PhysicsMath.xyz(q[i].position) + v * dt, lo, hi)
+                            keys[i] = PhysicsWorld.fluidCellIndex(PhysicsWorld.fluidCell(predicted[i], p), p)
+                        }
+                    }
+                }
+            }
         }
         // Sort by cell: a counting sort, each cell's particles in the order they had (fluidCellCount ... fluidReorder).
         let cellCount = Int(p.dims.w)
-        let keys = predicted.map { PhysicsWorld.fluidCellIndex(PhysicsWorld.fluidCell($0, p), p) }
         var starts = [UInt32](repeating: 0, count: cellCount + 1)
         for k in keys { starts[k + 1] += 1 }
         for c in 0..<cellCount { starts[c + 1] += starts[c] }
@@ -194,116 +253,160 @@ extension PhysicsWorld {
         var particles = order.map { system.particles[$0] }
         predicted = order.map { predicted[$0] }
         // Each particle's neighbours as sorted, for the rest of the substep (fluidPbfNeighboursKernel).
-        let cells = predicted.map { PhysicsWorld.fluidCell($0, p) }
         let reach = PhysicsWorld.fluidReach * h
-        let neighbours = (0..<n).map { i -> [Int] in
-            var list: [Int] = []
-            PhysicsWorld.forNeighbours(cells[i], p, starts) { j in
-                if list.count < PhysicsWorld.fluidNeighboursMost && length_squared(predicted[i] - predicted[j]) < reach * reach { list.append(j) }
-            }
-            return list
-        }
+        var neighbours = [Int32](repeating: 0, count: n * most), counts = [Int32](repeating: 0, count: n)
         let start = particles.map { PhysicsMath.xyz($0.position) }
-        // The constraints, `emission.w` Jacobi iterations (fluidPbfLambdaKernel, fluidPbfDeltaKernel).
         var lambdas = [Float](repeating: 0, count: n)
-        for _ in 0..<Int(p.emission.w) {
-            for i in 0..<n {
-                let x = predicted[i]
-                var density: Float = 0, own = SIMD3<Float>(), squares: Float = 0
-                for j in neighbours[i] {
-                    let d = x - predicted[j]
-                    density += PBF.poly6(length_squared(d), h: h)
-                    guard j != i else { continue }
-                    let g = PBF.spiky(d, h: h) * volume
-                    own += g
-                    squares += length_squared(g)
-                }
-                // The walls' and colliders' boundary density, and its gradient.
-                pbfBoundary(x, p, colliders: colliders) { _, share, slope in
-                    density += share * rho0
-                    own += slope
-                }
-                let c = max(density / rho0 - 1, -p.material.z)
-                lambdas[i] = -c / (squares + length_squared(own) + p.pbf.y)
-            }
-            var next = predicted
-            for i in 0..<n {
-                let x = predicted[i]
-                var delta = SIMD3<Float>()
-                for j in neighbours[i] {
-                    guard j != i else { continue }
-                    let d = x - predicted[j], r2 = length_squared(d)
-                    guard r2 < h * h else { continue }
-                    let w = PBF.poly6(r2, h: h) * p.pbf.w
-                    let corr = -p.pbf.z * (w * w) * (w * w)
-                    delta += PBF.spiky(d, h: h) * ((lambdas[i] + lambdas[j] + corr) * volume)
-                }
-                // Off the walls and colliders as the boundary density pushes (and a body pushed back as much).
-                pbfBoundary(x, p, colliders: colliders) { code, _, slope in
-                    let push = slope * lambdas[i]
-                    delta += push
-                    if let code { fluidImpulse(code, -push * (p.material.y / dt), at: x) }
-                }
-                let y = simd_clamp(x + delta, lo, hi)
-                next[i] = simd_clamp(fluidPushOut(y, start: start[i], r: r, h: dt, friction: p.pbf2.z, mass: p.material.y,
-                                                  colliders: colliders), lo, hi)
-            }
-            predicted = next
-        }
-        // Velocities from how far they went, then vorticity, XSPH and confinement (fluidPbfVelocity ... Viscosity).
-        for i in 0..<n {
-            particles[i].velocity = SIMD4((predicted[i] - start[i]) / dt, 0)
-            particles[i].position = SIMD4(predicted[i], 1)
-        }
+        var next = predicted
         var vorticity = [SIMD3<Float>](repeating: .zero, count: n)
-        for i in 0..<n {
-            let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity)
-            var w = SIMD3<Float>()
-            for j in neighbours[i] {
-                guard j != i else { continue }
-                w += cross(PBF.spiky(x - predicted[j], h: h), PhysicsMath.xyz(particles[j].velocity) - v) * volume
+        starts.withUnsafeBufferPointer { starts in
+        neighbours.withUnsafeMutableBufferPointer { neighbours in
+        counts.withUnsafeMutableBufferPointer { counts in
+        start.withUnsafeBufferPointer { start in
+        lambdas.withUnsafeMutableBufferPointer { lambdas in
+        vorticity.withUnsafeMutableBufferPointer { vorticity in
+        particles.withUnsafeMutableBufferPointer { particles in
+            predicted.withUnsafeBufferPointer { predicted in
+                pool.parallel(n, grain: 128) { range in
+                    for i in range {
+                        var count = 0
+                        PhysicsWorld.forNeighbours(PhysicsWorld.fluidCell(predicted[i], p), p, starts) { j in
+                            if count < most && length_squared(predicted[i] - predicted[j]) < reach * reach {
+                                neighbours[i * most + count] = Int32(j)
+                                count += 1
+                            }
+                        }
+                        counts[i] = Int32(count)
+                    }
+                }
             }
-            vorticity[i] = w
-        }
-        var out = particles
-        for i in 0..<n {
-            let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity), w = vorticity[i], wl = length(w)
-            var smooth = SIMD3<Float>(), eta = SIMD3<Float>()
-            for j in neighbours[i] {
-                guard j != i else { continue }
-                let d = x - predicted[j]
-                smooth += (PhysicsMath.xyz(particles[j].velocity) - v) * (PBF.poly6(length_squared(d), h: h) * volume)
-                eta += PBF.spiky(d, h: h) * ((length(vorticity[j]) - wl) * volume)
+            // The constraints, `emission.w` Jacobi iterations (fluidPbfLambdaKernel, fluidPbfDeltaKernel).
+            for _ in 0..<Int(p.emission.w) {
+                predicted.withUnsafeBufferPointer { predicted in
+                    pool.parallel(n, grain: 128) { range in
+                        for i in range {
+                            let x = predicted[i]
+                            var density: Float = 0, own = SIMD3<Float>(), squares: Float = 0
+                            for m in 0..<Int(counts[i]) {
+                                let j = Int(neighbours[i * most + m])
+                                let d = x - predicted[j]
+                                density += PBF.poly6(length_squared(d), h: h)
+                                guard j != i else { continue }
+                                let g = PBF.spiky(d, h: h) * volume
+                                own += g
+                                squares += length_squared(g)
+                            }
+                            // The walls' and colliders' boundary density, and its gradient.
+                            PhysicsWorld.pbfBoundary(x, p, ctx, colliders: colliders) { _, share, slope in
+                                density += share * rho0
+                                own += slope
+                            }
+                            let c = max(density / rho0 - 1, -p.material.z)
+                            lambdas[i] = -c / (squares + length_squared(own) + p.pbf.y)
+                        }
+                    }
+                    next.withUnsafeMutableBufferPointer { next in
+                        pool.parallel(n, grain: 128) { range in
+                            for i in range {
+                                let x = predicted[i]
+                                var delta = SIMD3<Float>()
+                                for m in 0..<Int(counts[i]) {
+                                    let j = Int(neighbours[i * most + m])
+                                    guard j != i else { continue }
+                                    let d = x - predicted[j], r2 = length_squared(d)
+                                    guard r2 < h * h else { continue }
+                                    let w = PBF.poly6(r2, h: h) * p.pbf.w
+                                    let corr = -p.pbf.z * (w * w) * (w * w)
+                                    delta += PBF.spiky(d, h: h) * ((lambdas[i] + lambdas[j] + corr) * volume)
+                                }
+                                // Off the walls and colliders as the boundary density pushes (and a body pushed back as much).
+                                PhysicsWorld.pbfBoundary(x, p, ctx, colliders: colliders) { code, _, slope in
+                                    let push = slope * lambdas[i]
+                                    delta += push
+                                    if let code { ctx.impulse(code, -push * (p.material.y / dt), at: x) }
+                                }
+                                let y = simd_clamp(x + delta, lo, hi)
+                                next[i] = simd_clamp(ctx.pushOut(y, start: start[i], r: r, h: dt, friction: p.pbf2.z, mass: p.material.y,
+                                                                 colliders: colliders), lo, hi)
+                            }
+                        }
+                    }
+                }
+                swap(&predicted, &next)
+                next.withUnsafeMutableBufferPointer { next in   // (as `next = predicted` did: the next iteration's start)
+                    predicted.withUnsafeBufferPointer { predicted in next.baseAddress!.update(from: predicted.baseAddress!, count: n) }
+                }
             }
-            var u = v + smooth * p.pbf2.x
-            let el = length(eta)
-            if el > 1e-6 && wl > 1e-6 { u += cross(eta / el, w) * (p.pbf2.y * dt) }
-            out[i].velocity = SIMD4(u, 0)
-            out[i].affine0 = SIMD4(w, 0)
-        }
-        system.particles = out
+            // Velocities from how far they went, then vorticity, XSPH and confinement (fluidPbfVelocity ... Viscosity).
+            predicted.withUnsafeBufferPointer { predicted in
+                pool.parallel(n, grain: 512) { range in
+                    for i in range {
+                        particles[i].velocity = SIMD4((predicted[i] - start[i]) / dt, 0)
+                        particles[i].position = SIMD4(predicted[i], 1)
+                    }
+                }
+                pool.parallel(n, grain: 128) { range in
+                    for i in range {
+                        let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity)
+                        var w = SIMD3<Float>()
+                        for m in 0..<Int(counts[i]) {
+                            let j = Int(neighbours[i * most + m])
+                            guard j != i else { continue }
+                            w += cross(PBF.spiky(x - predicted[j], h: h), PhysicsMath.xyz(particles[j].velocity) - v) * volume
+                        }
+                        vorticity[i] = w
+                    }
+                }
+                var out = Array(particles)
+                out.withUnsafeMutableBufferPointer { out in
+                    pool.parallel(n, grain: 128) { range in
+                        for i in range {
+                            let x = predicted[i], v = PhysicsMath.xyz(particles[i].velocity), w = vorticity[i], wl = length(w)
+                            var smooth = SIMD3<Float>(), eta = SIMD3<Float>()
+                            for m in 0..<Int(counts[i]) {
+                                let j = Int(neighbours[i * most + m])
+                                guard j != i else { continue }
+                                let d = x - predicted[j]
+                                smooth += (PhysicsMath.xyz(particles[j].velocity) - v) * (PBF.poly6(length_squared(d), h: h) * volume)
+                                eta += PBF.spiky(d, h: h) * ((length(vorticity[j]) - wl) * volume)
+                            }
+                            var u = v + smooth * p.pbf2.x
+                            let el = length(eta)
+                            if el > 1e-6 && wl > 1e-6 { u += cross(eta / el, w) * (p.pbf2.y * dt) }
+                            out[i].velocity = SIMD4(u, 0)
+                            out[i].affine0 = SIMD4(w, 0)
+                        }
+                    }
+                    particles.baseAddress!.update(from: out.baseAddress!, count: n)
+                }
+            }
+        }}}}}}}
+        system.particles = particles
     }
 
     /// Each wall of the domain and collider within h of a particle at `x` (MSL fluidPbfBoundary): the collider (nil:
     /// a wall), its boundary density's share of the rest density (PBF.wall) and its gradient.
-    private func pbfBoundary(_ x: SIMD3<Float>, _ p: GPUFluidParams, colliders: [UInt32],
-                             _ body: (UInt32?, Float, SIMD3<Float>) -> Void) {
+    @inline(__always) private static func pbfBoundary(_ x: SIMD3<Float>, _ p: GPUFluidParams, _ ctx: FluidContext,
+                                                      colliders: UnsafeBufferPointer<UInt32>,
+                                                      _ body: (UInt32?, Float, SIMD3<Float>) -> Void) {
         let h = p.pbf.x, lo = PhysicsMath.xyz(p.lo), hi = PhysicsMath.xyz(p.hi)
         for a in 0..<3 {
-            for (d, sign) in [(x[a] - lo[a], Float(1)), (hi[a] - x[a], Float(-1))] where d < h {
+            for side in 0..<2 {
+                let d = side == 0 ? x[a] - lo[a] : hi[a] - x[a], sign: Float = side == 0 ? 1 : -1
+                guard d < h else { continue }
                 let w = PBF.wall(d, h: h)
                 var n = SIMD3<Float>()
                 n[a] = sign
                 body(nil, w.share, n * w.slope)
             }
         }
-        for code in colliders where fluidNear(code, x, h) {
-            let b = fluidCollider(code), pose = Pose(b), shape = Int(b.info.x)
+        for code in colliders where ctx.near(code, x, h) {
+            let b = ctx.collider(code), pose = Pose(b), shape = Int(b.info.x)
             let local = pose.toBody(x)
-            let d = distance(shape: shape, local)
+            let d = ctx.shapes.distance(shape: shape, local)
             guard d < h else { continue }
             let w = PBF.wall(d, h: h)
-            body(code, w.share, pose.direction(gradient(shape: shape, local)) * w.slope)
+            body(code, w.share, pose.direction(ctx.shapes.gradient(shape: shape, local)) * w.slope)
         }
     }
 
@@ -328,86 +431,99 @@ extension PhysicsWorld {
         return Int(c.x) + Int(p.dims.x) * (Int(c.y) + Int(p.dims.y) * Int(c.z))
     }
 
-    private func mpmSubstep(_ system: inout FluidSystem, bodies near: [UInt32]) {
+    private static func mpmSubstep(_ system: inout FluidSystem, _ ctx: FluidContext, colliders: UnsafeBufferPointer<UInt32>) {
         let p = system.params, n = system.particles.count
         guard n > 0 else { return }
         let dt = p.gravity.w, dx = p.lo.w, inv = p.hi.w, lo = PhysicsMath.xyz(p.lo)
-        let colliders = fluidColliders(system, bodies: near)
+        let pool = PhysicsPool.shared
         var grid = [SIMD4<Int32>](repeating: .zero, count: Int(p.dims.w))
-        // Particles to grid (fluidMpmP2GKernel).
-        for q in system.particles {
-            let x = PhysicsMath.xyz(q.position), (base, fx, w) = PhysicsWorld.spline((x - lo) * inv)
-            let a = PhysicsWorld.mpmAffine(q, p)
-            let v = PhysicsMath.xyz(q.velocity)
-            for k in 0..<27 {
-                let o = SIMD3<Int32>(Int32(k % 3), Int32(k / 3 % 3), Int32(k / 9))
-                let weight = PhysicsWorld.pick(w, Int(o.x)).x * PhysicsWorld.pick(w, Int(o.y)).y * PhysicsWorld.pick(w, Int(o.z)).z
-                let dpos = (SIMD3<Float>(o) - fx) * dx
-                let momentum = (v + SIMD3(dot(a.0, dpos), dot(a.1, dpos), dot(a.2, dpos))) * weight
-                let node = PhysicsWorld.mpmNode(base &+ o, p)
-                grid[node] &+= SIMD4(PhysicsWorld.fixed(momentum, p.fixed.y), PhysicsWorld.fixed(weight, p.fixed.x))
-            }
-        }
-        // The grid's velocities, gravity, walls and colliders (fluidMpmGridKernel).
         var velocity = [SIMD4<Float>](repeating: .zero, count: grid.count)
-        for z in 0..<Int32(p.dims.z) {
-            for y in 0..<Int32(p.dims.y) {
-                for x in 0..<Int32(p.dims.x) {
-                    let node = SIMD3(x, y, z), k = PhysicsWorld.mpmNode(node, p)
-                    velocity[k] = mpmNodeVelocity(grid[k], node, p, colliders: colliders)
+        let nodes = Int(p.dims.x) * Int(p.dims.y) * Int(p.dims.z)
+        system.particles.withUnsafeMutableBufferPointer { particles in
+            grid.withUnsafeMutableBufferPointer { grid in
+                // Particles to grid (fluidMpmP2GKernel): integer sums, the same in any order.
+                pool.parallel(n, grain: 128) { range in
+                    for i in range {
+                        let q = particles[i]
+                        let x = PhysicsMath.xyz(q.position), (base, fx, w) = PhysicsWorld.spline((x - lo) * inv)
+                        let a = PhysicsWorld.mpmAffine(q, p)
+                        let v = PhysicsMath.xyz(q.velocity)
+                        for k in 0..<27 {
+                            let o = SIMD3<Int32>(Int32(k % 3), Int32(k / 3 % 3), Int32(k / 9))
+                            let weight = PhysicsWorld.pick(w, Int(o.x)).x * PhysicsWorld.pick(w, Int(o.y)).y * PhysicsWorld.pick(w, Int(o.z)).z
+                            let dpos = (SIMD3<Float>(o) - fx) * dx
+                            let momentum = (v + SIMD3(dot(a.0, dpos), dot(a.1, dpos), dot(a.2, dpos))) * weight
+                            let node = PhysicsWorld.mpmNode(base &+ o, p)
+                            FluidContext.add(grid.baseAddress! + node, SIMD4(PhysicsWorld.fixed(momentum, p.fixed.y), PhysicsWorld.fixed(weight, p.fixed.x)))
+                        }
+                    }
+                }
+                // The grid's velocities, gravity, walls and colliders (fluidMpmGridKernel).
+                velocity.withUnsafeMutableBufferPointer { velocity in
+                    pool.parallel(nodes, grain: 512) { range in
+                        for k in range {
+                            let x = Int32(k % Int(p.dims.x)), y = Int32(k / Int(p.dims.x) % Int(p.dims.y))
+                            let z = Int32(k / (Int(p.dims.x) * Int(p.dims.y)))
+                            let node = SIMD3(x, y, z), at = PhysicsWorld.mpmNode(node, p)
+                            velocity[at] = PhysicsWorld.mpmNodeVelocity(grid[at], node, p, ctx, colliders: colliders)
+                        }
+                    }
+                    // Grid to particles (fluidMpmG2PKernel).
+                    let top = PhysicsMath.xyz(p.hi) - 2 * dx, bottom = lo + 2 * dx
+                    pool.parallel(n, grain: 128) { range in
+                        for i in range {
+                            var q = particles[i]
+                            let x = PhysicsMath.xyz(q.position), (base, fx, w) = PhysicsWorld.spline((x - lo) * inv)
+                            var v = SIMD3<Float>(), b0 = SIMD3<Float>(), b1 = SIMD3<Float>(), b2 = SIMD3<Float>(), density: Float = 0
+                            for k in 0..<27 {
+                                let o = SIMD3<Int32>(Int32(k % 3), Int32(k / 3 % 3), Int32(k / 9))
+                                let weight = PhysicsWorld.pick(w, Int(o.x)).x * PhysicsWorld.pick(w, Int(o.y)).y * PhysicsWorld.pick(w, Int(o.z)).z
+                                let dpos = (SIMD3<Float>(o) - fx) * dx
+                                let node = velocity[PhysicsWorld.mpmNode(base &+ o, p)]
+                                let vi = PhysicsMath.xyz(node) * weight
+                                density += node.w * weight
+                                v += vi
+                                b0 += vi.x * dpos
+                                b1 += vi.y * dpos
+                                b2 += vi.z * dpos
+                            }
+                            let s = 4 * inv * inv
+                            let c0 = b0 * s, c1 = b1 * s, c2 = b2 * s
+                            // J from how many particles the grid sees about it, against the rest's (MSL fluidMpmG2PKernel): carried
+                            // along by the velocity's divergence, it missed what a pool one or two cells deep does (a pour sank into
+                            // a layer four times as dense as water, its J still 1.07), and it drifts.
+                            let j = min(max(dx * dx * dx / p.extra.z / max(density, 1e-6), 0.5), 1.5)
+                            let speed = length(v)
+                            if speed > p.fixed.w { v *= p.fixed.w / speed }
+                            var y = x + v * dt
+                            (y, v) = PhysicsWorld.mpmPushOut(y, v, p, ctx, colliders: colliders)
+                            (y, v) = PhysicsWorld.mpmHold(y, v, bottom, top, p)
+                            q.position = SIMD4(y, j)
+                            q.velocity = SIMD4(v, 0)
+                            q.affine0 = SIMD4(c0, 0)
+                            q.affine1 = SIMD4(c1, 0)
+                            q.affine2 = SIMD4(c2, 0)
+                            particles[i] = q
+                        }
+                    }
                 }
             }
-        }
-        // Grid to particles (fluidMpmG2PKernel).
-        let top = PhysicsMath.xyz(p.hi) - 2 * dx, bottom = lo + 2 * dx
-        for i in 0..<n {
-            var q = system.particles[i]
-            let x = PhysicsMath.xyz(q.position), (base, fx, w) = PhysicsWorld.spline((x - lo) * inv)
-            var v = SIMD3<Float>(), b0 = SIMD3<Float>(), b1 = SIMD3<Float>(), b2 = SIMD3<Float>(), density: Float = 0
-            for k in 0..<27 {
-                let o = SIMD3<Int32>(Int32(k % 3), Int32(k / 3 % 3), Int32(k / 9))
-                let weight = PhysicsWorld.pick(w, Int(o.x)).x * PhysicsWorld.pick(w, Int(o.y)).y * PhysicsWorld.pick(w, Int(o.z)).z
-                let dpos = (SIMD3<Float>(o) - fx) * dx
-                let node = velocity[PhysicsWorld.mpmNode(base &+ o, p)]
-                let vi = PhysicsMath.xyz(node) * weight
-                density += node.w * weight
-                v += vi
-                b0 += vi.x * dpos
-                b1 += vi.y * dpos
-                b2 += vi.z * dpos
-            }
-            let s = 4 * inv * inv
-            let c0 = b0 * s, c1 = b1 * s, c2 = b2 * s
-            // J from how many particles the grid sees about it, against the rest's (MSL fluidMpmG2PKernel): carried
-            // along by the velocity's divergence, it missed what a pool one or two cells deep does (a pour sank into
-            // a layer four times as dense as water, its J still 1.07), and it drifts.
-            let j = min(max(dx * dx * dx / p.extra.z / max(density, 1e-6), 0.5), 1.5)
-            let speed = length(v)
-            if speed > p.fixed.w { v *= p.fixed.w / speed }
-            var y = x + v * dt
-            (y, v) = mpmPushOut(y, v, p, colliders: colliders)
-            (y, v) = PhysicsWorld.mpmHold(y, v, bottom, top, p)
-            q.position = SIMD4(y, j)
-            q.velocity = SIMD4(v, 0)
-            q.affine0 = SIMD4(c0, 0)
-            q.affine1 = SIMD4(c1, 0)
-            q.affine2 = SIMD4(c2, 0)
-            system.particles[i] = q
         }
     }
 
     /// A particle at `x` going at `v` pushed out of the colliders it is inside (MSL fluidMpmPushOut), and its velocity
     /// with them as a node's is (mpmContact): moved out but still going in, gravity would add to its speed every substep
     /// (a pool on a step slid at the top speed and never left it).
-    private func mpmPushOut(_ x: SIMD3<Float>, _ v: SIMD3<Float>, _ p: GPUFluidParams, colliders: [UInt32]) -> (SIMD3<Float>, SIMD3<Float>) {
+    @inline(__always) private static func mpmPushOut(_ x: SIMD3<Float>, _ v: SIMD3<Float>, _ p: GPUFluidParams, _ ctx: FluidContext,
+                                                     colliders: UnsafeBufferPointer<UInt32>) -> (SIMD3<Float>, SIMD3<Float>) {
         var y = x, u = v
         let r = p.extra.x
-        for code in colliders where fluidNear(code, y, r) {
-            let b = fluidCollider(code), pose = Pose(b), shape = Int(b.info.x)
+        for code in colliders where ctx.near(code, y, r) {
+            let b = ctx.collider(code), pose = Pose(b), shape = Int(b.info.x)
             let local = pose.toBody(y)
-            let depth = distance(shape: shape, local) - r
+            let depth = ctx.shapes.distance(shape: shape, local) - r
             guard depth < 0 else { continue }
-            let n = pose.direction(gradient(shape: shape, local))
+            let n = pose.direction(ctx.shapes.gradient(shape: shape, local))
             let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), y - pose.position)
             y += n * -depth
             u = PhysicsWorld.mpmContact(u, n, surface, p.pbf2.z, p.pbf2.w)
@@ -453,13 +569,14 @@ extension PhysicsWorld {
 
     /// Grid node `node`'s velocity from what the particles gave it, with gravity, the walls and the colliders (and their
     /// impulses on the bodies); w = its weight (MSL fluidMpmGridKernel).
-    private func mpmNodeVelocity(_ g: SIMD4<Int32>, _ node: SIMD3<Int32>, _ p: GPUFluidParams, colliders: [UInt32]) -> SIMD4<Float> {
+    @inline(__always) private static func mpmNodeVelocity(_ g: SIMD4<Int32>, _ node: SIMD3<Int32>, _ p: GPUFluidParams, _ ctx: FluidContext,
+                                                          colliders: UnsafeBufferPointer<UInt32>) -> SIMD4<Float> {
         // An empty node is read by no particle (each reads the nodes it gave mass to), so it stays empty: most of the
         // grid, which skips the colliders.
         guard g.w > 0 else { return .zero }
         // A node past a wall or inside a collider weighs a rest cell's particles in the density J is taken from (as SPH's
         // boundary particles do): a particle at the floor saw half the grid empty and took itself for half as dense.
-        let solid = mpmSolid(node, p, colliders: colliders)
+        let solid = mpmSolid(node, p, ctx, colliders: colliders)
         let rest = p.lo.w * p.lo.w * p.lo.w / p.extra.z
         let m = Float(g.w) / p.fixed.x
         var v = SIMD3<Float>(Float(g.x), Float(g.y), Float(g.z)) / p.fixed.y / m + PhysicsMath.xyz(p.gravity) * p.gravity.w
@@ -478,15 +595,15 @@ extension PhysicsWorld {
         let x = PhysicsMath.xyz(p.lo) + SIMD3<Float>(node) * p.lo.w
         // The colliders, the same: a node inside one or within half a cell of it.
         let band = 0.5 * p.lo.w
-        for code in colliders where fluidNear(code, x, band) {
-            let b = fluidCollider(code), pose = Pose(b), shape = Int(b.info.x)
+        for code in colliders where ctx.near(code, x, band) {
+            let b = ctx.collider(code), pose = Pose(b), shape = Int(b.info.x)
             let local = pose.toBody(x)
-            guard distance(shape: shape, local) < band else { continue }
-            let n = pose.direction(gradient(shape: shape, local))
+            guard ctx.shapes.distance(shape: shape, local) < band else { continue }
+            let n = pose.direction(ctx.shapes.gradient(shape: shape, local))
             let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), x - pose.position)
             let before = v
             v = PhysicsWorld.mpmContact(v, n, surface, friction, stick)
-            fluidImpulse(code, (before - v) * (m * p.material.y), at: x)
+            ctx.impulse(code, (before - v) * (m * p.material.y), at: x)
         }
         let speed = length(v)
         if speed > p.fixed.w { v *= p.fixed.w / speed }
@@ -496,13 +613,14 @@ extension PhysicsWorld {
     /// Whether grid node `node` is past the domain's walls or inside a collider (MSL fluidMpmSolid). A body's too:
     /// the liquid pressed against it is then as dense as it is, and the push the contact takes off it goes to the body
     /// (without, a light box dropped into honey sank slowly through it).
-    private func mpmSolid(_ node: SIMD3<Int32>, _ p: GPUFluidParams, colliders: [UInt32]) -> Bool {
+    @inline(__always) private static func mpmSolid(_ node: SIMD3<Int32>, _ p: GPUFluidParams, _ ctx: FluidContext,
+                                                   colliders: UnsafeBufferPointer<UInt32>) -> Bool {
         let dims = SIMD3<Int32>(Int32(p.dims.x), Int32(p.dims.y), Int32(p.dims.z))
         if any(node .< 2) || any(node .> dims &- 3) { return true }
         let x = PhysicsMath.xyz(p.lo) + SIMD3<Float>(node) * p.lo.w
-        for code in colliders where fluidNear(code, x, 0) {
-            let b = fluidCollider(code)
-            if distance(shape: Int(b.info.x), Pose(b).toBody(x)) < 0 { return true }
+        for code in colliders where ctx.near(code, x, 0) {
+            let b = ctx.collider(code)
+            if ctx.shapes.distance(shape: Int(b.info.x), Pose(b).toBody(x)) < 0 { return true }
         }
         return false
     }

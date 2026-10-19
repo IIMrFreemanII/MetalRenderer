@@ -195,3 +195,50 @@ extension PhysicsWorld {
         }
     }
 }
+
+/// The particles' arrays as their stages' loops read and write them (PhysicsWorld.withParticleBuffers): a particle
+/// writes only its own entries (a colour's links and tets share no particle); the bodies are read only.
+struct ParticleBuffers {
+    let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>
+    /// The particles as the substep's Jacobi pass found them (solveParticles reads these, writes `particles`).
+    let before: UnsafeMutableBufferPointer<GPUPhysicsParticle>
+    let neighbours: UnsafeMutableBufferPointer<UInt32>
+    let neighbourCounts: UnsafeMutableBufferPointer<UInt32>
+    let colliders: UnsafeMutableBufferPointer<UInt32>
+    let colliderCounts: UnsafeMutableBufferPointer<UInt32>
+    let bodies: UnsafeBufferPointer<GPUPhysicsBody>
+    let statics: UnsafeBufferPointer<GPUPhysicsBody>
+
+    /// A collider's record: a body, or a static collider.
+    @inline(__always) func partner(_ code: UInt32) -> GPUPhysicsBody {
+        code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : bodies[Int(code)]
+    }
+}
+
+extension PhysicsWorld {
+    /// `body` with the particles' arrays lent as raw buffers (ParticleBuffers).
+    func withParticleBuffers<R>(_ body: (ParticleBuffers) throws -> R) rethrows -> R {
+        if particleSnapshot.count != particles.count {
+            particleSnapshot = particles
+        }
+        return try particles.withUnsafeMutableBufferPointer { particles in
+            try particleSnapshot.withUnsafeMutableBufferPointer { before in
+                try neighbours.withUnsafeMutableBufferPointer { neighbours in
+                    try neighbourCounts.withUnsafeMutableBufferPointer { neighbourCounts in
+                        try colliders.withUnsafeMutableBufferPointer { colliders in
+                            try colliderCounts.withUnsafeMutableBufferPointer { colliderCounts in
+                                try bodies.withUnsafeBufferPointer { bodies in
+                                    try statics.withUnsafeBufferPointer { statics in
+                                        try body(ParticleBuffers(particles: particles, before: before, neighbours: neighbours,
+                                                                 neighbourCounts: neighbourCounts, colliders: colliders,
+                                                                 colliderCounts: colliderCounts, bodies: bodies, statics: statics))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
