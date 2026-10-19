@@ -32,14 +32,20 @@ extension Benchmark {
     }
 
     /// The CPU backend's step (PhysicsCPU.swift, on PhysicsThreads' workers), moving at the physics look (the GPU's part
-    /// small; the `cpu` column holds the steps): the courtyard, and the massive setting's building. The steps' worker
-    /// count is METALRENDERER_PHYSICS_THREADS (1: one thread).
+    /// small; the `cpu` column holds the steps): the courtyard, the massive setting's building, and three of them (over
+    /// 10,000 bodies; on the GPU too, for comparison). The steps' worker count is METALRENDERER_PHYSICS_THREADS (1: one
+    /// thread).
     private static func destructionCPU() -> [Config] {
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .destruction)) {
             $0.usePhysicsLook()
             $0.scene.physics.backend = .cpu
         }
-        return [base.named("courtyard cpu moving"), base.named("massive cpu moving").with { $0.scene.destruction.massive = true }]
+        let three = base.with {
+            $0.scene.destruction.massive = true
+            $0.scene.destruction.buildings = 3
+        }
+        return [base.named("courtyard cpu moving"), base.named("massive cpu moving").with { $0.scene.destruction.massive = true },
+                three.named("3 buildings cpu moving"), three.named("3 buildings gpu moving").with { $0.scene.physics.backend = .gpu }]
     }
 
     /// The demo paused at each of its moments (the default API).

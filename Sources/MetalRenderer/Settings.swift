@@ -472,6 +472,9 @@ struct DestructionSettings: Equatable, Codable {
     var demo = true
     /// The courtyard's objects only, or a whole building of pieces too (4,000 and more: offline).
     var massive = false
+    /// With `massive`: how many of its buildings stand side by side in the lot (3: over 10,000 bodies).
+    var buildings = 1
+    static let buildingRange = 1...3
     /// The statues: the meshes cut piece by piece (textures kept), or none.
     var statues = true
     /// The Fracture Editor's edits, by object name, over the saved recipes (FractureStore) and the defaults (session

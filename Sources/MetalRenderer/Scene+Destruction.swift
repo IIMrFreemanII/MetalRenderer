@@ -7,6 +7,17 @@ import simd
 /// stone bust. The scripted demo (`DestructionSettings.demo`) wakes the ball at 2 s and the weight at 6 s, and fires
 /// cannonballs at a pane, the brick wall and a pillar; the tools (Shoot, Blast) fire the pool of balls kept for them.
 extension Scene {
+    /// The massive setting's buildings' centres along x (DestructionSettings.buildings): side by side in the lot.
+    static func buildingCentres(_ count: Int) -> [Float] {
+        switch min(max(count, 1), 3) {
+        case 1: return [0]
+        case 2: return [-4.5, 4.5]
+        default: return [-8, 0, 8]
+        }
+    }
+}
+
+extension Scene {
     /// The scene's scripted times (s) and the pool of balls the Shoot tool fires (Renderer.fireShot).
     struct DestructionRig {
         var shots: [Int] = []
@@ -174,12 +185,14 @@ extension Scene {
         // pieces and more with the courtyard's: offline runs).
         if settings.massive {
             section("Building")
-            let w: Float = 3.2, d: Float = 2.8, storey: Float = 3, t: Float = 0.2, centre = SIMD3<Float>(0, 0, -15)
+            let w: Float = 3.2, d: Float = 2.8, storey: Float = 3, t: Float = 0.2
             // Its welds a twentieth of the courtyard's: blasted at the corners, its ground floor gives way and the storeys
             // come down. (At full strength what is left of each wall holds them up; they once came down only because a
             // weld's anchors were metres off and it snapped at the first turn.)
             let buildingStrength: Float = 0.05
-            var panel = recipe(.concrete, seed: 101)
+            for (n, x) in Scene.buildingCentres(settings.buildings).enumerated() {
+            let centre = SIMD3<Float>(x, 0, -15), name = settings.buildings == 1 ? "Building" : "Building \(n + 1)"
+            var panel = recipe(.concrete, seed: 101 + UInt64(n) * 1000)
             panel.counts = [24, 8]
             for floor in 0..<3 {
                 let y = Float(floor) * (storey + t)   // (each storey on the slab under it)
@@ -189,16 +202,17 @@ extension Scene {
                     ("right", [w - t / 2, y + storey / 2, 0], [t / 2, storey / 2, d - t / 2]),
                 ]
                 for (k, (side, at, half)) in walls.enumerated() {
-                    panel.seed = 101 + UInt64(floor * 8 + k)
-                    fractured("Building/Floor \(floor + 1) \(side)", shape: SDFShape(.box(halfExtents: half)), recipe: panel,
+                    panel.seed = 101 + UInt64(n) * 1000 + UInt64(floor * 8 + k)
+                    fractured("\(name)/Floor \(floor + 1) \(side)", shape: SDFShape(.box(halfExtents: half)), recipe: panel,
                               transform: translate(centre + at - [0, 0.001, 0]), material: concrete, interior: concreteInside,
                               anchor: floor == 0 ? .ground(0) : .none, toughness: tough, strength: strong * buildingStrength)
                 }
                 var slab = panel
-                slab.seed = 201 + UInt64(floor)
-                fractured("Building/Floor \(floor + 1) slab", shape: SDFShape(.box(halfExtents: [w, t / 2, d + t / 2])), recipe: slab,
+                slab.seed = 201 + UInt64(n) * 1000 + UInt64(floor)
+                fractured("\(name)/Floor \(floor + 1) slab", shape: SDFShape(.box(halfExtents: [w, t / 2, d + t / 2])), recipe: slab,
                           transform: translate(centre + [0, y + storey + t / 2, 0]), material: concrete, interior: concreteInside,
                           anchor: .none, toughness: tough, strength: strong * buildingStrength)
+            }
             }
         }
 
@@ -253,8 +267,10 @@ extension Scene {
             // The building's ground floor blasted at its corners, the front left and the back right first, then the
             // others: the storeys above lose their footing and come down.
             let step = { (t: Float) in Int(t / PhysicsWorld.stepLength) }
-            for (x, z, t) in [(Float(-3), Float(-12.2), Float(2.5)), (3, -17.8, 2.5), (3, -12.2, 3.5), (-3, -17.8, 3.5)] {
-                world.command(.blast, origin: [x, 1, z], radius: 2.2, magnitude: 14, at: step(t), steps: 6)
+            for centre in Scene.buildingCentres(settings.buildings) {
+                for (x, z, t) in [(Float(-3), Float(-12.2), Float(2.5)), (3, -17.8, 2.5), (3, -12.2, 3.5), (-3, -17.8, 3.5)] {
+                    world.command(.blast, origin: [centre + x, 1, z], radius: 2.2, magnitude: 14, at: step(t), steps: 6)
+                }
             }
         }
         if settings.demo && preview == nil {

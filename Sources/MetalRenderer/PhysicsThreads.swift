@@ -30,6 +30,8 @@ final class PhysicsPool {
     private var busy: UnsafeMutablePointer<Int> { words + 3 }
     private var held: UnsafeMutablePointer<Int> { words + 4 }
     private var parked: UnsafeMutablePointer<Int> { words + 5 }
+    /// Threads holding the stage out (it isn't put away until none does).
+    private var inside: UnsafeMutablePointer<Int> { words + 6 }
     /// The stage out: chunk index -> its items. Written before the ticket that publishes it, read only by a thread
     /// that claimed one of its chunks (so it never changes under one).
     private var stage: ((Int) -> Void)?
@@ -96,21 +98,36 @@ final class PhysicsPool {
                 for _ in 0..<sleeping { wake.signal() }
             }
             drain(generation)
-            while cpa_load(done) < chunks { cpa_pause() }
+            while cpa_load(done) < chunks || cpa_load(inside) != 0 { cpa_pause() }
             stage = nil
         }
         cpa_store(busy, 0)
     }
 
-    /// Claims and runs generation `generation`'s chunks until none are left.
+    /// Claims and runs generation `generation`'s chunks until none are left (the stage read once, after the first
+    /// claim: read for each chunk, its count went back and forth between the cores).
     @inline(__always) private func drain(_ generation: Int) {
+        guard let first = claim(generation) else { return }
+        _ = cpa_add(inside, 1)   // (before its first chunk is done: the stage can't end before this)
+        do {
+            let run = stage!
+            var next: Int? = first
+            while let c = next {
+                run(c)
+                _ = cpa_add(done, 1)
+                next = claim(generation)
+            }
+        }
+        _ = cpa_add(inside, -1)   // (the stage let go of)
+    }
+
+    /// The next chunk of generation `generation`, if one is left.
+    @inline(__always) private func claim(_ generation: Int) -> Int? {
         while true {
             let t = cpa_load(ticket)
             let next = t & PhysicsPool.mask
-            guard t >> 48 == generation, next < (t >> 24) & PhysicsPool.mask else { return }
-            guard cpa_cas(ticket, t, t + 1) else { continue }
-            stage!(next)
-            _ = cpa_add(done, 1)
+            guard t >> 48 == generation, next < (t >> 24) & PhysicsPool.mask else { return nil }
+            if cpa_cas(ticket, t, t + 1) { return next }
         }
     }
 

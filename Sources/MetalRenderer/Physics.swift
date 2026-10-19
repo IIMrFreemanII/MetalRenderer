@@ -604,7 +604,9 @@ final class PhysicsWorld {
 
     /// The grid's cell: twice the largest bounding sphere a body may have in a step (its radius, its travel, the margin).
     var cellSize: Float {
-        let r = bodies.map(\.invInertia.w).max() ?? 1
+        // (The largest bounding radius, as `bodies.map(\.invInertia.w).max()` finds it, without the array.)
+        var r: Float = 1
+        for (i, b) in bodies.enumerated() where i == 0 || r < b.invInertia.w { r = b.invInertia.w }
         return 2 * (r + PhysicsWorld.cellSpeed * PhysicsWorld.stepLength + PhysicsWorld.margin)
     }
 
@@ -615,7 +617,8 @@ final class PhysicsWorld {
 
     /// The particles' grid cell: twice the largest reach a particle has in a step.
     var particleCellSize: Float {
-        let r = particles.map(\.position.w).max() ?? 0.05
+        var r: Float = 0.05
+        for (i, q) in particles.enumerated() where i == 0 || r < q.position.w { r = q.position.w }
         return 2 * (r + PhysicsWorld.particleSpeed * PhysicsWorld.stepLength + PhysicsWorld.margin)
     }
 
