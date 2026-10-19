@@ -1561,7 +1561,7 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
 
 ### Destruction
 
-Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fracture.swift`, `Fracture/`, `Scene+Fracture.swift`, `Shaders/Physics.metal`): fractured ahead of time into pieces, whole until something hits them hard enough, then pieces held together by welds until those break too, with dust and debris where they part. On the GPU, with the same steps on the CPU as their reference. The **Destruction** scene (`METALRENDERER_SCENE=destruction`, `Scene+Destruction.swift`) is a paved courtyard under an afternoon sun: a concrete wall a wrecking ball swings into at 2 s, a brick wall, two concrete pillars with a wooden beam across them, two glass panes in wooden frames, a concrete tower a weight falls on at 6 s, a stone bust, and the gallery's golem as a statue (its mesh cut piece by piece). Cannonballs hit a pane, the brick wall, a pillar and the golem. It keeps its full look (GI and reflections: the glass needs them). Its settings: `pieces` (scales every object's pieces), `toughness`, `strength` (welds), `dust`, `fade`, `demo` (the wrecking ball, the weight and the shots), `statues`, `massive` (a three-storey building of fractured walls and floors behind the courtyard, over 4,000 bodies, its ground floor's corners blasted by the demo at 2.5 s and 3.5 s, its welds a twentieth as strong so that it comes down: offline). In the scene, 1, 2 and 3 pick what a click does: grab a piece (as in the other physics scenes), shoot a ball from the camera, or blast where you point; a box in the view's top-left corner names the tool.
+Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fracture.swift`, `Fracture/`, `Scene+Fracture.swift`, `Shaders/Physics.metal`): fractured ahead of time into pieces, whole until something hits them hard enough, then pieces held together by welds until those break too, with dust and debris where they part. On the GPU, with the same steps on the CPU as their reference. The **Destruction** scene (`METALRENDERER_SCENE=destruction`, `Scene+Destruction.swift`) is a paved courtyard under an afternoon sun: a concrete wall a wrecking ball swings into at 2 s, a brick wall, two concrete pillars with a wooden beam across them, two glass panes in wooden frames, a concrete tower a weight falls on at 6 s, a stone bust, and the gallery's golem as a statue (its mesh cut piece by piece). Cannonballs hit a pane, the brick wall, a pillar and the golem. It keeps its full look (GI and reflections: the glass needs them). Its settings: `pieces` (scales every object's pieces), `toughness`, `strength` (welds), `dust`, `fade`, `demo` (the wrecking ball, the weight and the shots), `statues`, `massive` (a three-storey building of fractured walls and floors behind the courtyard, over 4,000 bodies, its ground floor's corners blasted by the demo at 2.5 s and 3.5 s, its welds a twentieth as strong so that it comes down: offline), `buildings` (1 to 3 of those buildings side by side, each with its own seeds and corner blasts: over 10,000 bodies with three). In the scene, 1, 2 and 3 pick what a click does: grab a piece (as in the other physics scenes), shoot a ball from the camera, or blast where you point; a box in the view's top-left corner names the tool.
 
 * **Fracturing** (`FractureTree`, `FracturePatterns`, `ConvexCell`): an object is a tree of convex cells, the object's box at its root, each node cut into its children by its material's pattern, up to three levels; a cell is a list of planes, clipped one at a time, its faces' polygons kept for its volume, inertia and neighbours. **Concrete and stone** are Voronoi cells of random sites kept apart (clustered toward a point by `clustering`, Chaos's clustered Voronoi); **wood** is slabs across the grain, then Voronoi cells in a metric squashed along the grain (cells `stretch` times longer: splinters), which are still convex, their bisectors mapped back by the metric; **bricks** are staggered courses, then each brick in halves; **glass** is radial cracks and rings round a point, each wedge cut into shards by tilted chords, then each shard across. A non-convex object (a cylinder, a statue) is cut inside its box and its cells keep only what is inside it (a 7³ sample of its distance: cells with less than 4 % of it inside go). Neighbours that share a face, at any level, and neither holding the other, are welded (Chaos's connection graph), the weld's area the shared faces' part inside the object.
 * **Pieces** are SDF shapes: the object's own nodes, then a new primitive, `.cell`, the cell's cut planes intersected (`SDFShapes.swift`; its distance the largest plane's, exact inside and a bound outside; its planes after the nodes in the nodes' buffer, `SDF_CELL` in `Shaders/SDF.metal`), with the interior material on the cut faces (the node's material offset). A box's pieces are their cells, their mass and samples from the polytope exactly; the others' are built from their fields side by side. A model's (`addFracturedModel`, `MeshCutter`): its parts merged into one mesh, each piece its triangles clipped by the cell (normals, texture coordinates and materials kept) with caps on the cuts by marching squares of the model's baked distance grid on each cut face (no loops of cut edges to close: a generated model is rarely watertight), colliding as the grid cut by the cell.
@@ -1598,6 +1598,46 @@ Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fra
   * Dust comes from the GPU's breaks only (a CPU-stepped scene has none), and from where a piece broke, not along the crack.
   * The golem's sign is the baked grid's three-axis vote: a model with shells inside shells can get caps where it is hollow.
   * Metal 4 and the M4 Max are untested.
+
+### CPU physics on every core
+
+The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference, and a scene can run on it (`physics=cpu`). It runs on every core and gives the same numbers, bit for bit, as it did on one thread, whatever the number of threads (`PhysicsThreads.swift`):
+* **A pool of workers** (`PhysicsPool`: one fewer than the cores, `METALRENDERER_PHYSICS_THREADS=n` for n threads in all) runs each stage's items in fixed chunks with the stepping thread. Its atomics are C11's (`CPhysicsAtomics`). A step has hundreds of stages (a colour of contacts or joints is one, 16 substeps over), so the workers spin between them and park on a semaphore after about 50 µs without one. A stage of one chunk, or one started while another runs (a parallel loop inside another), runs on the thread that asked.
+* **What stays bit for bit:**
+  * Each item writes only its own elements: a body, a particle, a pair's entry, or, within a colour, its pair's two bodies, link's two particles or tet's four, which no other item of that colour shares.
+  * Jacobi passes read a snapshot taken before them: the particles' solve, wake, settle, and the fracture verdicts and breaks.
+  * Nothing adds floats across chunks. The liquids' sums (the bodies' impulses, MPM's grid) were already fixed-point integers, so they are atomic integer adds, the same total in any order (as on the GPU).
+  * Serial stays serial: the colouring's last greedy pass and its rest, the ragdolls' settling, breaking welds, commands.
+* **What made the step fit for threads:**
+  * Stages read and write raw buffers (`StepBuffers`, `ParticleBuffers`, `HairBuffers`, `FluidContext`). Swift moves an array out of its property while its buffer is lent, so a stage never reads the world's arrays through the world.
+  * Collision reads shapes from a flat table without counted references (`PhysicsShapeTable`: SDF nodes, planes, samples, baked grids). Ten threads asking one shape's distance contended on its arrays' reference counts, and hair took 87 s instead of 1.6 s.
+  * The broad phases' cells are flat arrays behind an open-addressed table (`PhysicsCellGrid`), with each cell's items in the order a dictionary of arrays had them.
+  * Manifolds have four fixed slots, and partners and neighbours are kept nearest first as they are found (the same as sorting all of them: the order is total). None of this allocates per item: `Tools/perf/hotcalls.py` holds the stages to the fast subset (`Tools/perf/hot-functions.txt`).
+* **Behind the frame** (`PhysicsStepper`, `PhysicsSettings.asynchronous`, "CPU physics behind the frame", on by default):
+  * A CPU-stepped scene's world steps on a thread of its own. Each frame asks for the steps up to its time, with the body the mouse holds then, and draws the bodies where the steps before left them (a copy-on-write snapshot of bodies, particles, hair and fracture state).
+  * A pick, a shot or a blast waits for the steps asked before it (`Scene.withPhysics`), so it lands on the same step as it would in the frame. Paused, or a still, the frame waits for its steps.
+  * Benchmarks step in the frame unless `METALRENDERER_PHYSICS_ASYNC=1`. "CPU physics on every core" (`physicscores`) is the pool's switch.
+* **What it costs** (M1 Max, 10 threads):
+
+  | World (each scene's digest run) | One thread (main) | Every core |
+  |---|---|---|
+  | Massive building, 8 s (4,127 bodies) | 33.5 s | 4.7 s |
+  | Liquids, 2 s | 22.2 s | 3.8 s |
+  | Muscles, 2 s | 11.5 s | 1.5 s |
+  | Soft bodies, 3 s | 6.3 s | 1.4 s |
+  | Physics, 4 s | 4.2 s | 1.2 s |
+  | Destruction courtyard, 10 s | 3.8 s | 1.4 s |
+  | Ragdolls, 4 s | 1.5 s | 0.9 s |
+  | Hair, 3 s (parallel before) | 1.6 s | 1.1 s |
+
+  On the frame's thread (`METALRENDERER_BENCH=destructioncpu`, the first 5 s moving, at the physics look), the massive building goes from 9.8 ms with the steps in the frame to 2.9 ms behind it. Three buildings (over 10,000 bodies) go from 19.0 ms to 5.4 ms, with an 11.0 ms GPU frame. The same three buildings stepped on the GPU make a 23.6 ms frame.
+* **Checked:** `PhysicsThreadsTests` steps every physics scene's world (physics, ragdolls, hair, soft bodies, muscles, liquids, the courtyard through its demo, the massive building) on one thread and on all of them: the same bytes. `testDigests` (`PHYSICS_DIGEST=1`) prints each world's hash after its seconds, and those match a build of main from before the threads. `testTheStepperStepsAsTheFrameDoes` checks the stepper against stepping in the frame: frames of uneven lengths, a grab held, a blast between, the same bytes.
+* **Limits:**
+  * The grids are built on one thread, sized by the largest body.
+  * Most stages still visit every body, asleep or not.
+  * With three buildings the frame's own CPU time is mostly the renderer's per-instance work, not physics.
+  * The workers spin for about 50 µs after each stage, which costs power.
+  * Not yet tried by hand in the window: grab, shoot and blast with the stepper on.
 
 ### Particles
 

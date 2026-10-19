@@ -79,38 +79,65 @@ extension PhysicsWorld {
 
     /// The muscles' activations, then every pinned particle held to its bones, where this substep moved them.
     func solveFlesh(_ p: GPUPhysicsParams) {
-        for (m, muscle) in muscles.enumerated() {
-            activations[m] = PhysicsWorld.activation(muscle, bodies[Int(muscle.bodyA)], bodies[Int(muscle.bodyB)])
-        }
-        for pin in pins {
-            let target = PhysicsWorld.pinTarget(pin, bodies[Int(pin.bodyA)], bodies[Int(pin.bodyB)])
-            PhysicsWorld.pin(&particles[Int(pin.particle)], pin, to: target, h: p.gravity.w)
+        guard !muscles.isEmpty || !pins.isEmpty else { return }
+        let muscles = self.muscles, pins = self.pins, h = p.gravity.w
+        activations.withUnsafeMutableBufferPointer { activations in
+            muscles.withUnsafeBufferPointer { muscles in
+                pins.withUnsafeBufferPointer { pins in
+                    withParticleBuffers { s in
+                        PhysicsPool.shared.parallel(muscles.count, grain: 64) { range in
+                            for m in range {
+                                let muscle = muscles[m]
+                                activations[m] = PhysicsWorld.activation(muscle, s.bodies[Int(muscle.bodyA)], s.bodies[Int(muscle.bodyB)])
+                            }
+                        }
+                        PhysicsPool.shared.parallel(pins.count, grain: 256) { range in   // (a particle has one pin at most)
+                            for k in range {
+                                let pin = pins[k]
+                                let target = PhysicsWorld.pinTarget(pin, s.bodies[Int(pin.bodyA)], s.bodies[Int(pin.bodyB)])
+                                PhysicsWorld.pin(&s.particles[Int(pin.particle)], pin, to: target, h: h)
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// A muscle's tet's fibre (before its volume, in the same pass): XPBD on the fibre's stretch, |Ds g| (Ds the tet's
     /// edges now, g = Dm^-1 f), toward 1 less its shortening at the muscle's activation, damped along its gradient as
     /// the volume is.
-    func solveFibre(_ t: GPUPhysicsTet, _ h: Float) {
+    @inline(__always) static func solveFibre(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+                                             _ fibres: UnsafeBufferPointer<GPUFleshFibre>, _ activations: UnsafeBufferPointer<Float>,
+                                             _ h: Float) {
         let f = fibres[Int(t.fibre) - 1]
-        let i = [Int(t.ids.x), Int(t.ids.y), Int(t.ids.z), Int(t.ids.w)]
-        let x = i.map { PhysicsMath.xyz(particles[$0].position) }
-        let w = i.map { particles[$0].prevPosition.w }
-        let v = (x[1] - x[0]) * f.g.x + (x[2] - x[0]) * f.g.y + (x[3] - x[0]) * f.g.z
+        let i0 = Int(t.ids.x), i1 = Int(t.ids.y), i2 = Int(t.ids.z), i3 = Int(t.ids.w)
+        let x0 = PhysicsMath.xyz(particles[i0].position), x1 = PhysicsMath.xyz(particles[i1].position)
+        let x2 = PhysicsMath.xyz(particles[i2].position), x3 = PhysicsMath.xyz(particles[i3].position)
+        let w0 = particles[i0].prevPosition.w, w1 = particles[i1].prevPosition.w
+        let w2 = particles[i2].prevPosition.w, w3 = particles[i3].prevPosition.w
+        let v = (x1 - x0) * f.g.x + (x2 - x0) * f.g.y + (x3 - x0) * f.g.z
         let l = length(v)
         guard l > 1e-9 else { return }
         let n = v / l
-        let g = [-(f.g.x + f.g.y + f.g.z) * n, f.g.x * n, f.g.y * n, f.g.z * n]
+        let g0 = -(f.g.x + f.g.y + f.g.z) * n, g1 = f.g.x * n, g2 = f.g.y * n, g3 = f.g.z * n
         let alpha = f.compliance / (h * h), gamma = f.compliance * t.damping / h
         var sum: Float = 0, moved: Float = 0
-        for k in 0..<4 {
-            sum += w[k] * length_squared(g[k])
-            moved += dot(g[k], x[k] - PhysicsMath.xyz(particles[i[k]].prevPosition))
-        }
+        sum += w0 * length_squared(g0)
+        moved += dot(g0, x0 - PhysicsMath.xyz(particles[i0].prevPosition))
+        sum += w1 * length_squared(g1)
+        moved += dot(g1, x1 - PhysicsMath.xyz(particles[i1].prevPosition))
+        sum += w2 * length_squared(g2)
+        moved += dot(g2, x2 - PhysicsMath.xyz(particles[i2].prevPosition))
+        sum += w3 * length_squared(g3)
+        moved += dot(g3, x3 - PhysicsMath.xyz(particles[i3].prevPosition))
         let denominator = (1 + gamma) * sum + alpha
         guard denominator > 1e-12 else { return }
         let lambda = (-(l - (1 - f.g.w * activations[Int(f.muscle)])) - gamma * moved) / denominator
-        for k in 0..<4 { particles[i[k]].position += SIMD4(g[k] * (lambda * w[k]), 0) }
+        particles[i0].position += SIMD4(g0 * (lambda * w0), 0)
+        particles[i1].position += SIMD4(g1 * (lambda * w1), 0)
+        particles[i2].position += SIMD4(g2 * (lambda * w2), 0)
+        particles[i3].position += SIMD4(g3 * (lambda * w3), 0)
     }
 
     // MARK: Building

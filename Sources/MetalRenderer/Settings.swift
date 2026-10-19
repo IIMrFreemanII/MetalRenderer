@@ -472,6 +472,9 @@ struct DestructionSettings: Equatable, Codable {
     var demo = true
     /// The courtyard's objects only, or a whole building of pieces too (4,000 and more: offline).
     var massive = false
+    /// With `massive`: how many of its buildings stand side by side in the lot (3: over 10,000 bodies).
+    var buildings = 1
+    static let buildingRange = 1...3
     /// The statues: the meshes cut piece by piece (textures kept), or none.
     var statues = true
     /// The Fracture Editor's edits, by object name, over the saved recipes (FractureStore) and the defaults (session
@@ -492,6 +495,10 @@ struct PhysicsSettings: Equatable, Codable {
         var title: String { ["Automatic", "GPU", "CPU"][rawValue] }
     }
     var backend = Backend.auto
+    /// The CPU's steps on a thread of their own, behind the frame (PhysicsStepper): the frame doesn't wait for them.
+    var asynchronous = true
+    /// The CPU's steps on every core (PhysicsPool), or on one: the same numbers either way.
+    var everyCore = true
     /// Substeps a step (1/60 s): more hold stacks stiffer, for more work (8 lets a tower of 8 crossed layers sink
     /// through the floor; 12 holds it to 3 mm).
     var substeps = 16

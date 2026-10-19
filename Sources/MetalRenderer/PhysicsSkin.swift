@@ -9,6 +9,13 @@ import simd
 /// turns as the tet does.
 extension PhysicsWorld {
     /// Where `bary` puts a point in the tet whose particles are `ids` (weights of the last three).
+    @inline(__always) static func inTet(_ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>, _ ids: SIMD4<UInt32>,
+                                        _ bary: SIMD4<Float>) -> SIMD3<Float> {
+        let x0 = PhysicsMath.xyz(particles[Int(ids.x)].position)
+        return x0 + (PhysicsMath.xyz(particles[Int(ids.y)].position) - x0) * bary.x
+            + (PhysicsMath.xyz(particles[Int(ids.z)].position) - x0) * bary.y
+            + (PhysicsMath.xyz(particles[Int(ids.w)].position) - x0) * bary.z
+    }
     @inline(__always) func inTet(_ ids: SIMD4<UInt32>, _ bary: SIMD4<Float>) -> SIMD3<Float> {
         let x0 = PhysicsMath.xyz(particles[Int(ids.x)].position)
         return x0 + (PhysicsMath.xyz(particles[Int(ids.y)].position) - x0) * bary.x
@@ -32,12 +39,23 @@ extension PhysicsWorld {
 
     /// Every skin particle held to the flesh (after the flesh's links and tets, before the collisions).
     func solveSkin(_ p: GPUPhysicsParams) {
-        for a in skinAttachments {
-            let i = Int(a.particle), w = particles[i].prevPosition.w
-            guard w > 0 else { continue }
-            let y = PhysicsWorld.skinHold(PhysicsMath.xyz(particles[i].position), a, target: inTet(a.ids, a.bary),
-                                          deep: inTet(a.ids, a.deep), w: w, h: p.gravity.w)
-            particles[i].position = SIMD4(y, particles[i].position.w)
+        guard !skinAttachments.isEmpty else { return }
+        let attachments = skinAttachments, h = p.gravity.w
+        attachments.withUnsafeBufferPointer { attachments in
+            withParticleBuffers { s in
+                // (One attachment a skin particle; the flesh's particles it reads aren't skin's.)
+                PhysicsPool.shared.parallel(attachments.count, grain: 256) { range in
+                    for k in range {
+                        let a = attachments[k]
+                        let i = Int(a.particle), w = s.particles[i].prevPosition.w
+                        guard w > 0 else { continue }
+                        let y = PhysicsWorld.skinHold(PhysicsMath.xyz(s.particles[i].position), a,
+                                                      target: PhysicsWorld.inTet(s.particles, a.ids, a.bary),
+                                                      deep: PhysicsWorld.inTet(s.particles, a.ids, a.deep), w: w, h: h)
+                        s.particles[i].position = SIMD4(y, s.particles[i].position.w)
+                    }
+                }
+            }
         }
     }
 }

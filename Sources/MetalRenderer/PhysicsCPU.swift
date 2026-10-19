@@ -6,7 +6,13 @@ import simd
 /// the same order. Contacts are solved a colour at a time (Gauss-Seidel): no two pairs of a colour share a body, so
 /// the GPU solves a colour's pairs at once and gets the same numbers. So are the joints, after the contacts.
 extension PhysicsWorld {
+    /// A step (1/60 s), its stages on PhysicsPool's workers.
     func step() {
+        PhysicsPool.shared.run { stepStages() }
+    }
+
+    private func stepStages() {
+        _ = shapeData   // (made here, if the shapes changed: the stages read it from every core)
         let p = params
         if fractures { beginFractureStep() }   // the shots and blasts of this step (Physics+Fracture.swift)
         broadPhase(p)
@@ -54,21 +60,24 @@ extension PhysicsWorld {
     /// overlap.
     @inline(__always) static func boxGap(_ a: GPUPhysicsBody, _ ca: SIMD4<Float>, _ ha: SIMD4<Float>, _ ma: Float,
                                          _ b: GPUPhysicsBody, _ cb: SIMD4<Float>, _ hb: SIMD4<Float>, _ mb: Float) -> Float {
-        let ax = [PhysicsMath.qrot(a.rotation, [1, 0, 0]), PhysicsMath.qrot(a.rotation, [0, 1, 0]), PhysicsMath.qrot(a.rotation, [0, 0, 1])]
-        let bx = [PhysicsMath.qrot(b.rotation, [1, 0, 0]), PhysicsMath.qrot(b.rotation, [0, 1, 0]), PhysicsMath.qrot(b.rotation, [0, 0, 1])]
+        let ax = (PhysicsMath.qrot(a.rotation, [1, 0, 0]), PhysicsMath.qrot(a.rotation, [0, 1, 0]), PhysicsMath.qrot(a.rotation, [0, 0, 1]))
+        let bx = (PhysicsMath.qrot(b.rotation, [1, 0, 0]), PhysicsMath.qrot(b.rotation, [0, 1, 0]), PhysicsMath.qrot(b.rotation, [0, 0, 1]))
+        @inline(__always) func axis(_ t: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), _ k: Int) -> SIMD3<Float> {
+            k == 0 ? t.0 : k == 1 ? t.1 : t.2
+        }
         let ea = PhysicsMath.xyz(ha) + ma, eb = PhysicsMath.xyz(hb) + mb
         let t = (PhysicsMath.xyz(b.position) + PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(cb)))
             - (PhysicsMath.xyz(a.position) + PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(ca)))
         var gap = -Float.infinity
         for k in 0..<15 {
-            var l = k < 3 ? ax[k] : k < 6 ? bx[k - 3] : cross(ax[(k - 6) / 3], bx[(k - 6) % 3])
+            var l = k < 3 ? axis(ax, k) : k < 6 ? axis(bx, k - 3) : cross(axis(ax, (k - 6) / 3), axis(bx, (k - 6) % 3))
             if k >= 6 {
                 let n = length(l)
                 if !(n > 1e-4) { continue }
                 l /= n
             }
-            let ra = ea.x * abs(dot(ax[0], l)) + ea.y * abs(dot(ax[1], l)) + ea.z * abs(dot(ax[2], l))
-            let rb = eb.x * abs(dot(bx[0], l)) + eb.y * abs(dot(bx[1], l)) + eb.z * abs(dot(bx[2], l))
+            let ra = ea.x * abs(dot(ax.0, l)) + ea.y * abs(dot(ax.1, l)) + ea.z * abs(dot(ax.2, l))
+            let rb = eb.x * abs(dot(bx.0, l)) + eb.y * abs(dot(bx.1, l)) + eb.z * abs(dot(bx.2, l))
             gap = max(gap, abs(dot(t, l)) - ra - rb)
         }
         return gap
@@ -87,12 +96,14 @@ extension PhysicsWorld {
 
     /// Whether a sphere meets static collider `s`'s box (an endless plane: whether it reaches below it).
     func touchesStatic(_ s: Int, centre: SIMD3<Float>, radius: Float) -> Bool {
-        let st = statics[s]
+        PhysicsWorld.touchesStatic(statics[s], shapes, staticBounds[s], centre: centre, radius: radius)
+    }
+    @inline(__always) static func touchesStatic(_ st: GPUPhysicsBody, _ shapes: [GPUPhysicsShape], _ box: AABB, centre: SIMD3<Float>,
+                                                radius: Float) -> Bool {
         if shapes[Int(st.info.x)].info.x == PhysicsShapeKind.plane.rawValue {
             let n = PhysicsMath.qrot(st.rotation, SIMD3(0, 1, 0))
             return dot(centre - PhysicsMath.xyz(st.position), n) < radius
         }
-        let box = staticBounds[s]
         let nearest = simd_clamp(centre, box.lo, box.hi)
         return length_squared(centre - nearest) < radius * radius
     }
@@ -100,47 +111,77 @@ extension PhysicsWorld {
     /// Every body's partners: the static colliders it meets, then the bodies in the 27 cells around it whose spheres
     /// meet its own, nearest first (the lower first of equals), `maxPairs` at most: a crowded body drops its farthest
     /// bodies, never what holds it up. Two bodies a joint joins aren't partners (they overlap where it is). (Keeping the lowest-numbered instead, a tower's middle blocks dropped a body
-    /// dragged into them, which went through.)
+    /// dragged into them, which went through.) The grid is built here; each body's query on every core.
     private func broadPhase(_ p: GPUPhysicsParams) {
         let size = p.grid.x
-        var grid: [SIMD3<Int32>: [Int]] = [:]
-        for (i, b) in bodies.enumerated() where !PhysicsWorld.disabled(b) {
-            grid[PhysicsWorld.cell(PhysicsMath.xyz(b.position), size), default: []].append(i)
+        bodies.withUnsafeBufferPointer { b in
+            bodyCells.build(b.count) { i in PhysicsWorld.disabled(b[i]) ? nil : PhysicsWorld.cell(PhysicsMath.xyz(b[i].position), size) }
         }
-        let k = PhysicsWorld.maxPairs, byGap = fractures
-        for (i, b) in bodies.enumerated() {
-            if PhysicsWorld.disabled(b) { pairCounts[i] = 0; continue }   // (it is in no cell: nothing finds it either)
-            let x = PhysicsMath.xyz(b.position), r = PhysicsWorld.reach(b, p)
-            let c = PhysicsWorld.cell(x, size)
-            // (Distance squared, -1 for a static; partner. With fractured objects, the gap between their boxes, those
-            // that overlap, -infinity for a static: physPairs.)
-            var found: [(Float, UInt32)] = []
-            for dz: Int32 in -1...1 {
-                for dy: Int32 in -1...1 {
-                    for dx: Int32 in -1...1 {
-                        for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i && !PhysicsWorld.joined(b, i, bodies[j], j) {
-                            let o = bodies[j]
-                            if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
-                            if PhysicsWorld.held(b) && PhysicsWorld.held(o) { continue }             // two anchored pieces
-                            let reach = r + PhysicsWorld.reach(o, p)
-                            let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
-                            guard d2 < reach * reach else { continue }
-                            guard byGap else { found.append((d2, UInt32(j))); continue }
-                            let sa = Int(b.info.x), sb = Int(o.info.x)
-                            let gap = PhysicsWorld.boxGap(b, shapeBoxes[2 * sa], shapeBoxes[2 * sa + 1], r - b.invInertia.w,
-                                                          o, shapeBoxes[2 * sb], shapeBoxes[2 * sb + 1], PhysicsWorld.reach(o, p) - o.invInertia.w)
-                            if gap < 0 { found.append((gap, UInt32(j))) }
+        let shapes = self.shapes, boxes = shapeBoxes, staticBounds = self.staticBounds, byGap = fractures, n = bodies.count
+        bodyCells.withView { grid in
+            withStepBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 32) { range in
+                    withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxPairs) { kept in
+                        for i in range {
+                            PhysicsWorld.partners(i, s, grid, shapes, boxes, staticBounds, p, byGap: byGap, kept: kept)
                         }
                     }
                 }
             }
-            for s in statics.indices where !PhysicsWorld.kinematic(b) && touchesStatic(s, centre: x, radius: r) {
-                found.append((byGap ? -.infinity : -1, UInt32(s) | PhysicsWorld.staticBit))
-            }
-            found.sort { $0.0 < $1.0 || ($0.0 == $1.0 && $0.1 < $1.1) }
-            pairCounts[i] = UInt32(min(found.count, k))
-            for (n, f) in found.prefix(k).enumerated() { pairs[i * k + n] = GPUPhysicsPair(partner: f.1) }
         }
+    }
+
+    /// Body i's partners (broadPhase), kept nearest first in `kept` as they are found (the same `maxPairs` as sorting
+    /// them all: the order is total, and no partner is found twice).
+    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
+                                           _ boxes: [SIMD4<Float>], _ staticBounds: [AABB], _ p: GPUPhysicsParams, byGap: Bool,
+                                           kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
+        let k = PhysicsWorld.maxPairs
+        let b = s.bodies[i]
+        if PhysicsWorld.disabled(b) { s.pairCounts[i] = 0; return }   // (it is in no cell: nothing finds it either)
+        let x = PhysicsMath.xyz(b.position), r = PhysicsWorld.reach(b, p)
+        let c = PhysicsWorld.cell(x, p.grid.x)
+        var count = 0
+        // (Distance squared, -1 for a static; partner. With fractured objects, the gap between their boxes, those
+        // that overlap, -infinity for a static: physPairs.)
+        @inline(__always) func keep(_ key: Float, _ id: UInt32) {
+            if count == k && !(key < kept[k - 1].0 || (key == kept[k - 1].0 && id < kept[k - 1].1)) { return }
+            var at = min(count, k - 1)
+            while at > 0 && (key < kept[at - 1].0 || (key == kept[at - 1].0 && id < kept[at - 1].1)) {
+                kept[at] = kept[at - 1]
+                at -= 1
+            }
+            kept[at] = (key, id)
+            count = min(count + 1, k)
+        }
+        for dz: Int32 in -1...1 {
+            for dy: Int32 in -1...1 {
+                for dx: Int32 in -1...1 {
+                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
+                        let j = grid.item(m)
+                        guard j != i && !PhysicsWorld.joined(b, i, s.bodies[j], j) else { continue }
+                        let o = s.bodies[j]
+                        if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
+                        if PhysicsWorld.held(b) && PhysicsWorld.held(o) { continue }             // two anchored pieces
+                        let reach = r + PhysicsWorld.reach(o, p)
+                        let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
+                        guard d2 < reach * reach else { continue }
+                        guard byGap else { keep(d2, UInt32(j)); continue }
+                        let sa = Int(b.info.x), sb = Int(o.info.x)
+                        let gap = PhysicsWorld.boxGap(b, boxes[2 * sa], boxes[2 * sa + 1], r - b.invInertia.w,
+                                                      o, boxes[2 * sb], boxes[2 * sb + 1], PhysicsWorld.reach(o, p) - o.invInertia.w)
+                        if gap < 0 { keep(gap, UInt32(j)) }
+                    }
+                }
+            }
+        }
+        if !PhysicsWorld.kinematic(b) {
+            for st in s.statics.indices where PhysicsWorld.touchesStatic(s.statics[st], shapes, staticBounds[st], centre: x, radius: r) {
+                keep(byGap ? -.infinity : -1, UInt32(st) | PhysicsWorld.staticBit)
+            }
+        }
+        s.pairCounts[i] = UInt32(count)
+        for n in 0..<count { s.pairs[i * k + n] = GPUPhysicsPair(partner: kept[n].1) }
     }
 
     /// A sleeping body wakes when something it touches moves faster than the wake speed, or turns its mass faster than
@@ -159,15 +200,29 @@ extension PhysicsWorld {
     }
 
     private func wake(_ p: GPUPhysicsParams) {
-        let k = PhysicsWorld.maxPairs
-        let before = bodies
-        for i in bodies.indices where before[i].info.y & PhysicsWorld.asleep != 0 {
-            for n in 0..<Int(pairCounts[i]) {
-                let partner = pairs[i * k + n].partner
-                guard partner & PhysicsWorld.staticBit == 0, PhysicsWorld.stirs(before[Int(partner)], p) else { continue }
-                bodies[i].info.y &= ~PhysicsWorld.asleep
-                bodies[i].prevPosition.w = 0
-                break
+        let n = bodies.count
+        wakeFlags.removeAll(keepingCapacity: true)
+        wakeFlags.append(contentsOf: repeatElement(0, count: n))
+        // Who wakes, from the bodies as they were (a body woken here stirs nothing: its speeds are a sleeper's 0)...
+        wakeFlags.withUnsafeMutableBufferPointer { flags in
+            withStepBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 64) { range in
+                    for i in range where s.bodies[i].info.y & PhysicsWorld.asleep != 0 {
+                        for m in 0..<Int(s.pairCounts[i]) {
+                            let partner = s.pairs[i * PhysicsWorld.maxPairs + m].partner
+                            guard partner & PhysicsWorld.staticBit == 0, PhysicsWorld.stirs(s.bodies[Int(partner)], p) else { continue }
+                            flags[i] = 1
+                            break
+                        }
+                    }
+                }
+                // ...and they wake.
+                PhysicsPool.shared.parallel(n, grain: 256) { range in
+                    for i in range where flags[i] != 0 {
+                        s.bodies[i].info.y &= ~PhysicsWorld.asleep
+                        s.bodies[i].prevPosition.w = 0
+                    }
+                }
             }
         }
         // A ragdoll wakes whole: if any of its bodies is awake (or held), the rest wake.
@@ -189,28 +244,30 @@ extension PhysicsWorld {
     /// more pieces than it has room for) is that one's, marked (pad = `oneSided`) to be solved one after another after
     /// the colours: without it, the piece sank into the slab and was pushed out again, and the heap stirred on.
     private func link() {
-        let k = PhysicsWorld.maxPairs, oneSided = fractures
-        for i in bodies.indices {
-            for n in 0..<Int(pairCounts[i]) {
-                let e = i * k + n, partner = pairs[e].partner
-                if oneSided { pairs[e].pad = PhysicsWorld.none }
-                if partner & PhysicsWorld.staticBit != 0 {
-                    pairs[e].link = UInt32(e)
-                    continue
+        let k = PhysicsWorld.maxPairs, oneSided = fractures, n = bodies.count
+        withStepBuffers { s in
+            PhysicsPool.shared.parallel(n, grain: 64) { range in
+                for i in range {
+                    for m in 0..<Int(s.pairCounts[i]) {
+                        let e = i * k + m, partner = s.pairs[e].partner
+                        if oneSided { s.pairs[e].pad = PhysicsWorld.none }
+                        if partner & PhysicsWorld.staticBit != 0 {
+                            s.pairs[e].link = UInt32(e)
+                            continue
+                        }
+                        let o = Int(partner)
+                        var link = PhysicsWorld.none
+                        for q in 0..<Int(s.pairCounts[o]) where s.pairs[o * k + q].partner == UInt32(i) {
+                            link = o > i ? UInt32(e) : UInt32(o * k + q)
+                            break
+                        }
+                        if oneSided && link == PhysicsWorld.none {
+                            link = UInt32(e)
+                            s.pairs[e].pad = PhysicsWorld.oneSided
+                        }
+                        s.pairs[e].link = link
+                    }
                 }
-                if Int(partner) > i {
-                    let o = Int(partner)
-                    pairs[e].link = (0..<Int(pairCounts[o])).contains { pairs[o * k + $0].partner == UInt32(i) } ? UInt32(e) : PhysicsWorld.none
-                    if oneSided && pairs[e].link == PhysicsWorld.none { (pairs[e].link, pairs[e].pad) = (UInt32(e), PhysicsWorld.oneSided) }
-                    continue
-                }
-                let o = Int(partner)
-                pairs[e].link = PhysicsWorld.none
-                for m in 0..<Int(pairCounts[o]) where pairs[o * k + m].partner == UInt32(i) {
-                    pairs[e].link = UInt32(o * k + m)
-                    break
-                }
-                if oneSided && pairs[e].link == PhysicsWorld.none { (pairs[e].link, pairs[e].pad) = (UInt32(e), PhysicsWorld.oneSided) }
             }
         }
     }
@@ -224,36 +281,46 @@ extension PhysicsWorld {
 
     /// Each owned entry's contacts, closer than the margin plus how far the two may close in a step.
     /// `refresh`: within the step, when only the pairs that had contacts at its start, and of which a body moves, are
-    /// found again.
+    /// found again. On every core: an entry writes only its own count and contacts.
     private func narrowPhase(_ p: GPUPhysicsParams, refresh: Bool) {
-        let k = PhysicsWorld.maxPairs
-        for i in bodies.indices {
-            let a = bodies[i]
-            for n in 0..<Int(pairCounts[i]) {
-                let e = i * k + n
-                guard pairs[e].link == UInt32(e) else { continue }
-                let b = partner(pairs[e].partner)
-                // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
-                if refresh && (pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
-                // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
-                if let w = liveWeld(i, pairs[e].partner) {
-                    pairs[e].contacts = 1
-                    contacts[e * PhysicsWorld.maxContacts] = PhysicsWorld.weldContact(w)
-                    continue
-                }
-                let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
-                               + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
-                               + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
-                let manifold = collide(a, b, margin: p.grid.y + closing)
-                let pa = Pose(a), pb = Pose(b)
-                pairs[e].contacts = UInt32(manifold.points.count)
-                for (c, point) in manifold.points.enumerated() {
-                    contacts[e * PhysicsWorld.maxContacts + c] = GPUPhysicsContact(
-                        normal: SIMD4(point.normal, point.separation),
-                        anchorA: SIMD4(pa.toBody(point.pointA), point.radiusA),
-                        anchorB: SIMD4(pb.toBody(point.pointB), point.radiusB),
-                        lambda: .zero)
-                }
+        let shapes = shapeData, n = bodies.count
+        withStepBuffers { s in
+            PhysicsPool.shared.parallel(n, grain: 16) { range in
+                for i in range { PhysicsWorld.narrow(i, s, shapes, p, refresh: refresh) }
+            }
+        }
+    }
+
+    /// Body i's owned entries' contacts (narrowPhase).
+    @inline(__always) static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool) {
+        let k = PhysicsWorld.maxPairs, mc = PhysicsWorld.maxContacts
+        let a = s.bodies[i]
+        for n in 0..<Int(s.pairCounts[i]) {
+            let e = i * k + n
+            guard s.pairs[e].link == UInt32(e) else { continue }
+            let b = s.partner(s.pairs[e].partner)
+            // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
+            if refresh && (s.pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
+            // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
+            if let w = liveWeld(i, s.pairs[e].partner, bodies: UnsafeBufferPointer(s.bodies), starts: s.weldStarts,
+                                list: s.weldList, welds: UnsafeBufferPointer(s.welds)) {
+                s.pairs[e].contacts = 1
+                s.contacts[e * mc] = PhysicsWorld.weldContact(w)
+                continue
+            }
+            let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
+                           + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
+                           + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
+            let manifold = shapes.collide(a, b, margin: p.grid.y + closing)
+            let pa = Pose(a), pb = Pose(b)
+            s.pairs[e].contacts = UInt32(manifold.count)
+            for c in 0..<manifold.count {
+                let point = manifold[c]
+                s.contacts[e * mc + c] = GPUPhysicsContact(
+                    normal: SIMD4(point.normal, point.separation),
+                    anchorA: SIMD4(pa.toBody(point.pointA), point.radiusA),
+                    anchorB: SIMD4(pb.toBody(point.pointB), point.radiusB),
+                    lambda: .zero)
             }
         }
     }
@@ -276,72 +343,116 @@ extension PhysicsWorld {
     /// those it shares a body with has (at most 31: a pair shares its bodies with 30 others at most). What
     /// `maxRounds` rounds leave (pad = `leftover`) is solved one pair after another, after the colours.
     private func colourPairs() {
-        let k = PhysicsWorld.maxPairs
-        func live(_ e: Int) -> Bool { e % k < Int(pairCounts[e / k]) && pairs[e].link == UInt32(e) && pairs[e].contacts > 0 }
-        func touching(_ i: Int) -> [Int] {
-            (0..<Int(pairCounts[i])).compactMap { n in
-                let link = pairs[i * k + n].link
-                return link != PhysicsWorld.none && pairs[Int(link)].contacts > 0 ? Int(link) : nil
+        let k = PhysicsWorld.maxPairs, entries = pairs.count, n = bodies.count, fractured = fractures
+        var left: [Int32] = [], oneSided: [Int32] = []
+        var won = [UInt8](repeating: 0, count: entries)
+        withStepBuffers { s in
+            // The pairs with contacts their owner keeps, in entry order (one-sided ones left over from the start).
+            for e in 0..<entries {
+                let mark = s.pairs[e].pad
+                s.pairs[e].pad = PhysicsWorld.none
+                guard e % k < Int(s.pairCounts[e / k]) && s.pairs[e].link == UInt32(e) && s.pairs[e].contacts > 0 else { continue }
+                if mark == PhysicsWorld.oneSided {
+                    s.pairs[e].pad = PhysicsWorld.leftover
+                    oneSided.append(Int32(e))
+                } else {
+                    left.append(Int32(e))
+                }
             }
-        }
-        func around(_ e: Int) -> [Int] {
-            let code = pairs[e].partner
-            return touching(e / k) + (code & PhysicsWorld.staticBit == 0 ? touching(Int(code)) : [])
-        }
-        var left: [Int] = [], oneSided: [Int] = []
-        for e in pairs.indices {
-            let mark = pairs[e].pad
-            pairs[e].pad = PhysicsWorld.none
-            guard live(e) else { continue }
-            // (A one-sided pair, `link`, is left over from the start.)
-            if mark == PhysicsWorld.oneSided { pairs[e].pad = PhysicsWorld.leftover; oneSided.append(e) } else { left.append(e) }
-        }
-        var rounds = 0
-        while !left.isEmpty && rounds < PhysicsWorld.maxRounds {
-            let mine = { (e: Int) in PhysicsWorld.priority(UInt32(e)) }
-            let chosen = left.filter { e in
-                around(e).allSatisfy { q in q == e || pairs[q].pad != PhysicsWorld.none || mine(q) < mine(e) }
+            /// The pairs with contacts beside pair e (through either body), e itself among them, each through `visit`.
+            @inline(__always) func around(_ e: Int, _ visit: (Int) -> Bool) -> Bool {
+                let code = s.pairs[e].partner
+                for body in 0..<2 {
+                    guard body == 0 || code & PhysicsWorld.staticBit == 0 else { break }
+                    let i = body == 0 ? e / k : Int(code)
+                    for m in 0..<Int(s.pairCounts[i]) {
+                        let link = s.pairs[i * k + m].link
+                        guard link != PhysicsWorld.none && s.pairs[Int(link)].contacts > 0 else { continue }
+                        if !visit(Int(link)) { return false }
+                    }
+                }
+                return true
             }
-            for e in chosen {
-                var used: UInt64 = 0
-                for q in around(e) where q != e && pairs[q].pad != PhysicsWorld.none { used |= 1 << UInt64(pairs[q].pad) }
-                pairs[e].pad = UInt32((~used).trailingZeroBitCount)
+            var rounds = 0
+            won.withUnsafeMutableBufferPointer { won in
+                while !left.isEmpty && rounds < PhysicsWorld.maxRounds {
+                    left.withUnsafeBufferPointer { left in
+                        // Who outranks every uncoloured pair beside it (winners never share a body)...
+                        PhysicsPool.shared.parallel(left.count, grain: 256) { range in
+                            for t in range {
+                                let e = Int(left[t]), mine = PhysicsWorld.priority(UInt32(e))
+                                won[e] = around(e) { q in q == e || s.pairs[q].pad != PhysicsWorld.none || PhysicsWorld.priority(UInt32(q)) < mine } ? 1 : 0
+                            }
+                        }
+                        // ...takes the lowest colour none beside it has.
+                        PhysicsPool.shared.parallel(left.count, grain: 256) { range in
+                            for t in range where won[Int(left[t])] != 0 {
+                                let e = Int(left[t])
+                                var used: UInt64 = 0
+                                _ = around(e) { q in
+                                    if q != e && s.pairs[q].pad != PhysicsWorld.none { used |= 1 << UInt64(s.pairs[q].pad) }
+                                    return true
+                                }
+                                s.pairs[e].pad = UInt32((~used).trailingZeroBitCount)
+                            }
+                        }
+                    }
+                    left.removeAll { s.pairs[Int($0)].pad != PhysicsWorld.none }
+                    rounds += 1
+                }
             }
-            left.removeAll { pairs[$0].pad != PhysicsWorld.none }
-            rounds += 1
-        }
-        for e in left { pairs[e].pad = PhysicsWorld.leftover }
-        if !oneSided.isEmpty { left = (left + oneSided).sorted() }   // (in entry order, as the GPU's one thread takes them)
-        let colours = Int(pairs.filter { $0.pad < PhysicsWorld.leftover }.map(\.pad).max().map { $0 + 1 } ?? 0)
-        pairOrder = []
-        pairColourStarts = [0]
-        for c in 0..<colours {
-            pairOrder += pairs.indices.filter { pairs[$0].pad == UInt32(c) }.map(UInt32.init)
+            for e in left { s.pairs[Int(e)].pad = PhysicsWorld.leftover }
+            if !oneSided.isEmpty { left = (left + oneSided).sorted() }   // (in entry order, as the GPU's one thread takes them)
+            // The colours' pairs in entry order, colour by colour (one counting pass).
+            var counts = [Int](repeating: 0, count: PhysicsWorld.maxColours + 1)
+            var colours = 0
+            for e in 0..<entries {
+                let pad = s.pairs[e].pad
+                guard pad < UInt32(PhysicsWorld.maxColours) else { continue }
+                counts[Int(pad)] += 1
+                colours = max(colours, Int(pad) + 1)
+            }
+            pairColourStarts.removeAll(keepingCapacity: true)
+            pairColourStarts.append(0)
+            var at = 0
+            for c in 0..<colours {
+                at += counts[c]
+                pairColourStarts.append(UInt32(at))
+            }
+            pairOrder.removeAll(keepingCapacity: true)
+            pairOrder.append(contentsOf: repeatElement(0, count: at))
+            var cursor = [Int](repeating: 0, count: colours)
+            for c in 0..<colours { cursor[c] = Int(pairColourStarts[c]) }
+            for e in 0..<entries {
+                let pad = s.pairs[e].pad
+                guard pad < UInt32(colours) else { continue }
+                pairOrder[cursor[Int(pad)]] = UInt32(e)
+                cursor[Int(pad)] += 1
+            }
+            if fractured {
+                // The left-over pairs, the one-sided ones most of all, in more colours (in entry order, each body in
+                // each at most once), as the GPU's thread 0 colours them; what is left after those, one after another.
+                var used = [UInt32](repeating: 0, count: n), more = [[Int32]](repeating: [], count: PhysicsWorld.maxColours)
+                var rest: [Int32] = []
+                for e32 in left {
+                    let e = Int(e32), i = e / k, code = s.pairs[e].partner, both = code & PhysicsWorld.staticBit == 0
+                    let taken = used[i] | (both ? used[Int(code)] : 0)
+                    guard taken != .max else { rest.append(e32); continue }
+                    let c = (~taken).trailingZeroBitCount
+                    used[i] |= 1 << c
+                    if both { used[Int(code)] |= 1 << c }
+                    s.pairs[e].pad = UInt32(PhysicsWorld.maxColours + c)
+                    more[c].append(e32)
+                }
+                for group in more where !group.isEmpty {
+                    for e in group { pairOrder.append(UInt32(e)) }
+                    pairColourStarts.append(UInt32(pairOrder.count))
+                }
+                left = rest
+            }
+            for e in left { pairOrder.append(UInt32(e)) }   // the rest: one after another
             pairColourStarts.append(UInt32(pairOrder.count))
         }
-        if fractures {
-            // The left-over pairs, the one-sided ones most of all, in more colours (in entry order, each body in each
-            // at most once), as the GPU's thread 0 colours them; what is left after those, one after another.
-            var used = [UInt32](repeating: 0, count: bodies.count), more = [[Int]](repeating: [], count: PhysicsWorld.maxColours)
-            var rest: [Int] = []
-            for e in left {
-                let i = e / k, code = pairs[e].partner, both = code & PhysicsWorld.staticBit == 0
-                let taken = used[i] | (both ? used[Int(code)] : 0)
-                guard taken != .max else { rest.append(e); continue }
-                let c = (~taken).trailingZeroBitCount
-                used[i] |= 1 << c
-                if both { used[Int(code)] |= 1 << c }
-                pairs[e].pad = UInt32(PhysicsWorld.maxColours + c)
-                more[c].append(e)
-            }
-            for group in more where !group.isEmpty {
-                pairOrder += group.map(UInt32.init)
-                pairColourStarts.append(UInt32(pairOrder.count))
-            }
-            left = rest
-        }
-        pairOrder += left.map(UInt32.init)   // the rest: one after another
-        pairColourStarts.append(UInt32(pairOrder.count))
     }
 
     // MARK: Substeps
@@ -356,32 +467,36 @@ extension PhysicsWorld {
     /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target;
     /// a kinematic body to where its table puts it at the end of substep `sub` (PhysicsFlesh.swift).
     private func integrate(_ p: GPUPhysicsParams, sub: Int) {
-        let h = p.gravity.w
-        for i in bodies.indices {
-            if PhysicsWorld.kinematic(bodies[i]) {
-                guard kinematicRows > 0 else { continue }
-                PhysicsWorld.moveKinematic(&bodies[i], to: kinematicPose(bodies[i], step: stepIndex, alpha: Float(sub + 1) / p.softDamping.z), h: h)
-                continue
+        let h = p.gravity.w, n = bodies.count, grab = self.grab, step = stepIndex, rows = kinematicRows
+        withStepBuffers { s in
+            PhysicsPool.shared.parallel(n, grain: 128) { range in
+                for i in range {
+                    if PhysicsWorld.kinematic(s.bodies[i]) {
+                        guard rows > 0 else { continue }
+                        PhysicsWorld.moveKinematic(&s.bodies[i], to: kinematicPose(s.bodies[i], step: step, alpha: Float(sub + 1) / p.softDamping.z), h: h)
+                        continue
+                    }
+                    let held = grab.target.w > 0 && grab.body == UInt32(i)
+                    if held {
+                        s.bodies[i].info.y &= ~PhysicsWorld.asleep
+                        s.bodies[i].prevPosition.w = 0
+                    }
+                    guard PhysicsWorld.moves(s.bodies[i]) else { continue }
+                    var b = s.bodies[i]
+                    b.prevPosition = SIMD4(PhysicsMath.xyz(b.position), b.prevPosition.w)
+                    b.prevRotation = b.rotation
+                    let decay: Float = held ? max(1 - PhysicsWorld.holdDamping * h, 0) : 1
+                    b.angular = SIMD4(PhysicsMath.xyz(b.angular) * decay, b.angular.w)
+                    var v = PhysicsMath.xyz(b.velocity) * decay + PhysicsMath.xyz(p.gravity) * h
+                    let speed = length(v)
+                    if speed > p.grid.z { v *= p.grid.z / speed }
+                    b.velocity = SIMD4(v, b.velocity.w)
+                    b.position = SIMD4(PhysicsMath.xyz(b.position) + v * h, b.position.w)
+                    b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.xyz(b.angular) * h)
+                    if held { PhysicsWorld.hold(&b, grab) }
+                    s.bodies[i] = b
+                }
             }
-            let held = grab.target.w > 0 && grab.body == UInt32(i)
-            if held {
-                bodies[i].info.y &= ~PhysicsWorld.asleep
-                bodies[i].prevPosition.w = 0
-            }
-            guard PhysicsWorld.moves(bodies[i]) else { continue }
-            var b = bodies[i]
-            b.prevPosition = SIMD4(PhysicsMath.xyz(b.position), b.prevPosition.w)
-            b.prevRotation = b.rotation
-            let decay: Float = held ? max(1 - PhysicsWorld.holdDamping * h, 0) : 1
-            b.angular = SIMD4(PhysicsMath.xyz(b.angular) * decay, b.angular.w)
-            var v = PhysicsMath.xyz(b.velocity) * decay + PhysicsMath.xyz(p.gravity) * h
-            let speed = length(v)
-            if speed > p.grid.z { v *= p.grid.z / speed }
-            b.velocity = SIMD4(v, b.velocity.w)
-            b.position = SIMD4(PhysicsMath.xyz(b.position) + v * h, b.position.w)
-            b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.xyz(b.angular) * h)
-            if held { PhysicsWorld.hold(&b, grab) }
-            bodies[i] = b
         }
     }
 
@@ -465,55 +580,97 @@ extension PhysicsWorld {
                           + PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), cross(r, impulse) + twist), b.angular.w)
     }
 
-    /// Pair `e`'s contacts, one after the other, each pushing both bodies at once (`body` does it to the two).
-    private func solvePair(_ e: Int, _ body: (inout GPUPhysicsBody, inout GPUPhysicsBody, GPUPhysicsContact, Int) -> Void) {
-        let i = e / PhysicsWorld.maxPairs, code = pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
-        var a = bodies[i], b = partner(code)
-        for c in 0..<Int(pairs[e].contacts) {
+    /// Pair `e`'s contacts' pushes, one after the other, each on both bodies at once.
+    @inline(__always) static func pushPair(_ e: Int, _ s: StepBuffers, h: Float) {
+        let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
+        var a = s.bodies[i], b = s.partner(code)
+        for c in 0..<Int(s.pairs[e].contacts) {
             let ci = e * PhysicsWorld.maxContacts + c
-            body(&a, &b, contacts[ci], ci)
+            let push = PhysicsWorld.contactPush(s.contacts[ci], a, b, h: h)
+            s.contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
+            guard push.lambda > 0 else { continue }
+            PhysicsWorld.shove(&a, push.impulse, push.ra)
+            PhysicsWorld.shove(&b, -push.impulse, push.rb)
         }
-        bodies[i] = a
-        if dynamic { bodies[Int(code)] = b }
+        s.bodies[i] = a
+        if dynamic { s.bodies[Int(code)] = b }
+    }
+
+    /// Pair `e`'s contacts' kicks.
+    @inline(__always) static func kickPair(_ e: Int, _ s: StepBuffers, _ p: GPUPhysicsParams) {
+        let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
+        var a = s.bodies[i], b = s.partner(code)
+        for c in 0..<Int(s.pairs[e].contacts) {
+            guard let kick = PhysicsWorld.contactKick(s.contacts[e * PhysicsWorld.maxContacts + c], a, b, p) else { continue }
+            PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
+            PhysicsWorld.kick(&b, -kick.impulse, kick.rb, -kick.twist)
+        }
+        s.bodies[i] = a
+        if dynamic { s.bodies[Int(code)] = b }
+    }
+
+    /// The pairs in `pairOrder`, a colour at a time: a colour's pairs (no two sharing a body) on every core, the
+    /// rest (the last run of `pairColourStarts`) one after another, in order.
+    private func eachColour(_ s: StepBuffers, _ solve: (Int) -> Void) {
+        let starts = pairColourStarts, runs = starts.count - 1
+        pairOrder.withUnsafeBufferPointer { order in
+            for g in 0..<runs {
+                let lo = Int(starts[g]), hi = Int(starts[g + 1])
+                if g == runs - 1 {
+                    for t in lo..<hi { solve(Int(order[t])) }
+                } else {
+                    PhysicsPool.shared.parallel(hi - lo, grain: 32) { range in
+                        for t in range { solve(Int(order[lo + t])) }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Joint colour by colour (a colour's joints share no body), each joint's two bodies through `solve`.
+    private func eachJointColour(_ s: StepBuffers, _ solve: (GPUPhysicsJoint, inout GPUPhysicsBody, inout GPUPhysicsBody) -> Void) {
+        let starts = jointStarts
+        joints.withUnsafeBufferPointer { joints in
+            for c in 0..<(starts.count - 1) {
+                let lo = Int(starts[c]), hi = Int(starts[c + 1])
+                PhysicsPool.shared.parallel(hi - lo, grain: 32) { range in
+                    for t in range {
+                        let j = joints[lo + t], ia = Int(j.info.x), ib = Int(j.info.y)
+                        var a = s.bodies[ia], b = s.bodies[ib]
+                        solve(j, &a, &b)
+                        s.bodies[ia] = a
+                        s.bodies[ib] = b
+                    }
+                }
+            }
+        }
     }
 
     /// The joints, then the contacts' pushes, a colour at a time, then every moving body's velocities from how far it went.
     private func solvePositions(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w
-        // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
-        // friction undoes what the substep slid a contact, the joints' pushes included. (Joints after the contacts
-        // slid a resting ragdoll's chest a little every substep, out of friction's reach: it crept and never slept.)
-        for _ in 0..<PhysicsWorld.jointIterations {
-            for c in 0..<(jointStarts.count - 1) {
-                for k in Int(jointStarts[c])..<Int(jointStarts[c + 1]) {
-                    let j = joints[k], ia = Int(j.info.x), ib = Int(j.info.y)
-                    var a = bodies[ia], b = bodies[ib]
-                    PhysicsWorld.solveJoint(j, &a, &b)
-                    bodies[ia] = a
-                    bodies[ib] = b
+        let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps), n = bodies.count
+        withStepBuffers { s in
+            // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
+            // friction undoes what the substep slid a contact, the joints' pushes included. (Joints after the contacts
+            // slid a resting ragdoll's chest a little every substep, out of friction's reach: it crept and never slept.)
+            for _ in 0..<PhysicsWorld.jointIterations {
+                eachJointColour(s) { j, a, b in PhysicsWorld.solveJoint(j, &a, &b) }
+            }
+            if fractured {
+                eachColour(s) { e in PhysicsWorld.pushFracturePair(e, s, h: h, substeps: substeps) }
+            } else {
+                eachColour(s) { e in PhysicsWorld.pushPair(e, s, h: h) }
+            }
+            PhysicsPool.shared.parallel(n, grain: 128) { range in
+                for i in range where PhysicsWorld.moves(s.bodies[i]) {
+                    var b = s.bodies[i]
+                    b.velocity = SIMD4((PhysicsMath.xyz(b.position) - PhysicsMath.xyz(b.prevPosition)) / h, b.velocity.w)
+                    var dq = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(b.prevRotation))
+                    if dq.w < 0 { dq = -dq }
+                    b.angular = SIMD4(2 * PhysicsMath.xyz(dq) / h, b.angular.w)
+                    s.bodies[i] = b
                 }
             }
-        }
-        for e in pairOrder {
-            if fractures {
-                pushFracturePair(Int(e), h: h, g: length(PhysicsMath.xyz(p.gravity)))
-                continue
-            }
-            solvePair(Int(e)) { a, b, contact, ci in
-                let push = PhysicsWorld.contactPush(contact, a, b, h: h)
-                contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
-                guard push.lambda > 0 else { return }
-                PhysicsWorld.shove(&a, push.impulse, push.ra)
-                PhysicsWorld.shove(&b, -push.impulse, push.rb)
-            }
-        }
-        for i in bodies.indices where PhysicsWorld.moves(bodies[i]) {
-            var b = bodies[i]
-            b.velocity = SIMD4((PhysicsMath.xyz(b.position) - PhysicsMath.xyz(b.prevPosition)) / h, b.velocity.w)
-            var dq = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(b.prevRotation))
-            if dq.w < 0 { dq = -dq }
-            b.angular = SIMD4(2 * PhysicsMath.xyz(dq) / h, b.angular.w)
-            bodies[i] = b
         }
     }
 
@@ -558,13 +715,14 @@ extension PhysicsWorld {
         var twist = SIMD3<Float>()
         let spin = PhysicsMath.xyz(a.angular) - PhysicsMath.xyz(b.angular)
         let about = n * dot(spin, n)
-        for (part, resistance) in [(spin - about, p.rolling.x), (about, p.rolling.y)] {
+        for k in 0..<2 {
+            let part = k == 0 ? spin - about : about, resistance = k == 0 ? p.rolling.x : p.rolling.y
             let speed = length(part)
             guard speed > 1e-6 else { continue }
-            let k = part / speed
-            let w = turnWeight(a, k) + turnWeight(b, k)
+            let axis = part / speed
+            let w = turnWeight(a, axis) + turnWeight(b, axis)
             guard w > 0 else { continue }
-            twist -= k * min(speed / w, resistance * lambda / h)
+            twist -= axis * min(speed / w, resistance * lambda / h)
         }
         guard impulse != .zero || twist != .zero else { return nil }
         return (impulse, twist, ra, rb)
@@ -572,25 +730,14 @@ extension PhysicsWorld {
 
     /// The contacts' velocity changes, a colour of pairs at a time.
     private func solveVelocities(_ p: GPUPhysicsParams) {
-        for e in pairOrder {
-            if fractures {
-                kickFracturePair(Int(e), p)
-                continue
+        let fractured = fractures
+        withStepBuffers { s in
+            if fractured {
+                eachColour(s) { e in PhysicsWorld.kickFracturePair(e, s, p) }
+            } else {
+                eachColour(s) { e in PhysicsWorld.kickPair(e, s, p) }
             }
-            solvePair(Int(e)) { a, b, contact, _ in
-                guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { return }
-                PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
-                PhysicsWorld.kick(&b, -kick.impulse, kick.rb, -kick.twist)
-            }
-        }
-        for c in 0..<(jointStarts.count - 1) {
-            for k in Int(jointStarts[c])..<Int(jointStarts[c + 1]) {
-                let j = joints[k], ia = Int(j.info.x), ib = Int(j.info.y)
-                var a = bodies[ia], b = bodies[ib]
-                PhysicsWorld.dampJoint(j, &a, &b, h: p.gravity.w)
-                bodies[ia] = a
-                bodies[ib] = b
-            }
+            eachJointColour(s) { j, a, b in PhysicsWorld.dampJoint(j, &a, &b, h: p.gravity.w) }
         }
     }
 
@@ -710,31 +857,49 @@ extension PhysicsWorld {
     /// After the substeps: a body that has been slow for long enough falls asleep, once the bodies it touches (has
     /// contacts with) have been slow for half as long (or sleep): a pile goes to sleep together, not one body propped on moving ones.
     private func settle(_ p: GPUPhysicsParams, _ start: [SIMD8<Float>]) {
-        for i in bodies.indices where PhysicsWorld.moves(bodies[i]) {
-            let b = bodies[i]
-            bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
-        }
-        let k = PhysicsWorld.maxPairs, timers = bodies
-        var sleeps = [Bool](repeating: false, count: bodies.count)
-        for i in bodies.indices where PhysicsWorld.moves(timers[i]) && timers[i].prevPosition.w > p.sleep.z {
-            var settled = true
-            for n in 0..<Int(pairCounts[i]) {
-                let e = i * k + n, partner = pairs[e].partner, link = pairs[e].link
-                guard partner & PhysicsWorld.staticBit == 0, link != PhysicsWorld.none, pairs[Int(link)].contacts > 0 else { continue }
-                let o = timers[Int(partner)]
-                if PhysicsWorld.moves(o) && o.prevPosition.w <= p.sleep.z / 2 { settled = false; break }
+        let n = bodies.count, k = PhysicsWorld.maxPairs
+        wakeFlags.removeAll(keepingCapacity: true)
+        wakeFlags.append(contentsOf: repeatElement(0, count: n))
+        wakeFlags.withUnsafeMutableBufferPointer { sleeps in
+            start.withUnsafeBufferPointer { start in
+                withStepBuffers { s in
+                    // The timers...
+                    PhysicsPool.shared.parallel(n, grain: 128) { range in
+                        for i in range where PhysicsWorld.moves(s.bodies[i]) {
+                            let b = s.bodies[i]
+                            s.bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
+                        }
+                    }
+                    // ...then who may sleep (reading the timers only)...
+                    PhysicsPool.shared.parallel(n, grain: 64) { range in
+                        for i in range where PhysicsWorld.moves(s.bodies[i]) && s.bodies[i].prevPosition.w > p.sleep.z {
+                            var settled = true
+                            for m in 0..<Int(s.pairCounts[i]) {
+                                let e = i * k + m, partner = s.pairs[e].partner, link = s.pairs[e].link
+                                guard partner & PhysicsWorld.staticBit == 0, link != PhysicsWorld.none, s.pairs[Int(link)].contacts > 0 else { continue }
+                                let o = s.bodies[Int(partner)]
+                                if PhysicsWorld.moves(o) && o.prevPosition.w <= p.sleep.z / 2 { settled = false; break }
+                            }
+                            sleeps[i] = settled ? 1 : 0
+                        }
+                    }
+                }
             }
-            sleeps[i] = settled
-        }
-        // A ragdoll sleeps whole: while any of its moving bodies can't, none does (one asleep would hold its joints).
-        for r in ragdolls {
-            let range = Int(r.x)..<Int(r.x + r.y)
-            if range.contains(where: { PhysicsWorld.moves(timers[$0]) && !sleeps[$0] }) { for i in range { sleeps[i] = false } }
-        }
-        for i in bodies.indices where sleeps[i] {
-            bodies[i].info.y |= PhysicsWorld.asleep
-            bodies[i].velocity = SIMD4(.zero, timers[i].velocity.w)
-            bodies[i].angular = SIMD4(.zero, timers[i].angular.w)
+            // A ragdoll sleeps whole: while any of its moving bodies can't, none does (one asleep would hold its joints).
+            for r in ragdolls {
+                let range = Int(r.x)..<Int(r.x + r.y)
+                if range.contains(where: { PhysicsWorld.moves(bodies[$0]) && sleeps[$0] == 0 }) { for i in range { sleeps[i] = 0 } }
+            }
+            // ...and they sleep.
+            withStepBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 256) { range in
+                    for i in range where sleeps[i] != 0 {
+                        s.bodies[i].info.y |= PhysicsWorld.asleep
+                        s.bodies[i].velocity = SIMD4(.zero, s.bodies[i].velocity.w)
+                        s.bodies[i].angular = SIMD4(.zero, s.bodies[i].angular.w)
+                    }
+                }
+            }
         }
     }
 
@@ -746,59 +911,101 @@ extension PhysicsWorld {
     }
 
     /// Every particle's neighbours (the nearest `maxNeighbours` within reach, the lower first of equals) and the
-    /// colliders it may touch (statics, then bodies, the lowest `maxColliders`).
+    /// colliders it may touch (statics, then bodies, the lowest `maxColliders`). The grid here; each particle's query on
+    /// every core.
     private func particleBroadPhase(_ p: GPUPhysicsParams) {
-        let size = p.particleGrid.x, k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
-        var grid: [SIMD3<Int32>: [Int]] = [:]
-        for (i, q) in particles.enumerated() { grid[PhysicsWorld.cell(PhysicsMath.xyz(q.position), size), default: []].append(i) }
-        for (i, q) in particles.enumerated() {
-            let x = PhysicsMath.xyz(q.position), r = PhysicsWorld.particleReach(q, p)
-            let c = PhysicsWorld.cell(x, size)
-            var found: [(Float, UInt32)] = []
-            for dz: Int32 in -1...1 {
-                for dy: Int32 in -1...1 {
-                    for dx: Int32 in -1...1 {
-                        for j in grid[c &+ SIMD3(dx, dy, dz)] ?? [] where j != i {
-                            let o = particles[j]
-                            if !PhysicsWorld.meets(q, o) { continue }   // cloths only meet colliders, a soft body not itself
-                            let reach = r + PhysicsWorld.particleReach(o, p)
-                            let d2 = length_squared(PhysicsMath.xyz(o.position) - x)
-                            if d2 < reach * reach { found.append((d2, UInt32(j))) }
-                        }
+        guard !particles.isEmpty else { return }
+        let size = p.particleGrid.x, n = particles.count
+        particles.withUnsafeBufferPointer { q in
+            particleCells.build(q.count) { i in PhysicsWorld.cell(PhysicsMath.xyz(q[i].position), size) }
+        }
+        let shapes = self.shapes, staticBounds = self.staticBounds
+        particleCells.withView { grid in
+            withParticleBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 64) { range in
+                    withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxNeighbours) { kept in
+                        for i in range { PhysicsWorld.particleNeighbours(i, s, grid, shapes, staticBounds, p, kept: kept) }
                     }
                 }
             }
-            found.sort { $0.0 < $1.0 || ($0.0 == $1.0 && $0.1 < $1.1) }
-            neighbourCounts[i] = UInt32(min(found.count, k))
-            for (n, f) in found.prefix(k).enumerated() { neighbours[i * k + n] = f.1 }
-            var touching: [UInt32] = []
-            for s in statics.indices where touchesStatic(s, centre: x, radius: r) { touching.append(UInt32(s) | PhysicsWorld.staticBit) }
-            // (A figure's flesh and skin don't meet its own bones: info.z = their first << 8 | how many.)
-            let soft = q.info.y & PhysicsWorld.softBit != 0
-            let own = soft ? Int(q.info.z >> 8)..<Int((q.info.z >> 8) + (q.info.z & 0xFF)) : 0..<0
-            for (j, b) in bodies.enumerated() where !own.contains(j) && !PhysicsWorld.disabled(b) {
-                let reach = r + PhysicsWorld.reach(b, p)
-                if length_squared(PhysicsMath.xyz(b.position) - x) < reach * reach { touching.append(UInt32(j)) }
-            }
-            touching.sort { ($0 ^ PhysicsWorld.staticBit) < ($1 ^ PhysicsWorld.staticBit) }
-            colliderCounts[i] = UInt32(min(touching.count, kc))
-            for (n, code) in touching.prefix(kc).enumerated() { colliders[i * kc + n] = code }
         }
     }
 
+    /// Particle i's neighbours and colliders (particleBroadPhase): neighbours kept nearest first as they are found
+    /// (the same as sorting them all: the order is total, none found twice); colliders found in the order they sort
+    /// in (statics, then bodies, each by number), the first `maxColliders` kept.
+    @inline(__always) static func particleNeighbours(_ i: Int, _ s: ParticleBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
+                                                     _ staticBounds: [AABB], _ p: GPUPhysicsParams,
+                                                     kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
+        let k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
+        let q = s.particles[i]
+        let x = PhysicsMath.xyz(q.position), r = PhysicsWorld.particleReach(q, p)
+        let c = PhysicsWorld.cell(x, p.particleGrid.x)
+        var count = 0
+        for dz: Int32 in -1...1 {
+            for dy: Int32 in -1...1 {
+                for dx: Int32 in -1...1 {
+                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
+                        let j = grid.item(m)
+                        guard j != i else { continue }
+                        let o = s.particles[j]
+                        if !PhysicsWorld.meets(q, o) { continue }   // cloths only meet colliders, a soft body not itself
+                        let reach = r + PhysicsWorld.particleReach(o, p)
+                        let d2 = length_squared(PhysicsMath.xyz(o.position) - x)
+                        guard d2 < reach * reach else { continue }
+                        let id = UInt32(j)
+                        if count == k && !(d2 < kept[k - 1].0 || (d2 == kept[k - 1].0 && id < kept[k - 1].1)) { continue }
+                        var at = min(count, k - 1)
+                        while at > 0 && (d2 < kept[at - 1].0 || (d2 == kept[at - 1].0 && id < kept[at - 1].1)) {
+                            kept[at] = kept[at - 1]
+                            at -= 1
+                        }
+                        kept[at] = (d2, id)
+                        count = min(count + 1, k)
+                    }
+                }
+            }
+        }
+        s.neighbourCounts[i] = UInt32(count)
+        for m in 0..<count { s.neighbours[i * k + m] = kept[m].1 }
+        var touching = 0
+        for st in s.statics.indices where touching < kc && PhysicsWorld.touchesStatic(s.statics[st], shapes, staticBounds[st], centre: x, radius: r) {
+            s.colliders[i * kc + touching] = UInt32(st) | PhysicsWorld.staticBit
+            touching += 1
+        }
+        // (A figure's flesh and skin don't meet its own bones: info.z = their first << 8 | how many.)
+        let soft = q.info.y & PhysicsWorld.softBit != 0
+        let own = soft ? Int(q.info.z >> 8)..<Int((q.info.z >> 8) + (q.info.z & 0xFF)) : 0..<0
+        for j in s.bodies.indices where touching < kc {
+            let b = s.bodies[j]
+            guard !own.contains(j) && !PhysicsWorld.disabled(b) else { continue }
+            let reach = r + PhysicsWorld.reach(b, p)
+            if length_squared(PhysicsMath.xyz(b.position) - x) < reach * reach {
+                s.colliders[i * kc + touching] = UInt32(j)
+                touching += 1
+            }
+        }
+        s.colliderCounts[i] = UInt32(touching)
+    }
+
     private func integrateParticles(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w
-        for i in particles.indices where particles[i].prevPosition.w > 0 {   // (a pinned cloth vertex stays)
-            var q = particles[i]
-            q.prevPosition = SIMD4(PhysicsMath.xyz(q.position), q.prevPosition.w)
-            let rate = q.info.y & PhysicsWorld.clothBit != 0 ? p.particleGrid.z : q.info.y & PhysicsWorld.softBit != 0 ? p.softDamping.x : 0
-            let drag = max(1 - rate * h, 0)
-            var v = PhysicsMath.xyz(q.velocity) * drag + PhysicsMath.xyz(p.gravity) * h
-            let speed = length(v)
-            if speed > p.grid.z { v *= p.grid.z / speed }
-            q.velocity = SIMD4(v, q.velocity.w)
-            q.position = SIMD4(PhysicsMath.xyz(q.position) + v * h, q.position.w)
-            particles[i] = q
+        guard !particles.isEmpty else { return }
+        let h = p.gravity.w, n = particles.count
+        withParticleBuffers { s in
+            PhysicsPool.shared.parallel(n, grain: 256) { range in
+                for i in range where s.particles[i].prevPosition.w > 0 {   // (a pinned cloth vertex stays)
+                    var q = s.particles[i]
+                    q.prevPosition = SIMD4(PhysicsMath.xyz(q.position), q.prevPosition.w)
+                    let rate = q.info.y & PhysicsWorld.clothBit != 0 ? p.particleGrid.z : q.info.y & PhysicsWorld.softBit != 0 ? p.softDamping.x : 0
+                    let drag = max(1 - rate * h, 0)
+                    var v = PhysicsMath.xyz(q.velocity) * drag + PhysicsMath.xyz(p.gravity) * h
+                    let speed = length(v)
+                    if speed > p.grid.z { v *= p.grid.z / speed }
+                    q.velocity = SIMD4(v, q.velocity.w)
+                    q.position = SIMD4(PhysicsMath.xyz(q.position) + v * h, q.position.w)
+                    s.particles[i] = q
+                }
+            }
         }
     }
 
@@ -823,78 +1030,98 @@ extension PhysicsWorld {
     /// summed, and faster (`softPushSpeed`): its links hold it among its own, and averaged pushes let a body shove it
     /// in, or a jelly on top sink into it.
     private func solveParticles(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w, k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
-        let before = particles
-        for i in before.indices where before[i].prevPosition.w > 0 {
-            let q = before[i]
-            let x = PhysicsMath.xyz(q.position), moved = x - PhysicsMath.xyz(q.prevPosition), w = q.prevPosition.w
-            let soft = q.info.y & PhysicsWorld.softBit != 0
-            let cap = (soft ? PhysicsWorld.softPushSpeed : PhysicsWorld.pushSpeed) * h
-            var shared = SIMD3<Float>(), sharedCount: Float = 0
-            for n in 0..<Int(neighbourCounts[i]) {
-                let o = before[Int(neighbours[i * k + n])]
-                let d = x - PhysicsMath.xyz(o.position)
-                let dist = length(d)
-                let overlap = min(q.position.w + o.position.w - dist, cap)
-                guard overlap > 0, dist > 1e-6 else { continue }
-                let share = w / (w + o.prevPosition.w)
-                let slide = moved - (PhysicsMath.xyz(o.position) - PhysicsMath.xyz(o.prevPosition))
-                shared += PhysicsWorld.particlePush(d / dist, overlap, slide, sqrt(q.velocity.w * o.velocity.w)) * share
-                sharedCount += 1
+        guard !particles.isEmpty else { return }
+        let n = particles.count, shapes = shapeData
+        withParticleBuffers { s in
+            s.before.baseAddress!.update(from: s.particles.baseAddress!, count: n)   // (Jacobi: every particle against these)
+            PhysicsPool.shared.parallel(n, grain: 64) { range in
+                for i in range where s.before[i].prevPosition.w > 0 { PhysicsWorld.solveParticle(i, s, shapes, p) }
             }
-            var held = SIMD3<Float>(), heldCount: Float = 0, shoved = false
-            for n in 0..<Int(colliderCounts[i]) {
-                let b = partner(colliders[i * kc + n])
-                let pose = Pose(b), shape = Int(b.info.x)
-                let local = pose.toBody(x)
-                let depth = distance(shape: shape, local) - q.position.w
-                guard depth < 0 else { continue }
-                let normal = pose.direction(gradient(shape: shape, local))
-                let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), x - pose.position)
-                held += PhysicsWorld.particlePush(normal, min(-depth, cap), moved - surface * h,
-                                                  sqrt(q.velocity.w * b.velocity.w))
-                heldCount += 1
-                shoved = shoved || PhysicsWorld.moves(b)
-            }
-            var out = q
-            var y = x
-            if sharedCount > 0 { y += soft ? shared : shared / sharedCount }
-            if heldCount > 0 { y += soft ? held : held / heldCount }
-            // At rest: a particle in a heap (no body shoving it, not a cloth's or a soft body's) that went slower than
-            // the rest speed stays where it was (Macklin et al. 2014's sleeping); the averaged pushes otherwise keep a
-            // heap fizzing.
-            if PhysicsWorld.rests(q, touching: sharedCount + heldCount > 0, shoved: shoved, moved: y - PhysicsMath.xyz(q.prevPosition), p) {
-                y = PhysicsMath.xyz(q.prevPosition)
-            }
-            out.position = SIMD4(y, q.position.w)
-            out.velocity = SIMD4((y - PhysicsMath.xyz(q.prevPosition)) / h, q.velocity.w)
-            particles[i] = out
         }
+    }
+
+    /// Particle i's pushes (solveParticles), against the particles as the pass found them.
+    @inline(__always) static func solveParticle(_ i: Int, _ s: ParticleBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams) {
+        let h = p.gravity.w, k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
+        let q = s.before[i]
+        let x = PhysicsMath.xyz(q.position), moved = x - PhysicsMath.xyz(q.prevPosition), w = q.prevPosition.w
+        let soft = q.info.y & PhysicsWorld.softBit != 0
+        let cap = (soft ? PhysicsWorld.softPushSpeed : PhysicsWorld.pushSpeed) * h
+        var shared = SIMD3<Float>(), sharedCount: Float = 0
+        for n in 0..<Int(s.neighbourCounts[i]) {
+            let o = s.before[Int(s.neighbours[i * k + n])]
+            let d = x - PhysicsMath.xyz(o.position)
+            let dist = length(d)
+            let overlap = min(q.position.w + o.position.w - dist, cap)
+            guard overlap > 0, dist > 1e-6 else { continue }
+            let share = w / (w + o.prevPosition.w)
+            let slide = moved - (PhysicsMath.xyz(o.position) - PhysicsMath.xyz(o.prevPosition))
+            shared += PhysicsWorld.particlePush(d / dist, overlap, slide, sqrt(q.velocity.w * o.velocity.w)) * share
+            sharedCount += 1
+        }
+        var held = SIMD3<Float>(), heldCount: Float = 0, shoved = false
+        for n in 0..<Int(s.colliderCounts[i]) {
+            let b = s.partner(s.colliders[i * kc + n])
+            let pose = Pose(b), shape = Int(b.info.x)
+            let local = pose.toBody(x)
+            let depth = shapes.distance(shape: shape, local) - q.position.w
+            guard depth < 0 else { continue }
+            let normal = pose.direction(shapes.gradient(shape: shape, local))
+            let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), x - pose.position)
+            held += PhysicsWorld.particlePush(normal, min(-depth, cap), moved - surface * h,
+                                              sqrt(q.velocity.w * b.velocity.w))
+            heldCount += 1
+            shoved = shoved || PhysicsWorld.moves(b)
+        }
+        var out = q
+        var y = x
+        if sharedCount > 0 { y += soft ? shared : shared / sharedCount }
+        if heldCount > 0 { y += soft ? held : held / heldCount }
+        // At rest: a particle in a heap (no body shoving it, not a cloth's or a soft body's) that went slower than
+        // the rest speed stays where it was (Macklin et al. 2014's sleeping); the averaged pushes otherwise keep a
+        // heap fizzing.
+        if PhysicsWorld.rests(q, touching: sharedCount + heldCount > 0, shoved: shoved, moved: y - PhysicsMath.xyz(q.prevPosition), p) {
+            y = PhysicsMath.xyz(q.prevPosition)
+        }
+        out.position = SIMD4(y, q.position.w)
+        out.velocity = SIMD4((y - PhysicsMath.xyz(q.prevPosition)) / h, q.velocity.w)
+        s.particles[i] = out
     }
 
     /// The cloths' and soft bodies' links, a colour at a time (Gauss-Seidel: each sees what the colours before it
     /// moved), each an XPBD distance constraint (one iteration a substep, so its lambda starts at 0); a soft body's
     /// with Macklin et al. 2016's damping of what moves along it.
     private func solveCloth(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w
-        for c in 0..<(colourStarts.count - 1) {
-            for k in Int(colourStarts[c])..<Int(colourStarts[c + 1]) {
-                let con = constraints[k]
-                let a = Int(con.a), b = Int(con.b)
-                let wa = particles[a].prevPosition.w, wb = particles[b].prevPosition.w
-                guard wa + wb > 0 else { continue }
-                let d = PhysicsMath.xyz(particles[a].position) - PhysicsMath.xyz(particles[b].position)
-                let l = length(d)
-                guard l > 1e-9 else { continue }
-                let n = d / l
-                let gamma = particles[a].info.y & PhysicsWorld.softBit != 0 ? con.compliance * p.softDamping.y / h : 0
-                let moved = dot(n, PhysicsMath.xyz(particles[a].position - particles[a].prevPosition)
-                                   - PhysicsMath.xyz(particles[b].position - particles[b].prevPosition))
-                let lambda = (-(l - con.rest) - gamma * moved) / ((1 + gamma) * (wa + wb) + con.compliance / (h * h))
-                let push = n * lambda
-                particles[a].position += SIMD4(push * wa, 0)
-                particles[b].position -= SIMD4(push * wb, 0)
+        guard colourStarts.count > 1 else { return }
+        let h = p.gravity.w, starts = colourStarts, constraints = self.constraints
+        constraints.withUnsafeBufferPointer { constraints in
+            withParticleBuffers { s in
+                for c in 0..<(starts.count - 1) {
+                    let lo = Int(starts[c]), hi = Int(starts[c + 1])
+                    PhysicsPool.shared.parallel(hi - lo, grain: 256) { range in   // (a colour's links share no particle)
+                        for t in range { PhysicsWorld.solveLink(constraints[lo + t], s.particles, h, p) }
+                    }
+                }
             }
         }
+    }
+
+    /// One link (solveCloth).
+    @inline(__always) static func solveLink(_ con: GPUPhysicsConstraint, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+                                            _ h: Float, _ p: GPUPhysicsParams) {
+        let a = Int(con.a), b = Int(con.b)
+        let wa = particles[a].prevPosition.w, wb = particles[b].prevPosition.w
+        guard wa + wb > 0 else { return }
+        let d = PhysicsMath.xyz(particles[a].position) - PhysicsMath.xyz(particles[b].position)
+        let l = length(d)
+        guard l > 1e-9 else { return }
+        let n = d / l
+        let gamma = particles[a].info.y & PhysicsWorld.softBit != 0 ? con.compliance * p.softDamping.y / h : 0
+        let moved = dot(n, PhysicsMath.xyz(particles[a].position - particles[a].prevPosition)
+                           - PhysicsMath.xyz(particles[b].position - particles[b].prevPosition))
+        let lambda = (-(l - con.rest) - gamma * moved) / ((1 + gamma) * (wa + wb) + con.compliance / (h * h))
+        let push = n * lambda
+        particles[a].position += SIMD4(push * wa, 0)
+        particles[b].position -= SIMD4(push * wb, 0)
     }
 }
