@@ -118,7 +118,7 @@ final class PlantTracing {
     let variantCount: Int
     private let descriptorCount: Int
     /// Per set (a frame slot's, or the one of a still scene): the variants' structures and their descriptors.
-    private(set) var sets: [[MTLAccelerationStructure]] = [] { didSet { declared = [:] } }
+    private(set) var sets: [[MTLAccelerationStructure]] = [] { didSet { declared = [:]; ids.sets = [] } }
     private var descriptorBuffers: [MTLBuffer] = []
     private var variantDescriptors: [[MTLInstanceAccelerationStructureDescriptor]] = []
     private let work: MTLBuffer                  // per descriptor: (part, phase bucket); ~0 for the pads
@@ -139,14 +139,28 @@ final class PlantTracing {
     private var used: [[Int]]
     /// Far plants as their voxels (SceneSettings.voxelBoxes, a scene that moves): the assemblies' grids, whose boxes
     /// a far plant's instance names at its level instead of its variant (as VoxelLOD does a still scene's baked plants).
-    var voxels: VoxelGrids? { didSet { declared = [:] } }
+    var voxels: VoxelGrids? { didSet { declared = [:]; ids.voxels = [] } }
     /// Per set: what each plant's descriptor names (its variant, variantCount + its rest variant, or -1 - its voxel
     /// level's box), to tell when another structure is named: the top-level structure is then built again, not refitted.
     private var chosen: [[Int32]]
+    /// writeDescriptors' scratch, kept from frame to frame: per part of the instances, whether one names another
+    /// structure; per variant, whether a plant names it.
+    private var partChanged: [Bool] = []
+    private var usedMarks: [Bool] = []
+    /// The resource IDs of `sets`, `rest` and the voxels' boxes, which the descriptors name: asked of each structure
+    /// once (an Objective-C message apiece), not for every plant every frame. Emptied when they change, made again
+    /// (`madeIDs`) where an empty list doesn't match its structures.
+    private var ids = (sets: [[MTLResourceID]](), rest: [MTLResourceID](), voxels: [MTLResourceID]())
+    private func madeIDs() {
+        if ids.sets.count != sets.count { ids.sets = sets.map { $0.map(\.gpuResourceID) } }
+        if ids.rest.count != rest.count { ids.rest = rest.map(\.gpuResourceID) }
+        let boxes = voxels?.boxes.count ?? 0
+        if ids.voxels.count != boxes { ids.voxels = voxels?.boxes.map(\.gpuResourceID) ?? [] }
+    }
     /// A scene that moves: per assembly and share kept, a variant at rest, built once and never posed or refitted,
     /// which a plant beyond the wind's `sway` reach names (it still leans as a whole: its instance's transform). Per
     /// assembly, its first.
-    private(set) var rest: [MTLAccelerationStructure] = [] { didSet { declared = [:] } }
+    private(set) var rest: [MTLAccelerationStructure] = [] { didSet { declared = [:]; ids.rest = [] } }
     private var restBase: [Int] = []
 
     /// `meshStructures`: each mesh's (SceneBuffers.primitives); `positions` and `indices`: the scene's arrays, which the
@@ -444,64 +458,82 @@ final class PlantTracing {
         let base = buffer.contents(), set = set(slot: slot)
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
         let camera = view.map { SIMD3($0.x, $0.y, $0.z) }
-        let instances = scene.instances, meshes = scene.meshes, variants = sets[set], options = instanceOptions
+        madeIDs()
+        let meshes = scene.meshes, variants = ids.sets[set], restIDs = ids.rest, boxes = ids.voxels, options = instanceOptions
+        let rigid = rigid, variantBase = variantBase, restBase = restBase, grids = voxels?.gridRecords
         // Beyond the sway's reach (in the wind, in a scene with variants at rest), a plant's limbs stand still.
-        let reach = wind.wind.z > 0 && !rest.isEmpty ? wind.sway.w : 0, near = SIMD3(wind.sway.x, wind.sway.y, wind.sway.z)
+        let reach = wind.wind.z > 0 && !restIDs.isEmpty ? wind.sway.w : 0, near = SIMD3(wind.sway.x, wind.sway.y, wind.sway.z)
         let variantTotal = Int32(variantCount)
-        // What each instance's descriptor names (its variant, -1 - a voxel level, or none), in parts side by side: a
-        // forest's thousands of plants every frame the wind blows.
-        var choice = [Int32](repeating: .max, count: instances.count)
-        let part = 1024
-        choice.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: (instances.count + part - 1) / part) { k in
-                for i in (k * part)..<min((k + 1) * part, instances.count) {
-                    let inst = instances[i]
-                    if inst.assembly >= 0, rigid[inst.assembly] {   // a building: still, never refitted
-                        SceneBuffers.writeDescriptor(base + i * stride, transform: inst.transform, options: options, mask: inst.mask,
-                                                     userID: UInt32(i), structure: variants[variantBase[inst.assembly]])
-                    } else if inst.assembly >= 0 {
-                        let id = UInt32(i), transform = Wind.plant(inst.transform, wind: wind.wind, time: wind.time, id: id)
-                        var level: UInt8 = 0
-                        if let voxels, let view, let camera {
-                            let position = SIMD3(inst.transform.columns.3.x, inst.transform.columns.3.y, inst.transform.columns.3.z)
-                            let scale = length(SIMD3(inst.transform.columns.0.x, inst.transform.columns.0.y, inst.transform.columns.0.z))
-                            level = VoxelLOD.level(distance: distance(position, camera), size: voxels.gridRecords[inst.assembly].lo.w * scale,
-                                                   view: view.w, jitter: VoxelLOD.jitter(position))
+        // What each instance's descriptor names (its variant, -1 - a voxel level, or none: .max), written over the last
+        // frame's in place, in parts side by side (a forest's thousands of plants every frame the wind blows). A part
+        // that changes one says so, so nothing is allocated or compared whole.
+        let count = scene.instances.count, part = 1024, parts = (count + part - 1) / part
+        var changed = chosen[set].count != count
+        if changed { chosen[set] = [Int32](repeating: .max, count: count) }
+        if partChanged.count < parts { partChanged = [Bool](repeating: false, count: parts) }
+        scene.instances.withUnsafeBufferPointer { instances in
+            // Writes instance i's descriptor; returns what it names. (Its fields one by one: an instance is ~290 bytes.)
+            func write(_ i: Int) -> Int32 {
+                let assembly = instances[i].assembly
+                if assembly >= 0, rigid[assembly] {   // a building: still, never refitted
+                    SceneBuffers.writeDescriptor(base + i * stride, transform: instances[i].transform, options: options, mask: instances[i].mask,
+                                                 userID: UInt32(i), resource: variants[variantBase[assembly]])
+                } else if assembly >= 0 {
+                    let id = UInt32(i), at = instances[i].transform, transform = Wind.plant(at, wind: wind.wind, time: wind.time, id: id)
+                    let position = SIMD3(at.columns.3.x, at.columns.3.y, at.columns.3.z)
+                    var level: UInt8 = 0
+                    if let grids, let view, let camera {
+                        let scale = length(SIMD3(at.columns.0.x, at.columns.0.y, at.columns.0.z))
+                        level = VoxelLOD.level(distance: distance(position, camera), size: grids[assembly].lo.w * scale,
+                                               view: view.w, jitter: VoxelLOD.jitter(position))
+                    }
+                    if level > 0 {
+                        SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: boxOptions, mask: Scene.maskVoxels,
+                                                     userID: id, resource: boxes[VoxelGrids.levels * assembly + Int(level) - 1])
+                        return -Int32(level)
+                    }
+                    let v = variant(assembly: assembly, id: id, fall: wind.leafFall)
+                    if reach > 0, distance(position, near) > reach * exp2(VoxelLOD.jitter(position)) {
+                        let r = restBase[assembly] + (v - variantBase[assembly]) / Wind.phases
+                        SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: instances[i].mask,
+                                                     userID: id, resource: restIDs[r])
+                        return variantTotal + Int32(r)
+                    }
+                    SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: instances[i].mask,
+                                                 userID: id, resource: variants[v])
+                    return Int32(v)
+                } else if instances[i].mesh >= 0, meshes[instances[i].mesh].sways != 0 {
+                    let m = Wind.cover(instances[i].transform, wind: wind.wind, time: wind.time)
+                    var offset = 0
+                    for column in 0..<4 {
+                        for row in 0..<3 { (base + i * stride).storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self); offset += 4 }
+                    }
+                }
+                return .max
+            }
+            chosen[set].withUnsafeMutableBufferPointer { out in
+                partChanged.withUnsafeMutableBufferPointer { flags in
+                    let out = out, flags = flags
+                    DispatchQueue.concurrentPerform(iterations: parts) { k in
+                        var differs = false
+                        for i in (k * part)..<min((k + 1) * part, count) {
+                            let c = write(i)
+                            if out[i] != c { out[i] = c; differs = true }
                         }
-                        if level > 0, let voxels {
-                            let box = voxels.boxes[VoxelGrids.levels * inst.assembly + Int(level) - 1]
-                            SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: boxOptions, mask: Scene.maskVoxels,
-                                                         userID: id, structure: box)
-                            out[i] = -Int32(level)
-                            continue
-                        }
-                        let v = variant(assembly: inst.assembly, id: id, fall: wind.leafFall)
-                        let position = SIMD3(inst.transform.columns.3.x, inst.transform.columns.3.y, inst.transform.columns.3.z)
-                        if reach > 0, distance(position, near) > reach * exp2(VoxelLOD.jitter(position)) {
-                            let r = restBase[inst.assembly] + (v - variantBase[inst.assembly]) / Wind.phases
-                            out[i] = variantTotal + Int32(r)
-                            SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: inst.mask,
-                                                         userID: id, structure: rest[r])
-                            continue
-                        }
-                        out[i] = Int32(v)
-                        SceneBuffers.writeDescriptor(base + i * stride, transform: transform, options: options, mask: inst.mask,
-                                                     userID: id, structure: variants[v])
-                    } else if inst.mesh >= 0, meshes[inst.mesh].sways != 0 {
-                        let m = Wind.cover(inst.transform, wind: wind.wind, time: wind.time)
-                        var offset = 0
-                        for column in 0..<4 {
-                            for row in 0..<3 { (base + i * stride).storeBytes(of: m[column][row], toByteOffset: offset, as: Float.self); offset += 4 }
-                        }
+                        flags[k] = differs
                     }
                 }
             }
         }
-        var usedHere = [Bool](repeating: false, count: variantCount)
-        for c in choice where c >= 0 && c < variantTotal { usedHere[Int(c)] = true }
-        used[set] = usedHere.indices.filter { usedHere[$0] }
-        defer { chosen[set] = choice }
-        return chosen[set] != choice
+        // The variants its plants name (the ones its frames refit), in order.
+        if usedMarks.count != variantCount { usedMarks = [Bool](repeating: false, count: variantCount) }
+        used[set].removeAll(keepingCapacity: true)
+        usedMarks.withUnsafeMutableBufferPointer { marks in
+            marks.update(repeating: false)
+            chosen[set].withUnsafeBufferPointer { for c in $0 where c >= 0 && c < variantTotal { marks[Int(c)] = true } }
+            for v in marks.indices where marks[v] { used[set].append(v) }
+        }
+        return changed || partChanged.withUnsafeBufferPointer { $0[0..<parts].contains(true) }
     }
 
     /// A plant's instance options: opaque unless the scene has leaf cards, which the queries' loop cuts out.
