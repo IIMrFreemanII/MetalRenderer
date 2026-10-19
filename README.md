@@ -242,6 +242,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | - = | Lower / raise render resolution |
 | U | Upscaling (MetalFX denoiser): off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
 | B | Toggle blue-noise sampling (on by default; the tile is generated once, in the background of the first launch, and kept in `~/Library/Caches/MetalRenderer`) |
+| ` (backtick), ⇧⌘S | Solid shading: every surface flat grey under a studio light, nothing else drawn (see "Solid shading") |
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (cascades: probe grid over interpolation confidence) |
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
@@ -2001,6 +2002,44 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | Traversal cost | The candidates (triangles and boxes) Metal's traversal hands each primary ray's query, log scale: blue few, red ~250. Metal can't count its nodes; the candidates are what can be seen of its work. |
 
 The views work in both virtual-geometry runtimes (with virtual geometry off, the clusters, groups and LOD views are grey). In `METALRENDERER_VG_MODE=clusters`, cluster colours follow a cluster's place in the page pool, so they change when it is streamed again.
+
+### Solid shading
+
+For iterating on scenes, physics and destruction, solid shading draws the frame the way Blender's Solid viewport does: every surface flat grey, lit by a studio light fixed to the camera (a key light from the upper left, a weak fill from the right, and an ambient that goes from sky to ground). Each pixel uses the surface's smooth normal. Turn it on with ` (backtick), App menu → Solid Shading (⇧⌘S), the Rendering section's "Solid shading" checkbox, or `METALRENDERER_VIEW="solid=1"`, which also works in benchmarks. The setting is saved with the others, and the window title says "solid" while it is on.
+
+One kernel (`solidKernel`, Shaders/Output.metal) traces one camera ray per pixel and writes the drawable. Nothing else runs:
+* no shadows, light grid, ReSTIR, MegaLights or many-light sampling;
+* no GI, reflections, denoisers, fog or sky;
+* no TAA, MetalFX or lens.
+
+The scene's update still runs every frame: physics, cloth, soft bodies, hair, liquids, destruction, the crowd's skinning, the plants' wind, virtual geometry, and the TLAS. Everything that moves therefore shows where it is: rigid bodies, debris, ragdolls, cloth, the crowd and liquids' surfaces.
+
+What isn't drawn:
+* window glass, so rooms show through their windows;
+* the lights' shapes;
+* billboard particles, which aren't in the TLAS;
+* terrain water.
+
+Turning solid shading off starts the denoisers' and MetalFX's histories over. Gizmos and click-picking work as usual.
+
+The picture is drawn at the output size, which is what MetalFX would have made, so it stays sharp. Its cost scales with the pixel count. On the M1 Max (no hardware ray tracing), the stress building costs 0.37 ms at 640×400, 1.2 ms at 1280×800 and 2.5 ms at 1920×1200. U (upscaling off) draws it at the traced size; − and = change that size.
+
+Whole frames on the M1 Max, measured with `METALRENDERER_BENCH_SPLIT=0` in release (`-m solid`), each scene's own look against solid shading, all moving:
+
+| Scene | Look | Normal (ms) | Solid (ms) |
+|---|---|---|---|
+| Physics | physics look, 480×300 → 1440×900 | 11.8 | 9.9 |
+| Destruction | cascades, 640×400 → 1920×1200 | 14.9 | 8.6 |
+| City | cascades, 640×400 → 1920×1200 | 9.1 | 2.4 |
+| Stress building (rooms) | cascades, 640×400 → 1920×1200 | 13.1 | 2.6 |
+| Crowd | cascades, 640×400 → 1920×1200 | 17.6 | 12.9 |
+
+In the city and the stress building, solid shading is 4–5× faster: the solid pass is the whole frame. The other scenes keep their own work.
+* Physics: the simulation's steps, 6.9 ms.
+* Destruction: the steps, 4.9 ms.
+* Crowd: the skinned characters' BLAS refits, 6.2 ms. Its solid pass also costs more, 6.1 ms, because refitted trees trace slower.
+
+Split timings come from the same mode without `METALRENDERER_BENCH_SPLIT=0`.
 
 ### Reference rendering
 

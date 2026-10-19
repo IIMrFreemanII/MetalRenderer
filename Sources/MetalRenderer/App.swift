@@ -210,7 +210,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         controller.onToggleProjectGraph = { [weak self] in self?.toggleProjectGraph(nil) }
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
+        solidItem?.state = controller.settings.solid ? .on : .off
         controller.observeSettings { [weak self] s in
+            self?.solidItem?.state = s.solid ? .on : .off
             guard let self, s.scene.kind != kind else { return }
             kind = s.scene.kind
             if kind == .plants, self.plantEditor?.isVisible == false { self.plantEditor?.show(nextTo: self.window) }
@@ -348,6 +350,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
     private var dayBarItem: NSMenuItem?
 
+    @objc private func toggleSolid(_ sender: Any?) { controller.update { $0.solid.toggle() } }
+    private var solidItem: NSMenuItem?
+
     private func buildMenu() {
         let mainMenu = NSMenu()
         let appItem = NSMenuItem()
@@ -387,6 +392,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             day.target = self
             day.state = DayBar.isEnabled ? .on : .off
             dayBarItem = day
+            let solid = appMenu.addItem(withTitle: "Solid Shading (`)", action: #selector(toggleSolid(_:)), keyEquivalent: "s")
+            solid.keyEquivalentModifierMask = [.command, .shift]
+            solid.target = self
+            solidItem = solid
         }
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit MetalRenderer",

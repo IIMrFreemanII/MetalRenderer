@@ -1272,6 +1272,10 @@ struct RenderSettings: Equatable, Codable {
     var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     var paused = false
     var viewMode = 0
+    /// Solid shading, like Blender's viewport: every surface flat grey under a fixed studio light, one camera ray a
+    /// pixel and nothing else (no shadows, GI, reflections, fog, sky, denoisers, MetalFX or lens). For iterating on
+    /// scenes and physics fast (Renderer: FramePlan.solid, Shaders/Output.metal solidKernel).
+    var solid = false
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker

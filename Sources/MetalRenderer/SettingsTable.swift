@@ -591,6 +591,7 @@ enum SettingsTable {
                 .available { FrameInterpolation.allCases[$0] == .off || Capabilities.current.frameInterpolator },
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
+            S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
             S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),
