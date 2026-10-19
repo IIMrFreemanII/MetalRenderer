@@ -97,3 +97,35 @@ Measuring:
 Next:
 - **GPU:** its substeps run in one threadgroup over every body, which is now the limit (47 ms).
 - **CPU:** a sleeping body still runs its broad-phase query each step.
+
+## Big worlds on the GPU, and sleepers that follow their supports (branch `claude/gpu-physics-wide`)
+
+The GPU step for three buildings settling, part by part: broad phase 16 ms, colouring 12 ms, substeps 22 ms, narrow
+phase 10 ms. The substeps ran in one threadgroup (384 threads, on one core). The parts were timed by encoding each
+alone on a settled state. Timing by skipping a part misled: without the narrow phase there are no contacts, so the
+substeps cost nothing.
+
+Changes:
+- **Levelled grid on the GPU:** separate heads and next for the levelled grid (`physicsFractureInsertKernel`); the
+  particles keep the old grid. The first level's cell is fixed when the GPU world is built. Same pairs: the GPU
+  states equal main's.
+- **Colouring across the GPU:** `physicsColour*Kernel` and `encodeColours`, with indirect dispatches over the live
+  pairs and two per round. Same colours. The counts buffer is bound at index 4: putting it at 0 overwrote the step's
+  params, and the massive building then hung the GPU at 5 s.
+- **Substeps across the GPU:** `encodeWideSubsteps`, for bodies and joints only. The rounds' first 10 colours and the
+  left-over pairs' first 4 run wide; the rest run in `physicsWideTailKernel`. With all 64 colours as dispatches, the
+  collapse was 45% slower, since each dispatch costs a few µs. The settling runs in the old kernel through a group
+  with no substeps (the extra entry in `groups`). Results are not bit-identical to the one-threadgroup kernel, since
+  the same functions round a last bit differently in other kernels.
+- **Rubble wakes when the piece under it leaves its place** (`motion.w`, `below`), on both CPU and GPU.
+  `testASleepingHeapWakesWhereItIsTouched` shoots, blasts and pulls a loose heap, lets it sleep again, then wakes
+  everything. Without the rule a piece moved 9 cm; now the most is 0.8 cm, where before the heaps slept it was 1.4 cm.
+  Three buildings at 25 s on the CPU: 632 pieces awake, 20 ms a step. A 1–1.5 cm drift window didn't fix the moves and
+  cost far more.
+
+Numbers (M1 Max, three buildings, GPU physics pass): settling 46.7 → 29.8 ms; collapsing 15.6 → 16.7 ms.
+
+Next:
+- an indirect command buffer that the GPU writes with only the colours there are;
+- the narrow phase's refresh passes, about 3 ms each mostly in launching 170,000 empty entries: run them over the
+  coloured pairs only.

@@ -217,7 +217,8 @@ final class PhysicsWorld {
     var wakeFlags: [UInt8] = []
     /// With fractured objects: each body's pose when its still time began (position, rotation; `settle`), and how
     /// fast its mass went over the last step (x: its move, y: its turn x its radius of gyration, each over the step;
-    /// z: 1 if it left where its still time began then; what wakes a sleeper it touches: `wake`), kept.
+    /// z: 1 if it left where its still time began soon after it began, w: 1 if it left it at all; what wakes a sleeper
+    /// it touches: `wake`), kept.
     var sleepAnchors: [SIMD8<Float>] = []
     var stepMotion: [SIMD4<Float>] = []
     /// The particles as a substep's Jacobi pass found them (solveParticles), kept.

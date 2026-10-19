@@ -27,7 +27,10 @@ enum Kernel: Int, CaseIterable {
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
-    case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow   // destruction (Physics+Fracture.swift)
+    case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow, physicsFractureClear, physicsFractureInsert,
+         physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourCount,
+         physicsColourStarts, physicsColourScatter, physicsColourExtra,
+         physicsWideStart, physicsWideIntegrate, physicsWideVelocities, physicsWideArgs, physicsWidePush, physicsWideKick, physicsWideJoints, physicsWideTail   // destruction (Physics+Fracture.swift)
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder

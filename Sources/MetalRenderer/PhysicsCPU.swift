@@ -257,12 +257,14 @@ extension PhysicsWorld {
 
     /// With fractured objects (wake): whether moving body `o`, which went at `motion` over the last step, wakes a
     /// sleeper it touches: faster than the wake speed or turn over the step (not at the last substep's speeds, which
-    /// a heap's solve leaves jittering). Rubble (`rubble`) wakes only for a hit (`rubbleWake` times that) or a
-    /// partner that moves on (it left where its still time began that step, soon after it began, `motion.z`): about 44 of a settled heap's pieces rock past the wake speed each step, in place,
-    /// and they woke 900 pieces a second; the pieces they woke jolted as they woke, and woke their own.
-    @inline(__always) static func rubbleStirs(_ o: GPUPhysicsBody, _ motion: SIMD4<Float>, rubble: Bool, _ p: GPUPhysicsParams) -> Bool {
+    /// a heap's solve leaves jittering). Rubble (`rubble`) wakes only for a hit (`rubbleWake` times that), a partner
+    /// moving on (it left where its still time began soon after it began, `motion.z`), or one under it (`below`)
+    /// leaving its place at all (`motion.w`): about 44 of a settled heap's pieces rock past the wake speed each step,
+    /// in place, and they woke 900 pieces a second; but what rests on a piece that slides off slowly must come too
+    /// (woken all at once, a heap whose sleepers had stayed put on their supports' last places moved 9 cm).
+    @inline(__always) static func rubbleStirs(_ o: GPUPhysicsBody, _ motion: SIMD4<Float>, rubble: Bool, below: Bool, _ p: GPUPhysicsParams) -> Bool {
         guard moves(o), motion.x > p.rolling.z || motion.y > p.rolling.w else { return false }
-        return !rubble || motion.z != 0 || motion.x > rubbleWake * p.rolling.z || motion.y > rubbleWake * p.rolling.w
+        return !rubble || (below && motion.w != 0) || motion.z != 0 || motion.x > rubbleWake * p.rolling.z || motion.y > rubbleWake * p.rolling.w
     }
 
     /// Whether body b (body i, `initial` its first pose) is rubble: a piece more than `fallen` from where it began,
@@ -290,7 +292,8 @@ extension PhysicsWorld {
                             guard partner & PhysicsWorld.staticBit == 0 else { continue }
                             let o = s.bodies[Int(partner)]
                             let stirs = heaps && !PhysicsWorld.kinematic(o)
-                                ? PhysicsWorld.rubbleStirs(o, motion[Int(partner)], rubble: rubble, p) : PhysicsWorld.stirs(o, p)
+                                ? PhysicsWorld.rubbleStirs(o, motion[Int(partner)], rubble: rubble,
+                                                           below: o.position.y < s.bodies[i].position.y, p) : PhysicsWorld.stirs(o, p)
                             guard stirs else { continue }
                             flags[i] = 1
                             break
@@ -1087,6 +1090,7 @@ extension PhysicsWorld {
                                 // (It moves on: left in under half the sleep time, faster than twice the sleep speed. Not one
                                 // just woken, which starts its time here, nor one creeping out after a while.)
                                 if b.prevPosition.w > 0 && b.prevPosition.w <= p.sleep.z / 2 { motion[i].z = 1 }
+                                if b.prevPosition.w > 0 { motion[i].w = 1 }   // (it left its place: what rests on it wakes)
                                 s.bodies[i].prevPosition.w = p.grid.w
                                 anchors[i] = here
                             }
