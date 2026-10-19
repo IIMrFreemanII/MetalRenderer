@@ -241,5 +241,15 @@ final class SDFTests: XCTestCase {
         XCTAssertEqual(word(2, 60), UInt32(scene.meshes.count))
         XCTAssertEqual(word(1, 48) & MTLAccelerationStructureInstanceOptions.nonOpaque.rawValue, MTLAccelerationStructureInstanceOptions.nonOpaque.rawValue)
         XCTAssertEqual(word(0, 48) & MTLAccelerationStructureInstanceOptions.opaque.rawValue, MTLAccelerationStructureInstanceOptions.opaque.rawValue)
+
+        // Metal 4's descriptors are indirect: they name the boxes by resource ID, the boxes' after the meshes'.
+        let indirect = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal4, slots: 2))
+        XCTAssertTrue(indirect.indirect)
+        let q = indirect.instanceDescriptors[0].contents()
+        func id(_ instance: Int) -> UInt64 {
+            q.load(fromByteOffset: instance * SceneBuffers.indirectStride + 64, as: MTLResourceID.self)._impl
+        }
+        XCTAssertEqual(id(1), indirect.primitives[scene.meshes.count + 1].gpuResourceID._impl)
+        XCTAssertEqual(id(2), indirect.primitives[scene.meshes.count].gpuResourceID._impl)
     }
 }
