@@ -856,6 +856,16 @@ final class Scene {
         return try body(physics)
     }
 
+    /// Where the CPU's steps broke pieces (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust: the stepper's
+    /// latest, or the world's.
+    var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
+        if let physicsStepper {
+            let drawn = physicsStepper.latest
+            return (drawn.breakLog, drawn.breakSteps, drawn.breakTotal)
+        }
+        return physics.map { ($0.breakLog, $0.breakSteps, $0.breakTotal) }
+    }
+
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
     var drawnPhysics: PhysicsStepper.Drawn? {
         if let physicsStepper { return physicsStepper.latest }

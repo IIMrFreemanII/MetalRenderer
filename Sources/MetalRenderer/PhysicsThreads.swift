@@ -242,6 +242,27 @@ struct NarrowMemo {
     }
 }
 
+/// The broad phase's memo (PhysicsWorld.broadPhase): body i's partners as the last step found them are what this
+/// step's query would find again when i is as it was then, so is each of them, and no body that isn't as it was
+/// (`changed`, in a grid of their own: `cells`, `bodies`, `bigs`) reaches it now. Its partners are the nearest
+/// `maxPairs` of those within reach by a total order: one that changed and kept none of its places among them, and
+/// doesn't reach it now, can't make it keep others; one now within reach can.
+struct BroadMemo {
+    let changed: UnsafeBufferPointer<UInt8>
+    let cells: PhysicsCellGrid.View
+    let used: UInt32        // (the levels the changed bodies are in)
+    let bodies: UnsafeBufferPointer<Int32>
+    let bigs: UnsafeBufferPointer<Int32>
+
+    /// What of body b the broad phase reads, bit for bit (the partners' tests: PhysicsWorld.consider, touchesStatic).
+    @inline(__always) static func key(_ b: GPUPhysicsBody) -> SIMD16<UInt32> {
+        SIMD16(b.position.x.bitPattern, b.position.y.bitPattern, b.position.z.bitPattern, b.position.w.bitPattern,
+               b.rotation.x.bitPattern, b.rotation.y.bitPattern, b.rotation.z.bitPattern, b.rotation.w.bitPattern,
+               b.velocity.x.bitPattern, b.velocity.y.bitPattern, b.velocity.z.bitPattern,
+               b.invInertia.w.bitPattern, b.info.x, b.info.y, b.info.z, b.info.w)
+    }
+}
+
 extension PhysicsWorld {
     /// `body` with the narrow phase's memo lent as raw buffers (NarrowMemo).
     func withNarrowMemo<R>(_ body: (NarrowMemo) throws -> R) rethrows -> R {
@@ -458,12 +479,19 @@ final class PhysicsStepper {
         var particles: [GPUPhysicsParticle]
         var hairVertices: [GPUHairVertex]
         var fractureState: [GPUFractureState]
+        /// Where pieces broke (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust.
+        var breakLog: [GPUBreakEvent]
+        var breakSteps: [Int]
+        var breakTotal: Int
 
         init(_ w: PhysicsWorld) {
             bodies = w.bodies
             particles = w.particles
             hairVertices = w.hairVertices
             fractureState = w.fractureState
+            breakLog = w.breakLog
+            breakSteps = w.breakSteps
+            breakTotal = w.breakTotal
         }
     }
 
