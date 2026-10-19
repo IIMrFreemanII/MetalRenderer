@@ -114,16 +114,17 @@ extension PhysicsWorld {
     /// dragged into them, which went through.) The grid is built here; each body's query on every core.
     private func broadPhase(_ p: GPUPhysicsParams) {
         let size = p.grid.x
-        var grid: [SIMD3<Int32>: [Int]] = [:]
-        for (i, b) in bodies.enumerated() where !PhysicsWorld.disabled(b) {
-            grid[PhysicsWorld.cell(PhysicsMath.xyz(b.position), size), default: []].append(i)
+        bodies.withUnsafeBufferPointer { b in
+            bodyCells.build(b.count) { i in PhysicsWorld.disabled(b[i]) ? nil : PhysicsWorld.cell(PhysicsMath.xyz(b[i].position), size) }
         }
         let shapes = self.shapes, boxes = shapeBoxes, staticBounds = self.staticBounds, byGap = fractures, n = bodies.count
-        withStepBuffers { s in
-            PhysicsPool.shared.parallel(n, grain: 32) { range in
-                withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxPairs) { kept in
-                    for i in range {
-                        PhysicsWorld.partners(i, s, grid, shapes, boxes, staticBounds, p, byGap: byGap, kept: kept)
+        bodyCells.withView { grid in
+            withStepBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 32) { range in
+                    withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxPairs) { kept in
+                        for i in range {
+                            PhysicsWorld.partners(i, s, grid, shapes, boxes, staticBounds, p, byGap: byGap, kept: kept)
+                        }
                     }
                 }
             }
@@ -132,7 +133,7 @@ extension PhysicsWorld {
 
     /// Body i's partners (broadPhase), kept nearest first in `kept` as they are found (the same `maxPairs` as sorting
     /// them all: the order is total, and no partner is found twice).
-    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: [SIMD3<Int32>: [Int]], _ shapes: [GPUPhysicsShape],
+    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
                                            _ boxes: [SIMD4<Float>], _ staticBounds: [AABB], _ p: GPUPhysicsParams, byGap: Bool,
                                            kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
         let k = PhysicsWorld.maxPairs
@@ -156,8 +157,9 @@ extension PhysicsWorld {
         for dz: Int32 in -1...1 {
             for dy: Int32 in -1...1 {
                 for dx: Int32 in -1...1 {
-                    guard let cell = grid[c &+ SIMD3(dx, dy, dz)] else { continue }
-                    for j in cell where j != i && !PhysicsWorld.joined(b, i, s.bodies[j], j) {
+                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
+                        let j = grid.item(m)
+                        guard j != i && !PhysicsWorld.joined(b, i, s.bodies[j], j) else { continue }
                         let o = s.bodies[j]
                         if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
                         if PhysicsWorld.held(b) && PhysicsWorld.held(o) { continue }             // two anchored pieces
@@ -914,13 +916,16 @@ extension PhysicsWorld {
     private func particleBroadPhase(_ p: GPUPhysicsParams) {
         guard !particles.isEmpty else { return }
         let size = p.particleGrid.x, n = particles.count
-        var grid: [SIMD3<Int32>: [Int]] = [:]
-        for (i, q) in particles.enumerated() { grid[PhysicsWorld.cell(PhysicsMath.xyz(q.position), size), default: []].append(i) }
+        particles.withUnsafeBufferPointer { q in
+            particleCells.build(q.count) { i in PhysicsWorld.cell(PhysicsMath.xyz(q[i].position), size) }
+        }
         let shapes = self.shapes, staticBounds = self.staticBounds
-        withParticleBuffers { s in
-            PhysicsPool.shared.parallel(n, grain: 64) { range in
-                withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxNeighbours) { kept in
-                    for i in range { PhysicsWorld.particleNeighbours(i, s, grid, shapes, staticBounds, p, kept: kept) }
+        particleCells.withView { grid in
+            withParticleBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 64) { range in
+                    withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxNeighbours) { kept in
+                        for i in range { PhysicsWorld.particleNeighbours(i, s, grid, shapes, staticBounds, p, kept: kept) }
+                    }
                 }
             }
         }
@@ -929,7 +934,7 @@ extension PhysicsWorld {
     /// Particle i's neighbours and colliders (particleBroadPhase): neighbours kept nearest first as they are found
     /// (the same as sorting them all: the order is total, none found twice); colliders found in the order they sort
     /// in (statics, then bodies, each by number), the first `maxColliders` kept.
-    @inline(__always) static func particleNeighbours(_ i: Int, _ s: ParticleBuffers, _ grid: [SIMD3<Int32>: [Int]], _ shapes: [GPUPhysicsShape],
+    @inline(__always) static func particleNeighbours(_ i: Int, _ s: ParticleBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
                                                      _ staticBounds: [AABB], _ p: GPUPhysicsParams,
                                                      kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
         let k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
@@ -940,8 +945,9 @@ extension PhysicsWorld {
         for dz: Int32 in -1...1 {
             for dy: Int32 in -1...1 {
                 for dx: Int32 in -1...1 {
-                    guard let cell = grid[c &+ SIMD3(dx, dy, dz)] else { continue }
-                    for j in cell where j != i {
+                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
+                        let j = grid.item(m)
+                        guard j != i else { continue }
                         let o = s.particles[j]
                         if !PhysicsWorld.meets(q, o) { continue }   // cloths only meet colliders, a soft body not itself
                         let reach = r + PhysicsWorld.particleReach(o, p)

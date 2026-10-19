@@ -107,17 +107,25 @@ extension PhysicsWorld {
         return pose
     }
 
-    /// Whether a body's or a static's sphere reaches a strand rooted at `centre` and `reach` long.
-    func hairColliders(centre: SIMD3<Float>, reach: Float, _ p: GPUPhysicsParams) -> [UInt32] {
-        var found: [UInt32] = []
-        for s in statics.indices where found.count < PhysicsWorld.maxHairColliders && touchesStatic(s, centre: centre, radius: reach) {
-            found.append(UInt32(s) | PhysicsWorld.staticBit)
+    /// The bodies' and statics' spheres that reach a strand rooted at `centre` and `reach` long (statics first, then
+    /// bodies, each by number), `maxHairColliders` at most, into `found`; returns how many.
+    @inline(__always) static func hairColliders(centre: SIMD3<Float>, reach: Float, _ p: GPUPhysicsParams, _ s: HairBuffers,
+                                                found: UnsafeMutableBufferPointer<UInt32>) -> Int {
+        var count = 0
+        for st in s.statics.indices where count < PhysicsWorld.maxHairColliders
+            && PhysicsWorld.touchesStatic(s.statics[st], s.shapeKinds, s.staticBounds[st], centre: centre, radius: reach) {
+            found[count] = UInt32(st) | PhysicsWorld.staticBit
+            count += 1
         }
-        for (j, b) in bodies.enumerated() where found.count < PhysicsWorld.maxHairColliders {
+        for j in s.bodies.indices where count < PhysicsWorld.maxHairColliders {
+            let b = s.bodies[j]
             let r = reach + PhysicsWorld.reach(b, p)
-            if length_squared(PhysicsMath.xyz(b.position) - centre) < r * r { found.append(UInt32(j)) }
+            if length_squared(PhysicsMath.xyz(b.position) - centre) < r * r {
+                found[count] = UInt32(j)
+                count += 1
+            }
         }
-        return found
+        return count
     }
 
     // MARK: - Stepping (the CPU's)
@@ -126,40 +134,58 @@ extension PhysicsWorld {
     func stepHair(_ start: [SIMD8<Float>]) {
         guard !hairStrands.isEmpty else { return }
         let p = params, hp = hairParams
-        let strands = hairStrands
+        let strands = hairStrands, shapeKinds = shapes, staticBounds = self.staticBounds, view = shapeData
         var still = [UInt32](repeating: 0, count: strands.count)
         hairVertices.withUnsafeMutableBufferPointer { vertices in
-            still.withUnsafeMutableBufferPointer { flags in
-                PhysicsPool.shared.parallel(strands.count, grain: 64) { range in   // (the step's workers: PhysicsThreads.swift)
-                    for s in range {
-                        flags[s] = stepStrand(strands[s], vertices.baseAddress!, start, p, hp)
+        still.withUnsafeMutableBufferPointer { flags in
+        start.withUnsafeBufferPointer { start in
+        bodies.withUnsafeBufferPointer { bodies in
+        statics.withUnsafeBufferPointer { statics in
+        strands.withUnsafeBufferPointer { strands in
+            let s = HairBuffers(vertices: vertices.baseAddress!, start: start, bodies: bodies, statics: statics,
+                                staticBounds: staticBounds, shapeKinds: shapeKinds, shapes: view)
+            PhysicsPool.shared.parallel(strands.count, grain: 64) { range in   // (the step's workers: PhysicsThreads.swift)
+                withUnsafeTemporaryAllocation(of: SIMD3<Float>.self, capacity: 2 * (PhysicsWorld.maxHairVertices + 1)) { scratch in
+                    withUnsafeTemporaryAllocation(of: UInt32.self, capacity: PhysicsWorld.maxHairColliders) { colliders in
+                        for k in range {
+                            flags[k] = PhysicsWorld.stepStrand(strands[k], s, p, hp, scratch: scratch, colliders: colliders)
+                        }
                     }
                 }
             }
         }
+        }
+        }
+        }
+        }
+        }
         for s in hairStrands.indices { hairStrands[s].info.w = still[s] }
     }
 
-    /// One strand's step; returns 1 if it lies still on a sleeping body (it then stops), else 0.
-    private func stepStrand(_ strand: GPUHairStrand, _ v: UnsafeMutablePointer<GPUHairVertex>, _ start: [SIMD8<Float>],
-                            _ p: GPUPhysicsParams, _ hp: GPUHairParams) -> UInt32 {
+    /// One strand's step; returns 1 if it lies still on a sleeping body (it then stops), else 0. (`scratch`: room for
+    /// its vertices' positions before and their corrections; `colliders`: for those it may touch.)
+    static func stepStrand(_ strand: GPUHairStrand, _ s: HairBuffers, _ p: GPUPhysicsParams, _ hp: GPUHairParams,
+                           scratch: UnsafeMutableBufferPointer<SIMD3<Float>>, colliders: UnsafeMutableBufferPointer<UInt32>) -> UInt32 {
+        let v = s.vertices
         let first = Int(strand.info.y), n = Int(strand.info.z)
-        let body = strand.info.x == PhysicsWorld.none ? nil : Int(strand.info.x)
-        let asleep = body.map { bodies[$0].info.y & PhysicsWorld.asleep != 0 } ?? false
+        let body = strand.info.x == PhysicsWorld.none ? -1 : Int(strand.info.x)
+        let asleep = body >= 0 && s.bodies[body].info.y & PhysicsWorld.asleep != 0
         if asleep && strand.info.w != 0 { return 1 }
         var p0 = SIMD3<Float>(), q0 = SIMD4<Float>(0, 0, 0, 1), p1 = p0, q1 = q0
-        if let body {
-            p0 = SIMD3(start[body][0], start[body][1], start[body][2])
-            q0 = SIMD4(start[body][4], start[body][5], start[body][6], start[body][7])
-            p1 = PhysicsMath.xyz(bodies[body].position)
-            q1 = bodies[body].rotation
+        if body >= 0 {
+            let b0 = s.start[body]
+            p0 = SIMD3(b0[0], b0[1], b0[2])
+            q0 = SIMD4(b0[4], b0[5], b0[6], b0[7])
+            p1 = PhysicsMath.xyz(s.bodies[body].position)
+            q1 = s.bodies[body].rotation
         }
-        let colliders = hairColliders(centre: Pose(GPUPhysicsBody(position: SIMD4(p1, 0), rotation: q1)).toWorld(PhysicsMath.xyz(v[first].rest)),
-                                      reach: strand.across.w + PhysicsWorld.hairReach, p)
+        let touching = PhysicsWorld.hairColliders(centre: Pose(GPUPhysicsBody(position: SIMD4(p1, 0), rotation: q1)).toWorld(PhysicsMath.xyz(v[first].rest)),
+                                                  reach: strand.across.w + PhysicsWorld.hairReach, p, s, found: colliders)
         let h = hp.gravity.w, subs = Int(hp.counts.w)
-        let before = (first..<(first + n)).map { PhysicsMath.xyz(v[$0].position) }
+        let before = scratch.baseAddress!, corrections = scratch.baseAddress! + (PhysicsWorld.maxHairVertices + 1)
+        for i in 0..<n { before[i] = PhysicsMath.xyz(v[first + i].position) }
+        for i in 0...PhysicsWorld.maxHairVertices { corrections[i] = .zero }
         let gravity = PhysicsMath.xyz(hp.gravity)
-        var corrections = [SIMD3<Float>](repeating: .zero, count: PhysicsWorld.maxHairVertices + 1)
         for sub in 0..<subs {
             let pose = PhysicsWorld.between(p0, q0, p1, q1, Float(sub + 1) / Float(subs))
             let t = hp.air.z + h * Float(sub + 1)
@@ -201,7 +227,7 @@ extension PhysicsWorld {
                 let a = PhysicsMath.xyz(v[i - 1].position), x = PhysicsMath.xyz(v[i].position)
                 let led = a + PhysicsMath.direction(x - a) * v[i].previous.w
                 corrections[i - first] = led - x   // DFTL's d: the follow-the-leader move alone
-                var y = pushOut(led, v[i], colliders, h)
+                var y = PhysicsWorld.pushOut(led, v[i], UnsafeBufferPointer(rebasing: colliders[0..<touching]), s, h)
                 y = a + PhysicsMath.direction(y - a) * v[i].previous.w
                 v[i].position = SIMD4(y, v[i].position.w)
             }
@@ -220,14 +246,15 @@ extension PhysicsWorld {
     }
 
     /// `y` pushed out of the colliders it is in, with friction against its slide over them.
-    @inline(__always) private func pushOut(_ y: SIMD3<Float>, _ vertex: GPUHairVertex, _ colliders: [UInt32], _ h: Float) -> SIMD3<Float> {
+    @inline(__always) private static func pushOut(_ y: SIMD3<Float>, _ vertex: GPUHairVertex, _ colliders: UnsafeBufferPointer<UInt32>,
+                                                  _ s: HairBuffers, _ h: Float) -> SIMD3<Float> {
         var y = y
         for code in colliders {
-            let b = partner(code), pose = Pose(b), shape = Int(b.info.x)
+            let b = s.partner(code), pose = Pose(b), shape = Int(b.info.x)
             let local = pose.toBody(y)
-            let depth = distance(shape: shape, local) - vertex.position.w
+            let depth = s.shapes.distance(shape: shape, local) - vertex.position.w
             guard depth < 0 else { continue }
-            let normal = pose.direction(gradient(shape: shape, local))
+            let normal = pose.direction(s.shapes.gradient(shape: shape, local))
             let surface = PhysicsMath.xyz(b.velocity) + cross(PhysicsMath.xyz(b.angular), y - pose.position)
             y += PhysicsWorld.particlePush(normal, min(-depth, PhysicsWorld.hairPush), y - PhysicsMath.xyz(vertex.previous) - surface * h,
                                            (vertex.velocity.w * b.velocity.w).squareRoot())

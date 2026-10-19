@@ -209,6 +209,8 @@ final class PhysicsWorld {
     var wakeFlags: [UInt8] = []
     /// The particles as a substep's Jacobi pass found them (solveParticles), kept.
     var particleSnapshot: [GPUPhysicsParticle] = []
+    /// The broad phases' cells of the bodies and of the particles (PhysicsCellGrid), kept.
+    var bodyCells = PhysicsCellGrid(), particleCells = PhysicsCellGrid()
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.

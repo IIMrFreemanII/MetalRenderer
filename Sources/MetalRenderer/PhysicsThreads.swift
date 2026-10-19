@@ -260,6 +260,126 @@ extension PhysicsWorld {
     }
 }
 
+/// What the hair's strands read and write as they step on the workers (PhysicsWorld.stepHair): a strand writes only
+/// its own vertices; the bodies (and their poses when the step began) are read only.
+struct HairBuffers {
+    let vertices: UnsafeMutablePointer<GPUHairVertex>
+    let start: UnsafeBufferPointer<SIMD8<Float>>
+    let bodies: UnsafeBufferPointer<GPUPhysicsBody>
+    let statics: UnsafeBufferPointer<GPUPhysicsBody>
+    let staticBounds: [AABB]
+    let shapeKinds: [GPUPhysicsShape]
+    let shapes: PhysicsShapes
+
+    /// A collider's record: a body, or a static collider.
+    @inline(__always) func partner(_ code: UInt32) -> GPUPhysicsBody {
+        code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : bodies[Int(code)]
+    }
+}
+
+/// The cells the broad phases' things are in (broadPhase, particleBroadPhase), as their queries on the workers read
+/// them: each cell's items in the order they were added (as a dictionary of arrays held them), flat, found through an
+/// open-addressed table, so a lookup counts no references. Kept between steps, its arrays reused.
+struct PhysicsCellGrid {
+    private var keys: [SIMD3<Int32>] = []
+    private var slots: [Int32] = []
+    private var starts: [Int32] = []
+    private var items: [Int32] = []
+    private var cellOf: [Int32] = []
+
+    @inline(__always) static func hash(_ k: SIMD3<Int32>) -> Int {
+        Int(UInt32(bitPattern: k.x &* 73_856_093 ^ k.y &* 19_349_663 ^ k.z &* 83_492_791))
+    }
+
+    /// `a` as `count` copies of `value`, its storage kept.
+    private static func reset<T>(_ a: inout [T], _ count: Int, _ value: T) {
+        a.removeAll(keepingCapacity: true)
+        a.append(contentsOf: repeatElement(value, count: count))
+    }
+
+    /// Items 0..<n in their cells (`key`; nil for one in none).
+    mutating func build(_ n: Int, _ key: (Int) -> SIMD3<Int32>?) {
+        var capacity = 16
+        while capacity < 2 * n { capacity *= 2 }
+        let mask = capacity - 1
+        PhysicsCellGrid.reset(&slots, capacity, -1)
+        PhysicsCellGrid.reset(&keys, n, .zero)        // (n cells at most)
+        PhysicsCellGrid.reset(&starts, n + 1, 0)
+        PhysicsCellGrid.reset(&cellOf, n, -1)
+        var cells = 0
+        slots.withUnsafeMutableBufferPointer { slots in
+        keys.withUnsafeMutableBufferPointer { keys in
+        starts.withUnsafeMutableBufferPointer { starts in
+        cellOf.withUnsafeMutableBufferPointer { cellOf in
+            for i in 0..<n {
+                guard let k = key(i) else { continue }
+                var at = PhysicsCellGrid.hash(k) & mask
+                while slots[at] >= 0 && keys[Int(slots[at])] != k { at = (at + 1) & mask }
+                if slots[at] < 0 {
+                    slots[at] = Int32(cells)
+                    keys[cells] = k
+                    cells += 1
+                }
+                let c = Int(slots[at])
+                cellOf[i] = Int32(c)
+                starts[c + 1] += 1
+            }
+            for c in 0..<cells { starts[c + 1] += starts[c] }
+        }
+        }
+        }
+        }
+        PhysicsCellGrid.reset(&items, Int(starts[cells]), 0)
+        items.withUnsafeMutableBufferPointer { items in
+        starts.withUnsafeMutableBufferPointer { starts in
+        cellOf.withUnsafeBufferPointer { cellOf in
+            // (Each cell's items in order, its start moved along as they go in, then put back.)
+            for i in 0..<n where cellOf[i] >= 0 {
+                let c = Int(cellOf[i])
+                items[Int(starts[c])] = Int32(i)
+                starts[c] += 1
+            }
+            var at = cells
+            while at > 0 { starts[at] = starts[at - 1]; at -= 1 }
+            starts[0] = 0
+        }
+        }
+        }
+    }
+
+    struct View {
+        let keys: UnsafeBufferPointer<SIMD3<Int32>>
+        let slots: UnsafeBufferPointer<Int32>
+        let starts: UnsafeBufferPointer<Int32>
+        let items: UnsafeBufferPointer<Int32>
+
+        /// The items in cell `k`, in the order they were added (none for an empty cell).
+        @inline(__always) func cell(_ k: SIMD3<Int32>) -> Range<Int> {
+            let mask = slots.count - 1
+            var at = PhysicsCellGrid.hash(k) & mask
+            while slots[at] >= 0 {
+                let c = Int(slots[at])
+                if keys[c] == k { return Int(starts[c])..<Int(starts[c + 1]) }
+                at = (at + 1) & mask
+            }
+            return 0..<0
+        }
+        @inline(__always) func item(_ m: Int) -> Int { Int(items[m]) }
+    }
+
+    func withView<R>(_ body: (View) throws -> R) rethrows -> R {
+        try keys.withUnsafeBufferPointer { keys in
+            try slots.withUnsafeBufferPointer { slots in
+                try starts.withUnsafeBufferPointer { starts in
+                    try items.withUnsafeBufferPointer { items in
+                        try body(View(keys: keys, slots: slots, starts: starts, items: items))
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A world stepped on a thread of its own, behind the frame (a CPU-stepped scene: Scene.update, PhysicsSettings.
 /// asynchronous): each frame asks for the steps to its time, with the body the mouse holds then, and draws the bodies
 /// where the steps before left them (`latest`), while these run beside the frame's own work. The same numbers as
