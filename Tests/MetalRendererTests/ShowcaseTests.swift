@@ -3,7 +3,7 @@ import simd
 @testable import MetalRenderer
 
 /// The showcase (Showcase.swift, Scene+Showcase.swift): every model of Assets/ has a look of its own, a setting names
-/// its model, and the lens effects are the showcase's alone.
+/// its model, and the lens effects are the showcase's and, outdoors, the realistic look's alone.
 final class ShowcaseTests: XCTestCase {
     func testEveryAssetHasItsOwnLook() throws {
         let files = Scene.galleryFiles()
@@ -36,10 +36,25 @@ final class ShowcaseTests: XCTestCase {
         XCTAssertEqual(ShowcaseLook.look(for: "no such model").stage, .studio)
     }
 
-    func testLensIsTheShowcasesAlone() {
+    /// The realistic look (Realism) gives the outdoor scenes a camera's lens (auto exposure, a grade, bloom and
+    /// vignette) and haze in their fog; every other scene, and every scene with the look off, has no lens and its kind's fog.
+    func testLensIsTheShowcasesAndTheRealisticLooksAlone() {
         for kind in SceneKind.allCases where kind != .showcase {
-            XCTAssertFalse(PostSettings.preset(for: SceneSettings(kind: kind)).isOn, "\(kind) has lens effects")
-            XCTAssertEqual(FogSettings.preset(for: SceneSettings(kind: kind)), FogSettings.preset(for: kind))
+            var scene = SceneSettings(kind: kind)
+            scene.realism = .off
+            XCTAssertFalse(PostSettings.preset(for: scene).isOn, "\(kind) has lens effects with the realistic look off")
+            XCTAssertEqual(FogSettings.preset(for: scene), FogSettings.preset(for: kind), "\(kind)")
+            for realism in Realism.allCases where realism != .off {
+                scene.realism = realism
+                let post = PostSettings.preset(for: scene), fog = FogSettings.preset(for: scene)
+                XCTAssertEqual(post.isOn, kind.hasRealisticLook, "\(kind), realism \(realism)")
+                if kind.hasRealisticLook {
+                    XCTAssertTrue(post.autoExposure, "\(kind)")
+                    XCTAssertGreaterThan(fog.haze, FogSettings.preset(for: kind).haze, "\(kind)'s aerial perspective")
+                } else {
+                    XCTAssertEqual(fog, FogSettings.preset(for: kind), "\(kind)")
+                }
+            }
         }
         var s = RenderSettings()
         s.applySceneDefaults(from: RenderSettings())
