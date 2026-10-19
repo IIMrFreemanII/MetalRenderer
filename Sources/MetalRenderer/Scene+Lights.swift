@@ -78,6 +78,7 @@ extension Scene {
         case .vfxStage: return camera([0, 2.4, 10.5], pitch: 0.02)
         case .materials: return camera([0, 2.0, 6.6], pitch: -0.17)
         case .painter: return camera([0, 1.5, 3.4], pitch: -0.16)
+        case .destruction: return camera([0, 2.6, 13.5], pitch: -0.1)
         case .cornell, .stress, .gallery, .crowd, .city, .cityNight, .world, .showcase, .plants, .buildings, .characters, .mireland, .terrain:
             return nil   // the crowd's, the city's, the world's and the showcase's are their scenes' to say
         }

@@ -413,6 +413,67 @@ struct GPUPhysicsJoint {
     var info = SIMD4<UInt32>()               // x = A, y = B, z = kind (PhysicsJointKind), w = 0
 }
 
+/// A fractured object's node as the body it is (FractureTree.Node, Physics+Fracture.swift): MSL PhysicsFractureNode.
+/// Every node of a fractured object is a body from the start, its children's bodies one after another; all but the
+/// root are disabled (PhysicsWorld.disabledBit) until their parent breaks.
+struct GPUFractureNode {
+    var info = SIMD4<UInt32>(~0, 0, 0, 0)   // x = its parent's body (none: a root), y = its first child's body, z = how
+                                             // many children, w = flags (PhysicsWorld.anchoredNode ...)
+    var offset = SIMD4<Float>()              // its centre of mass in its parent's body space at rest; w = the impact (N s)
+                                             // that breaks it into its children (0: it has none)
+    var rotation = SIMD4<Float>(0, 0, 0, 1)  // its body's rotation in its parent's (q = q_parent q_rel)
+    var extra = SIMD4<Float>()               // x = its inverse mass once free (an anchored piece has 0 until then),
+                                             // y = the impact (N s) that frees it (its welds broken, its anchor let go),
+                                             // z = its bounding radius if it fades away at rest (a small leaf), else 0,
+                                             // w = its material (FractureMaterial)
+}
+
+/// A weld between two pieces that share a face (FractureTree.Weld): their anchors held together and their turn
+/// about each other kept, until the force it takes passes its strength. Solved as its pair's contact (the narrow
+/// phase marks a welded pair's one contact: Physics+Fracture.swift). MSL PhysicsFractureWeld.
+struct GPUFractureWeld {
+    var anchorA = SIMD4<Float>()             // A's body space; w = the force it holds (N)
+    var anchorB = SIMD4<Float>()             // B's body space; w = its lever (m), the shared face's radius: the moment it
+                                             // holds is the force x this
+    var rest = SIMD4<Float>(0, 0, 0, 1)      // B's rotation in A's at rest (q_b = q_a rest)
+    var info = SIMD4<UInt32>()               // x = A, y = B, z = 1 once broken, w = its load lately (a float's bits:
+                                             // PhysicsWorld.weld)
+}
+
+/// A fractured body's step: what hit it, and what the step's end makes of it. MSL PhysicsFractureState.
+struct GPUFractureState {
+    var strain = SIMD4<Float>()              // x = this step's impacts (N s), y = how long it has lain still (s), z = what
+                                             // it took over from its parent's break (N s), w = the step's verdict
+                                             // (0: nothing, 1: it breaks, 2: it comes free)
+    var impact = SIMD4<Float>()              // xyz = where the impacts were, times their impulse; w = their impulse
+    var direction = SIMD4<Float>(0, 0, 0, 1) // xyz = which way they pushed it, times their impulse; w = its drawn scale
+                                             // (1; less as it fades away)
+    var hold = SIMD4<Float>()                // x = how much longer (s) it is held where it is after its parent broke
+}
+
+/// Something done to the fractured bodies at a step (a shot, a blast, a release): kept for replays. MSL
+/// PhysicsFractureCommand.
+struct GPUFractureCommand {
+    var info = SIMD4<UInt32>()               // x = its first step, y = kind (PhysicsWorld.FractureCommand), z = its body
+                                             // (a shot's ball, a body woken), w = how many steps it lasts
+    var origin = SIMD4<Float>()              // world; w = a blast's radius
+    var direction = SIMD4<Float>()           // a shot's way (unit); w = its speed (m/s), or a blast's speed at its middle
+}
+
+/// Where a piece broke, for the dust (PhysicsGPU.breakRing): MSL PhysicsBreakEvent.
+struct GPUBreakEvent {
+    var position = SIMD4<Float>()            // its centre of mass; w = its radius
+    var velocity = SIMD4<Float>()            // w = its material (FractureMaterial)
+}
+
+/// What the fracture kernels are told: MSL PhysicsFractureParams.
+struct GPUFractureParams {
+    var counts = SIMD4<UInt32>()             // x = bodies, y = welds, z = commands, w = 0
+    var tuning = SIMD4<Float>()              // x = how long a small piece lies still before it fades (s), y = how long it
+                                             // fades (s), z = how far a break's damage reaches per unit of its excess
+                                             // (m), w = how much of it pushes the freed pieces
+}
+
 /// A guide strand of hair (PhysicsHair.swift): a chain of vertices from a root held by a body (or the world). MSL
 /// PhysicsStrand.
 struct GPUHairStrand {
@@ -808,6 +869,12 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsParticle>.stride == 64, "GPUPhysicsParticle layout mismatch")
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
     precondition(MemoryLayout<GPUPhysicsJoint>.stride == 112, "GPUPhysicsJoint layout mismatch")
+    precondition(MemoryLayout<GPUFractureNode>.stride == 64, "GPUFractureNode layout mismatch")
+    precondition(MemoryLayout<GPUFractureWeld>.stride == 64, "GPUFractureWeld layout mismatch")
+    precondition(MemoryLayout<GPUFractureState>.stride == 64, "GPUFractureState layout mismatch")
+    precondition(MemoryLayout<GPUFractureCommand>.stride == 48, "GPUFractureCommand layout mismatch")
+    precondition(MemoryLayout<GPUFractureParams>.stride == 32, "GPUFractureParams layout mismatch")
+    precondition(MemoryLayout<GPUBreakEvent>.stride == 32, "GPUBreakEvent layout mismatch")
     precondition(MemoryLayout<GPUHairStrand>.stride == 64, "GPUHairStrand layout mismatch")
     precondition(MemoryLayout<GPUHairVertex>.stride == 64, "GPUHairVertex layout mismatch")
     precondition(MemoryLayout<GPUHairParams>.stride == 64, "GPUHairParams layout mismatch")

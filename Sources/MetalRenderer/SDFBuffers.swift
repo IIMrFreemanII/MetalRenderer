@@ -40,12 +40,25 @@ final class SDFBuffers {
             made.label = label
             return made
         }
-        var records: [GPUSDFShape] = [], nodeRecords: [GPUSDFNode] = []
+        var records: [GPUSDFShape] = [], nodeRecords: [GPUSDFNode] = [], planes: [SIMD4<Float>] = []
         for (s, shape) in sdf.sdfShapes.enumerated() {
             let box = sdf.sdfBounds[s]
             records.append(GPUSDFShape(lo: SIMD4(box.lo, shape.stepScale), hi: SIMD4(box.hi, 0),
                                        range: SIMD4(UInt32(nodeRecords.count), UInt32(shape.nodes.count), 0, 0)))
-            nodeRecords += shape.gpuNodes
+            nodeRecords += shape.gpuNodes(planes: &planes)
+        }
+        // The cells' planes after the nodes, as float4s from the nodes' start (MSL SDF_CELL reads them there).
+        if !planes.isEmpty {
+            let base = UInt32(nodeRecords.count * MemoryLayout<GPUSDFNode>.stride / 16)
+            for i in nodeRecords.indices where nodeRecords[i].kind == SDFShape.cellKind { nodeRecords[i].volume += base }
+            let per = MemoryLayout<GPUSDFNode>.stride / 16
+            for k in stride(from: 0, to: planes.count, by: per) {
+                var block = GPUSDFNode(row0: .zero, row1: .zero, row2: .zero)
+                withUnsafeMutableBytes(of: &block) { raw in
+                    for j in 0..<min(per, planes.count - k) { raw.storeBytes(of: planes[k + j], toByteOffset: 16 * j, as: SIMD4<Float>.self) }
+                }
+                nodeRecords.append(block)
+            }
         }
         var volumeRecords: [GPUSDFVolume] = [], samples: [Float16] = []
         for v in sdf.sdfVolumes {

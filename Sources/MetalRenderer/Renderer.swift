@@ -701,6 +701,8 @@ final class Renderer: NSObject {
     /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
     /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
     private var pickArmed = false
+    /// The destruction scene's tool (Renderer+Destruction.swift).
+    var destructionTool = DestructionTool.grab
     private var pickRequest: SIMD2<Float>?
     private var pickPending: Int?
     private var pickBuffer: MTLBuffer?
@@ -1102,6 +1104,10 @@ final class Renderer: NSObject {
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
+            if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true, let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty {
+                particlesGPU?.breakRing = ring
+                particlesGPU?.breakProxies = proxies
+            }
             scene.replayParticles()
         }
         try createLightBuffers()
@@ -3348,7 +3354,10 @@ final class Renderer: NSObject {
             if physicsGPU.simulates {
                 // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
                 // buffer, past the watchdog: it catches up over the next frames instead.
-                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                // (Liquids and fractured objects: 20 steps a frame at most, so that a replay of thousands of bodies
+                // stays under the GPU's watchdog; the rest wait for the next frames.)
+                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid || physicsGPU.fractures ? 20 : .max)
+                physicsGPU.sendCommands()
                 if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
@@ -3464,7 +3473,8 @@ final class Renderer: NSObject {
                 particlesGPU.programKernels = kernels
                 scene.replayParticles()
             }
-            let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
+            // (Fractured objects' dust comes from the physics' steps, 20 a frame at most in a replay: these keep up with them.)
+            let (steps, restart) = scene.takeParticleSteps(limit: particlesGPU.breakRing != nil ? 20 : ParticlesGPU.maxStepsPerFrame)
             // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
             let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
             let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
@@ -4917,6 +4927,8 @@ final class Renderer: NSObject {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
+        status.destruction = scene.settings.kind == .destruction
+            ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
         status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
@@ -5148,6 +5160,7 @@ final class Renderer: NSObject {
             return
         }
         if isRepeat { return }
+        if destructionKey(key) { return }
         switch key {
         case " ": settings.paused.toggle()
         case "g": settings.giEnabled.toggle()
@@ -5228,7 +5241,7 @@ final class Renderer: NSObject {
         }
         clickAt = cursor
         leftLook = walker == nil
-        guard let physics = scene.physics else { return }
+        guard let physics = scene.physics, !destructionFires else { return }
         let direction = cursorRay(cursor)
         guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
         let point = camera.position + direction * hit.distance
@@ -5273,6 +5286,8 @@ final class Renderer: NSObject {
                 pickRequest = c
                 pickSelects = false
                 pickArmed = false
+            } else if destructionFires {
+                fireDestruction(at: c)
             } else if walker != nil {
                 use(cursorRay(c))
             } else {

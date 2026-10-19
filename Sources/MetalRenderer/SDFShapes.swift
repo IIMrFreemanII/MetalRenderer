@@ -23,6 +23,9 @@ struct SDFShape {
         case cone(halfHeight: Float, bottom: Float, top: Float)
         /// A baked distance grid (Scene.sdfVolumes).
         case volume(Int)
+        /// A convex polytope (a fractured piece's cell, ConvexCell): inside where n . p <= d for every plane (n, d), n unit;
+        /// its distance the largest plane's (exact inside, a bound outside). `lo`, `hi`: its corners' box.
+        case cell(planes: [SIMD4<Float>], lo: SIMD3<Float>, hi: SIMD3<Float>)
     }
 
     enum Op: UInt32 {
@@ -77,6 +80,7 @@ struct SDFShape {
         case .cylinder: name = "cylinder"
         case .cone: name = "cone"
         case .volume: name = "baked shape"
+        case .cell: name = "piece"
         }
         return nodes.count > 1 ? "\(name) blend" : name
     }
@@ -154,6 +158,10 @@ struct SDFShape {
             return s * sqrt(min(dot(ca, ca), dot(cb, cb)))
         case .volume(let v):
             return volumes[v].distance(q)
+        case .cell(let planes, _, _):
+            var d = -Float.infinity
+            for k in planes { d = max(d, dot(SIMD3(k.x, k.y, k.z), q) - k.w) }
+            return d
         }
     }
 
@@ -178,6 +186,7 @@ struct SDFShape {
         case .cylinder(let h, let r, _): e = SIMD3(r, h, r)
         case .cone(let h, let r1, let r2): e = SIMD3(max(r1, r2), h, max(r1, r2))
         case .volume(let v): return AABB(lo: volumes[v].lo, hi: volumes[v].hi)
+        case .cell(_, let lo, let hi): return AABB(lo: lo, hi: hi)
         }
         return AABB(lo: -e, hi: e)
     }
@@ -209,9 +218,16 @@ struct SDFShape {
 
     /// The kinds and their parameters as MSL SDFNode has them (Shaders/SDF.metal).
     static let sphereKind: UInt32 = 0, boxKind: UInt32 = 1, torusKind: UInt32 = 2, capsuleKind: UInt32 = 3,
-               cylinderKind: UInt32 = 4, coneKind: UInt32 = 5, volumeKind: UInt32 = 6
+               cylinderKind: UInt32 = 4, coneKind: UInt32 = 5, volumeKind: UInt32 = 6, cellKind: UInt32 = 7
 
     var gpuNodes: [GPUSDFNode] {
+        var planes: [SIMD4<Float>] = []
+        return gpuNodes(planes: &planes)
+    }
+
+    /// ...a cell's planes onto `planes`: its node's `volume` is where they start there (SDFBuffers puts them after the
+    /// nodes, and moves that on by where they begin), its `params.x` how many.
+    func gpuNodes(planes: inout [SIMD4<Float>]) -> [GPUSDFNode] {
         nodes.map { n in
             let inv = n.transform.inverse   // shape -> the primitive's space, as rows
             var node = GPUSDFNode(row0: SIMD4(inv[0][0], inv[1][0], inv[2][0], inv[3][0]),
@@ -226,6 +242,9 @@ struct SDFShape {
             case .cylinder(let h, let r, let rr): (node.kind, node.params) = (SDFShape.cylinderKind, SIMD4(h, r, rr, 0))
             case .cone(let h, let r1, let r2): (node.kind, node.params) = (SDFShape.coneKind, SIMD4(h, r1, r2, 0))
             case .volume(let v): (node.kind, node.volume) = (SDFShape.volumeKind, UInt32(v))
+            case .cell(let p, _, _):
+                (node.kind, node.volume, node.params) = (SDFShape.cellKind, UInt32(planes.count), SIMD4(Float(p.count), 0, 0, 0))
+                planes += p
             }
             return node
         }

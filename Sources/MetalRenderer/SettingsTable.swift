@@ -448,6 +448,17 @@ enum SettingsTable {
                 .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
             S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
                 .env(.scene, "fluid").when { $0.scene.kind == .fluids },
+            S.slider("Pieces", \.scene.destruction.pieces, DestructionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "pieces").when { $0.scene.kind == .destruction },
+            S.slider("Toughness", \.scene.destruction.toughness, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "toughness").when { $0.scene.kind == .destruction },
+            S.slider("Weld strength", \.scene.destruction.strength, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "strength").when { $0.scene.kind == .destruction },
+            S.check("Dust and debris", \.scene.destruction.dust).env(.scene, "dust").when { $0.scene.kind == .destruction },
+            S.check("Small pieces fade", \.scene.destruction.fade).env(.scene, "fade").when { $0.scene.kind == .destruction },
+            S.check("Scripted demo", \.scene.destruction.demo).env(.scene, "demo").when { $0.scene.kind == .destruction },
+            S.check("Statues (cut meshes)", \.scene.destruction.statues).env(.scene, "statues").when { $0.scene.kind == .destruction },
+            S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },

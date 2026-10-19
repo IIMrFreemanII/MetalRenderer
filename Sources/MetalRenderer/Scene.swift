@@ -505,6 +505,8 @@ final class Scene {
     var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
     private(set) var physics: PhysicsWorld?
+    /// The destruction scene's shots (Scene+Destruction.swift), if it is that scene.
+    var destructionRig: DestructionRig?
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
@@ -611,6 +613,7 @@ final class Scene {
         case .mireland: buildMireland()
         case .painter: buildPainterWorkshop()
         case .terrain: buildTerrainWorkshop()
+        case .destruction: buildDestruction(settings.destruction)
         }
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
@@ -813,7 +816,8 @@ final class Scene {
         for b in physics.bodies.indices {
             let i = Int(physics.bodies[b].info.z)
             instances[i].prevTransform = instances[i].transform
-            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1]))
+            // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
+            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w))
         }
     }
 
@@ -2214,26 +2218,7 @@ final class Scene {
     func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
         beginObject(model.name, assets: [AssetKey(kind: .model, name: url.lastPathComponent)])   // the outline's: its parts, its lights
         defer { endObject() }
-        var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
-        func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
-            guard let ref else { return .max }
-            let key = ref.image * 2 + (srgb ? 1 : 0)
-            if let i = textureIndex[key] { return i }
-            textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
-                                          name: "\(model.name)/\(model.images[ref.image].name)",
-                                          modelPath: url.path, cacheKey: "\(ref.image)-\(srgb ? "srgb" : "linear")"))
-            textureIndex[key] = UInt32(textures.count - 1)
-            return UInt32(textures.count - 1)
-        }
-        let firstMaterial = materials.count
-        for m in model.materials {
-            materials.append(GPUMaterial(
-                albedo: SIMD4(SIMD3(m.baseColor.x, m.baseColor.y, m.baseColor.z), m.metallic),
-                emission: SIMD4(m.emissive, m.roughness),
-                params: SIMD4(1, m.normalScale, 0, 0),
-                textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
-                                texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
-        }
+        let firstMaterial = addModelMaterials(model, url: url)
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
         addModelLights(model, transform: transform, animation: animation)
         // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
@@ -2268,6 +2253,31 @@ final class Scene {
                 emitterSources[index] = (m.positions, m.uvs, m.indices)
             }
         }
+    }
+
+    /// `model`'s materials (and their textures) one after another; the first's index.
+    func addModelMaterials(_ model: GLTFModel, url: URL) -> Int {
+        var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
+        func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
+            guard let ref else { return .max }
+            let key = ref.image * 2 + (srgb ? 1 : 0)
+            if let i = textureIndex[key] { return i }
+            textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
+                                          name: "\(model.name)/\(model.images[ref.image].name)",
+                                          modelPath: url.path, cacheKey: "\(ref.image)-\(srgb ? "srgb" : "linear")"))
+            textureIndex[key] = UInt32(textures.count - 1)
+            return UInt32(textures.count - 1)
+        }
+        let firstMaterial = materials.count
+        for m in model.materials {
+            materials.append(GPUMaterial(
+                albedo: SIMD4(SIMD3(m.baseColor.x, m.baseColor.y, m.baseColor.z), m.metallic),
+                emission: SIMD4(m.emissive, m.roughness),
+                params: SIMD4(1, m.normalScale, 0, 0),
+                textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
+                                texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
+        }
+        return firstMaterial
     }
 
     /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,

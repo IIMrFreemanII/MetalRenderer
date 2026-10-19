@@ -1006,3 +1006,51 @@ kernel void particleMeshPoseKernel(constant ParticleMeshPose&      m           [
         }
     }
 }
+
+// MARK: - Destruction's dust (Physics+Fracture.swift)
+
+// What the injection is told (ParticlesGPU.Inject): this step and its parity, each material's proxy emitter (none: no
+// dust), the ring's size.
+struct ParticleInject {
+    uint  step, parity, slots, perSlot;
+    uint4 proxies0;   // FractureMaterial 0...3's proxy emitters
+    uint4 proxies1;   // ...4...7's
+};
+
+// Before this step's begin: the physics' breaks of this step (its ring's slot, PhysicsGPU.breakRing, if its stamp is this
+// step) as events of each material's proxy emitter, which spawns none of its own; its children (dust, debris) take them
+// as a parent's. Written where begin reads a parent's (the other parity's buffer and count), in the ring's order, by
+// one thread: the same every run.
+kernel void particleInjectKernel(constant ParticleInject&        inj      [[buffer(0)]],
+                                 device const ParticleEmitter*   emitters [[buffer(13)]],
+                                 device ParticleCounts&          c        [[buffer(14)]],
+                                 device ParticleEvent*           events0  [[buffer(20)]],
+                                 device ParticleEvent*           events1  [[buffer(21)]],
+                                 device const uint4*             ring     [[buffer(30)]],
+                                 uint t [[thread_position_in_grid]])
+{
+    if (t != 0) return;
+    uint q = 1u - (inj.parity & 1u);
+    device ParticleEvent* out = q == 0u ? events0 : events1;
+    uint4 header = ring[inj.step % inj.slots];
+    uint n = header.x == inj.step + 1u ? header.y : 0u;
+    device const float4* events = (device const float4*)(ring + inj.slots) + (inj.step % inj.slots) * inj.perSlot * 2u;
+    uint counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    for (uint k = 0; k < n; ++k) {
+        float4 position = events[2u * k], velocity = events[2u * k + 1u];
+        uint m = min(uint(velocity.w), 7u);
+        uint proxy = m < 4u ? inj.proxies0[m] : inj.proxies1[m - 4u];
+        if (proxy == PARTICLE_NONE) continue;
+        ParticleEmitter em = emitters[proxy];
+        if (counts[m] >= em.ids.y) continue;
+        ParticleEvent ev;
+        ev.a = float4(position.xyz, as_type<float>(pcgHash(inj.step * 2654435761u ^ (k * 40503u + 17u))));
+        ev.b = float4(velocity.xyz, as_type<float>(inj.step * 256u + k));
+        out[em.ids.x + counts[m]] = ev;
+        counts[m] += 1u;
+    }
+    for (uint m = 0; m < 8u; ++m) {
+        uint proxy = m < 4u ? inj.proxies0[m] : inj.proxies1[m - 4u];
+        if (proxy != PARTICLE_NONE) atomic_store_explicit(&c.events[q][proxy], counts[m], memory_order_relaxed);
+    }
+}

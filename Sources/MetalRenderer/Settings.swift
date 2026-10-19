@@ -294,6 +294,9 @@ enum SceneKind: Int, CaseIterable, Codable {
                             // Painter (`SceneSettings.painterWorkshop`)
     case terrain            // the terrain workshop (Scene+TerrainWorkshop.swift): a terrain of its own, 0.5 to 4 km, made with
                             // the Terrain Editor (`SceneSettings.terrainWorkshop`)
+    case destruction        // destruction (Scene+Destruction.swift, Physics+Fracture.swift): a courtyard of fractured walls,
+                            // pillars, a tower, glass panes, beams and statues broken by a wrecking ball, a weight and
+                            // shots (`SceneSettings.destruction`)
 
     var title: String {
         switch self {
@@ -331,13 +334,17 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .mireland: return "Mireland swamp"
         case .painter: return "Painter workshop"
         case .terrain: return "Terrain workshop"
+        case .destruction: return "Destruction"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
     var simulates: Bool {
         self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles || self == .fluids
+            || self == .destruction
     }
+    /// ...and those of them drawn with its plain look: destruction has its full look (its glass needs reflections).
+    var usesPhysicsLook: Bool { simulates && self != .destruction }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -441,6 +448,39 @@ struct ParticleSettings: Equatable, Codable {
             return e
         }
     }
+}
+
+/// The Fracture Editor's look at one object's pieces (DestructionSettings.preview).
+struct FracturePreview: Equatable, Codable {
+    var object: String
+    /// The level shown (1: the object's pieces), and how far apart they are (a share of their distance from its middle).
+    var level = 1
+    var explode: Float = 0.4
+}
+
+/// The destruction scene's (Scene+Destruction.swift). Changing any of it builds the scene again.
+struct DestructionSettings: Equatable, Codable {
+    /// Scales every object's pieces (the first level's count, the next ones' by its square root).
+    var pieces: Float = 1
+    /// Scale what breaks a piece into its children and frees it (toughness), and what a weld holds (strength).
+    var toughness: Float = 1
+    var strength: Float = 1
+    /// Dust and debris where pieces part (the scene's particles), and small pieces fading away once still.
+    var dust = true
+    var fade = true
+    /// The scripted wrecking ball, weight and cannonballs (off: only what the tools do).
+    var demo = true
+    /// The courtyard's objects only, or a whole building of pieces too (4,000 and more: offline).
+    var massive = false
+    /// The statues: the meshes cut piece by piece (textures kept), or none.
+    var statues = true
+    /// The Fracture Editor's edits, by object name, over the saved recipes (FractureStore) and the defaults (session
+    /// state); and its preview: one object's pieces at a level, held apart (nothing moves, no demo).
+    var recipes: [String: FractureRecipe] = [:]
+    var preview: FracturePreview?
+
+    static let pieceRange: ClosedRange<Float> = 0.25...4
+    static let toughnessRange: ClosedRange<Float> = 0.1...10
 }
 
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
@@ -581,6 +621,8 @@ struct SceneSettings: Equatable, Codable {
     var voxelBoxes = false
     /// The physics scene: its bodies and how they are simulated.
     var physics = PhysicsSettings()
+    /// The destruction scene: its objects and how they break.
+    var destruction = DestructionSettings()
     var particles = ParticleSettings()
     /// The plant workshop: what it shows.
     var plants = PlantSceneSettings()
@@ -936,7 +978,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter, .destruction:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -1088,6 +1130,8 @@ struct SkySettings: Equatable, Codable {
         case .terrain:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
+        case .destruction:   // a courtyard under an afternoon sun, a few clouds
+            s.mode = .atmosphere; s.coverage = 0.25; s.cloudBase = 1300; s.cloudThickness = 1000; s.cloudScale = 2600
         case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
             s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
         }
@@ -1272,7 +1316,7 @@ struct RenderSettings: Equatable, Codable {
     /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
-        if scene.kind.simulates {
+        if scene.kind.usesPhysicsLook {
             usePhysicsLook()
         } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
             giEnabled = defaults.giEnabled
