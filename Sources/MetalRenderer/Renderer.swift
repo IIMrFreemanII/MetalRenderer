@@ -564,6 +564,8 @@ final class Renderer: NSObject {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            // Solid shading leaves no history: the light's starts over on the way back (upscalerReset: MetalFX's too).
+            if settings.solid != oldValue.solid { resetGIState(); upscalerReset = true }
             dayChanged(from: oldValue)
             // Any change can change the picture: the reference starts over (a benchmark's starts with its config).
             if !benchmarkAccumulating { resetReference() }
@@ -2721,7 +2723,7 @@ final class Renderer: NSObject {
         }
         if let released = virtualTracing?.takeReleased(), !released.isEmpty { passes.release(released) }   // (before the frame binds)
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
-        if skyActive { encodeSky(passes) }
+        if skyActive && !plan.solid { encodeSky(passes) }
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
@@ -2731,7 +2733,7 @@ final class Renderer: NSObject {
         if plan.pathTrace != nil {
             // Reference "Path traced": one kernel makes the whole picture.
             stages.head = pathTraceStages(plan)
-        } else {
+        } else if !plan.solid {   // (solid shading: encodeOutput draws it)
             stages.lightGrid = lightGridStages(plan)
             stages.head = headStages(plan, targets: t)
             stages.gi = giStages(plan, targets: t)
@@ -2826,6 +2828,8 @@ final class Renderer: NSObject {
     /// made: upscaling is then turned off (SVGF denoises instead) and the frame skipped.
     private func prepareUpscalers(for size: FrameSize) -> Bool {
         let width = size.width, height = size.height, outWidth = size.outWidth, outHeight = size.outHeight
+        // Solid shading uses neither: what is there stays for the way back (made again only if the size changed).
+        if settings.solid { return true }
         if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
@@ -3036,6 +3040,7 @@ final class Renderer: NSObject {
         var accumulating = false                // benchmark reference: raw frames are averaged instead of denoised
         var splitPasses = false                 // benchmark: a command buffer per pass, so its GPU time can be read back
         var overlap = false                     // one concurrent encoder: the cascades and the denoisers overlap on the GPU
+        var solid = false                       // solid shading: solidKernel draws the frame at the output size, nothing else runs
 
         // Lighting
         var giMode = GIMode.pathTraced
@@ -3107,6 +3112,14 @@ final class Renderer: NSObject {
         let width = size.width, height = size.height
         var p = FramePlan(size: size, slot: slot, cur: Int(frameIndex & 1))
         checkReferenceView(width: width, height: height)
+        // Solid shading: one camera ray a pixel at the output size, unjittered. No lights, GI, denoisers, fog or lens.
+        if settings.solid {
+            p.solid = true
+            p.uniforms = makeUniforms(width: size.outWidth, height: size.outHeight, giMode: activeGIMode, directMode: activeDirectMode)
+            p.uniforms.jitter = SIMD4<Float>()
+            p.splitPasses = benchmark != nil && Benchmark.splitPasses
+            return p
+        }
         p.accumulating = accumulating
         p.giMode = activeGIMode
         let directMode = activeDirectMode
@@ -3543,6 +3556,24 @@ final class Renderer: NSObject {
     private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
                               passes: FrameEncoder) -> (output: FrameOutput?, between: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
+        // Solid shading: the whole picture, straight into the drawable; then the gizmos and a pick, as below.
+        if plan.solid {
+            let drawableStart = CACurrentMediaTime()
+            var drawable = nextOutput(plan, surface: surface)
+            let drawableWait = CACurrentMediaTime() - drawableStart
+            if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
+            if let drawable, let enc = passes.compute("solid") {
+                bind(enc, .solid, c.uniforms, sceneSlot: plan.slot)
+                enc.setTexture(drawable.texture, index: 0)
+                dispatch(enc, .solid, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+            interpolator?.advance(kept: false)
+            interpolating = false
+            if let drawable { encodeGizmos([drawable.texture], slot: plan.slot, passes: passes) }
+            encodePick(plan, passes: passes)
+            return (drawable, nil, drawableWait)
+        }
         // Reference "Path traced": the paths' mean, exposed and tone mapped into the drawable.
         if let pt = plan.pathTrace {
             let drawableStart = CACurrentMediaTime()
@@ -4912,7 +4943,7 @@ final class Renderer: NSObject {
         if frozenLOD != nil && lodFreezes { sceneName += " — LOD frozen" }
         surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ noise — denoiser %@ — %@%@",
                                 sceneName, stats, gi, s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
-                                RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
+                                s.solid ? "solid" : RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         statsLine = stats
         cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
         frameIntervalSum = 0
@@ -5171,6 +5202,7 @@ final class Renderer: NSObject {
         case "g": settings.giEnabled.toggle()
         case "m": settings.giMode = GIMode(rawValue: (settings.giMode.rawValue + 1) % GIMode.allCases.count) ?? .pathTraced
         case "b": settings.blueNoise.toggle()
+        case "`": settings.solid.toggle()
         case "n": settings.denoiser.enabled.toggle()
         case "[", "]":
             let step = key == "[" ? -1 : 1

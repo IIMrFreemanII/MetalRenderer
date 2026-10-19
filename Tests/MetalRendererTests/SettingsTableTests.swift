@@ -304,6 +304,14 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(b.fovDegrees, 70)
     }
 
+    /// Solid shading is off by default and reaches benchmarks too (it isn't one of the interactive-only keys).
+    func testSolidShadingFromTheEnvironment() {
+        XCTAssertFalse(defaults.solid)
+        var b = defaults
+        SettingsEnv.apply(.view, to: &b, from: ["METALRENDERER_VIEW": "solid=1"])
+        XCTAssertTrue(b.solid)
+    }
+
     /// Far plants are traced as their triangles unless asked for their voxels, which are slower wherever
     /// they were measured.
     func testFarPlantsAreTrianglesUnlessAskedFor() {
