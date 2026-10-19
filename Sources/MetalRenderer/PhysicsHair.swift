@@ -130,9 +130,8 @@ extension PhysicsWorld {
         var still = [UInt32](repeating: 0, count: strands.count)
         hairVertices.withUnsafeMutableBufferPointer { vertices in
             still.withUnsafeMutableBufferPointer { flags in
-                let chunk = 64
-                DispatchQueue.concurrentPerform(iterations: (strands.count + chunk - 1) / chunk) { c in
-                    for s in (c * chunk)..<min((c + 1) * chunk, strands.count) {
+                PhysicsPool.shared.parallel(strands.count, grain: 64) { range in   // (the step's workers: PhysicsThreads.swift)
+                    for s in range {
                         flags[s] = stepStrand(strands[s], vertices.baseAddress!, start, p, hp)
                     }
                 }

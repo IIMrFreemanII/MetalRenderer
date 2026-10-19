@@ -92,10 +92,13 @@ final class PhysicsWorld {
     let substeps: Int
 
     /// What the shapes are made of: their distances and samples (PhysicsCollide.swift).
-    private(set) var shapes: [GPUPhysicsShape] = []
-    private(set) var samples: [SIMD4<Float>] = []
-    private(set) var sdfShapes: [SDFShape] = []
-    private(set) var sdfVolumes: [SDFVolume] = []
+    private(set) var shapes: [GPUPhysicsShape] = [] { didSet { shapeTable = nil; shapeView = nil } }
+    private(set) var samples: [SIMD4<Float>] = [] { didSet { shapeTable = nil; shapeView = nil } }
+    private(set) var sdfShapes: [SDFShape] = [] { didSet { shapeTable = nil; shapeView = nil } }
+    private(set) var sdfVolumes: [SDFVolume] = [] { didSet { shapeTable = nil; shapeView = nil } }
+    /// The shapes above as the steps read them (PhysicsCollide.swift: shapeData), made when they are first asked for.
+    var shapeTable: PhysicsShapeTable?
+    var shapeView: PhysicsShapes?
     private var shapeOf: [Int: Int] = [:]   // SDF shape -> its physics shape
     private var massOf: [Int: (volume: Float, moments: SIMD3<Float>)] = [:]
 
@@ -202,6 +205,8 @@ final class PhysicsWorld {
     private(set) var weldStarts: [UInt32] = [0]
     private(set) var weldList: [SIMD2<UInt32>] = []
     var fractureState: [GPUFractureState] = []
+    /// A flag a body for the CPU step's stages (PhysicsCPU.swift: who wakes, who sleeps, who came free), kept.
+    var wakeFlags: [UInt8] = []
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.
@@ -640,7 +645,7 @@ final class PhysicsWorld {
     func advance(to time: Float) {
         let (steps, restart) = stepsTo(time)
         if restart { reset() }
-        for _ in 0..<steps { step() }
+        PhysicsPool.shared.run { for _ in 0..<steps { step() } }   // (the workers awake once for the lot)
     }
 
     /// ...`atMost` steps a call: further behind (a slow frame), the world skips the rest of the time.
@@ -648,7 +653,7 @@ final class PhysicsWorld {
         var (steps, restart) = stepsTo(time)
         if restart { reset() }
         if steps > limit { stepIndex += steps - limit; steps = limit }
-        for _ in 0..<steps { step() }
+        PhysicsPool.shared.run { for _ in 0..<steps { step() } }
     }
 
     /// For the GPU: the steps that reach `time` (from the start, `restart`), counted as run.
