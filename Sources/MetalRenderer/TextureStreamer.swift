@@ -47,6 +47,7 @@ final class TextureStreamer {
     private var pendingUnmaps: [(entry: Int, level: Int, frame: UInt32)] = []
     private let lock = NSLock()
     private var collected: [UInt32] = []            // level histograms (16 per texture) from the last completed frame(s)
+    private var feedback: [UInt32] = []             // ...as `update` took them: swapped with `collected`, never copied
     static let levelBins = 16
     // Uploads go through each slot's staging buffers, reused once the slot's last frame is done and grown when a frame
     // needs more (Metal 4 keeps them resident, so they last).
@@ -175,6 +176,7 @@ final class TextureStreamer {
             feedbackBuffers.append(f)
         }
         collected = [UInt32](repeating: 0, count: entries.count * TextureStreamer.levelBins)
+        feedback = [UInt32](repeating: 0, count: collected.count)   // (its own buffer: the swap copies nothing)
         for slot in 0..<slots { writeMinLod(slot: slot) }   // nothing yet: the first `update` maps the base levels
         print(String(format: "Textures: %d streamed (%@, budget %d MB, %.1f MB base levels), ready in %.1f s", entries.count,
                      placement ? "placement sparse" : "sparse", budgetBytes >> 20, Double(baseBytes) / 1_048_576,
@@ -187,8 +189,8 @@ final class TextureStreamer {
         work = TextureStreamWork()
         stagingCursor = (slot, 0, 0)
         lock.lock()
-        let feedback = collected
-        for i in collected.indices { collected[i] = 0 }
+        swap(&collected, &feedback)
+        collected.withUnsafeMutableBufferPointer { $0.update(repeating: 0) }
         lock.unlock()
         let bins = TextureStreamer.levelBins
         for i in entries.indices {
