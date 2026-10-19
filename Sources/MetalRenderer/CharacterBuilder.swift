@@ -324,7 +324,7 @@ final class CharacterKit {
         return kit
     }
 
-    static let version: UInt32 = 15
+    static let version: UInt32 = 16
     private static let magic: UInt32 = 0x4B43_474D   // "MGCK"
 
     static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true, options: CharacterBase.Options = .init()) -> CharacterKit? {

@@ -37,6 +37,21 @@ final class CharacterBaseTests: XCTestCase {
         XCTAssertGreaterThan(c.triangleCount, 40_000)
     }
 
+    /// Where the body is sewn to the head round the neck, no vertex faces against its neighbours (a fold, dark in the
+    /// light).
+    func testTheNecksSeamHasNoFolds() throws {
+        let base = try kit().base, c = base.character
+        let ring = CharacterBase.neighbours(c.positions.count, c.indices)
+        var folded: [SIMD3<Float>] = []
+        for v in c.positions.indices where base.regions[v] < CharacterBase.Region.leftEye.rawValue {
+            let p = c.positions[v]
+            guard (1.50...1.60).contains(p.y), simd_length(SIMD2(p.x, p.z + 0.02)) < 0.1 else { continue }
+            let around = ring[v].reduce(SIMD3<Float>()) { $0 + c.normals[Int($1)] }
+            if simd_length(around) > 0 && simd_dot(simd_normalize(around), c.normals[v]) < 0.5 { folded.append(p) }
+        }
+        XCTAssertEqual(folded.count, 0, "folds at \(folded.prefix(8))")
+    }
+
     func testWeightsAreWholeOnFourJoints() throws {
         let c = try kit().base.character
         for s in c.skin {

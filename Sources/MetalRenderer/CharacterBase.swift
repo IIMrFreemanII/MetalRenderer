@@ -309,7 +309,7 @@ struct CharacterBase {
             return SIMD3(f(p + [h, 0, 0]) - f(p - [h, 0, 0]), f(p + [0, h, 0]) - f(p - [0, h, 0]), f(p + [0, 0, h]) - f(p - [0, 0, h])) / (2 * h)
         }
         // The body below a cut across the neck, the head above it (finer): each closed off a little past the cut,
-        // meshed, cut there, simplified (their open edges stay), then sewn together.
+        // meshed, cut level a mm short of it, simplified (their open edges stay), then sewn together.
         let cut = face.world([0, 1.552, 0]).y
         let below: (SIMD3<Float>) -> Float = { p in max(distance(p), p.y - cut - 0.008) }
         let above: (SIMD3<Float>) -> Float = { p in max(distance(p), cut - 0.006 - p.y) }
@@ -320,16 +320,19 @@ struct CharacterBase {
         var (positions, indices) = SurfaceNets.sparseMesh(lo: lo, size: size, counts: counts, distance: below,
                                                           gradient: { gradient($0, size, below) })
         (positions, indices) = largestPart(positions, indices)
-        (positions, indices) = clipped(positions, indices) { $0 < cut }
+        (positions, indices) = sliced(positions, indices, at: cut - 0.001, below: true, snap: size * 0.25)
         let headLo = face.world([-0.125, 1.536, -0.15]), headHi = face.world([0.125, 1.83, 0.17])
         let headSize = options.headCell * face.scale
         var (headPositions, headIndices) = SurfaceNets.sparseMesh(lo: headLo, size: headSize,
                                                                   counts: SIMD3<Int>(((headHi - headLo) / headSize).rounded(.up)) &+ 1,
                                                                   distance: above, gradient: { gradient($0, headSize, above) })
         (headPositions, headIndices) = largestPart(headPositions, headIndices)
-        (headPositions, headIndices) = clipped(headPositions, headIndices) { $0 >= cut }
+        (headPositions, headIndices) = sliced(headPositions, headIndices, at: cut + 0.001, below: false, snap: headSize * 0.25)
         let meshed = CFAbsoluteTimeGetCurrent()
-        (positions, indices) = simplified(positions, indices, to: options.triangles - options.headTriangles)
+        // (The open edge kept as it is: sewn to the head's finer one, a coarse edge would fan out to many of its
+        // vertices, and smoothing would pull it up past them.)
+        (positions, indices) = simplified(positions, indices, to: options.triangles - options.headTriangles,
+                                          locked: openEdgeVertices(positions.count, indices))
         // Kept at full detail: where the lips' and brows' colours end (their edges stay smooth curves), and where the
         // surface bends sharply (the rims of the ears, the lids' edges, the nostrils, the lips' parting), which the
         // simplifier would otherwise flatten.
@@ -344,7 +347,7 @@ struct CharacterBase {
             headRing[v].contains { kinds[Int($0)] != kinds[v] || simd_dot(headNormals[Int($0)], headNormals[v]) < sharp }
         }
         (headPositions, headIndices) = simplified(headPositions, headIndices, to: options.headTriangles, locked: kept)
-        (positions, indices) = stitched((positions, indices), (headPositions, headIndices), at: cut)
+        (positions, indices) = stitched((positions, indices), (headPositions, headIndices))
         // Smoothed without shrinking (Taubin): the grid's ripples and what is left of the panels' seams go. The
         // fingers are left as they are (a finger is only a few cells across), and the face (its details are fine).
         let fixed = positions.map { p in
@@ -450,27 +453,60 @@ struct CharacterBase {
         return GPUSkinVertex(joints: joints[0] | joints[1] << 8 | joints[2] << 16 | joints[3] << 24, w0: weights[0], w1: weights[1], w2: weights[2])
     }
 
-    /// The triangles of a mesh whose middles' heights `keep` accepts, vertices renumbered.
-    static func clipped(_ positions: [SIMD3<Float>], _ indices: [UInt32], keep: (Float) -> Bool) -> ([SIMD3<Float>], [UInt32]) {
-        var remap = [Int32](repeating: -1, count: positions.count)
+    /// The part of a mesh below (`below`) or above the level `y`, the triangles across it cut along it (corners within
+    /// `snap` of it moved onto it first, so that no sliver is left), vertices renumbered: its open edge lies flat at `y`.
+    static func sliced(_ positions: [SIMD3<Float>], _ indices: [UInt32], at y: Float, below: Bool, snap: Float) -> ([SIMD3<Float>], [UInt32]) {
+        let p = positions.map { abs($0.y - y) < snap ? SIMD3($0.x, y, $0.z) : $0 }
+        let side = p.map { below ? y - $0.y : $0.y - y }   // > 0 kept, 0 on the level
+        var remap = [Int32](repeating: -1, count: p.count), crossings: [UInt64: UInt32] = [:]
         var outP: [SIMD3<Float>] = [], outI: [UInt32] = []
+        func kept(_ v: Int) -> UInt32 {
+            if remap[v] < 0 { remap[v] = Int32(outP.count); outP.append(p[v]) }
+            return UInt32(remap[v])
+        }
+        func crossing(_ a: Int, _ b: Int) -> UInt32 {
+            let key = UInt64(min(a, b)) << 32 | UInt64(max(a, b))
+            if let made = crossings[key] { return made }
+            var q = p[a] + (p[b] - p[a]) * (side[a] / (side[a] - side[b]))
+            q.y = y
+            crossings[key] = UInt32(outP.count)
+            outP.append(q)
+            return UInt32(outP.count - 1)
+        }
         for t in stride(from: 0, to: indices.count, by: 3) {
-            let y = (positions[Int(indices[t])].y + positions[Int(indices[t + 1])].y + positions[Int(indices[t + 2])].y) / 3
-            guard keep(y) else { continue }
+            let v = (0..<3).map { Int(indices[t + $0]) }
+            guard v.contains(where: { side[$0] > 0 }) else { continue }
+            // The kept part of the triangle (three or four corners, in its order), fanned.
+            var polygon: [UInt32] = []
             for k in 0..<3 {
-                let v = Int(indices[t + k])
-                if remap[v] < 0 { remap[v] = Int32(outP.count); outP.append(positions[v]) }
-                outI.append(UInt32(remap[v]))
+                let a = v[k], b = v[(k + 1) % 3]
+                if side[a] >= 0 { polygon.append(kept(a)) }
+                if (side[a] > 0 && side[b] < 0) || (side[a] < 0 && side[b] > 0) { polygon.append(crossing(a, b)) }
             }
+            for k in 1..<(polygon.count - 1) { outI += [polygon[0], polygon[k], polygon[k + 1]] }
         }
         return (outP, outI)
     }
 
-    /// Two meshes made one: each has an open edge round the same upright tube at height `y` (the neck, cut), each
-    /// edge's loop is laid flat at that height and a strip of triangles sews the two round, the shorter way across at
-    /// every step.
-    static func stitched(_ a: ([SIMD3<Float>], [UInt32]), _ b: ([SIMD3<Float>], [UInt32]), at y: Float) -> ([SIMD3<Float>], [UInt32]) {
-        var positions = a.0 + b.0
+    /// Whether each vertex is on an open edge (one triangle's).
+    static func openEdgeVertices(_ count: Int, _ indices: [UInt32]) -> [Bool] {
+        var edges: [UInt64: Int] = [:]
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            for k in 0..<3 {
+                let u = UInt64(indices[t + k]), v = UInt64(indices[t + (k + 1) % 3])
+                edges[min(u, v) << 32 | max(u, v), default: 0] += 1
+            }
+        }
+        var open = [Bool](repeating: false, count: count)
+        for (e, n) in edges where n == 1 { open[Int(e >> 32)] = true; open[Int(e & 0xFFFF_FFFF)] = true }
+        return open
+    }
+
+    /// Two meshes made one: each has an open edge round the same upright tube (the neck, cut: `sliced`, the first's a
+    /// little below the second's), and a strip of triangles sews the two round, the shorter way across at every step.
+    /// (Edges laid flat at one height would sew with a flat strip, folded wherever the two loops cross.)
+    static func stitched(_ a: ([SIMD3<Float>], [UInt32]), _ b: ([SIMD3<Float>], [UInt32])) -> ([SIMD3<Float>], [UInt32]) {
+        let positions = a.0 + b.0
         var indices = a.1 + b.1.map { $0 + UInt32(a.0.count) }
         // Open edges (one triangle), in their triangles' direction.
         var count: [UInt64: Int] = [:]
@@ -497,7 +533,6 @@ struct CharacterBase {
         let split = UInt32(a.0.count)
         guard let la = loops.filter({ $0[0] < split }).max(by: { $0.count < $1.count }),
               let lb = loops.filter({ $0[0] >= split }).max(by: { $0.count < $1.count }) else { return (positions, indices) }
-        for v in la + lb { positions[Int(v)].y = y }
         let centre = la.reduce(SIMD3<Float>()) { $0 + positions[Int($1)] } / Float(la.count)
         func angle(_ v: UInt32) -> Float { atan2(positions[Int(v)].z - centre.z, positions[Int(v)].x - centre.x) }
         // Both walked the same way round (increasing angle); `forward`: whether that is the loop's own direction.

@@ -1620,15 +1620,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterBase.swift": {
-    "mtime": 1792443947.9100266,
-    "seen": 1792444061.9125602,
-    "ast_hash": "073d70daca46e7b7bee91f8f43825023",
+    "mtime": 1792444376.8733017,
+    "seen": 1792444447.509656,
+    "ast_hash": "8717b923d86ac2967fe31c1cad36932d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterBuilder.swift": {
-    "mtime": 1792443969.3884485,
-    "seen": 1792444061.912561,
-    "ast_hash": "1396c6f501c9c8e8c7932f857d14d677",
+    "mtime": 1792444376.87364,
+    "seen": 1792444447.5096571,
+    "ast_hash": "2ec3155dd91099484438dbf7c639d755",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/CharacterDNA.swift": {
@@ -1704,9 +1704,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterBaseTests.swift": {
-    "mtime": 1792443979.098784,
-    "seen": 1792444061.912744,
-    "ast_hash": "0382eab001fa7f485b4e709904ad53bf",
+    "mtime": 1792444376.8734586,
+    "seen": 1792444447.509852,
+    "ast_hash": "94a9e329d4777507cdfbc753fe2611a6",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/CharacterDNATests.swift": {
