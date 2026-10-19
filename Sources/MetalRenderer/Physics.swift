@@ -211,6 +211,16 @@ final class PhysicsWorld {
     var particleSnapshot: [GPUPhysicsParticle] = []
     /// The broad phases' cells of the bodies and of the particles (PhysicsCellGrid), kept.
     var bodyCells = PhysicsCellGrid(), particleCells = PhysicsCellGrid()
+    /// The bodies a substep may move (listMoving), kept.
+    var movingBodies: [Int32] = []
+    /// The bodies too big for the broad phase's grid this step (broadPhase).
+    var bigBodies: [Int32] = []
+    /// The narrow phase's memo (NarrowMemo): an entry's partner its contacts were found with at the last step's start
+    /// (`none`: not kept), how many; each body then, as the narrow phase reads it, and whether it is so now; the
+    /// shapes' build they were found on (`shapeEpoch`, one more each time shapeData makes them).
+    var narrowPartners: [UInt32] = [], narrowCounts: [UInt32] = []
+    var narrowSeen: [SIMD16<UInt32>] = [], narrowChanged: [UInt8] = []
+    var narrowEpoch = -1, shapeEpoch = 0
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.

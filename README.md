@@ -1602,7 +1602,7 @@ Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fra
 ### CPU physics on every core
 
 The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference, and a scene can run on it (`physics=cpu`). It runs on every core and gives the same numbers, bit for bit, as it did on one thread, whatever the number of threads (`PhysicsThreads.swift`):
-* **A pool of workers** (`PhysicsPool`: one fewer than the cores, `METALRENDERER_PHYSICS_THREADS=n` for n threads in all) runs each stage's items in fixed chunks with the stepping thread. Its atomics are C11's (`CPhysicsAtomics`). A step has hundreds of stages (a colour of contacts or joints is one, 16 substeps over), so the workers spin between them and park on a semaphore after about 50 µs without one. A stage of one chunk, or one started while another runs (a parallel loop inside another), runs on the thread that asked.
+* **A pool of workers** (`PhysicsPool`: one fewer than the cores, `METALRENDERER_PHYSICS_THREADS=n` for n threads in all) runs each stage's items in chunks with the stepping thread, each thread claiming a run of them at a time, a quarter of what is left over the threads (one chunk at least). Which thread runs which items changes nothing: a stage's items are independent. Its atomics are C11's (`CPhysicsAtomics`), and the ticket, the count done and the count of threads inside each have a cache line of their own: on one line, a stage of 3,000 empty items took 150 µs, and now takes 36 µs. A step has hundreds of stages (a colour of contacts or joints is one, 16 substeps over), so the workers spin between them and park on a semaphore after about 50 µs without one. A stage of one chunk, or one started while another runs (a parallel loop inside another), runs on the thread that asked.
 * **What stays bit for bit:**
   * Each item writes only its own elements: a body, a particle, a pair's entry, or, within a colour, its pair's two bodies, link's two particles or tet's four, which no other item of that colour shares.
   * Jacobi passes read a snapshot taken before them: the particles' solve, wake, settle, and the fracture verdicts and breaks.
@@ -1612,7 +1612,13 @@ The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference
   * Stages read and write raw buffers (`StepBuffers`, `ParticleBuffers`, `HairBuffers`, `FluidContext`). Swift moves an array out of its property while its buffer is lent, so a stage never reads the world's arrays through the world.
   * Collision reads shapes from a flat table without counted references (`PhysicsShapeTable`: SDF nodes, planes, samples, baked grids). Ten threads asking one shape's distance contended on its arrays' reference counts, and hair took 87 s instead of 1.6 s.
   * The broad phases' cells are flat arrays behind an open-addressed table (`PhysicsCellGrid`), with each cell's items in the order a dictionary of arrays had them.
+  * The bodies' grid has levels (`PhysicsLevels`): each level's cells are twice the size of the one before, and a body goes in the first whose cells are twice its reach. A query looks at each level's cells within its reach plus half that level's cell, so it finds every body within reach, as one grid sized by the largest body did (the GPU's), and the nearest 16 are kept by a total order. Sized by the largest body, a fractured building's cells were the size of the building, its whole being a body. Sized by the largest piece (1.5 m against a median of 0.33 m), each of a heap's cells held hundreds of candidates.
   * Manifolds have four fixed slots, and partners and neighbours are kept nearest first as they are found (the same as sorting all of them: the order is total). None of this allocates per item: `Tools/perf/hotcalls.py` holds the stages to the fast subset (`Tools/perf/hot-functions.txt`).
+* **Skipping what can't change:**
+  * A pair neither of whose bodies moves (asleep, held, kinematic or static), other than a weld, is passed over in the solves: its push is 0 and no kick follows.
+  * At a step's start, a pair whose two bodies are bit for bit as they were at the last step's start, with the same partner, keeps the contacts found then (`NarrowMemo`): that is what `collide` would find again. A pair found again mid-step isn't kept.
+  * The substeps' body loops (integrate, the velocities) go over the bodies that can move (`movingBodies`), listed after the liquids, which wake what they push.
+  * The box test between two pieces stops at the first axis that parts them.
 * **Behind the frame** (`PhysicsStepper`, `PhysicsSettings.asynchronous`, "CPU physics behind the frame", on by default):
   * A CPU-stepped scene's world steps on a thread of its own. Each frame asks for the steps up to its time, with the body the mouse holds then, and draws the bodies where the steps before left them (a copy-on-write snapshot of bodies, particles, hair and fracture state).
   * A pick, a shot or a blast waits for the steps asked before it (`Scene.withPhysics`), so it lands on the same step as it would in the frame. Paused, or a still, the frame waits for its steps.
@@ -1630,11 +1636,23 @@ The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference
   | Ragdolls, 4 s | 1.5 s | 0.9 s |
   | Hair, 3 s (parallel before) | 1.6 s | 1.1 s |
 
+  Three buildings (`buildings=3`, 10,637 bodies, 6,049 of them enabled once the buildings are down), a step from 10 to 13 s while the heaps settle, M1 Max (bit for bit the same as before, digests checked):
+
+  | | Before (PR #91) | Now |
+  |---|---|---|
+  | One thread | 480 ms | 395 ms |
+  | Ten threads | 88 ms | 66 ms |
+  | Broad phase, ten threads | 17.7 ms | 5.0 ms |
+  | Contact solves, ten threads | 34.6 ms | 28.0 ms |
+
+  Three buildings' first 7 s, every core: 9.0 s, now 7.9 s; the massive building's 8 s: 4.85 s, now 4.25 s. The settling heaps are still four times too slow for 60 steps a second. Their narrow phase is 28 ms (it scales 7.6× over ten threads, all of it the pieces' collision work), and their 44 colours a substep cost about 5 µs each to hand out. Few of their pieces ever sleep (at 20 s, 4,605 of 6,060 are awake), so the skips above do little there.
+
   On the frame's thread (`METALRENDERER_BENCH=destructioncpu`, the first 5 s moving, at the physics look), the massive building goes from 9.8 ms with the steps in the frame to 2.9 ms behind it. Three buildings (over 10,000 bodies) go from 19.0 ms to 5.4 ms, with an 11.0 ms GPU frame. The same three buildings stepped on the GPU make a 23.6 ms frame.
-* **Checked:** `PhysicsThreadsTests` steps every physics scene's world (physics, ragdolls, hair, soft bodies, muscles, liquids, the courtyard through its demo, the massive building) on one thread and on all of them: the same bytes. `testDigests` (`PHYSICS_DIGEST=1`) prints each world's hash after its seconds, and those match a build of main from before the threads. `testTheStepperStepsAsTheFrameDoes` checks the stepper against stepping in the frame: frames of uneven lengths, a grab held, a blast between, the same bytes.
+* **Checked:** `PhysicsThreadsTests` steps every physics scene's world (physics, ragdolls, hair, soft bodies, muscles, liquids, the courtyard through its demo, the massive building, three buildings) on one thread and on all of them: the same bytes. `testDigests` (`PHYSICS_DIGEST=1`) prints each world's hash after its seconds, and those match a build of main from before the threads. `testTheStepperStepsAsTheFrameDoes` checks the stepper against stepping in the frame: frames of uneven lengths, a grab held, a blast between, the same bytes.
 * **Limits:**
-  * The grids are built on one thread, sized by the largest body.
-  * Most stages still visit every body, asleep or not.
+  * The grids are built on one thread.
+  * A stage hands out its chunks through one ticket: a colour's claims queue on one cache line, about 5 µs a stage with ten threads.
+  * Settling rubble rarely sleeps, so it does all its collision and solving work every step.
   * With three buildings the frame's own CPU time is mostly the renderer's per-instance work, not physics.
   * The workers spin for about 50 µs after each stage, which costs power.
   * Not yet tried by hand in the window: grab, shoot and blast with the stepper on.

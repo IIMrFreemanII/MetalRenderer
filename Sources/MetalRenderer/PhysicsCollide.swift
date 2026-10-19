@@ -490,6 +490,7 @@ extension PhysicsWorld {
         if let view = shapeView { return view }   // (raw buffers: nothing counted, from any thread)
         let table = PhysicsShapeTable(shapes: shapes, samples: samples, sdfShapes: sdfShapes, volumes: sdfVolumes)
         shapeTable = table
+        shapeEpoch += 1   // (what the narrow phase kept was found on the shapes before)
         shapeView = table.view
         return table.view
     }

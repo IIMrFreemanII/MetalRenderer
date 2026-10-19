@@ -15,11 +15,15 @@ static MeshClusterizer.morton(_:_:)
 
 # The CPU physics step's stages, per body, pair, particle, tet or strand, on every core (PhysicsCPU.swift and the rest;
 # PhysicsThreads.swift). The liquids' loops are closures inside pbfSubstep/mpmSubstep and aren't listed.
-static PhysicsWorld.partners(_:_:_:_:_:_:_:byGap:kept:)
+static PhysicsWorld.partners(_:_:_:_:_:_:_:_:_:byGap:kept:)
+PhysicsLevels.level(_:)
+static PhysicsWorld.consider(_:_:_:_:_:_:_:_:byGap:kept:_:)
+static PhysicsWorld.keep(_:_:_:_:)
 static PhysicsWorld.particleNeighbours(_:_:_:_:_:_:kept:)
 PhysicsCellGrid.View.cell(_:)
 static PhysicsWorld.touchesStatic(_:_:_:centre:radius:)
-static PhysicsWorld.narrow(_:_:_:_:refresh:)
+static PhysicsWorld.narrow(_:_:_:_:refresh:memo:)
+static NarrowMemo.key(_:)
 static PhysicsWorld.pushPair(_:_:h:)
 static PhysicsWorld.kickPair(_:_:_:)
 static PhysicsWorld.pushFracturePair(_:_:h:substeps:)
