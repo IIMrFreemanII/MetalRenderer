@@ -866,12 +866,23 @@ final class Scene {
     /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
     func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
         guard let physics else { return }
-        physics.drawnPoses = Array(poses)   // what picking sees
-        for b in physics.bodies.indices {
-            let i = Int(physics.bodies[b].info.z)
-            instances[i].prevTransform = instances[i].transform
-            // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
-            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w))
+        // What picking sees: over the last frame's copy (made anew only when the count changes).
+        if physics.drawnPoses.count == poses.count {
+            physics.drawnPoses.withUnsafeMutableBufferPointer { _ = $0.update(fromContentsOf: poses) }
+        } else {
+            physics.drawnPoses = Array(poses)
+        }
+        // Through the instances' buffer (as setTransform does, without its exclusivity check per body).
+        let count = physics.bodies.count
+        instances.withUnsafeMutableBufferPointer { inst in
+            for b in 0..<count {
+                let i = Int(physics.bodies[b].info.z)
+                // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
+                let m = physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w)
+                inst[i].prevTransform = inst[i].transform
+                inst[i].transform = m
+                inst[i].normalMatrix = m.inverse.transpose
+            }
         }
     }
 
