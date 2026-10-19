@@ -81,7 +81,7 @@ extension Scene {
                               restitution: m.restitution)
             }
         }
-        world.addFracture(tree, first: firstBody, anchored: Scene.anchored(tree, cell: cell, transform: transform, anchor),
+        world.addFracture(tree, first: firstBody, transform: transform, anchored: Scene.anchored(tree, cell: cell, transform: transform, anchor),
                           toughness: toughness, strength: strength, fadeRadius: fadeRadius)
         return Fractured(tree: tree, firstBody: firstBody, firstInstance: firstInstance, name: name)
     }
@@ -183,7 +183,7 @@ extension Scene {
             editInstance(i) { $0.simulated = true }
             world.addPiece(sdf: sdfs[k], colliders[k], build: builds[k]!, transform: transform, instance: i, material: m)
         }
-        world.addFracture(tree, first: firstBody, anchored: Scene.anchored(tree, cell: cell, transform: transform, anchor),
+        world.addFracture(tree, first: firstBody, transform: transform, anchored: Scene.anchored(tree, cell: cell, transform: transform, anchor),
                           toughness: toughness, strength: strength, fadeRadius: 0.06)
         return Fractured(tree: tree, firstBody: firstBody, firstInstance: firstInstance, name: name)
     }

@@ -448,6 +448,7 @@ struct GPUFractureState {
     var impact = SIMD4<Float>()              // xyz = where the impacts were, times their impulse; w = their impulse
     var direction = SIMD4<Float>(0, 0, 0, 1) // xyz = which way they pushed it, times their impulse; w = its drawn scale
                                              // (1; less as it fades away)
+    var hold = SIMD4<Float>()                // x = how much longer (s) it is held where it is after its parent broke
 }
 
 /// Something done to the fractured bodies at a step (a shot, a blast, a release): kept for replays. MSL
@@ -870,7 +871,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsJoint>.stride == 112, "GPUPhysicsJoint layout mismatch")
     precondition(MemoryLayout<GPUFractureNode>.stride == 64, "GPUFractureNode layout mismatch")
     precondition(MemoryLayout<GPUFractureWeld>.stride == 64, "GPUFractureWeld layout mismatch")
-    precondition(MemoryLayout<GPUFractureState>.stride == 48, "GPUFractureState layout mismatch")
+    precondition(MemoryLayout<GPUFractureState>.stride == 64, "GPUFractureState layout mismatch")
     precondition(MemoryLayout<GPUFractureCommand>.stride == 48, "GPUFractureCommand layout mismatch")
     precondition(MemoryLayout<GPUFractureParams>.stride == 32, "GPUFractureParams layout mismatch")
     precondition(MemoryLayout<GPUBreakEvent>.stride == 32, "GPUBreakEvent layout mismatch")

@@ -16,6 +16,13 @@ import simd
 /// smaller one that frees it loses its welds and its anchor. Blasts and shots are commands kept with the step they
 /// start at, so a replay does them again: any time's state is the same however it was reached.
 ///
+/// A shot breaks a wall and goes on, knocking pieces out of it. In the step the wall breaks, the shot meets it whole and
+/// held by the ground, which stops it dead; the pieces are only there from the next step. So a projectile (a body that
+/// is not a piece) whose hardest hit of a step was on a held piece that broke or came free goes on at the speed it
+/// started the step at (`giveWay`; its fracture state, unused otherwise, keeps that speed and the hit). And the pieces
+/// of a held piece that broke stay held for a moment (`holdAfterBreak`), but for those its impacts freed: the shot's
+/// push goes into the ground, not through the welds into the rest of the wall.
+///
 /// A welded pair is solved as a pair of the contact colouring (its one contact marks the weld: lambda.w = 1), so the
 /// welds need no colours of their own, and solved like a joint fixed in place: its turn about its partner back to rest,
 /// then their anchors together, a force of lambda / h^2 (N). The GPU's step (Shaders/Physics.metal) does the same in the
@@ -41,6 +48,11 @@ extension PhysicsWorld {
     static let impactSpeed: Float = 1
     /// The fastest a freed piece is pushed by the impacts that freed it (m/s).
     static let freedPush: Float = 4
+    /// How long (s) the pieces of a held piece that broke stay held where they are, but for those its impacts freed
+    /// (Chaos keeps an anchored cluster's rest in place): the hit's push goes into the ground, the pieces it knocked out
+    /// get away, and only then does the rest stand on its welds. (Let go at once, a shot that went on pushed the welded
+    /// rest along, one weld solve a substep: the wall around the hole toppled.)
+    static let holdAfterBreak: Float = 0.25
     /// How far a weld stretches (m) or twists (rad) before it snaps: one pulled shut in a substep moves its pieces at
     /// gap / h (a centimetre's gap flung a brick at 10 m/s; a piece takes its parent's place where that had moved to).
     static let weldGap: Float = 3e-3
@@ -106,10 +118,11 @@ extension PhysicsWorld {
         return ShapeBuild(shape: shape, samples: points.map { SIMD4(toBody($0), 0) }, volume: cell.volume, moments: SIMD3<Float>(moments))
     }
 
-    /// Fractured object `tree`: its node k is body `first + k` (added in order, all but the root disabled), anchored
-    /// where `anchored[k]`. Thresholds from its material and recipe, times `toughness` and `strength` (the scene's).
-    func addFracture(_ tree: FractureTree, first: Int, anchored: [Bool], toughness: Float = 1, strength: Float = 1,
-                     fadeRadius: Float = 0.1) {
+    /// Fractured object `tree` placed by `transform` (its cells and welds are in shape space): its node k is body
+    /// `first + k` (added in order, all but the root disabled), anchored where `anchored[k]`. Thresholds from its
+    /// material and recipe, times `toughness` and `strength` (the scene's).
+    func addFracture(_ tree: FractureTree, first: Int, transform: float4x4, anchored: [Bool], toughness: Float = 1,
+                     strength: Float = 1, fadeRadius: Float = 0.1) {
         while fractureNodes.count < bodies.count { fractureNodes.append(GPUFractureNode()) }
         let material = tree.recipe.material
         let tough = material.toughness * tree.recipe.toughness * toughness
@@ -142,9 +155,12 @@ extension PhysicsWorld {
         let sigma = material.strength * tree.recipe.strength * strength
         for w in tree.welds {
             let a = bodies[first + w.a], b = bodies[first + w.b]
+            // (In the world, where the bodies are: shape space put a weld's anchors as far from its pieces as the
+            // object is from the origin, and the first small turn after a break opened it past the snap.)
+            let centre = PhysicsMath.xyz(transform * SIMD4(w.centre, 1))
             var weld = GPUFractureWeld()
-            weld.anchorA = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(a.rotation), w.centre - PhysicsMath.xyz(a.position)), sigma * w.area)
-            weld.anchorB = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(b.rotation), w.centre - PhysicsMath.xyz(b.position)), (w.area / .pi).squareRoot())
+            weld.anchorA = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(a.rotation), centre - PhysicsMath.xyz(a.position)), sigma * w.area)
+            weld.anchorB = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(b.rotation), centre - PhysicsMath.xyz(b.position)), (w.area / .pi).squareRoot())
             weld.rest = PhysicsMath.qnormalize(PhysicsMath.qmul(PhysicsMath.qconj(a.rotation), b.rotation))
             weld.info = SIMD4(UInt32(first + w.a), UInt32(first + w.b), 0, 0)
             welds.append(weld)
@@ -216,6 +232,16 @@ extension PhysicsWorld {
             case nil: continue
             }
         }
+        for i in bodies.indices where bodies[i].info.y & PhysicsWorld.pieceBit == 0 {
+            PhysicsWorld.startProjectile(bodies[i], &fractureState[i])
+        }
+    }
+
+    /// A body that is not a piece at its step's start (after the commands): its speed then, no hit yet (its drawn scale
+    /// stays).
+    @inline(__always) static func startProjectile(_ b: GPUPhysicsBody, _ s: inout GPUFractureState) {
+        s.strain = .zero
+        s.impact = SIMD4(xyz(b.velocity), 0)
     }
 
     /// A shot's ball enabled at the command's origin, sent along its direction.
@@ -283,6 +309,7 @@ extension PhysicsWorld {
                 let impulse = push.lambda / h, point = PhysicsWorld.points(contact, a, b).pa, n = PhysicsMath.xyz(contact.normal)
                 if a.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&fractureState[i], point, n, impulse) }
                 if dynamic && b.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&fractureState[Int(code)], point, -n, impulse) }
+                if dynamic { hitHeld(i, a, Int(code), b, impulse) }
             }
             PhysicsWorld.shove(&a, push.impulse, push.ra)
             PhysicsWorld.shove(&b, -push.impulse, push.rb)
@@ -307,6 +334,7 @@ extension PhysicsWorld {
                     let point = PhysicsWorld.points(contact, a, b).pa
                     if a.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&fractureState[i], point, n, impulse) }
                     if dynamic && b.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&fractureState[Int(code)], point, -n, impulse) }
+                    if dynamic { hitHeld(i, a, Int(code), b, impulse) }
                 }
             }
             PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
@@ -314,6 +342,22 @@ extension PhysicsWorld {
         }
         bodies[i] = a
         if dynamic { bodies[Int(code)] = b }
+    }
+
+    /// An impact between bodies i and j: a projectile's hardest hit on a held piece this step, kept in its state.
+    @inline(__always) private func hitHeld(_ i: Int, _ a: GPUPhysicsBody, _ j: Int, _ b: GPUPhysicsBody, _ impulse: Float) {
+        if PhysicsWorld.fixed(b) && a.info.y & PhysicsWorld.pieceBit == 0 { PhysicsWorld.hit(&fractureState[i], j, impulse) }
+        if PhysicsWorld.fixed(a) && b.info.y & PhysicsWorld.pieceBit == 0 { PhysicsWorld.hit(&fractureState[j], i, impulse) }
+    }
+
+    /// A piece held where it is (by the ground, or for now after its parent broke): no mass of its own.
+    @inline(__always) static func fixed(_ b: GPUPhysicsBody) -> Bool { b.info.y & pieceBit != 0 && b.position.w == 0 }
+
+    /// A projectile's hit on held piece `piece`: strain.x its impulse, strain.z the piece, if the hardest so far.
+    @inline(__always) static func hit(_ s: inout GPUFractureState, _ piece: Int, _ impulse: Float) {
+        guard impulse > s.strain.x else { return }
+        s.strain.x = impulse
+        s.strain.z = Float(piece)
     }
 
     @inline(__always) static func strike(_ s: inout GPUFractureState, _ point: SIMD3<Float>, _ push: SIMD3<Float>, _ impulse: Float) {
@@ -384,6 +428,10 @@ extension PhysicsWorld {
         }
         let before = bodies, states = fractureState
         for i in bodies.indices {
+            guard bodies[i].info.y & PhysicsWorld.pieceBit != 0 else {
+                PhysicsWorld.giveWay(&bodies[i], fractureState[i], states)
+                continue
+            }
             let node = fractureNodes[i], p = node.info.x == PhysicsWorld.none ? i : Int(node.info.x)
             let free = PhysicsWorld.apply(&bodies[i], &fractureState[i], node, parent: before[p], parentState: states[p],
                                           parentThreshold: fractureNodes[p].offset.w, tuning: tuning)
@@ -394,6 +442,13 @@ extension PhysicsWorld {
     /// Every weld of body `i` broken (it came free).
     private func breakWelds(_ i: Int) {
         for k in Int(weldStarts[i])..<Int(weldStarts[i + 1]) { welds[Int(weldList[k].y)].info.z = 1 }
+    }
+
+    /// Phase B for a projectile b: if its hardest hit this step was on a held piece that broke or came free (`states`,
+    /// as phase A left them), on at the speed it started the step at, into the pieces.
+    @inline(__always) static func giveWay(_ b: inout GPUPhysicsBody, _ s: GPUFractureState, _ states: [GPUFractureState]) {
+        guard s.strain.x > 0, states[Int(s.strain.z)].strain.w != 0 else { return }
+        b.velocity = SIMD4(xyz(s.impact), b.velocity.w)
     }
 
     /// Phase A: the step's verdict on body b (and its time lying still, for fading).
@@ -410,7 +465,8 @@ extension PhysicsWorld {
     }
 
     /// Phase B for one body (it reads only its parent's state as phase A left it, and writes only its own): disabled
-    /// if it broke; in its parent's place if that broke; freed; faded. Whether its welds break (it came free).
+    /// if it broke; in its parent's place if that broke; freed; let go after its hold; faded. Whether its welds break
+    /// (it came free).
     @inline(__always) static func apply(_ b: inout GPUPhysicsBody, _ s: inout GPUFractureState, _ node: GPUFractureNode,
                                         parent: GPUPhysicsBody, parentState ps: GPUFractureState, parentThreshold: Float,
                                         tuning: SIMD4<Float>) -> Bool {
@@ -421,7 +477,17 @@ extension PhysicsWorld {
                 b.info.y |= disabledBit   // (its strain stays: its children read it)
                 return false
             }
-            if verdict == 2 { free(&b, node) }
+            if verdict == 2 {
+                free(&b, node)
+                s.hold.x = 0
+            }
+            if s.hold.x > 0 {   // held since its parent broke: let go
+                s.hold.x -= stepLength
+                if !(s.hold.x > 0) {
+                    free(&b, node)
+                    s.hold.x = 0
+                }
+            }
             // Fading: a small piece lying still shrinks away, then is gone.
             let scale = min(max(1 - (s.strain.y - tuning.x) / max(tuning.y, 1e-3), 0), 1)
             if scale <= 0 { b.info.y |= disabledBit }
@@ -444,8 +510,10 @@ extension PhysicsWorld {
         // (From its near side: the piece the hit was on takes all of it.)
         let f = max(1 - max(length(x - hit) - 0.6 * b.invInertia.w, 0) / spread, 0)
         let inherited = total * f * f
-        // Held by the ground only if its parent was.
-        let held = node.info.w & anchoredNode != 0 && parent.position.w == 0
+        let freed = inherited > node.extra.y
+        // Held where it is if its parent was: by the ground if anchored, else for a moment unless freed.
+        let anchored = node.info.w & anchoredNode != 0
+        let held = parent.position.w == 0 && (anchored || !freed)
         b.position = SIMD4(x, held ? 0 : node.extra.x)
         b.rotation = q
         b.prevPosition = SIMD4(x, 0)
@@ -453,7 +521,7 @@ extension PhysicsWorld {
         b.info.y &= ~(disabledBit | asleep)
         s = GPUFractureState()
         s.strain.z = inherited
-        let freed = inherited > node.extra.y
+        s.hold.x = held && !anchored ? holdAfterBreak : 0
         if freed && !held {
             // Pushed on the way the impacts pushed its parent.
             let d = xyz(ps.direction), l = length(d)

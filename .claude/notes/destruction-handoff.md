@@ -24,6 +24,14 @@ README's "Destruction" section is the design; this is where things stand and wha
   (`physColourPairs`, `extra`). The building demo blasts all four ground-floor corners (two no longer brought it down:
   part of the old collapse was pieces sinking through each other's dropped contacts). Measure with
   `DESTRUCTION_SETTLE=1 swift test ... --filter DestructionTests/testTheBuildingSettles` (and `testALooseHeapSettles`).
+- Shots knock pieces out (Oct 19): a projectile whose hardest hit of a step was on a held piece that broke or came free
+  keeps its speed from the step's start (`giveWay`, `startProjectile`, `hitHeld`; the projectile's own fracture state
+  holds the speed and the hit); a held piece's children that weren't freed stay held for 0.25 s (`holdAfterBreak`,
+  `GPUFractureState.hold`), then stand on their welds. And a real bug: weld anchors were computed from the weld centre in
+  shape space against world body positions (`addFracture` now takes the transform), so every weld of an object away
+  from the origin snapped at the first small turn after a break. With welds that hold, the massive building stood after
+  its corner blasts, so its welds are 0.05x (`buildingStrength` in Scene+Destruction.swift): down by 8 s, steady reach
+  7.5 m and height ~1 m from 8 s. Brick wall test: 14 of 103 moved, a hole (it was 0); shot test: 3 knocked out.
 
 ## Not done / not checked
 
@@ -44,14 +52,14 @@ README's "Destruction" section is the design; this is where things stand and wha
   resistance, damping slow pieces, a lower push cap, looser sleep and denser edge samples did nothing; a slab's full
   pair list dropped the pieces on it (one-sided: about 1,600 a step); solving those one after another on thread 0 took
   0.4 s a step, and scanning every entry on one thread for them 10 ms.
-- What it cost the courtyard's look: cracked pieces no longer creep out of a wall, so a shot cracks a wall and stops
-  (the ball meets the held root whole in the step it breaks). Tried and dropped: a held piece giving way past its
-  threshold (the shot went on, and the welded rest of the wall fell as a slab), sibling knocks not counting.
+- Knock-out traps (Oct 19): with the ball given its speed back, the welded rest took its push and toppled; what did NOT
+  fix that: a piece tearing its welds mid-step once its strain passed its threshold, counting what a struck piece's welds
+  pass on as strain, counting a projectile's every contact impulse, capping friction's normal speed between pieces,
+  welds in the velocity pass, more substeps (32, 64), no gap snap. Giving back a fraction of the speed is chaotic (0.25
+  passed, 0.4 and 0.6 toppled). Holding the rest briefly did it. Debug with a per-piece CSV of the brick test and an
+  ASCII front view (rows x columns of displacement) - far quicker than reading counters.
 
 ## Next
-
-- Shots that knock pieces out: break within the step (or redo a step that broke something) so the projectile meets the
-  pieces, not the whole held root; then welds that let a hole open without the wall around it falling as a slab.
 
 - Hand test, then M4 Max timings (`METALRENDERER_BENCH=destruction`, `destructionmassive`).
 - Glass cracking at the hit point (a runtime radial pattern into the pre-made pool) if wanted.

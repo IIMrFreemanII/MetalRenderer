@@ -91,8 +91,9 @@ final class DestructionTests: XCTestCase {
         }
     }
 
-    /// The scene's brick wall and its cannonball (which once slid the wall off its foot, and once flung bricks 20 m:
-    /// welds pulled shut from a centimetre away).
+    /// The scene's brick wall and its cannonball, which knocks bricks out of it (and once slid the wall off its foot,
+    /// once flung bricks 20 m: welds pulled shut from a centimetre away; once stopped dead against it; once went through
+    /// and the wall around the hole toppled after it).
     func testABrickWallKeepsMostOfItsBricks() {
         let s = scene()
         var r = FractureRecipe.defaults(.brick)
@@ -117,6 +118,7 @@ final class DestructionTests: XCTestCase {
         }
         print("bricks: \(f.tree.nodes.count) nodes, \(f.tree.welds.count) welds; 3 s: \(c.enabled) enabled, \(c.moved) moved, \(c.broken) broken, farthest \(farthest) m")
         XCTAssertGreaterThan(c.enabled, 1, "the wall broke")
+        XCTAssertGreaterThan(c.moved, 0, "the shot knocked bricks out")
         XCTAssertLessThan(Float(c.moved), 0.3 * Float(c.enabled), "most of the wall still stands")
         XCTAssertLessThan(farthest, 6, "nothing is flung")
     }
@@ -132,9 +134,8 @@ final class DestructionTests: XCTestCase {
         XCTAssertEqual(c.moved, 0)
     }
 
-    /// A shot breaks the wall where it hits: the pieces there come free, and most of the wall stands. (It doesn't
-    /// knock them out: the shot meets the wall whole, held by the ground, in the step it breaks, and stops. Once the
-    /// cracked wall's pieces crept out of it over the next seconds, a heap rocking: no longer.)
+    /// A shot breaks the wall where it hits and knocks the pieces there out, and most of the wall stands. (It met the
+    /// wall whole, held by the ground, in the step it broke, and stopped dead: it goes on now, into the pieces.)
     func testAShotBreaksTheWallWhereItHits() {
         let s = scene()
         let f = wall(s)
@@ -155,6 +156,7 @@ final class DestructionTests: XCTestCase {
         print("shot: \(f.tree.nodes.count) nodes (\(leaves) leaves, \(f.tree.welds.count) welds); 0.4 s: \(hit.enabled) enabled, \(freed) free, \(hit.broken) welds broken; 3 s: \(later.enabled) enabled, \(later.moved) moved, \(later.broken) broken")
         XCTAssertGreaterThan(hit.enabled, 1, "the wall broke")
         XCTAssertGreaterThan(freed, 0, "the pieces at the hit came free")
+        XCTAssertGreaterThan(later.moved, 0, "the shot knocked pieces out")
         XCTAssertLessThan(Float(later.moved), 0.5 * Float(later.enabled), "most of the wall still stands")
     }
 
@@ -438,6 +440,8 @@ final class DestructionTests: XCTestCase {
         // (A weld at its strength breaks in one and holds in the other a substep after the break: 1.3 mm then, 13 mm at
         // 16 steps, in this one.)
         XCTAssertLessThan(early.worst, 0.03)
-        XCTAssertEqual(late.differ, 0, "the same pieces still")
+        // (Then the shot goes on into the pieces, some at their thresholds: one breaks a step later in one than the
+        // other, it and its children, 7 bodies, here.)
+        XCTAssertLessThanOrEqual(late.differ, 8, "the same pieces still, but for one at its threshold")
     }
 }

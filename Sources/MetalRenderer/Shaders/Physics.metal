@@ -23,6 +23,7 @@ constant float PHYS_SOFT_PUSH_SPEED = 10.0f;        // PhysicsWorld.softPushSpee
 constant float PHYS_GYRATION = 0.15f;               // PhysicsWorld.gyration
 constant float PHYS_STEP = 1.0f / 60.0f;            // PhysicsWorld.stepLength
 constant float PHYS_IMPACT_SPEED = 1.0f, PHYS_FREED_PUSH = 4.0f;   // PhysicsWorld.impactSpeed, freedPush
+constant float PHYS_HOLD_AFTER_BREAK = 0.25f;                        // PhysicsWorld.holdAfterBreak
 constant float PHYS_WELD_GAP = 3e-3f, PHYS_WELD_TWIST = 0.03f;     // PhysicsWorld.weldGap, weldTwist
 
 struct PhysicsBody {
@@ -74,8 +75,9 @@ struct PhysicsFractureState {
     float4 strain;     // x = this step's impacts (N s), y = time lying still, z = taken over from its parent, w = verdict
     float4 impact;     // xyz = impacts' points x impulse, w = impulse
     float4 direction;  // xyz = their push x impulse, w = its drawn scale
+    float4 hold;       // x = how much longer (s) it is held after its parent broke
 };
-static_assert(sizeof(PhysicsFractureState) == 48, "PhysicsFractureState: GPUFractureState");
+static_assert(sizeof(PhysicsFractureState) == 64, "PhysicsFractureState: GPUFractureState");
 
 struct PhysicsFractureCommand {
     uint4  info;       // x = first step, y = kind, z = body, w = steps
@@ -1069,6 +1071,21 @@ inline void physStrike(device PhysicsFractureState& s, float3 point, float3 push
     s.direction.xyz += push * impulse;
 }
 
+// PhysicsWorld.fixed: a piece held where it is (by the ground, or for now after its parent broke).
+inline bool physFixed(PhysicsBody b) { return (b.info.y & PHYS_PIECE) != 0 && b.position.w == 0.0f; }
+
+// PhysicsWorld.hitHeld: a projectile's hardest hit on a held piece this step (PhysicsWorld.hit).
+inline void physHitHeld(device const PhysicsTables& t, uint i, PhysicsBody a, uint j, PhysicsBody b, float impulse) {
+    if (physFixed(b) && (a.info.y & PHYS_PIECE) == 0 && impulse > t.fracture[i].strain.x) {
+        t.fracture[i].strain.x = impulse;
+        t.fracture[i].strain.z = float(j);
+    }
+    if (physFixed(a) && (b.info.y & PHYS_PIECE) == 0 && impulse > t.fracture[j].strain.x) {
+        t.fracture[j].strain.x = impulse;
+        t.fracture[j].strain.z = float(i);
+    }
+}
+
 // PhysicsCPU.solvePositions for pair e: its contacts one after the other, each pushing both bodies.
 inline void physPushPair(constant PhysicsParams& p, device PhysicsBody* bodies, device const PhysicsBody* statics,
                          device const PhysicsPair* pairs, device PhysicsContact* contacts, uint e) {
@@ -1110,6 +1127,7 @@ inline void physPushFracturePair(constant PhysicsParams& p, device PhysicsBody* 
             float3 point = physPoints(contact, a, b, false).pa, n = contact.normal.xyz;
             if ((a.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[i], point, n, impulse);
             if (dynamic && (b.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[code], point, -n, impulse);
+            if (dynamic) physHitHeld(t, i, a, code, b, impulse);
         }
         physShove(a, push.impulse, push.ra);
         physShove(b, -push.impulse, push.rb);
@@ -1230,6 +1248,7 @@ inline void physKickFracturePair(constant PhysicsParams& p, device PhysicsBody* 
                 float3 point = physPoints(contact, a, b, false).pa;
                 if ((a.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[i], point, n, impulse);
                 if (dynamic && (b.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[code], point, -n, impulse);
+                if (dynamic) physHitHeld(t, i, a, code, b, impulse);
             }
         }
         physKick(a, kick.impulse, kick.ra, kick.twist);
@@ -2469,6 +2488,7 @@ kernel void physicsFractureResetKernel(constant PhysicsFractureParams&     fp   
         s.strain = float4(0.0f);
         s.impact = float4(0.0f);
         s.direction = float4(0, 0, 0, 1);
+        s.hold = float4(0.0f);
         state[i] = s;
     }
     if (i < fp.counts.y) welds[i] = initial[i];
@@ -2558,6 +2578,11 @@ kernel void physicsFractureCommandKernel(constant PhysicsFractureParams&      fp
         default: break;
         }
     }
+    if ((b.info.y & PHYS_PIECE) == 0) {   // PhysicsWorld.startProjectile: its speed at the step's start, no hit yet
+        s.strain = float4(0.0f);
+        s.impact = float4(b.velocity.xyz, 0.0f);
+        state[i] = s;
+    }
     if (!changed) return;
     bodies[i] = b;
     state[i] = s;
@@ -2602,7 +2627,13 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
     if (i >= fp.counts.x) return;
     PhysicsBody b = bodies[i];
     broke[i] = (b.info.y & (PHYS_PIECE | PHYS_DISABLED)) == PHYS_PIECE && state[i].strain.w == 1.0f ? 1u : 0u;
-    if ((b.info.y & PHYS_PIECE) == 0) return;
+    if ((b.info.y & PHYS_PIECE) == 0) {
+        // PhysicsWorld.giveWay: a projectile whose hardest hit was on a held piece that broke or came free goes on at
+        // its speed from the step's start. (The piece's verdict is read while its thread writes it back unchanged.)
+        PhysicsFractureState s = state[i];
+        if (s.strain.x > 0.0f && state[uint(s.strain.z)].strain.w != 0.0f) bodies[i].velocity.xyz = s.impact.xyz;
+        return;
+    }
     PhysicsFractureNode node = nodes[i];
     PhysicsFractureState s = state[i];
     float4 tuning = fp.tuning;
@@ -2613,7 +2644,11 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
             bodies[i].info.y = b.info.y | PHYS_DISABLED;   // (its strain stays: its children read it)
             return;
         }
-        if (verdict == 2.0f) { physFree(b, node); freed = true; }
+        if (verdict == 2.0f) { physFree(b, node); freed = true; s.hold.x = 0.0f; }
+        if (s.hold.x > 0.0f) {   // PhysicsWorld.holdAfterBreak: let go
+            s.hold.x -= PHYS_STEP;
+            if (!(s.hold.x > 0.0f)) { physFree(b, node); s.hold.x = 0.0f; }
+        }
         float scale = min(max(1.0f - (s.strain.y - tuning.x) / max(tuning.y, 1e-3f), 0.0f), 1.0f);
         if (!(scale > 0.0f)) b.info.y |= PHYS_DISABLED;
         s.strain.x = 0.0f;
@@ -2635,7 +2670,9 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
         float spread = max(tuning.z * pow(total / max(nodes[p].offset.w, 1e-6f), 1.0f / 3.0f), 1e-3f);
         float f = max(1.0f - max(length(x - hit) - 0.6f * b.invInertia.w, 0.0f) / spread, 0.0f);
         float inherited = total * f * f;
-        bool held = (node.info.w & 1u) != 0 && px.w == 0.0f;
+        freed = inherited > node.extra.y;
+        bool anchored = (node.info.w & 1u) != 0;
+        bool held = px.w == 0.0f && (anchored || !freed);
         b.position = float4(x, held ? 0.0f : node.extra.x);
         b.rotation = q;
         b.prevPosition = float4(x, 0.0f);
@@ -2644,7 +2681,7 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
         s.strain = float4(0, 0, inherited, 0);
         s.impact = float4(0.0f);
         s.direction = float4(0, 0, 0, 1);
-        freed = inherited > node.extra.y;
+        s.hold = float4(held && !anchored ? PHYS_HOLD_AFTER_BREAK : 0.0f, 0.0f, 0.0f, 0.0f);
         if (freed && !held) {
             float3 d = ps.direction.xyz;
             float l = length(d);

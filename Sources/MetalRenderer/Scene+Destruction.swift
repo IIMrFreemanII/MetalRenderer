@@ -175,6 +175,10 @@ extension Scene {
         if settings.massive {
             section("Building")
             let w: Float = 3.2, d: Float = 2.8, storey: Float = 3, t: Float = 0.2, centre = SIMD3<Float>(0, 0, -15)
+            // Its welds a twentieth of the courtyard's: blasted at the corners, its ground floor gives way and the storeys
+            // come down. (At full strength what is left of each wall holds them up; they once came down only because a
+            // weld's anchors were metres off and it snapped at the first turn.)
+            let buildingStrength: Float = 0.05
             var panel = recipe(.concrete, seed: 101)
             panel.counts = [24, 8]
             for floor in 0..<3 {
@@ -188,13 +192,13 @@ extension Scene {
                     panel.seed = 101 + UInt64(floor * 8 + k)
                     fractured("Building/Floor \(floor + 1) \(side)", shape: SDFShape(.box(halfExtents: half)), recipe: panel,
                               transform: translate(centre + at - [0, 0.001, 0]), material: concrete, interior: concreteInside,
-                              anchor: floor == 0 ? .ground(0) : .none, toughness: tough, strength: strong)
+                              anchor: floor == 0 ? .ground(0) : .none, toughness: tough, strength: strong * buildingStrength)
                 }
                 var slab = panel
                 slab.seed = 201 + UInt64(floor)
                 fractured("Building/Floor \(floor + 1) slab", shape: SDFShape(.box(halfExtents: [w, t / 2, d + t / 2])), recipe: slab,
                           transform: translate(centre + [0, y + storey + t / 2, 0]), material: concrete, interior: concreteInside,
-                          anchor: .none, toughness: tough, strength: strong)
+                          anchor: .none, toughness: tough, strength: strong * buildingStrength)
             }
         }
 
