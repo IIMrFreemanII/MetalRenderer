@@ -22,19 +22,22 @@ final class PhysicsPool {
 
     /// Words the threads share: the ticket (a stage's generation << 48 | its chunks << 24 | the next chunk), the
     /// chunks done, whether the workers spin (a step is running), whether a stage is out (a stage's items that hand
-    /// out a stage themselves run it inline), and which thread holds the pool (one stepper at a time).
+    /// out a stage themselves run it inline), and which thread holds the pool (one stepper at a time). The ticket, the
+    /// chunks done and the threads inside are each on a cache line of their own (on one, every claim and every chunk
+    /// done moved it between all the cores: a stage of 3,000 empty items took 150 µs).
     private let words: UnsafeMutablePointer<Int>
+    private static let line = 16   // (Ints a cache line: 128 bytes on Apple's cores)
     private var ticket: UnsafeMutablePointer<Int> { words }
-    private var done: UnsafeMutablePointer<Int> { words + 1 }
-    private var awake: UnsafeMutablePointer<Int> { words + 2 }
-    private var busy: UnsafeMutablePointer<Int> { words + 3 }
-    private var held: UnsafeMutablePointer<Int> { words + 4 }
-    private var parked: UnsafeMutablePointer<Int> { words + 5 }
+    private var done: UnsafeMutablePointer<Int> { words + PhysicsPool.line }
     /// Threads holding the stage out (it isn't put away until none does).
-    private var inside: UnsafeMutablePointer<Int> { words + 6 }
-    /// The stage out: chunk index -> its items. Written before the ticket that publishes it, read only by a thread
-    /// that claimed one of its chunks (so it never changes under one).
-    private var stage: ((Int) -> Void)?
+    private var inside: UnsafeMutablePointer<Int> { words + 2 * PhysicsPool.line }
+    private var awake: UnsafeMutablePointer<Int> { words + 3 * PhysicsPool.line }
+    private var busy: UnsafeMutablePointer<Int> { words + 3 * PhysicsPool.line + 1 }
+    private var held: UnsafeMutablePointer<Int> { words + 3 * PhysicsPool.line + 2 }
+    private var parked: UnsafeMutablePointer<Int> { words + 3 * PhysicsPool.line + 3 }
+    /// The stage out: a run of chunks -> their items. Written before the ticket that publishes it, read only by a
+    /// thread that claimed some of its chunks (so it never changes under one).
+    private var stage: ((Range<Int>) -> Void)?
     private let wake = DispatchSemaphore(value: 0)
 
     private static let mask = (1 << 24) - 1
@@ -45,8 +48,9 @@ final class PhysicsPool {
         let asked = Int(ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_THREADS"] ?? "") ?? 0
         let all = asked > 0 ? asked : ProcessInfo.processInfo.activeProcessorCount
         workers = max(min(all, 64) - 1, 0)
-        words = .allocate(capacity: 8)
-        words.initialize(repeating: 0, count: 8)
+        words = UnsafeMutableRawPointer.allocate(byteCount: 4 * PhysicsPool.line * MemoryLayout<Int>.stride, alignment: 128)
+            .bindMemory(to: Int.self, capacity: 4 * PhysicsPool.line)
+        words.initialize(repeating: 0, count: 4 * PhysicsPool.line)
         for k in 0..<workers {
             let t = Thread { [unowned self] in self.work() }
             t.name = "MetalRenderer.physics.\(k)"
@@ -87,7 +91,7 @@ final class PhysicsPool {
             return
         }
         withoutActuallyEscaping(body) { body in
-            stage = { c in body(c * grain..<min((c + 1) * grain, count)) }
+            stage = { c in body(c.lowerBound * grain..<min(c.upperBound * grain, count)) }
             cpa_store(done, 0)
             let generation = ((cpa_load(ticket) >> 48) + 1) & 0xFFFF
             cpa_store(ticket, generation << 48 | chunks << 24)
@@ -104,30 +108,35 @@ final class PhysicsPool {
         cpa_store(busy, 0)
     }
 
-    /// Claims and runs generation `generation`'s chunks until none are left (the stage read once, after the first
-    /// claim: read for each chunk, its count went back and forth between the cores).
+    /// Claims and runs generation `generation`'s chunks until none are left, then counts them done (the stage read
+    /// once, after the first claim: read for each chunk, its count went back and forth between the cores).
     @inline(__always) private func drain(_ generation: Int) {
         guard let first = claim(generation) else { return }
         _ = cpa_add(inside, 1)   // (before its first chunk is done: the stage can't end before this)
         do {
             let run = stage!
-            var next: Int? = first
+            var next: Range<Int>? = first, ran = 0
             while let c = next {
                 run(c)
-                _ = cpa_add(done, 1)
+                ran += c.count
                 next = claim(generation)
             }
+            _ = cpa_add(done, ran)
         }
         _ = cpa_add(inside, -1)   // (the stage let go of)
     }
 
-    /// The next chunk of generation `generation`, if one is left.
-    @inline(__always) private func claim(_ generation: Int) -> Int? {
+    /// The next run of generation `generation`'s chunks, if any are left: a share of what is left (a quarter of it
+    /// over the threads, one chunk at least), so a stage is a few claims a thread and its last chunks still even out.
+    /// (Which thread runs which items changes nothing: a stage's items are independent.)
+    @inline(__always) private func claim(_ generation: Int) -> Range<Int>? {
+        let threads = workers + 1
         while true {
             let t = cpa_load(ticket)
-            let next = t & PhysicsPool.mask
-            guard t >> 48 == generation, next < (t >> 24) & PhysicsPool.mask else { return nil }
-            if cpa_cas(ticket, t, t + 1) { return next }
+            let next = t & PhysicsPool.mask, chunks = (t >> 24) & PhysicsPool.mask
+            guard t >> 48 == generation, next < chunks else { return nil }
+            let take = max((chunks - next) / (4 * threads), 1)
+            if cpa_cas(ticket, t, t + take) { return next..<(next + take) }
         }
     }
 
@@ -213,6 +222,41 @@ extension PhysicsWorld {
     }
 }
 
+/// The narrow phase's memo (PhysicsWorld.narrowPhase) as its stages read and write it: the contacts of a pair whose
+/// two bodies are as they were at the last step's start (each of their bits the narrow phase reads: pose, speeds,
+/// radius, shape, flags) are what `collide` found then, so they are kept, not found again. A body's entries are its
+/// own to write, `changed` is written in a stage before.
+struct NarrowMemo {
+    let partners: UnsafeMutableBufferPointer<UInt32>
+    let counts: UnsafeMutableBufferPointer<UInt32>
+    let seen: UnsafeMutableBufferPointer<SIMD16<UInt32>>
+    let changed: UnsafeMutableBufferPointer<UInt8>
+
+    /// What of body b the narrow phase reads, bit for bit.
+    @inline(__always) static func key(_ b: GPUPhysicsBody) -> SIMD16<UInt32> {
+        SIMD16(b.position.x.bitPattern, b.position.y.bitPattern, b.position.z.bitPattern,
+               b.rotation.x.bitPattern, b.rotation.y.bitPattern, b.rotation.z.bitPattern, b.rotation.w.bitPattern,
+               b.velocity.x.bitPattern, b.velocity.y.bitPattern, b.velocity.z.bitPattern,
+               b.angular.x.bitPattern, b.angular.y.bitPattern, b.angular.z.bitPattern,
+               b.invInertia.w.bitPattern, b.info.x, b.info.y)
+    }
+}
+
+extension PhysicsWorld {
+    /// `body` with the narrow phase's memo lent as raw buffers (NarrowMemo).
+    func withNarrowMemo<R>(_ body: (NarrowMemo) throws -> R) rethrows -> R {
+        try narrowPartners.withUnsafeMutableBufferPointer { partners in
+            try narrowCounts.withUnsafeMutableBufferPointer { counts in
+                try narrowSeen.withUnsafeMutableBufferPointer { seen in
+                    try narrowChanged.withUnsafeMutableBufferPointer { changed in
+                        try body(NarrowMemo(partners: partners, counts: counts, seen: seen, changed: changed))
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The particles' arrays as their stages' loops read and write them (PhysicsWorld.withParticleBuffers): a particle
 /// writes only its own entries (a colour's links and tets share no particle); the bodies are read only.
 struct ParticleBuffers {
@@ -277,18 +321,40 @@ struct HairBuffers {
     }
 }
 
-/// The cells the broad phases' things are in (broadPhase, particleBroadPhase), as their queries on the workers read
-/// them: each cell's items in the order they were added (as a dictionary of arrays held them), flat, found through an
+/// The levels of the bodies' grid (PhysicsWorld.broadPhase): level l's cells are `first` x 2^l a side, and a body is
+/// in the first level whose cells are twice the reach it can have in a step (its radius, the most it travels, the
+/// margin) or more. `used`: a bit a level with bodies in it.
+struct PhysicsLevels {
+    static let most = 12
+    let first: Float
+    var used: UInt32
+
+    /// The most a body of radius r reaches in a step (PhysicsWorld.reach at the cell speed).
+    @inline(__always) static func most(_ r: Float) -> Float {
+        r + PhysicsWorld.cellSpeed * PhysicsWorld.stepLength + PhysicsWorld.margin
+    }
+    @inline(__always) func size(_ level: Int) -> Float { first * Float(1 << level) }
+    /// Body b's level (`most` for one too big for the last).
+    @inline(__always) func level(_ b: GPUPhysicsBody) -> Int {
+        let need = 2 * PhysicsLevels.most(b.invInertia.w)
+        var level = 0
+        while level < PhysicsLevels.most && size(level) < need { level += 1 }
+        return level
+    }
+}
+
+/// The cells the broad phases' things are in (broadPhase, particleBroadPhase; the bodies' in levels of cells of
+/// sizes doubling), as their queries on the workers read them: each cell's items in the order they were added (as a dictionary of arrays held them), flat, found through an
 /// open-addressed table, so a lookup counts no references. Kept between steps, its arrays reused.
 struct PhysicsCellGrid {
-    private var keys: [SIMD3<Int32>] = []
+    private var keys: [SIMD4<Int32>] = []
     private var slots: [Int32] = []
     private var starts: [Int32] = []
     private var items: [Int32] = []
     private var cellOf: [Int32] = []
 
-    @inline(__always) static func hash(_ k: SIMD3<Int32>) -> Int {
-        Int(UInt32(bitPattern: k.x &* 73_856_093 ^ k.y &* 19_349_663 ^ k.z &* 83_492_791))
+    @inline(__always) static func hash(_ k: SIMD4<Int32>) -> Int {
+        Int(UInt32(bitPattern: k.x &* 73_856_093 ^ k.y &* 19_349_663 ^ k.z &* 83_492_791 ^ k.w &* 1_640_531_527))
     }
 
     /// `a` as `count` copies of `value`, its storage kept.
@@ -297,8 +363,8 @@ struct PhysicsCellGrid {
         a.append(contentsOf: repeatElement(value, count: count))
     }
 
-    /// Items 0..<n in their cells (`key`; nil for one in none).
-    mutating func build(_ n: Int, _ key: (Int) -> SIMD3<Int32>?) {
+    /// Items 0..<n in their cells (`key`: a cell, and the level of cells it is one of; nil for one in none).
+    mutating func build(_ n: Int, _ key: (Int) -> SIMD4<Int32>?) {
         var capacity = 16
         while capacity < 2 * n { capacity *= 2 }
         let mask = capacity - 1
@@ -348,13 +414,13 @@ struct PhysicsCellGrid {
     }
 
     struct View {
-        let keys: UnsafeBufferPointer<SIMD3<Int32>>
+        let keys: UnsafeBufferPointer<SIMD4<Int32>>
         let slots: UnsafeBufferPointer<Int32>
         let starts: UnsafeBufferPointer<Int32>
         let items: UnsafeBufferPointer<Int32>
 
         /// The items in cell `k`, in the order they were added (none for an empty cell).
-        @inline(__always) func cell(_ k: SIMD3<Int32>) -> Range<Int> {
+        @inline(__always) func cell(_ k: SIMD4<Int32>) -> Range<Int> {
             let mask = slots.count - 1
             var at = PhysicsCellGrid.hash(k) & mask
             while slots[at] >= 0 {

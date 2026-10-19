@@ -58,6 +58,7 @@ where things stand and what to do next.
   | fluids | 935db933f06c9358 |
   | destruction | 51920c0b0adf9f39 |
   | massive | ddd80465606fa8f1 |
+  | 3 buildings (7 s; added on `claude/cpu-physics-big-worlds`, from main at 58d9774) | bc8fb68c4820d793 |
 
 - Related suites in release pass: BuildingWorkshop, Fluid, Destruction, Hair, Muscle, PhysicsThreads, Physics, Ragdoll,
   ProjectGraph, SettingsTable, SoftBody, Terrain, KernelVariants.
@@ -72,13 +73,54 @@ where things stand and what to do next.
 - The interior push and terrain edits through the stepper. They go through `Scene.withPhysics` / the stepper's
   `sync`, but they were not exercised by hand.
 
+## Big worlds (branch `claude/cpu-physics-big-worlds`)
+
+The settling phase of three buildings (10 to 13 s, 6,049 enabled bodies) was measured stage by stage, with timers
+that were taken out afterwards (one thread / ten):
+
+| Stage | Before, 1 / 10 threads | After, 1 / 10 threads |
+|---|---|---|
+| Narrow phase | 214 / 29.9 ms | 212 / 27.9 ms |
+| Contact positions | 75 / 19.2 ms | 72 / 14.5 ms |
+| Contact velocities | 57 / 15.4 ms | 63 / 13.5 ms |
+| Broad phase | 119 / 17.7 ms | 33 / 5.0 ms |
+| Colouring | 11 / 4.4 ms | 11 / 4.4 ms |
+| Whole step | 480 / 88 ms | 395 / 66 ms |
+
+Done:
+- **Levelled grid** (`PhysicsLevels`, `PhysicsCellGrid` keys are SIMD4 with the level in w). Cells double in size
+  from level to level, and the first level is sized by the enabled bodies' mean radius. A body is in the first level
+  whose cell is at least twice its most reach. A query covers each used level's cells within `r + size/2`, with a
+  little slack for rounding. Bodies past the 12th level go in `bigBodies`, which every body checks.
+- **Pool:**
+  - The hot words (ticket, done, inside) are each on a 128-byte line.
+  - Each claim takes a quarter of the remaining chunks divided over the threads.
+  - `done` is added once a drain, not once a chunk.
+  - Colour grain is 8.
+- **Exact skips:**
+  - still pairs in the solves (`PhysicsWorld.still`, never welds);
+  - the narrow phase's memo (`NarrowMemo`: 16 words a body, the bits `collide` reads; invalidated on a refresh, on
+    a weld, on any entry not owned at a step's start, and by the shapes' epoch);
+  - `movingBodies` for integrate and the velocity pass, rebuilt after each `stepFluids`;
+  - `boxGap` stops at the first separating axis.
+
+What did nothing, or got worse:
+- A colour grain of 128 or 512 was slower: a pair's cost varies from tens of ns to about 1 µs.
+- Narrow and broad grains from 1 to 32 all measured the same.
+- The memo and the still-pair skip barely help this world, because its rubble doesn't sleep: at 20 s, 4,605 of
+  6,060 pieces are awake. They pay where heaps do sleep.
+
 ## Next (toward bigger worlds)
 
-1. Compact lists of moving bodies: most stages visit every body, asleep or disabled.
-2. A broad-phase grid not sized by the largest body (one big root makes every cell huge), and a parallel grid build
-   (sorted cell keys).
-3. Spin and power tuning: a shorter spin, or none when a stage is tiny.
-4. With 3 buildings the frame thread's remaining 5 ms is the renderer's per-instance work (`useResources`,
+1. Narrow phase (28 ms, real `collide` work on the pieces' cells): cheaper sample tests that give the same bits, e.g.
+   checking a piece's `.cell` node first when its join is a plain intersection, skipping the sample if that alone is
+   past the margin. Check `SDFShape.join` and float max with signed zeros.
+2. Colour stages: about 44 a substep, each about 5 µs to hand out. Islands, or a cheaper barrier, would help. Within
+   an island the colours keep their order, and islands are independent.
+3. Rubble that never sleeps is physics behaviour (see the destruction handoff). It would change the numbers, so it
+   isn't for this work.
+4. Spin and power tuning: a shorter spin, or none when a stage is tiny.
+5. With 3 buildings the frame thread's remaining 5 ms is the renderer's per-instance work (`useResources`,
    `_arrayForceCast` in the instance writer), not physics.
 
 ## Traps
@@ -88,4 +130,6 @@ where things stand and what to do next.
 - Retain/release on a shared array's buffer from ten threads costs more than the work. Keep shared reads in raw
   buffers or trivial structs, and check with `hotcalls.py`.
 - Keep a sum's order fixed. Use integers or a per-item value; never add floats across chunks.
+- Measure a stage by timers around its calls in `stepStages` and a gated test; `sample <pid>` on the xctest process
+  shows the hot functions. Two test runs at once slow each other: time them one after the other.
 - `related.sh` maps a `Package.swift` change to the whole suite. Give it the suite list instead.

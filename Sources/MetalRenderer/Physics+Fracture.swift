@@ -309,6 +309,7 @@ extension PhysicsWorld {
     @inline(__always) static func pushFracturePair(_ e: Int, _ s: StepBuffers, h: Float, substeps: Float) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
+        if PhysicsWorld.still(a, b) && s.contacts[e * PhysicsWorld.maxContacts].lambda.w != 1 { return }   // (a weld is a pair's one contact)
         for c in 0..<Int(s.pairs[e].contacts) {
             let ci = e * PhysicsWorld.maxContacts + c
             let contact = s.contacts[ci]
@@ -339,6 +340,7 @@ extension PhysicsWorld {
     @inline(__always) static func kickFracturePair(_ e: Int, _ s: StepBuffers, _ p: GPUPhysicsParams) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
+        if PhysicsWorld.still(a, b) { return }   // (a weld's contact kicks nothing: its lambda.x is 0)
         for c in 0..<Int(s.pairs[e].contacts) {
             let contact = s.contacts[e * PhysicsWorld.maxContacts + c]
             guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { continue }

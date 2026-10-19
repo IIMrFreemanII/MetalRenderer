@@ -22,6 +22,7 @@ extension PhysicsWorld {
         // The liquids before each group of substeps (PhysicsFluidCPU.swift), against the bodies where they are, and
         // what they push the bodies by, before the group's contacts.
         stepFluids()
+        listMoving()
         let start = bodies.map { SIMD8<Float>(lowHalf: $0.position, highHalf: $0.rotation) }
         narrowPhase(p, refresh: false)
         colourPairs()
@@ -30,6 +31,7 @@ extension PhysicsWorld {
             // contacts stay where it was (a rolling rim's sinks into the floor, and the push out of it launches it).
             if sub > 0 && sub % PhysicsWorld.contactRefresh == 0 {
                 stepFluids()
+                listMoving()
                 narrowPhase(p, refresh: true)
             }
             integrate(p, sub: sub)
@@ -57,7 +59,7 @@ extension PhysicsWorld {
 
     /// With fractured objects (physBoxGap): how far apart bodies a and b's boxes are, each grown by its margin `ma`, `mb`
     /// (their reach past their size); the largest gap along the 15 axes that could part two boxes, negative when they
-    /// overlap.
+    /// overlap (a gap of zero or more as soon as an axis parts them: not the largest).
     @inline(__always) static func boxGap(_ a: GPUPhysicsBody, _ ca: SIMD4<Float>, _ ha: SIMD4<Float>, _ ma: Float,
                                          _ b: GPUPhysicsBody, _ cb: SIMD4<Float>, _ hb: SIMD4<Float>, _ mb: Float) -> Float {
         let ax = (PhysicsMath.qrot(a.rotation, [1, 0, 0]), PhysicsMath.qrot(a.rotation, [0, 1, 0]), PhysicsMath.qrot(a.rotation, [0, 0, 1]))
@@ -79,6 +81,7 @@ extension PhysicsWorld {
             let ra = ea.x * abs(dot(ax.0, l)) + ea.y * abs(dot(ax.1, l)) + ea.z * abs(dot(ax.2, l))
             let rb = eb.x * abs(dot(bx.0, l)) + eb.y * abs(dot(bx.1, l)) + eb.z * abs(dot(bx.2, l))
             gap = max(gap, abs(dot(t, l)) - ra - rb)
+            if gap >= 0 { return gap }   // (apart: the broad phase keeps only overlaps, how far apart doesn't matter)
         }
         return gap
     }
@@ -108,22 +111,38 @@ extension PhysicsWorld {
         return length_squared(centre - nearest) < radius * radius
     }
 
-    /// Every body's partners: the static colliders it meets, then the bodies in the 27 cells around it whose spheres
-    /// meet its own, nearest first (the lower first of equals), `maxPairs` at most: a crowded body drops its farthest
-    /// bodies, never what holds it up. Two bodies a joint joins aren't partners (they overlap where it is). (Keeping the lowest-numbered instead, a tower's middle blocks dropped a body
-    /// dragged into them, which went through.) The grid is built here; each body's query on every core.
+    /// Every body's partners: the static colliders it meets, then the bodies whose spheres meet its own, nearest first
+    /// (the lower first of equals), `maxPairs` at most: a crowded body drops its farthest bodies, never what holds it
+    /// up. Two bodies a joint joins aren't partners (they overlap where it is). (Keeping the lowest-numbered instead, a
+    /// tower's middle blocks dropped a body dragged into them, which went through.) The grid is built here; each body's
+    /// query on every core.
+    ///
+    /// The grid has levels of cells, each twice the size of the one before (`bodyLevels`), and a body is in the first
+    /// whose cells are twice as big as its reach can be; one too big for the last is in none (`bigBodies`), and every
+    /// body looks at those. A body's query takes the cells of each level within its reach and the largest reach of
+    /// that level's bodies. The same partners as one grid sized by the largest body (the GPU's, `params.grid.x`):
+    /// every body within reach of another is found either way, and the nearest are kept by a total order. (A
+    /// fractured object's whole is a body the size of the object: sized by it, a building's cells held a storey each.
+    /// Sized by the largest of the pieces, a cell of a heap held hundreds.)
     private func broadPhase(_ p: GPUPhysicsParams) {
-        let size = p.grid.x
+        let levels = bodyLevels()
         bodies.withUnsafeBufferPointer { b in
-            bodyCells.build(b.count) { i in PhysicsWorld.disabled(b[i]) ? nil : PhysicsWorld.cell(PhysicsMath.xyz(b[i].position), size) }
+            bodyCells.build(b.count) { i in
+                guard !PhysicsWorld.disabled(b[i]) else { return nil }
+                let level = levels.level(b[i])
+                guard level < PhysicsLevels.most else { return nil }
+                return SIMD4(PhysicsWorld.cell(PhysicsMath.xyz(b[i].position), levels.size(level)), Int32(level))
+            }
         }
         let shapes = self.shapes, boxes = shapeBoxes, staticBounds = self.staticBounds, byGap = fractures, n = bodies.count
         bodyCells.withView { grid in
-            withStepBuffers { s in
-                PhysicsPool.shared.parallel(n, grain: 32) { range in
-                    withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxPairs) { kept in
-                        for i in range {
-                            PhysicsWorld.partners(i, s, grid, shapes, boxes, staticBounds, p, byGap: byGap, kept: kept)
+            bigBodies.withUnsafeBufferPointer { bigs in
+                withStepBuffers { s in
+                    PhysicsPool.shared.parallel(n, grain: 32) { range in
+                        withUnsafeTemporaryAllocation(of: (Float, UInt32).self, capacity: PhysicsWorld.maxPairs) { kept in
+                            for i in range {
+                                PhysicsWorld.partners(i, s, grid, levels, bigs, shapes, boxes, staticBounds, p, byGap: byGap, kept: kept)
+                            }
                         }
                     }
                 }
@@ -131,57 +150,94 @@ extension PhysicsWorld {
         }
     }
 
+    /// The levels of the broad phase's grid this step (broadPhase), from the enabled bodies: the first's cells twice
+    /// the reach a body of their mean radius can have; and the bodies too big for the last (`bigBodies`).
+    private func bodyLevels() -> PhysicsLevels {
+        var sum: Double = 0, enabled = 0
+        for b in bodies where !PhysicsWorld.disabled(b) {
+            sum += Double(b.invInertia.w)
+            enabled += 1
+        }
+        let mean = enabled > 0 ? Float(sum / Double(enabled)) : 1
+        var levels = PhysicsLevels(first: 2 * PhysicsLevels.most(max(mean, 0.01)), used: 0)
+        bigBodies.removeAll(keepingCapacity: true)
+        for (i, b) in bodies.enumerated() where !PhysicsWorld.disabled(b) {
+            let level = levels.level(b)
+            if level < PhysicsLevels.most { levels.used |= 1 << UInt32(level) } else { bigBodies.append(Int32(i)) }
+        }
+        return levels
+    }
+
     /// Body i's partners (broadPhase), kept nearest first in `kept` as they are found (the same `maxPairs` as sorting
-    /// them all: the order is total, and no partner is found twice).
-    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
+    /// them all: the order is total, and no partner is found twice): from each level's cells within reach, and the
+    /// big bodies.
+    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ levels: PhysicsLevels,
+                                           _ bigs: UnsafeBufferPointer<Int32>, _ shapes: [GPUPhysicsShape],
                                            _ boxes: [SIMD4<Float>], _ staticBounds: [AABB], _ p: GPUPhysicsParams, byGap: Bool,
                                            kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
         let k = PhysicsWorld.maxPairs
         let b = s.bodies[i]
         if PhysicsWorld.disabled(b) { s.pairCounts[i] = 0; return }   // (it is in no cell: nothing finds it either)
         let x = PhysicsMath.xyz(b.position), r = PhysicsWorld.reach(b, p)
-        let c = PhysicsWorld.cell(x, p.grid.x)
         var count = 0
-        // (Distance squared, -1 for a static; partner. With fractured objects, the gap between their boxes, those
-        // that overlap, -infinity for a static: physPairs.)
-        @inline(__always) func keep(_ key: Float, _ id: UInt32) {
-            if count == k && !(key < kept[k - 1].0 || (key == kept[k - 1].0 && id < kept[k - 1].1)) { return }
-            var at = min(count, k - 1)
-            while at > 0 && (key < kept[at - 1].0 || (key == kept[at - 1].0 && id < kept[at - 1].1)) {
-                kept[at] = kept[at - 1]
-                at -= 1
-            }
-            kept[at] = (key, id)
-            count = min(count + 1, k)
-        }
-        for dz: Int32 in -1...1 {
-            for dy: Int32 in -1...1 {
-                for dx: Int32 in -1...1 {
-                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
-                        let j = grid.item(m)
-                        guard j != i && !PhysicsWorld.joined(b, i, s.bodies[j], j) else { continue }
-                        let o = s.bodies[j]
-                        if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { continue }   // neither gives
-                        if PhysicsWorld.held(b) && PhysicsWorld.held(o) { continue }             // two anchored pieces
-                        let reach = r + PhysicsWorld.reach(o, p)
-                        let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
-                        guard d2 < reach * reach else { continue }
-                        guard byGap else { keep(d2, UInt32(j)); continue }
-                        let sa = Int(b.info.x), sb = Int(o.info.x)
-                        let gap = PhysicsWorld.boxGap(b, boxes[2 * sa], boxes[2 * sa + 1], r - b.invInertia.w,
-                                                      o, boxes[2 * sb], boxes[2 * sb + 1], PhysicsWorld.reach(o, p) - o.invInertia.w)
-                        if gap < 0 { keep(gap, UInt32(j)) }
+        var used = levels.used
+        while used != 0 {
+            let level = used.trailingZeroBitCount
+            used &= used - 1
+            // (A body of this level reaches half its cell at most; a little over, for the rounding of d2.)
+            let size = levels.size(level), far = (r + size / 2) * 1.0001 + 1e-4
+            let lo = PhysicsWorld.cell(x - far, size), hi = PhysicsWorld.cell(x + far, size)
+            for cz in lo.z...hi.z {
+                for cy in lo.y...hi.y {
+                    for cx in lo.x...hi.x {
+                        for m in grid.cell(SIMD4(cx, cy, cz, Int32(level))) {
+                            PhysicsWorld.consider(grid.item(m), i, b, x, r, s, boxes, p, byGap: byGap, kept: kept, &count)
+                        }
                     }
                 }
             }
         }
+        for j in bigs { PhysicsWorld.consider(Int(j), i, b, x, r, s, boxes, p, byGap: byGap, kept: kept, &count) }
         if !PhysicsWorld.kinematic(b) {
             for st in s.statics.indices where PhysicsWorld.touchesStatic(s.statics[st], shapes, staticBounds[st], centre: x, radius: r) {
-                keep(byGap ? -.infinity : -1, UInt32(st) | PhysicsWorld.staticBit)
+                PhysicsWorld.keep(byGap ? -.infinity : -1, UInt32(st) | PhysicsWorld.staticBit, kept, &count)
             }
         }
         s.pairCounts[i] = UInt32(count)
         for n in 0..<count { s.pairs[i * k + n] = GPUPhysicsPair(partner: kept[n].1) }
+    }
+
+    /// Body j as body i's partner (partners), if their spheres meet (with fractured objects, their boxes too).
+    @inline(__always) static func consider(_ j: Int, _ i: Int, _ b: GPUPhysicsBody, _ x: SIMD3<Float>, _ r: Float, _ s: StepBuffers,
+                                           _ boxes: [SIMD4<Float>], _ p: GPUPhysicsParams, byGap: Bool,
+                                           kept: UnsafeMutableBufferPointer<(Float, UInt32)>, _ count: inout Int) {
+        guard j != i && !PhysicsWorld.joined(b, i, s.bodies[j], j) else { return }
+        let o = s.bodies[j]
+        if PhysicsWorld.kinematic(b) && PhysicsWorld.kinematic(o) { return }   // neither gives
+        if PhysicsWorld.held(b) && PhysicsWorld.held(o) { return }             // two anchored pieces
+        let reach = r + PhysicsWorld.reach(o, p)
+        let d2 = PhysicsWorld.distance2(PhysicsMath.xyz(o.position), x)
+        guard d2 < reach * reach else { return }
+        // (Distance squared, -1 for a static; partner. With fractured objects, the gap between their boxes, those
+        // that overlap, -infinity for a static: physPairs.)
+        guard byGap else { keep(d2, UInt32(j), kept, &count); return }
+        let sa = Int(b.info.x), sb = Int(o.info.x)
+        let gap = PhysicsWorld.boxGap(b, boxes[2 * sa], boxes[2 * sa + 1], r - b.invInertia.w,
+                                      o, boxes[2 * sb], boxes[2 * sb + 1], PhysicsWorld.reach(o, p) - o.invInertia.w)
+        if gap < 0 { keep(gap, UInt32(j), kept, &count) }
+    }
+
+    /// (`key`, `id`) into `kept` (`count` of them so far, `maxPairs` at most), nearest first.
+    @inline(__always) static func keep(_ key: Float, _ id: UInt32, _ kept: UnsafeMutableBufferPointer<(Float, UInt32)>, _ count: inout Int) {
+        let k = PhysicsWorld.maxPairs
+        if count == k && !(key < kept[k - 1].0 || (key == kept[k - 1].0 && id < kept[k - 1].1)) { return }
+        var at = min(count, k - 1)
+        while at > 0 && (key < kept[at - 1].0 || (key == kept[at - 1].0 && id < kept[at - 1].1)) {
+            kept[at] = kept[at - 1]
+            at -= 1
+        }
+        kept[at] = (key, id)
+        count = min(count + 1, k)
     }
 
     /// A sleeping body wakes when something it touches moves faster than the wake speed, or turns its mass faster than
@@ -282,30 +338,71 @@ extension PhysicsWorld {
     /// Each owned entry's contacts, closer than the margin plus how far the two may close in a step.
     /// `refresh`: within the step, when only the pairs that had contacts at its start, and of which a body moves, are
     /// found again. On every core: an entry writes only its own count and contacts.
+    /// Every owned pair's contacts (`refresh`: again, mid-step, those of pairs with contacts of which a body moves).
+    /// At the step's start a pair whose bodies are as they were at the last one's keeps the contacts found then
+    /// (NarrowMemo: the same bits `collide` would give again); one found again in a refresh isn't kept.
     private func narrowPhase(_ p: GPUPhysicsParams, refresh: Bool) {
-        let shapes = shapeData, n = bodies.count
-        withStepBuffers { s in
-            PhysicsPool.shared.parallel(n, grain: 16) { range in
-                for i in range { PhysicsWorld.narrow(i, s, shapes, p, refresh: refresh) }
+        let shapes = shapeData, n = bodies.count, entries = pairs.count
+        if !refresh {
+            let valid = narrowEpoch == shapeEpoch && narrowPartners.count == entries && narrowSeen.count == n
+            if narrowPartners.count != entries {
+                narrowPartners = [UInt32](repeating: PhysicsWorld.none, count: entries)
+                narrowCounts = [UInt32](repeating: 0, count: entries)
+            }
+            if narrowSeen.count != n {
+                narrowSeen = [SIMD16<UInt32>](repeating: .zero, count: n)
+                narrowChanged = [UInt8](repeating: 1, count: n)
+            }
+            narrowEpoch = shapeEpoch
+            withNarrowMemo { m in
+                withStepBuffers { s in
+                    PhysicsPool.shared.parallel(n, grain: 256) { range in
+                        for i in range {
+                            let key = NarrowMemo.key(s.bodies[i])
+                            m.changed[i] = valid && key == m.seen[i] ? 0 : 1
+                            m.seen[i] = key
+                        }
+                    }
+                }
+            }
+        }
+        withNarrowMemo { m in
+            withStepBuffers { s in
+                PhysicsPool.shared.parallel(n, grain: 16) { range in
+                    for i in range { PhysicsWorld.narrow(i, s, shapes, p, refresh: refresh, memo: m) }
+                }
             }
         }
     }
 
     /// Body i's owned entries' contacts (narrowPhase).
-    @inline(__always) static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool) {
+    @inline(__always) static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool,
+                                         memo m: NarrowMemo) {
         let k = PhysicsWorld.maxPairs, mc = PhysicsWorld.maxContacts
-        let a = s.bodies[i]
-        for n in 0..<Int(s.pairCounts[i]) {
+        let a = s.bodies[i], count = Int(s.pairCounts[i])
+        for n in 0..<k {
             let e = i * k + n
-            guard s.pairs[e].link == UInt32(e) else { continue }
-            let b = s.partner(s.pairs[e].partner)
+            guard n < count && s.pairs[e].link == UInt32(e) else {
+                if !refresh { m.partners[e] = PhysicsWorld.none }   // (its contacts aren't this step's)
+                continue
+            }
+            let code = s.pairs[e].partner
+            let b = s.partner(code)
             // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
             if refresh && (s.pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
             // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
-            if let w = liveWeld(i, s.pairs[e].partner, bodies: UnsafeBufferPointer(s.bodies), starts: s.weldStarts,
+            if let w = liveWeld(i, code, bodies: UnsafeBufferPointer(s.bodies), starts: s.weldStarts,
                                 list: s.weldList, welds: UnsafeBufferPointer(s.welds)) {
                 s.pairs[e].contacts = 1
                 s.contacts[e * mc] = PhysicsWorld.weldContact(w)
+                m.partners[e] = PhysicsWorld.none
+                continue
+            }
+            // As they were at the last step's start, and found then: those contacts.
+            if !refresh && m.partners[e] == code && m.changed[i] == 0 && (code & PhysicsWorld.staticBit != 0 || m.changed[Int(code)] == 0) {
+                let kept = Int(m.counts[e])
+                s.pairs[e].contacts = UInt32(kept)
+                for c in 0..<kept { s.contacts[e * mc + c].lambda = .zero }
                 continue
             }
             let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
@@ -322,6 +419,8 @@ extension PhysicsWorld {
                     anchorB: SIMD4(pb.toBody(point.pointB), point.radiusB),
                     lambda: .zero)
             }
+            m.partners[e] = refresh ? PhysicsWorld.none : code
+            m.counts[e] = UInt32(manifold.count)
         }
     }
 
@@ -467,10 +566,12 @@ extension PhysicsWorld {
     /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target;
     /// a kinematic body to where its table puts it at the end of substep `sub` (PhysicsFlesh.swift).
     private func integrate(_ p: GPUPhysicsParams, sub: Int) {
-        let h = p.gravity.w, n = bodies.count, grab = self.grab, step = stepIndex, rows = kinematicRows
+        let h = p.gravity.w, grab = self.grab, step = stepIndex, rows = kinematicRows
+        movingBodies.withUnsafeBufferPointer { moving in
         withStepBuffers { s in
-            PhysicsPool.shared.parallel(n, grain: 128) { range in
-                for i in range {
+            PhysicsPool.shared.parallel(moving.count, grain: 128) { range in
+                for t in range {
+                    let i = Int(moving[t])
                     if PhysicsWorld.kinematic(s.bodies[i]) {
                         guard rows > 0 else { continue }
                         PhysicsWorld.moveKinematic(&s.bodies[i], to: kinematicPose(s.bodies[i], step: step, alpha: Float(sub + 1) / p.softDamping.z), h: h)
@@ -497,6 +598,18 @@ extension PhysicsWorld {
                     s.bodies[i] = b
                 }
             }
+        }
+        }
+    }
+
+    /// The bodies a substep may move, in order (`movingBodies`): the kinematic ones, those that move, the held one.
+    /// Made after the liquids, which wake what they push; nothing else between them wakes or stops a body but the
+    /// held one's waking, so the substeps' loops over the bodies take these and pass over no body they would move.
+    private func listMoving() {
+        let held = grab.target.w > 0 ? Int(grab.body) : -1
+        movingBodies.removeAll(keepingCapacity: true)
+        for (i, b) in bodies.enumerated() where PhysicsWorld.kinematic(b) || PhysicsWorld.moves(b) || i == held {
+            movingBodies.append(Int32(i))
         }
     }
 
@@ -580,10 +693,16 @@ extension PhysicsWorld {
                           + PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), cross(r, impulse) + twist), b.angular.w)
     }
 
+    /// Two bodies neither of which moves (asleep, held, kinematic, static): their contacts push and kick nothing
+    /// (each one's weight is 0: a push of 0, which no kick follows), so their pair is passed over. (Not a weld: it
+    /// counts its load.)
+    @inline(__always) static func still(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> Bool { !moves(a) && !moves(b) }
+
     /// Pair `e`'s contacts' pushes, one after the other, each on both bodies at once.
     @inline(__always) static func pushPair(_ e: Int, _ s: StepBuffers, h: Float) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
+        if PhysicsWorld.still(a, b) { return }
         for c in 0..<Int(s.pairs[e].contacts) {
             let ci = e * PhysicsWorld.maxContacts + c
             let push = PhysicsWorld.contactPush(s.contacts[ci], a, b, h: h)
@@ -600,6 +719,7 @@ extension PhysicsWorld {
     @inline(__always) static func kickPair(_ e: Int, _ s: StepBuffers, _ p: GPUPhysicsParams) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
+        if PhysicsWorld.still(a, b) { return }
         for c in 0..<Int(s.pairs[e].contacts) {
             guard let kick = PhysicsWorld.contactKick(s.contacts[e * PhysicsWorld.maxContacts + c], a, b, p) else { continue }
             PhysicsWorld.kick(&a, kick.impulse, kick.ra, kick.twist)
@@ -608,6 +728,10 @@ extension PhysicsWorld {
         s.bodies[i] = a
         if dynamic { s.bodies[Int(code)] = b }
     }
+
+    /// Pairs a chunk of a colour: a pair's solve takes from tens of ns (a weld) to a µs (four contacts), so small
+    /// chunks even the threads out (claimed a run at a time: PhysicsPool.claim).
+    static let colourGrain = 8
 
     /// The pairs in `pairOrder`, a colour at a time: a colour's pairs (no two sharing a body) on every core, the
     /// rest (the last run of `pairColourStarts`) one after another, in order.
@@ -619,7 +743,7 @@ extension PhysicsWorld {
                 if g == runs - 1 {
                     for t in lo..<hi { solve(Int(order[t])) }
                 } else {
-                    PhysicsPool.shared.parallel(hi - lo, grain: 32) { range in
+                    PhysicsPool.shared.parallel(hi - lo, grain: PhysicsWorld.colourGrain) { range in
                         for t in range { solve(Int(order[lo + t])) }
                     }
                 }
@@ -648,7 +772,7 @@ extension PhysicsWorld {
 
     /// The joints, then the contacts' pushes, a colour at a time, then every moving body's velocities from how far it went.
     private func solvePositions(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps), n = bodies.count
+        let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps)
         withStepBuffers { s in
             // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
             // friction undoes what the substep slid a contact, the joints' pushes included. (Joints after the contacts
@@ -661,8 +785,11 @@ extension PhysicsWorld {
             } else {
                 eachColour(s) { e in PhysicsWorld.pushPair(e, s, h: h) }
             }
-            PhysicsPool.shared.parallel(n, grain: 128) { range in
-                for i in range where PhysicsWorld.moves(s.bodies[i]) {
+            movingBodies.withUnsafeBufferPointer { moving in
+            PhysicsPool.shared.parallel(moving.count, grain: 128) { range in
+                for t in range {
+                    let i = Int(moving[t])
+                    guard PhysicsWorld.moves(s.bodies[i]) else { continue }
                     var b = s.bodies[i]
                     b.velocity = SIMD4((PhysicsMath.xyz(b.position) - PhysicsMath.xyz(b.prevPosition)) / h, b.velocity.w)
                     var dq = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(b.prevRotation))
@@ -670,6 +797,7 @@ extension PhysicsWorld {
                     b.angular = SIMD4(2 * PhysicsMath.xyz(dq) / h, b.angular.w)
                     s.bodies[i] = b
                 }
+            }
             }
         }
     }
@@ -917,7 +1045,7 @@ extension PhysicsWorld {
         guard !particles.isEmpty else { return }
         let size = p.particleGrid.x, n = particles.count
         particles.withUnsafeBufferPointer { q in
-            particleCells.build(q.count) { i in PhysicsWorld.cell(PhysicsMath.xyz(q[i].position), size) }
+            particleCells.build(q.count) { i in SIMD4(PhysicsWorld.cell(PhysicsMath.xyz(q[i].position), size), 0) }
         }
         let shapes = self.shapes, staticBounds = self.staticBounds
         particleCells.withView { grid in
@@ -945,7 +1073,7 @@ extension PhysicsWorld {
         for dz: Int32 in -1...1 {
             for dy: Int32 in -1...1 {
                 for dx: Int32 in -1...1 {
-                    for m in grid.cell(c &+ SIMD3(dx, dy, dz)) {
+                    for m in grid.cell(SIMD4(c &+ SIMD3(dx, dy, dz), 0)) {
                         let j = grid.item(m)
                         guard j != i else { continue }
                         let o = s.particles[j]
@@ -1125,3 +1253,4 @@ extension PhysicsWorld {
         particles[b].position -= SIMD4(push * wb, 0)
     }
 }
+
