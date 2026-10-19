@@ -88,24 +88,35 @@ struct TerrainSnapshot {
         var out = [Float](repeating: 0, count: count.x * count.y)
         var bases: [SIMD2<Int>: [Float]?] = [:], stored: [SIMD2<Int>: Stored<Float>?] = [:], deltas: [SIMD2<Int>: [Float]?] = [:]
         out.withUnsafeMutableBufferPointer { o in
+            // The tile the last sample was in, and its arrays: the dictionaries are asked only where a row crosses into
+            // another tile (asked for every sample, they were half of a sector mesh's heights: Time Profiler).
+            var tile = SIMD2<Int>(.min, .min)
+            var full: [Float]? = nil, kept: Stored<Float>? = nil, delta: [Float]? = nil
             for b in 0..<count.y {
                 for a in 0..<count.x {
                     let s = grid.clamp(first.x + a * step, first.y + b * step), t = grid.tile(s.x, s.y)
                     let li = s.x - t.x * n, lj = s.y - t.y * n, k = lj * n + li
-                    if bases[t] == nil { bases[t] = .some(baseCache.cached(t)) }
-                    if deltas[t] == nil { deltas[t] = .some(tiles[t]?.delta) }
-                    var h: Float
-                    if let full = bases[t]! {
-                        h = full[k]
-                    } else {
-                        if stored[t] == nil { stored[t] = .some(step > 1 ? base.storedHeights(t, step: step) : nil) }
-                        if let kept = stored[t]!, li % step == 0, lj % step == 0 {
-                            h = kept[(lj / step) * (n / step) + li / step]
-                        } else {
-                            h = base.height(s.x, s.y)
+                    if t != tile {
+                        tile = t
+                        if bases[t] == nil { bases[t] = .some(baseCache.cached(t)) }
+                        if deltas[t] == nil { deltas[t] = .some(tiles[t]?.delta) }
+                        full = bases[t]!
+                        delta = deltas[t]!
+                        kept = nil
+                        if full == nil {
+                            if stored[t] == nil { stored[t] = .some(step > 1 ? base.storedHeights(t, step: step) : nil) }
+                            kept = stored[t]!
                         }
                     }
-                    o[b * count.x + a] = h + (deltas[t]!.map { $0[k] } ?? 0)
+                    var h: Float
+                    if let full {
+                        h = full[k]
+                    } else if let kept, li % step == 0, lj % step == 0 {
+                        h = kept[(lj / step) * (n / step) + li / step]
+                    } else {
+                        h = base.height(s.x, s.y)
+                    }
+                    o[b * count.x + a] = h + (delta.map { $0[k] } ?? 0)
                 }
             }
         }
