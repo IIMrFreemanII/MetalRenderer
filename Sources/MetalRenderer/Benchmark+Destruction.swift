@@ -36,6 +36,8 @@ extension Benchmark {
     /// 10,000 bodies; on the GPU too, for comparison). The steps' worker count is METALRENDERER_PHYSICS_THREADS (1: one
     /// thread).
     private static func destructionCPU() -> [Config] {
+        /// From 10 s, the buildings down and their heaps settling (PhysicsCPU.settle: what sleeps).
+        func settling(_ c: Config) -> Config { var c = c; c.startTime = 10; return c }
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .destruction)) {
             $0.usePhysicsLook()
             $0.scene.physics.backend = .cpu
@@ -45,7 +47,9 @@ extension Benchmark {
             $0.scene.destruction.buildings = 3
         }
         return [base.named("courtyard cpu moving"), base.named("massive cpu moving").with { $0.scene.destruction.massive = true },
-                three.named("3 buildings cpu moving"), three.named("3 buildings gpu moving").with { $0.scene.physics.backend = .gpu }]
+                three.named("3 buildings cpu moving"), three.named("3 buildings gpu moving").with { $0.scene.physics.backend = .gpu },
+                settling(three.named("3 buildings cpu settling")),
+                settling(three.named("3 buildings gpu settling").with { $0.scene.physics.backend = .gpu })]
     }
 
     /// The demo paused at each of its moments (the default API).

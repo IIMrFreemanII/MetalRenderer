@@ -255,18 +255,43 @@ extension PhysicsWorld {
         return w > 0 && rate * min(sqrt(b.position.w / w), gyration) > p.rolling.w
     }
 
+    /// With fractured objects (wake): whether moving body `o`, which went at `motion` over the last step, wakes a
+    /// sleeper it touches: faster than the wake speed or turn over the step (not at the last substep's speeds, which
+    /// a heap's solve leaves jittering). Rubble (`rubble`) wakes only for a hit (`rubbleWake` times that) or a
+    /// partner that moves on (it left where its still time began that step, soon after it began, `motion.z`): about 44 of a settled heap's pieces rock past the wake speed each step, in place,
+    /// and they woke 900 pieces a second; the pieces they woke jolted as they woke, and woke their own.
+    @inline(__always) static func rubbleStirs(_ o: GPUPhysicsBody, _ motion: SIMD4<Float>, rubble: Bool, _ p: GPUPhysicsParams) -> Bool {
+        guard moves(o), motion.x > p.rolling.z || motion.y > p.rolling.w else { return false }
+        return !rubble || motion.z != 0 || motion.x > rubbleWake * p.rolling.z || motion.y > rubbleWake * p.rolling.w
+    }
+
+    /// Whether body b (body i, `initial` its first pose) is rubble: a piece more than `fallen` from where it began,
+    /// what came down, welded or not. A structure still standing, or sagging on its way down, sleeps and wakes as
+    /// before (a collapse starts slowly).
+    @inline(__always) static func rubble(_ b: GPUPhysicsBody, _ initial: GPUPhysicsBody) -> Bool {
+        b.info.y & pieceBit != 0 && distance2(PhysicsMath.xyz(b.position), PhysicsMath.xyz(initial.position)) > fallen * fallen
+    }
+
     private func wake(_ p: GPUPhysicsParams) {
-        let n = bodies.count
+        let n = bodies.count, heaps = fractures
         wakeFlags.removeAll(keepingCapacity: true)
         wakeFlags.append(contentsOf: repeatElement(0, count: n))
+        if heaps && stepMotion.count != n { stepMotion = [SIMD4<Float>](repeating: .zero, count: n) }
         // Who wakes, from the bodies as they were (a body woken here stirs nothing: its speeds are a sleeper's 0)...
+        stepMotion.withUnsafeBufferPointer { motion in
+        initialBodies.withUnsafeBufferPointer { initial in
         wakeFlags.withUnsafeMutableBufferPointer { flags in
             withStepBuffers { s in
                 PhysicsPool.shared.parallel(n, grain: 64) { range in
                     for i in range where s.bodies[i].info.y & PhysicsWorld.asleep != 0 {
+                        let rubble = heaps && PhysicsWorld.rubble(s.bodies[i], initial[i])
                         for m in 0..<Int(s.pairCounts[i]) {
                             let partner = s.pairs[i * PhysicsWorld.maxPairs + m].partner
-                            guard partner & PhysicsWorld.staticBit == 0, PhysicsWorld.stirs(s.bodies[Int(partner)], p) else { continue }
+                            guard partner & PhysicsWorld.staticBit == 0 else { continue }
+                            let o = s.bodies[Int(partner)]
+                            let stirs = heaps && !PhysicsWorld.kinematic(o)
+                                ? PhysicsWorld.rubbleStirs(o, motion[Int(partner)], rubble: rubble, p) : PhysicsWorld.stirs(o, p)
+                            guard stirs else { continue }
                             flags[i] = 1
                             break
                         }
@@ -280,6 +305,8 @@ extension PhysicsWorld {
                     }
                 }
             }
+        }
+        }
         }
         // A ragdoll wakes whole: if any of its bodies is awake (or held), the rest wake.
         for r in ragdolls {
@@ -443,14 +470,17 @@ extension PhysicsWorld {
     /// `maxRounds` rounds leave (pad = `leftover`) is solved one pair after another, after the colours.
     private func colourPairs() {
         let k = PhysicsWorld.maxPairs, entries = pairs.count, n = bodies.count, fractured = fractures
+        let held = grab.target.w > 0 ? grab.body : PhysicsWorld.none
         var left: [Int32] = [], oneSided: [Int32] = []
         var won = [UInt8](repeating: 0, count: entries)
         withStepBuffers { s in
             // The pairs with contacts their owner keeps, in entry order (one-sided ones left over from the start).
+            // With fractured objects, not a pair neither of whose bodies moves (a heap asleep: PhysicsWorld.idle).
             for e in 0..<entries {
                 let mark = s.pairs[e].pad
                 s.pairs[e].pad = PhysicsWorld.none
                 guard e % k < Int(s.pairCounts[e / k]) && s.pairs[e].link == UInt32(e) && s.pairs[e].contacts > 0 else { continue }
+                if fractured && PhysicsWorld.idle(s, e, held: held) { s.pairs[e].pad = PhysicsWorld.idlePair; continue }
                 if mark == PhysicsWorld.oneSided {
                     s.pairs[e].pad = PhysicsWorld.leftover
                     oneSided.append(Int32(e))
@@ -466,7 +496,7 @@ extension PhysicsWorld {
                     let i = body == 0 ? e / k : Int(code)
                     for m in 0..<Int(s.pairCounts[i]) {
                         let link = s.pairs[i * k + m].link
-                        guard link != PhysicsWorld.none && s.pairs[Int(link)].contacts > 0 else { continue }
+                        guard link != PhysicsWorld.none && s.pairs[Int(link)].contacts > 0 && s.pairs[Int(link)].pad != PhysicsWorld.idlePair else { continue }
                         if !visit(Int(link)) { return false }
                     }
                 }
@@ -552,6 +582,16 @@ extension PhysicsWorld {
             for e in left { pairOrder.append(UInt32(e)) }   // the rest: one after another
             pairColourStarts.append(UInt32(pairOrder.count))
         }
+    }
+
+    /// With fractured objects (colourPairs): pair `e` neither of whose bodies moves this step (asleep, held,
+    /// kinematic, static; the held one, which its first substep wakes, moves), not a weld (it counts its load): its
+    /// contacts push and kick nothing, so it takes no colour and isn't solved. A sleeping heap's pairs took colours,
+    /// and each colour is a stage a substep.
+    @inline(__always) static func idle(_ s: StepBuffers, _ e: Int, held: UInt32) -> Bool {
+        let i = e / maxPairs, code = s.pairs[e].partner
+        if moves(s.bodies[i]) || UInt32(i) == held || s.contacts[e * maxContacts].lambda.w == 1 { return false }
+        return code & staticBit != 0 || !(moves(s.bodies[Int(code)]) || code == held)
     }
 
     // MARK: Substeps
@@ -982,20 +1022,74 @@ extension PhysicsWorld {
         return w <= 0 || 2 * sine * min(sqrt(b.position.w / w), gyration) < p.sleep.y * p.grid.w
     }
 
+    /// With fractured objects (settle): whether rubble `b` has stayed near `anchor` (its pose when its still time
+    /// began): moved less than the sleep speed x the sleep time, and turned its mass less than the sleep turn x the
+    /// sleep time (as `still` measures a turn). Its speed over the time, not each step's: a heap's pieces creep at
+    /// around a cm/s on the solver's last corrections (a cm and 2 degrees a second), and jolt faster for a step now
+    /// and then, which restarted their timers.
+    @inline(__always) static func near(_ b: GPUPhysicsBody, _ anchor: SIMD8<Float>, _ p: GPUPhysicsParams) -> Bool {
+        let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(anchor.lowHalf))
+        guard moved < p.sleep.x * p.sleep.z else { return false }
+        let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(anchor.highHalf)))
+        let sine = length(turn)
+        guard sine > 1e-9 else { return true }
+        let w = turnWeight(b, turn / sine)
+        return w <= 0 || 2 * sine * min(sqrt(b.position.w / w), gyration) < p.sleep.y * p.sleep.z
+    }
+
+    /// How fast body `b`'s mass went over a step from `start` (its pose then) in `h`: its move, and its turn x its
+    /// radius of gyration about the turn (`gyration` at most).
+    @inline(__always) static func motion(_ b: GPUPhysicsBody, _ start: SIMD8<Float>, _ h: Float) -> SIMD4<Float> {
+        let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(start.lowHalf))
+        let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(start.highHalf)))
+        let sine = length(turn)
+        guard sine > 1e-9 else { return SIMD4(moved / h, 0, 0, 0) }
+        let w = turnWeight(b, turn / sine)
+        return SIMD4(moved / h, w > 0 ? 2 * sine * min(sqrt(b.position.w / w), gyration) / h : 0, 0, 0)
+    }
+
     /// After the substeps: a body that has been slow for long enough falls asleep, once the bodies it touches (has
     /// contacts with) have been slow for half as long (or sleep): a pile goes to sleep together, not one body propped on moving ones.
+    /// With fractured objects, rubble is slow while it stays near where its slow time began (`near`), and every
+    /// moving body's motion over the step is kept for the next step's wake (`stepMotion`).
     private func settle(_ p: GPUPhysicsParams, _ start: [SIMD8<Float>]) {
-        let n = bodies.count, k = PhysicsWorld.maxPairs
+        let n = bodies.count, k = PhysicsWorld.maxPairs, heaps = fractures
         wakeFlags.removeAll(keepingCapacity: true)
         wakeFlags.append(contentsOf: repeatElement(0, count: n))
+        if heaps && sleepAnchors.count != n { sleepAnchors = [SIMD8<Float>](repeating: SIMD8(), count: n) }
+        if heaps && stepMotion.count != n { stepMotion = [SIMD4<Float>](repeating: .zero, count: n) }
         wakeFlags.withUnsafeMutableBufferPointer { sleeps in
             start.withUnsafeBufferPointer { start in
+            initialBodies.withUnsafeBufferPointer { initial in
+            sleepAnchors.withUnsafeMutableBufferPointer { anchors in
+            stepMotion.withUnsafeMutableBufferPointer { motion in
                 withStepBuffers { s in
                     // The timers...
                     PhysicsPool.shared.parallel(n, grain: 128) { range in
-                        for i in range where PhysicsWorld.moves(s.bodies[i]) {
+                        for i in range {
                             let b = s.bodies[i]
-                            s.bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
+                            guard PhysicsWorld.moves(b) else {
+                                if heaps { motion[i] = .zero }
+                                continue
+                            }
+                            guard heaps else {
+                                s.bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
+                                continue
+                            }
+                            motion[i] = PhysicsWorld.motion(b, start[i], p.grid.w)
+                            let here = SIMD8(lowHalf: b.position, highHalf: b.rotation)
+                            if !PhysicsWorld.rubble(b, initial[i]) {
+                                s.bodies[i].prevPosition.w = PhysicsWorld.still(b, start[i].lowHalf, start[i].highHalf, p) ? b.prevPosition.w + p.grid.w : 0
+                                anchors[i] = here
+                            } else if b.prevPosition.w > 0 && PhysicsWorld.near(b, anchors[i], p) {
+                                s.bodies[i].prevPosition.w = b.prevPosition.w + p.grid.w
+                            } else {
+                                // (It moves on: left in under half the sleep time, faster than twice the sleep speed. Not one
+                                // just woken, which starts its time here, nor one creeping out after a while.)
+                                if b.prevPosition.w > 0 && b.prevPosition.w <= p.sleep.z / 2 { motion[i].z = 1 }
+                                s.bodies[i].prevPosition.w = p.grid.w
+                                anchors[i] = here
+                            }
                         }
                     }
                     // ...then who may sleep (reading the timers only)...
@@ -1012,6 +1106,9 @@ extension PhysicsWorld {
                         }
                     }
                 }
+            }
+            }
+            }
             }
             // A ragdoll sleeps whole: while any of its moving bodies can't, none does (one asleep would hold its joints).
             for r in ragdolls {

@@ -48,6 +48,9 @@ final class PhysicsWorld {
     static let leftover: UInt32 = 0xFFFF_FFFE
     /// GPUPhysicsPair.pad from `link` with fractured objects: only one of the pair's bodies lists it (PhysicsCPU.link).
     static let oneSided: UInt32 = 0xFFFF_FFFD
+    /// ...and a pair neither of whose bodies moves this step, with fractured objects (`idle`): no colour, and the
+    /// colouring's rounds pass it by.
+    static let idlePair: UInt32 = 0xFFFF_FFFC
     /// The contacts are found again every this many substeps.
     static let contactRefresh = 4
     static let stepLength: Float = 1.0 / 60
@@ -83,6 +86,11 @@ final class PhysicsWorld {
     /// ...and a body wakes what it touches while its turning moves its mass faster than this (0.27 rad/s at 15 cm).
     static let wakeTurn: Float = 0.04
     static let gyration: Float = 0.15
+    /// With fractured objects, rubble (a piece more than `fallen` m from where it began: what came down, welded or
+    /// not) wakes for a hit, its partner going at `rubbleWake` x the wake speed or turn over a step, or for a partner
+    /// that moves on (`PhysicsWorld.rubbleStirs`); a structure still standing, or sagging on its way down, as before.
+    static let fallen: Float = 0.5
+    static let rubbleWake: Float = 10
     /// The most colours a body's joints can take (a body in more joints than this is refused).
     static let maxJointColours = 16
     /// Passes over the joints a substep: one leaves a whipping chain's anchors 2.5 mm apart, two 0.55 mm.
@@ -207,6 +215,11 @@ final class PhysicsWorld {
     var fractureState: [GPUFractureState] = []
     /// A flag a body for the CPU step's stages (PhysicsCPU.swift: who wakes, who sleeps, who came free), kept.
     var wakeFlags: [UInt8] = []
+    /// With fractured objects: each body's pose when its still time began (position, rotation; `settle`), and how
+    /// fast its mass went over the last step (x: its move, y: its turn x its radius of gyration, each over the step;
+    /// z: 1 if it left where its still time began then; what wakes a sleeper it touches: `wake`), kept.
+    var sleepAnchors: [SIMD8<Float>] = []
+    var stepMotion: [SIMD4<Float>] = []
     /// The particles as a substep's Jacobi pass found them (solveParticles), kept.
     var particleSnapshot: [GPUPhysicsParticle] = []
     /// The broad phases' cells of the bodies and of the particles (PhysicsCellGrid), kept.
@@ -610,6 +623,7 @@ final class PhysicsWorld {
         for i in hairStrands.indices { hairStrands[i].info.w = 0 }
         welds = initialWelds
         for i in fractureState.indices { fractureState[i] = GPUFractureState() }
+        for i in stepMotion.indices { stepMotion[i] = .zero }
         resetFluids()
         stepIndex = 0
     }
