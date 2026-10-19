@@ -348,35 +348,44 @@ final class DestructionTests: XCTestCase {
     /// 196 loose concrete shards (a 20 cm slab's Voronoi cells, freed: no welds, nothing to break) dropped four deep,
     /// on the CPU and the GPU: asleep in 8 s, still a heap. They once rocked on (the edge walk of the narrow phase,
     /// on a cell's distance, ended somewhere new each step), crept flat and never slept.
+    /// 196 concrete shards dropped four deep onto the ground (testALooseHeapSettles), and with `ball` a cannonball
+    /// kept aside for a shot.
+    private func looseHeap(ball: Bool = false) -> (Scene, [Int], Int?) {
+        let s = scene()
+        let w = s.physicsWorld()
+        var r = FractureRecipe.defaults(.concrete)
+        r.counts = [150]
+        var ids: [Int] = []
+        for slab in 0..<2 {
+            r.seed = 7 + UInt64(slab)
+            let tree = FractureTree(recipe: r, cell: ConvexCell(box: [-1.5, -0.1, -1.2], [1.5, 0.1, 1.2]))
+            for (k, node) in tree.nodes.enumerated() where node.isLeaf && k > 0 && ids.count < 196 {
+                let n = ids.count
+                let at = SIMD3<Float>(Float(n % 7) - 3, 0.5 + Float(n / 49) * 0.45, Float((n / 7) % 7) - 3) * SIMD3(0.45, 1, 0.45)
+                let spin = rotate(Float(n) * 2.39996, normalize(SIMD3<Float>(sin(Float(n)), 1, cos(Float(n) * 1.7))))
+                let shape = SDFShape(.cell(planes: node.cell.planes { _ in true }, lo: node.cell.bounds.lo, hi: node.cell.bounds.hi))
+                let sdf = s.addSDFShape(shape)
+                ids.append(w.bodies.count)
+                w.addPiece(sdf: sdf, shape, build: PhysicsWorld.pieceShape(node.cell, sdf: sdf),
+                           transform: translate(at) * spin * translate(-node.cell.centroid), instance: 0, material: .concrete)
+            }
+        }
+        for i in ids { w.bodies[i].info.y |= PhysicsWorld.pieceBit }   // (freed pieces of nothing: roots that never break)
+        var shot: Int?
+        if ball {   // (a cannonball out of the way, for a shot: testASleepingHeapWakesWhereItIsTouched)
+            shot = w.bodies.count
+            s.addBody(sdf: s.addSDFShape(SDFShape(.sphere(radius: 0.15))), 0, translate([0, -50, 0]), density: 7000, friction: 0.4, restitution: 0.1)
+            w.disable(shot!)
+        }
+        w.fractureNodes = [GPUFractureNode](repeating: GPUFractureNode(), count: w.bodies.count)
+        w.finish()
+        return (s, ids, shot)
+        }
+
     func testALooseHeapSettles() throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
         let pipelines = try Pipelines(device: device, source: DestructionTests.shaders, lightTypes: 0x3F, stats: false)
-        func heap() -> (Scene, [Int]) {
-            let s = scene()
-            let w = s.physicsWorld()
-            var r = FractureRecipe.defaults(.concrete)
-            r.counts = [150]
-            var ids: [Int] = []
-            for slab in 0..<2 {
-                r.seed = 7 + UInt64(slab)
-                let tree = FractureTree(recipe: r, cell: ConvexCell(box: [-1.5, -0.1, -1.2], [1.5, 0.1, 1.2]))
-                for (k, node) in tree.nodes.enumerated() where node.isLeaf && k > 0 && ids.count < 196 {
-                    let n = ids.count
-                    let at = SIMD3<Float>(Float(n % 7) - 3, 0.5 + Float(n / 49) * 0.45, Float((n / 7) % 7) - 3) * SIMD3(0.45, 1, 0.45)
-                    let spin = rotate(Float(n) * 2.39996, normalize(SIMD3<Float>(sin(Float(n)), 1, cos(Float(n) * 1.7))))
-                    let shape = SDFShape(.cell(planes: node.cell.planes { _ in true }, lo: node.cell.bounds.lo, hi: node.cell.bounds.hi))
-                    let sdf = s.addSDFShape(shape)
-                    ids.append(w.bodies.count)
-                    w.addPiece(sdf: sdf, shape, build: PhysicsWorld.pieceShape(node.cell, sdf: sdf),
-                               transform: translate(at) * spin * translate(-node.cell.centroid), instance: 0, material: .concrete)
-                }
-            }
-            for i in ids { w.bodies[i].info.y |= PhysicsWorld.pieceBit }   // (freed pieces of nothing: roots that never break)
-            w.fractureNodes = [GPUFractureNode](repeating: GPUFractureNode(), count: w.bodies.count)
-            w.finish()
-            return (s, ids)
-        }
-        let (cs, ids) = heap(), (gs, _) = heap()
+        let (cs, ids, _) = looseHeap(), (gs, _, _) = looseHeap()
         let cw = cs.physics!, gw = gs.physics!
         let sdf = try SDFBuffers(device: device, scene: gs)
         let gpu = try PhysicsGPU(device: device, world: gw, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
@@ -402,6 +411,57 @@ final class DestructionTests: XCTestCase {
 
     /// The GPU's steps against the CPU's through a shot's break: the same step, the same pieces, about the same places
     /// (a weld near its strength breaks on one and not the other, from float rounding: they part, as a pile does).
+    /// A sleeping heap (PhysicsCPU.settle, wake) touched three ways: a shot into it, a blast beside it, a piece pulled
+    /// out of it. Each wakes and moves pieces where it touches, and leaves most of the far side asleep; the heap sleeps
+    /// again; and woken all at once then, nothing moves more than a few cm: nothing slept in the air, or mid-slide.
+    func testASleepingHeapWakesWhereItIsTouched() {
+        for way in ["shot", "blast", "grab"] {
+            let (s, ids, shot) = looseHeap(ball: true)
+            let w = s.physics!
+            run(w, 8)
+            let asleep = { ids.filter { w.bodies[$0].info.y & PhysicsWorld.asleep != 0 }.count }
+            XCTAssertGreaterThan(asleep(), ids.count * 9 / 10, "\(way): the heap asleep first")
+            let before = ids.map { PhysicsMath.xyz(w.bodies[$0].position) }
+            var at = SIMD3<Float>()
+            switch way {
+            case "shot":
+                at = [0.6, 0.4, 0]
+                let from = SIMD3<Float>(6, 1.2, 0)
+                let (dir, speed) = Scene.aim(from: from, at: at, speed: 14, gravity: w.gravity.y)
+                w.command(.shoot, body: shot!, origin: from, direction: dir, magnitude: speed)
+            case "blast":
+                at = [-1.4, 0.3, 0]
+                w.command(.blast, origin: at, radius: 0.8, magnitude: 6, steps: 3)
+            default:
+                let top = ids.max { w.bodies[$0].position.y < w.bodies[$1].position.y }!
+                at = PhysicsMath.xyz(w.bodies[top].position)
+                w.grab = GPUPhysicsGrab(target: SIMD4(at + [0.8, 1.2, 0], 1), anchor: .zero, body: UInt32(top))
+                run(w, 0.75)
+                w.grab = GPUPhysicsGrab()
+            }
+            run(w, 0.5)
+            var nearMoved = 0, far = 0, farMoved = 0
+            for (k, i) in ids.enumerated() {
+                let moved = length(PhysicsMath.xyz(w.bodies[i].position) - before[k]) > 0.02
+                let d = length(before[k] - at)
+                if d < 1 && moved { nearMoved += 1 }
+                if d > 2.5 { far += 1; if moved { farMoved += 1 } }
+            }
+            run(w, 10)
+            let again = asleep()
+            let settled = ids.map { PhysicsMath.xyz(w.bodies[$0].position) }
+            w.wakeAll()
+            run(w, 1)
+            let drift = ids.indices.map { length(PhysicsMath.xyz(w.bodies[ids[$0]].position) - settled[$0]) }.sorted()
+            print(String(format: "sleeping heap, %@: moved near %d, far %d of %d; asleep again %d of %d; woken all, drift p99 %.3f max %.3f m",
+                         way as NSString, nearMoved, farMoved, far, again, ids.count, drift[drift.count * 99 / 100], drift.last!))
+            XCTAssertGreaterThan(nearMoved, 0, "\(way): pieces where it touched moved")
+            XCTAssertLessThan(farMoved, max(far / 10, 2), "\(way): the far side stayed")
+            XCTAssertGreaterThan(again, ids.count * 8 / 10, "\(way): asleep again")
+            XCTAssertLessThan(drift.last!, 0.05, "\(way): nothing asleep in the air or mid-slide")
+        }
+    }
+
     func testTheGPUBreaksAsTheCPUDoes() throws {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
         let pipelines = try Pipelines(device: device, source: DestructionTests.shaders, lightTypes: 0x3F, stats: false)

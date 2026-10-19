@@ -555,6 +555,48 @@ kernel void physicsInsertKernel(constant PhysicsParams&   p      [[buffer(0)]],
     next[i] = atomic_exchange_explicit(&heads[h], i, memory_order_relaxed);
 }
 
+// With fractured objects, the bodies' grid in levels (PhysicsLevels, PhysicsCPU.broadPhase): level l's cells are
+// `first` x 2^l a side, a body in the first whose cells are twice the most it reaches in a step; one too big for the
+// last in `big`. `levels`: x = the levels with bodies (bits), y = the big ones, z = `first`'s bits.
+constant uint PHYS_LEVELS = 12;
+
+// (The most a body of radius r reaches in a step: physReach at the cell speed.)
+inline uint physLevel(float r, float first, constant PhysicsParams& p) {
+    float need = 2.0f * (r + p.sleep.w * p.grid.w + p.grid.y);
+    uint level = 0;
+    while (level < PHYS_LEVELS && first * float(1u << level) < need) ++level;
+    return level;
+}
+inline uint physLevelHash(int3 c, uint level, uint buckets) {
+    return ((uint(c.x) * 73856093u) ^ (uint(c.y) * 19349663u) ^ (uint(c.z) * 83492791u) ^ (level * 1640531527u)) & (buckets - 1u);
+}
+
+kernel void physicsFractureClearKernel(constant PhysicsParams& p      [[buffer(0)]],
+                                       device uint*            heads  [[buffer(1)]],
+                                       device uint4*           levels [[buffer(2)]],
+                                       uint i [[thread_position_in_grid]])
+{
+    if (i < p.counts.w) heads[i] = PHYS_NONE;
+    if (i == 0) { levels[0].x = 0; levels[0].y = 0; }
+}
+
+kernel void physicsFractureInsertKernel(constant PhysicsParams&   p      [[buffer(0)]],
+                                        device const PhysicsBody* bodies [[buffer(1)]],
+                                        device atomic_uint*       heads  [[buffer(2)]],
+                                        device uint*              next   [[buffer(3)]],
+                                        device atomic_uint*       levels [[buffer(4)]],   // (uint4: x, y, z)
+                                        device uint*              big    [[buffer(5)]],
+                                        uint i [[thread_position_in_grid]])
+{
+    if (i >= p.counts.x || (bodies[i].info.y & PHYS_DISABLED) != 0) return;
+    float first = as_type<float>(atomic_load_explicit(&levels[2], memory_order_relaxed));
+    uint level = physLevel(bodies[i].invInertia.w, first, p);
+    if (level >= PHYS_LEVELS) { big[atomic_fetch_add_explicit(&levels[1], 1u, memory_order_relaxed)] = i; return; }
+    atomic_fetch_or_explicit(&levels[0], 1u << level, memory_order_relaxed);
+    uint h = physLevelHash(physCell(bodies[i].position.xyz, first * float(1u << level)), level, p.counts.w);
+    next[i] = atomic_exchange_explicit(&heads[h], i, memory_order_relaxed);
+}
+
 // Into a particle's colliders, kept sorted (statics first), the lowest `capacity` of them.
 inline void physKeep(thread uint* keys, thread uint& count, uint partner, uint capacity = PHYS_PAIRS) {
     uint key = partner ^ PHYS_STATIC;
@@ -612,10 +654,28 @@ inline float physBoxGap(PhysicsBody a, float4 ca, float4 ha, float ma, PhysicsBo
 // Body i's partners. `boxes` (with fractured objects: PhysicsWorld.shapeBoxes): only those whose boxes overlap,
 // nearest by the gap between them, not by their centres (PhysicsCPU.broadPhase): a heap's flat pieces have spheres
 // far bigger than they are, more of them overlap than PHYS_PAIRS, and a pebble on a slab's end lost its contact.
+// Body j as body i's partner (physPairs), if their spheres meet (by their boxes: `boxes`).
+inline void physConsider(constant PhysicsParams& p, device const PhysicsBody* bodies, PhysicsBody b, uint i, float3 x, float r,
+                         uint j, device const float4* boxes, thread float* d2s, thread uint* ids, thread uint& count) {
+    if (j == i) return;
+    PhysicsBody o = bodies[j];
+    if (b.info.w == j + 1 || o.info.w == i + 1) return;   // joined: PhysicsWorld.joined
+    if ((b.info.y & o.info.y & PHYS_KINEMATIC) != 0) return;   // neither gives
+    if (physHeld(b) && physHeld(o)) return;                    // two anchored pieces
+    float reach = r + physReach(o, p);
+    float d2 = physDistance2(o.position.xyz, x);
+    if (!(d2 < reach * reach)) return;
+    if (boxes == nullptr) { physKeepNearest(d2s, ids, count, d2, j); return; }
+    uint sa = b.info.x, sb = o.info.x;
+    float gap = physBoxGap(b, boxes[2 * sa], boxes[2 * sa + 1], r - b.invInertia.w,
+                           o, boxes[2 * sb], boxes[2 * sb + 1], physReach(o, p) - o.invInertia.w);
+    if (gap < 0.0f) physKeepNearest(d2s, ids, count, gap, j);
+}
+
 inline void physPairs(constant PhysicsParams& p, device const PhysicsBody* bodies, device const PhysicsBody* statics,
                       device const float4* bounds, device const PhysicsShape* shapes, device const uint* heads,
                       device const uint* next, device PhysicsPair* pairs, device uint* counts, uint i,
-                      device const float4* boxes)
+                      device const float4* boxes, device const uint4* levels = nullptr, device const uint* big = nullptr)
 {
     bool byGap = boxes != nullptr;
     if (i >= p.counts.x) return;
@@ -636,6 +696,33 @@ inline void physPairs(constant PhysicsParams& p, device const PhysicsBody* bodie
             touches = length_squared(x - nearest) < r * r;
         }
         if (touches && (b.info.y & PHYS_KINEMATIC) == 0) physKeepNearest(d2s, ids, count, byGap ? -INFINITY : -1.0f, s | PHYS_STATIC);
+    }
+    if (levels != nullptr) {
+        // The levelled grid (PhysicsCPU.partners): each level's cells within reach, and the big bodies; a big body
+        // looks at every body. The same partners as one grid sized by the largest body.
+        uint4 lv = levels[0];
+        float first = as_type<float>(lv.z);
+        if (physLevel(b.invInertia.w, first, p) >= PHYS_LEVELS) {
+            for (uint j = 0; j < p.counts.x; ++j) if ((bodies[j].info.y & PHYS_DISABLED) == 0) physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
+        } else {
+            for (uint used = lv.x; used != 0; used &= used - 1) {
+                uint level = ctz(used);
+                float size = first * float(1u << level), far = (r + size * 0.5f) * 1.0001f + 1e-4f;
+                int3 lo = physCell(x - far, size), hi = physCell(x + far, size);
+                for (int cz = lo.z; cz <= hi.z; ++cz)
+                    for (int cy = lo.y; cy <= hi.y; ++cy)
+                        for (int cx = lo.x; cx <= hi.x; ++cx)
+                            for (uint j = heads[physLevelHash(int3(cx, cy, cz), level, p.counts.w)]; j != PHYS_NONE; j = next[j])
+                                physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
+            }
+            for (uint k = 0; k < lv.y; ++k) physConsider(p, bodies, b, i, x, r, big[k], boxes, d2s, ids, count);
+        }
+        counts[i] = count;
+        for (uint k = 0; k < count; ++k) {
+            PhysicsPair pair = {ids[k], 0, 0, 0};
+            pairs[i * PHYS_PAIRS + k] = pair;
+        }
+        return;
     }
     int3 c = physCell(x, p.grid.x);
     for (int dz = -1; dz <= 1; ++dz) {
@@ -691,9 +778,11 @@ kernel void physicsFracturePairsKernel(constant PhysicsParams&   p        [[buff
                                        device PhysicsPair*       pairs    [[buffer(7)]],
                                        device uint*              counts   [[buffer(8)]],
                                        device const float4*      boxes    [[buffer(9)]],   // per shape: centre, half extents
+                                       device const uint4*       levels   [[buffer(10)]],  // the levelled grid (physicsFractureInsertKernel):
+                                       device const uint*        big      [[buffer(11)]],  // heads and next are its
                                        uint i [[thread_position_in_grid]])
 {
-    physPairs(p, bodies, statics, bounds, shapes, heads, next, pairs, counts, i, boxes);
+    physPairs(p, bodies, statics, bounds, shapes, heads, next, pairs, counts, i, boxes, levels, big);
 }
 
 inline bool physMoves(PhysicsBody b) { return b.position.w > 0.0f && (b.info.y & (PHYS_ASLEEP | PHYS_DISABLED)) == 0; }
@@ -719,9 +808,10 @@ inline bool physRubble(PhysicsBody b, float4 initial) {
 }
 
 // PhysicsCPU.rubbleStirs: moving body o, which went at `motion` over the last step, wakes a sleeper it touches.
-inline bool physRubbleStirs(PhysicsBody o, float4 motion, bool rubble, constant PhysicsParams& p) {
+inline bool physRubbleStirs(PhysicsBody o, float4 motion, bool rubble, bool below, constant PhysicsParams& p) {
     if (!physMoves(o) || !(motion.x > p.rolling.z || motion.y > p.rolling.w)) return false;
-    return !rubble || motion.z != 0.0f || motion.x > PHYS_RUBBLE_WAKE * p.rolling.z || motion.y > PHYS_RUBBLE_WAKE * p.rolling.w;
+    return !rubble || (below && motion.w != 0.0f) || motion.z != 0.0f || motion.x > PHYS_RUBBLE_WAKE * p.rolling.z
+        || motion.y > PHYS_RUBBLE_WAKE * p.rolling.w;
 }
 
 // Each entry's owner (PhysicsCPU.link), and whether the body wakes (PhysicsCPU.wake): something it touches stirs.
@@ -740,7 +830,8 @@ inline void physLink(constant PhysicsParams& p, device const PhysicsBody* bodies
         uint e = i * PHYS_PAIRS + n, partner = pairs[e].partner;
         if (asleep && !wakes && (partner & PHYS_STATIC) == 0) {
             PhysicsBody o = bodies[partner];
-            wakes = oneSided && (o.info.y & PHYS_KINEMATIC) == 0 ? physRubbleStirs(o, sleep[4 * partner + 2], rubble, p) : physStirs(o, p);
+            wakes = oneSided && (o.info.y & PHYS_KINEMATIC) == 0
+                ? physRubbleStirs(o, sleep[4 * partner + 2], rubble, o.position.y < bodies[i].position.y, p) : physStirs(o, p);
         }
         if (oneSided) pairs[e].pad = PHYS_NONE;
         if ((partner & PHYS_STATIC) != 0) { pairs[e].link = e; continue; }
@@ -901,7 +992,7 @@ kernel void physicsParticleNeighboursKernel(constant PhysicsParams&       p     
 struct PhysicsGroup {
     uint first, count;   // its substeps
     uint last;           // 1: the step's last run, which settles
-    uint pad;
+    uint wide;           // 1: the pairs were coloured across the GPU (physicsColour*Kernel), not by the threadgroup
 };
 
 // A SIMD group per entry: an owned entry's contacts (PhysicsCPU.narrowPhase), at the start of a step and again every
@@ -1541,6 +1632,67 @@ inline bool physIdle(device const PhysicsPair* pairs, device const PhysicsBody* 
     return (code & PHYS_STATIC) != 0 || !(physMoves(bodies[code]) || wake[code] != 0 || code == held);
 }
 
+// PhysicsCPU.colourPairs' extra colours (physColourPairs, and with fractured objects physicsColourExtraKernel): the
+// pairs the rounds left, in entry order, into up to PHYS_COLOURS more colours by thread 0; the rest into a list.
+inline void physColourExtra(device PhysicsPair* pairs, device const uint* counts, device uint* order, device uint* won,
+                            device uint* live, device uint* colouring, uint entries, uint t, uint width, uint bodies,
+                            threadgroup uint* scratch) {
+    // The left-over pairs in entry order into `live`: each thread a run of bodies, at its place after the runs before.
+    uint chunk = (bodies + width - 1) / width, first = min(t * chunk, bodies), end = min(first + chunk, bodies);
+    uint mine = 0;
+    for (uint i = first; i < end; ++i) {
+        won[i] = 0;   // (now each body's extra colours)
+        for (uint n = 0; n < counts[i]; ++n) mine += pairs[i * PHYS_PAIRS + n].pad == PHYS_LEFTOVER ? 1u : 0u;
+    }
+    scratch[t] = mine;
+    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
+    uint listed = 0;
+    if (t == 0) {
+        for (uint k = 0; k < width; ++k) { uint c = scratch[k]; scratch[k] = listed; listed += c; }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint at = scratch[t];
+    for (uint i = first; i < end; ++i) {
+        for (uint n = 0; n < counts[i]; ++n) if (pairs[i * PHYS_PAIRS + n].pad == PHYS_LEFTOVER) live[at++] = i * PHYS_PAIRS + n;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+    if (t == 0) {
+        uint cursor[PHYS_COLOURS];
+        for (uint c = 0; c < PHYS_COLOURS; ++c) cursor[c] = 0;
+        uint kept = 0, rest = 0;
+        for (uint k = 0; k < listed; ++k) {
+            uint e = live[k];
+            uint i = e / PHYS_PAIRS, code = pairs[e].partner;
+            bool both = (code & PHYS_STATIC) == 0;
+            uint used = won[i] | (both ? won[code] : 0u);
+            // (Still left over: their list, in entry order, after the bodies' colours; `won` has an entry a pair.)
+            if (used == 0xFFFFFFFFu) { if (bodies + rest < entries) won[bodies + rest++] = e; continue; }
+            uint c = ctz(~used);
+            won[i] |= 1u << c;
+            if (both) won[code] |= 1u << c;
+            pairs[e].pad = PHYS_COLOURS + c;
+            cursor[c] += 1;
+            live[kept++] = e;
+        }
+        uint at = colouring[PHYS_COLOURS], more = 0;
+        for (uint c = 0; c < PHYS_COLOURS; ++c) {
+            uint k = cursor[c];
+            colouring[PHYS_COLOURS + 3 + c] = at;
+            cursor[c] = at;
+            at += k;
+            if (k > 0) more = c + 1;
+        }
+        colouring[2 * PHYS_COLOURS + 3] = at;
+        colouring[2 * PHYS_COLOURS + 4] = more;
+        colouring[PHYS_COLOURS + 2] = rest;
+        for (uint k = 0; k < kept; ++k) {
+            uint e = live[k];
+            order[cursor[pairs[e].pad - PHYS_COLOURS]++] = e;
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+}
+
 inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts, device uint* order, device uint* won,
                             device uint* live, device uint* colouring, threadgroup atomic_uint* tally,
                             threadgroup atomic_uint* perColour, uint entries, uint t, uint width, bool extra, uint bodies,
@@ -1619,60 +1771,144 @@ inline void physColourPairs(device PhysicsPair* pairs, device const uint* counts
     }
     threadgroup_barrier(mem_flags::mem_device);
     if (!extra) return;
-    // The left-over pairs in entry order into `live`: each thread a run of bodies, at its place after the runs before.
-    uint chunk = (bodies + width - 1) / width, first = min(t * chunk, bodies), end = min(first + chunk, bodies);
-    uint mine = 0;
-    for (uint i = first; i < end; ++i) {
-        won[i] = 0;   // (now each body's extra colours)
-        for (uint n = 0; n < counts[i]; ++n) mine += pairs[i * PHYS_PAIRS + n].pad == PHYS_LEFTOVER ? 1u : 0u;
+    physColourExtra(pairs, counts, order, won, live, colouring, entries, t, width, bodies, scratch);
+}
+
+// MARK: The colouring across the GPU (with fractured objects)
+//
+// physColourPairs' rounds as dispatches over the live pairs, each round's winners from the last's colours (as the
+// threadgroup's barriers had them): the same colours, on every core, not one. A heap's 10,000 pairs took a core
+// 12 ms. `work` (uints): [0] the live pairs, [1 + r] round r's uncoloured, [PHYS_CW_LEFT] the left over,
+// [PHYS_CW_COLOUR + c] colour c's count (then its cursor), [PHYS_CW_ARGS] the live pairs' dispatch (threadgroups).
+// (`work` is buffer 4 throughout: buffer 0 holds the step's params for every kernel after.)
+constant uint PHYS_CW_LEFT = 1 + PHYS_ROUNDS, PHYS_CW_COLOUR = PHYS_CW_LEFT + 1, PHYS_CW_ARGS = PHYS_CW_COLOUR + PHYS_COLOURS;
+constant uint PHYS_CW_WIDTH = 64;   // threads a group over the live pairs
+
+kernel void physicsColourResetKernel(device uint* work [[buffer(4)]], uint t [[thread_position_in_grid]]) {
+    if (t < PHYS_CW_ARGS + 3) work[t] = 0;
+}
+
+// The pairs with contacts their owner keeps, as physColourPairs' first loop (idle, one-sided), into `live`.
+kernel void physicsColourStartKernel(constant PhysicsParams&       p        [[buffer(0)]],
+                                     device PhysicsPair*           pairs    [[buffer(1)]],
+                                     device const uint*            counts   [[buffer(2)]],
+                                     device uint*                  live     [[buffer(3)]],
+                                     device atomic_uint*           work     [[buffer(4)]],
+                                     device const PhysicsBody*     bodies   [[buffer(5)]],
+                                     device const uint*            wake     [[buffer(6)]],
+                                     constant PhysicsGrab&         grab     [[buffer(7)]],
+                                     device const PhysicsContact*  contacts [[buffer(8)]],
+                                     uint e [[thread_position_in_grid]])
+{
+    if (e >= p.counts.x * PHYS_PAIRS) return;
+    bool oneSided = pairs[e].pad == PHYS_ONE_SIDED;
+    pairs[e].pad = PHYS_NONE;
+    if (!physLive(pairs, counts, e)) return;
+    if (physIdle(pairs, bodies, wake, grab, contacts, e)) { pairs[e].pad = PHYS_IDLE; return; }
+    if (oneSided) pairs[e].pad = PHYS_LEFTOVER;
+    live[atomic_fetch_add_explicit(&work[0], 1u, memory_order_relaxed)] = e;
+}
+
+// The live pairs' dispatch: threadgroups of PHYS_CW_WIDTH.
+kernel void physicsColourArgsKernel(device uint* work [[buffer(4)]], uint t [[thread_position_in_grid]]) {
+    if (t != 0) return;
+    work[PHYS_CW_ARGS] = (work[0] + PHYS_CW_WIDTH - 1) / PHYS_CW_WIDTH;
+    work[PHYS_CW_ARGS + 1] = 1;
+    work[PHYS_CW_ARGS + 2] = 1;
+}
+
+// Round r's winners: each uncoloured pair outranking the uncoloured pairs beside it (none once a round left none).
+kernel void physicsColourWinKernel(device const PhysicsPair* pairs  [[buffer(1)]],
+                                   device const uint*        counts [[buffer(2)]],
+                                   device const uint*        live   [[buffer(3)]],
+                                   device const uint*        work   [[buffer(4)]],
+                                   device uint*              won    [[buffer(5)]],
+                                   constant uint&            round  [[buffer(6)]],
+                                   uint j [[thread_position_in_grid]])
+{
+    if (j >= work[0] || (round > 0 && work[round] == 0)) return;
+    uint e = live[j], code = pairs[e].partner;
+    won[e] = pairs[e].pad == PHYS_NONE && physOutranks(pairs, counts, e / PHYS_PAIRS, e)
+             && ((code & PHYS_STATIC) != 0 || physOutranks(pairs, counts, code, e)) ? 1u : 0u;
+}
+
+// ...take the lowest colour none beside them has; the rest counted (round r's uncoloured).
+kernel void physicsColourTakeKernel(device PhysicsPair*       pairs  [[buffer(1)]],
+                                    device const uint*        counts [[buffer(2)]],
+                                    device const uint*        live   [[buffer(3)]],
+                                    device atomic_uint*       work   [[buffer(4)]],
+                                    device const uint*        won    [[buffer(5)]],
+                                    constant uint&            round  [[buffer(6)]],
+                                    uint j [[thread_position_in_grid]])
+{
+    if (j >= atomic_load_explicit(&work[0], memory_order_relaxed)) return;
+    if (round > 0 && atomic_load_explicit(&work[round], memory_order_relaxed) == 0) return;
+    uint e = live[j], code = pairs[e].partner;
+    if (won[e] != 0) {
+        uint used = physColoursAround(pairs, counts, e / PHYS_PAIRS, e);
+        if ((code & PHYS_STATIC) == 0) used |= physColoursAround(pairs, counts, code, e);
+        pairs[e].pad = ctz(~used);
+    } else if (pairs[e].pad == PHYS_NONE) {
+        atomic_fetch_add_explicit(&work[1 + round], 1u, memory_order_relaxed);
     }
-    scratch[t] = mine;
-    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
-    uint listed = 0;
-    if (t == 0) {
-        for (uint k = 0; k < width; ++k) { uint c = scratch[k]; scratch[k] = listed; listed += c; }
+}
+
+// What the rounds left over, and each colour's count.
+kernel void physicsColourCountKernel(device PhysicsPair* pairs [[buffer(1)]],
+                                     device const uint*  live  [[buffer(3)]],
+                                     device atomic_uint* work  [[buffer(4)]],
+                                     uint j [[thread_position_in_grid]])
+{
+    if (j >= atomic_load_explicit(&work[0], memory_order_relaxed)) return;
+    uint e = live[j];
+    if (pairs[e].pad == PHYS_NONE) pairs[e].pad = PHYS_LEFTOVER;
+    if (pairs[e].pad == PHYS_LEFTOVER) atomic_fetch_add_explicit(&work[PHYS_CW_LEFT], 1u, memory_order_relaxed);
+    else atomic_fetch_add_explicit(&work[PHYS_CW_COLOUR + pairs[e].pad], 1u, memory_order_relaxed);
+}
+
+// Where each colour starts in `order` (as physColourPairs writes `colouring`), each colour's cursor there.
+kernel void physicsColourStartsKernel(device uint* work [[buffer(4)]], device uint* colouring [[buffer(7)]],
+                                      uint t [[thread_position_in_grid]])
+{
+    if (t != 0) return;
+    uint at = 0, colours = 0;
+    for (uint c = 0; c < PHYS_COLOURS; ++c) {
+        colouring[c] = at;
+        uint k = work[PHYS_CW_COLOUR + c];
+        if (k > 0) colours = c + 1;
+        work[PHYS_CW_COLOUR + c] = at;
+        at += k;
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
-    uint at = scratch[t];
-    for (uint i = first; i < end; ++i) {
-        for (uint n = 0; n < counts[i]; ++n) if (pairs[i * PHYS_PAIRS + n].pad == PHYS_LEFTOVER) live[at++] = i * PHYS_PAIRS + n;
-    }
-    threadgroup_barrier(mem_flags::mem_device);
-    if (t == 0) {
-        uint cursor[PHYS_COLOURS];
-        for (uint c = 0; c < PHYS_COLOURS; ++c) cursor[c] = 0;
-        uint kept = 0, rest = 0;
-        for (uint k = 0; k < listed; ++k) {
-            uint e = live[k];
-            uint i = e / PHYS_PAIRS, code = pairs[e].partner;
-            bool both = (code & PHYS_STATIC) == 0;
-            uint used = won[i] | (both ? won[code] : 0u);
-            // (Still left over: their list, in entry order, after the bodies' colours; `won` has an entry a pair.)
-            if (used == 0xFFFFFFFFu) { if (bodies + rest < entries) won[bodies + rest++] = e; continue; }
-            uint c = ctz(~used);
-            won[i] |= 1u << c;
-            if (both) won[code] |= 1u << c;
-            pairs[e].pad = PHYS_COLOURS + c;
-            cursor[c] += 1;
-            live[kept++] = e;
-        }
-        uint at = colouring[PHYS_COLOURS], more = 0;
-        for (uint c = 0; c < PHYS_COLOURS; ++c) {
-            uint k = cursor[c];
-            colouring[PHYS_COLOURS + 3 + c] = at;
-            cursor[c] = at;
-            at += k;
-            if (k > 0) more = c + 1;
-        }
-        colouring[2 * PHYS_COLOURS + 3] = at;
-        colouring[2 * PHYS_COLOURS + 4] = more;
-        colouring[PHYS_COLOURS + 2] = rest;
-        for (uint k = 0; k < kept; ++k) {
-            uint e = live[k];
-            order[cursor[pairs[e].pad - PHYS_COLOURS]++] = e;
-        }
-    }
-    threadgroup_barrier(mem_flags::mem_device);
+    colouring[PHYS_COLOURS] = at;
+    for (uint c = colours; c < PHYS_COLOURS; ++c) colouring[c] = at;
+    colouring[PHYS_COLOURS + 1] = colours;
+    colouring[PHYS_COLOURS + 2] = work[PHYS_CW_LEFT];
+}
+
+kernel void physicsColourScatterKernel(device const PhysicsPair* pairs [[buffer(1)]],
+                                       device const uint*        live  [[buffer(3)]],
+                                       device atomic_uint*       work  [[buffer(4)]],
+                                       device uint*              order [[buffer(8)]],
+                                       uint j [[thread_position_in_grid]])
+{
+    if (j >= atomic_load_explicit(&work[0], memory_order_relaxed)) return;
+    uint e = live[j], c = pairs[e].pad;
+    if (c < PHYS_COLOURS) order[atomic_fetch_add_explicit(&work[PHYS_CW_COLOUR + c], 1u, memory_order_relaxed)] = e;
+}
+
+// The extra colours (physColourExtra): one threadgroup.
+kernel void physicsColourExtraKernel(constant PhysicsParams& p         [[buffer(0)]],
+                                     device PhysicsPair*     pairs     [[buffer(1)]],
+                                     device const uint*      counts    [[buffer(2)]],
+                                     device uint*            live      [[buffer(3)]],
+                                     device uint*            won       [[buffer(5)]],
+                                     device uint*            colouring [[buffer(7)]],
+                                     device uint*            order     [[buffer(8)]],
+                                     uint t [[thread_index_in_threadgroup]],
+                                     uint width [[threads_per_threadgroup]])
+{
+    threadgroup uint scratch[1024];
+    physColourExtra(pairs, counts, order, won, live, colouring, p.counts.x * PHYS_PAIRS, t, width, p.counts.x, scratch);
 }
 
 // The pairs the colouring left, one after another in entry order, by thread 0.
@@ -1957,7 +2193,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     PhysicsShapes w = {shapes, samples, sdf};
     threadgroup atomic_uint tally[2], perColour[PHYS_COLOURS];
     threadgroup uint scratch[1024];   // (physColourPairs: each thread's left-over pairs)
-    bool fractured = tables.flags.x != 0;
+    bool fractured = tables.flags.x != 0, wide = group.wide != 0;
     if (group.first == 0) {
         // A ragdoll wakes whole (PhysicsCPU.wake): if any of its bodies is awake, woken or held, the rest wake. (Before
         // the colours: with fractured objects, a pair of bodies that wake takes one, PhysicsCPU.idle.)
@@ -1971,8 +2207,8 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             for (uint i = first; i < end; ++i) if ((bodies[i].info.y & PHYS_ASLEEP) != 0) wake[i] = 1;
         }
         threadgroup_barrier(mem_flags::mem_device);
-        physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width, fractured, n, scratch,
-                        bodies, wake, grab, contacts);
+        if (!wide) physColourPairs(pairs, counts, order, won, live, colouring, tally, perColour, entries, t, width, fractured, n, scratch,
+                                   bodies, wake, grab, contacts);
     }
     uint colours = colouring[PHYS_COLOURS + 1];
     bool leftovers = colouring[PHYS_COLOURS + 2] != 0;
@@ -2109,6 +2345,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             timer += p.grid.w;
         } else {
             if (timer > 0.0f && timer <= p.sleep.z * 0.5f) motion.z = 1.0f;   // (it moves on: PhysicsCPU.settle)
+            if (timer > 0.0f) motion.w = 1.0f;                                 // (it left its place)
             timer = p.grid.w;
             st[0] = b.position;
             st[1] = b.rotation;
@@ -2153,6 +2390,147 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     // The step is done: the kinematic bodies' clock on (everyone read it at the start of the run).
     threadgroup_barrier(mem_flags::mem_device);
     if (t == 0) ((device PhysicsFleshHeader*)flesh)->more.z = hd.more.z + 1;
+}
+
+// MARK: The substeps across the GPU (with fractured objects, and nothing but bodies)
+//
+// physicsSubstepsKernel's stages as dispatches, each over every body or a colour's pairs, the same functions in the
+// same order: the same numbers, on every core, not one (a heap's 16 substeps took a core 22 ms). Bound as the
+// substeps' kernel binds them; `substep` (8): the substep's index in the step; `colour` (12): which colour, the
+// first PHYS_COLOURS the rounds', the next the left-over pairs' (physColourExtra).
+
+kernel void physicsWideStartKernel(constant PhysicsParams&   p      [[buffer(0)]],
+                                   device const PhysicsBody* bodies [[buffer(1)]],
+                                   device float4*            start  [[buffer(2)]],
+                                   uint i [[thread_position_in_grid]])
+{
+    if (i >= p.counts.x) return;
+    start[2 * i] = bodies[i].position;
+    start[2 * i + 1] = bodies[i].rotation;
+}
+
+kernel void physicsWideIntegrateKernel(constant PhysicsParams& p       [[buffer(0)]],
+                                       device PhysicsBody*     bodies  [[buffer(1)]],
+                                       device uint*            wake    [[buffer(7)]],
+                                       constant uint&          substep [[buffer(8)]],
+                                       constant PhysicsGrab&   grab    [[buffer(24)]],
+                                       device float4*          flesh   [[buffer(30)]],
+                                       uint i [[thread_position_in_grid]])
+{
+    if (i >= p.counts.x) return;
+    PhysicsFleshHeader hd = *(device const PhysicsFleshHeader*)flesh;
+    bool held = grab.target.w > 0.0f && grab.body == i;
+    physIntegrate(p, bodies, wake, i, held, flesh, hd, hd.more.z, float(substep + 1) / p.softDamping.z);
+    if (held) physHold(bodies, grab, i);
+}
+
+kernel void physicsWideVelocitiesKernel(constant PhysicsParams& p      [[buffer(0)]],
+                                        device PhysicsBody*     bodies [[buffer(1)]],
+                                        uint i [[thread_position_in_grid]])
+{
+    if (i < p.counts.x) physTakeVelocities(p, bodies, i);
+}
+
+// Colour c's run of `order` (c < PHYS_COLOURS: the rounds' colours, else the left-over pairs' colour c - PHYS_COLOURS).
+inline uint2 physColourRun(device const uint* colouring, uint c) {
+    if (c < PHYS_COLOURS) return c < colouring[PHYS_COLOURS + 1] ? uint2(colouring[c], colouring[c + 1]) : uint2(0);
+    uint k = c - PHYS_COLOURS;
+    return k < colouring[2 * PHYS_COLOURS + 4] ? uint2(colouring[PHYS_COLOURS + 3 + k], colouring[PHYS_COLOURS + 4 + k]) : uint2(0);
+}
+
+// Each colour's dispatch (threadgroups of PHYS_CW_WIDTH), into `args`.
+kernel void physicsWideArgsKernel(device const uint* colouring [[buffer(23)]],
+                                  device uint*       args      [[buffer(13)]],
+                                  uint t [[thread_position_in_grid]])
+{
+    if (t >= 2 * PHYS_COLOURS) return;
+    uint2 run = physColourRun(colouring, t);
+    args[3 * t] = (run.y - run.x + PHYS_CW_WIDTH - 1) / PHYS_CW_WIDTH;
+    args[3 * t + 1] = 1;
+    args[3 * t + 2] = 1;
+}
+
+kernel void physicsWidePushKernel(constant PhysicsParams&     p         [[buffer(0)]],
+                                  device PhysicsBody*         bodies    [[buffer(1)]],
+                                  device const PhysicsBody*   statics   [[buffer(3)]],
+                                  device PhysicsPair*         pairs     [[buffer(4)]],
+                                  device PhysicsContact*      contacts  [[buffer(6)]],
+                                  device const uint*          order     [[buffer(9)]],
+                                  constant uint&              colour    [[buffer(12)]],
+                                  device const uint*          colouring [[buffer(23)]],
+                                  device const PhysicsTables& tables    [[buffer(28)]],
+                                  uint j [[thread_position_in_grid]])
+{
+    uint2 run = physColourRun(colouring, colour);
+    if (run.x + j < run.y) physPushFracturePair(p, bodies, statics, pairs, contacts, order[run.x + j], tables);
+}
+
+kernel void physicsWideKickKernel(constant PhysicsParams&     p         [[buffer(0)]],
+                                  device PhysicsBody*         bodies    [[buffer(1)]],
+                                  device const PhysicsBody*   statics   [[buffer(3)]],
+                                  device PhysicsPair*         pairs     [[buffer(4)]],
+                                  device PhysicsContact*      contacts  [[buffer(6)]],
+                                  device const uint*          order     [[buffer(9)]],
+                                  constant uint&              colour    [[buffer(12)]],
+                                  device const uint*          colouring [[buffer(23)]],
+                                  device const PhysicsTables& tables    [[buffer(28)]],
+                                  uint j [[thread_position_in_grid]])
+{
+    uint2 run = physColourRun(colouring, colour);
+    if (run.x + j < run.y) physKickFracturePair(p, bodies, statics, pairs, contacts, order[run.x + j], tables);
+}
+
+// The colours dispatched across the GPU: the rounds' first PHYS_WIDE_COLOURS and the left-over pairs' first
+// PHYS_WIDE_EXTRA (the colouring hands out its lowest colours first, and they are the big ones: a settled heap's
+// first ten held 400 to 3,000 pairs, the rest 1 to 200); the rest by one threadgroup (physicsWideTailKernel), a
+// colour at a time: a dispatch costs a few µs however small, and 128 a substep made a collapse slower than one core.
+constant uint PHYS_WIDE_COLOURS = 10, PHYS_WIDE_EXTRA = 4;
+
+// The colours past those, in order, then what no colour took (their list after the bodies' in `won`), by one
+// threadgroup: `colour` 0 the pushes, 1 the kicks.
+kernel void physicsWideTailKernel(constant PhysicsParams&     p         [[buffer(0)]],
+                                  device PhysicsBody*         bodies    [[buffer(1)]],
+                                  device const PhysicsBody*   statics   [[buffer(3)]],
+                                  device PhysicsPair*         pairs     [[buffer(4)]],
+                                  device PhysicsContact*      contacts  [[buffer(6)]],
+                                  device const uint*          order     [[buffer(9)]],
+                                  device const uint*          won       [[buffer(10)]],
+                                  constant uint&              colour    [[buffer(12)]],
+                                  device const uint*          colouring [[buffer(23)]],
+                                  device const PhysicsTables& tables    [[buffer(28)]],
+                                  uint t [[thread_index_in_threadgroup]],
+                                  uint width [[threads_per_threadgroup]])
+{
+    for (uint c = PHYS_WIDE_COLOURS; c < 2 * PHYS_COLOURS; ++c) {
+        if (c >= PHYS_COLOURS && c < PHYS_COLOURS + PHYS_WIDE_EXTRA) continue;
+        uint2 run = physColourRun(colouring, c);
+        if (run.x == run.y) continue;   // (the same for every thread: no barrier skipped by some)
+        for (uint j = run.x + t; j < run.y; j += width) {
+            if (colour == 0) physPushFracturePair(p, bodies, statics, pairs, contacts, order[j], tables);
+            else physKickFracturePair(p, bodies, statics, pairs, contacts, order[j], tables);
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
+    if (t == 0) {
+        uint n = p.counts.x;
+        for (uint r = 0; r < colouring[PHYS_COLOURS + 2]; ++r) {
+            if (colour == 0) physPushFracturePair(p, bodies, statics, pairs, contacts, won[n + r], tables);
+            else physKickFracturePair(p, bodies, statics, pairs, contacts, won[n + r], tables);
+        }
+    }
+}
+
+// Joint colour `range` (jointStarts[c], jointStarts[c + 1]: the CPU knows them): solved (`colour` 0), or damped (1).
+kernel void physicsWideJointsKernel(constant PhysicsParams&    p      [[buffer(0)]],
+                                    device PhysicsBody*        bodies [[buffer(1)]],
+                                    constant uint&             colour [[buffer(12)]],
+                                    device const PhysicsJoint* joints [[buffer(25)]],
+                                    constant uint2&            range  [[buffer(11)]],
+                                    uint k [[thread_position_in_grid]])
+{
+    if (range.x + k >= range.y) return;
+    if (colour == 0) physSolveJoint(bodies, joints[range.x + k]);
+    else physDampJoint(bodies, joints[range.x + k], p.gravity.w);
 }
 
 // MARK: - Drawing
