@@ -111,9 +111,50 @@ final class CharacterBaseTests: XCTestCase {
                 size = max(size, simd_length(dense[v]))
             }
             // (The mesh isn't exactly symmetric: a vertex's mirror is the nearest one to its reflection, up to a cm away.)
+            if t.name == "neckThickness" { print("Target neckThickness: asymmetry \(error / (size * 0.45 + 0.001)) of its bound") }
             XCTAssertLessThan(error, size * 0.45 + 0.001, "\(t.name): the left side's deltas mirror the right's")
             if error >= size * 0.45 + 0.001 { print("Asymmetric target \(t.name): \(error) against \(size)") }
         }
+    }
+
+    /// The neck's weights mirror (the Y Bot's do): where its neck's panel overlaps the chest's and the head's, and over
+    /// the seam to the finer head, the left side of the neck moves with its bones as the right does.
+    func testTheNecksWeightsAreSymmetric() throws {
+        let base = try kit().base, c = base.character
+        let names = c.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
+        let joints = ["Spine2", "Neck", "Head"].compactMap { names.firstIndex(of: $0) }
+        XCTAssertEqual(joints.count, 3)
+        func weights(_ v: Int) -> [Float] {
+            let s = c.skin[v], ws = [s.w0, s.w1, s.w2, 1 - s.w0 - s.w1 - s.w2]
+            return joints.map { j in (0..<4).reduce(0) { Int((s.joints >> UInt32(8 * $1)) & 0xFF) == j ? $0 + ws[$1] : $0 } }
+        }
+        let skin = (0..<c.skin.count).filter { base.regions[$0] < CharacterBase.Region.leftEye.rawValue }
+        var grid: [SIMD3<Int32>: [Int]] = [:]
+        for v in skin { grid[SIMD3<Int32>((c.positions[v] / 0.02).rounded(.down)), default: []].append(v) }
+        // Pairs: a vertex and the nearest to its reflection (within 4 mm) that faces the reflected way.
+        var differences: [Float] = []
+        for v in skin where (1.45...1.65).contains(c.positions[v].y) && c.positions[v].x > 0.002 {
+            let p = c.positions[v], n = c.normals[v]
+            let q = SIMD3(-p.x, p.y, p.z), facing = SIMD3(-n.x, n.y, n.z), cell = SIMD3<Int32>((q / 0.02).rounded(.down))
+            var best = (d: Float(0.004), v: -1)
+            for z in -1...1 { for y in -1...1 { for x in -1...1 {
+                for u in grid[cell &+ SIMD3(Int32(x), Int32(y), Int32(z))] ?? [] {
+                    let d = simd_distance(c.positions[u], q)
+                    if d < best.d && simd_dot(c.normals[u], facing) > 0.3 { best = (d, u) }
+                }
+            } } }
+            guard best.v >= 0 else { continue }
+            let a = weights(v), b = weights(best.v)
+            differences.append(zip(a, b).map { abs($0 - $1) }.max()!)
+        }
+        differences.sort()
+        let worst = differences.last ?? 0, p99 = differences[differences.count * 99 / 100]
+        print("Character neck weights: \(differences.count) mirror pairs, 99% within \(p99), worst \(worst)")
+        XCTAssertGreaterThan(differences.count, 1000)
+        // (A pair's vertices are up to 4 mm apart: where the jaw goes over to the head's bone the weights change by
+        // about 0.03 a mm.)
+        XCTAssertLessThan(p99, 0.05)
+        XCTAssertLessThan(worst, 0.15)
     }
 
     func testHeightFollowsItsSlider() throws {
