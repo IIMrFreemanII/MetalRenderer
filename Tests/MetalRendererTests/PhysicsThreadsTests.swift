@@ -63,6 +63,37 @@ final class PhysicsThreadsTests: XCTestCase {
         }
     }
 
+    /// The background stepper (PhysicsStepper) against stepping in the frame: frames of uneven lengths, a grab held
+    /// for a while, a blast in between: the same state, bit for bit.
+    func testTheStepperStepsAsTheFrameDoes() throws {
+        var settings = SceneSettings(kind: .destruction)
+        settings.physics.backend = .cpu
+        settings.destruction.statues = false
+        let frames = (1...150).map { k in Float(k) / 60 * (1 + 0.5 * sin(Float(k))) }.reduce(into: [Float]()) { $0.append(($0.last ?? 0) + $1 / Float(150) * 2) }
+        let grab = GPUPhysicsGrab(target: SIMD4(0, 3, 0, 1), anchor: .zero, body: 3)
+        func act(_ w: PhysicsWorld, _ k: Int) {
+            if k == 40 { w.command(.blast, origin: [0, 1, -2], radius: 2, magnitude: 12, steps: 6) }
+        }
+        let a = try XCTUnwrap(Scene(settings).physics)
+        for (k, t) in frames.enumerated() {
+            act(a, k)
+            a.grab = k >= 20 && k < 70 ? grab : GPUPhysicsGrab()
+            a.advance(to: t)
+        }
+        let b = try XCTUnwrap(Scene(settings).physics)
+        let stepper = PhysicsStepper(world: b)
+        for (k, t) in frames.enumerated() {
+            stepper.sync { act($0, k) }
+            stepper.grab = k >= 20 && k < 70 ? grab : GPUPhysicsGrab()
+            stepper.request(to: t)
+        }
+        stepper.waitIdle()
+        stepper.stop()
+        print(String(format: "stepper against the frame: %016llx, %016llx", PhysicsThreadsTests.digest(a), PhysicsThreadsTests.digest(b)))
+        XCTAssertEqual(PhysicsThreadsTests.digest(a), PhysicsThreadsTests.digest(b))
+        XCTAssertEqual(a.stepIndex, b.stepIndex)
+    }
+
     /// Each scene's world stepped on the CPU, its digest printed (`digest <name> <hex>`): the same lines from a build
     /// before a change to the CPU step and after it say it gives the same numbers. PHYSICS_DIGEST=1 (a name, or names
     /// joined by commas, for those only).

@@ -242,3 +242,116 @@ extension PhysicsWorld {
         }
     }
 }
+
+/// A world stepped on a thread of its own, behind the frame (a CPU-stepped scene: Scene.update, PhysicsSettings.
+/// asynchronous): each frame asks for the steps to its time, with the body the mouse holds then, and draws the bodies
+/// where the steps before left them (`latest`), while these run beside the frame's own work. The same numbers as
+/// stepping in the frame: the steps run in the order asked, each with its frame's grab, and anything else done to the
+/// world (a pick, a shot, a blast) waits for the steps asked before it (`sync`), so it lands on the same step.
+final class PhysicsStepper {
+    /// What a frame draws: the world's poses as a frame's steps left them (copies on write: the steps after copy).
+    struct Drawn {
+        var bodies: [GPUPhysicsBody]
+        var particles: [GPUPhysicsParticle]
+        var hairVertices: [GPUHairVertex]
+        var fractureState: [GPUFractureState]
+
+        init(_ w: PhysicsWorld) {
+            bodies = w.bodies
+            particles = w.particles
+            hairVertices = w.hairVertices
+            fractureState = w.fractureState
+        }
+    }
+
+    let world: PhysicsWorld
+    /// The body the mouse holds (the render thread's, sent with each frame's steps: the world's own `grab` is the
+    /// stepper's).
+    var grab: GPUPhysicsGrab
+
+    private let condition = NSCondition()
+    private var times: [(time: Float, grab: GPUPhysicsGrab)] = []   // asked for, not begun
+    private var busy = false
+    private var stopping = false
+    private var drawn: Drawn
+    private let finished = DispatchSemaphore(value: 0)
+    /// How many frames' steps may wait their turn before a frame waits for them (the frame then runs at the steps'
+    /// pace, a frame behind).
+    static let queued = 2
+
+    init(world: PhysicsWorld) {
+        self.world = world
+        grab = world.grab
+        drawn = Drawn(world)
+        let thread = Thread { [unowned self] in self.run() }
+        thread.name = "MetalRenderer.physics.stepper"
+        thread.qualityOfService = .userInteractive
+        thread.stackSize = 4 << 20
+        thread.start()
+    }
+
+    /// The steps to `time`, with this frame's grab, after those asked before (waiting while `queued` frames' are
+    /// still to run).
+    func request(to time: Float) {
+        condition.lock()
+        while times.count >= PhysicsStepper.queued && !stopping { condition.wait() }
+        times.append((time, grab))
+        condition.broadcast()
+        condition.unlock()
+    }
+
+    /// Waits for every step asked for.
+    func waitIdle() {
+        condition.lock()
+        while (!times.isEmpty || busy) && !stopping { condition.wait() }
+        condition.unlock()
+    }
+
+    /// `body` with the world, on this thread, once every step asked for is done (and none starts until it returns).
+    func sync<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R {
+        condition.lock()
+        defer { condition.unlock() }
+        while (!times.isEmpty || busy) && !stopping { condition.wait() }
+        return try body(world)
+    }
+
+    /// The poses the latest steps left.
+    var latest: Drawn {
+        condition.lock()
+        defer { condition.unlock() }
+        return drawn
+    }
+
+    /// Ends the thread (after the step it is on); the world is the caller's again.
+    func stop() {
+        condition.lock()
+        stopping = true
+        condition.broadcast()
+        condition.unlock()
+        finished.wait()
+    }
+
+    private func run() {
+        while true {
+            condition.lock()
+            while times.isEmpty && !stopping { condition.wait() }
+            if stopping {
+                condition.unlock()
+                finished.signal()
+                return
+            }
+            let next = times.removeFirst()
+            busy = true
+            condition.broadcast()   // (room for another frame's)
+            condition.unlock()
+            world.grab = next.grab
+            world.advance(to: next.time)
+            let now = Drawn(world)
+            condition.lock()
+            drawn = now
+            busy = false
+            condition.broadcast()
+            condition.unlock()
+        }
+    }
+}

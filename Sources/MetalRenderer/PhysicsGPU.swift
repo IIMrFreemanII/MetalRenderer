@@ -604,18 +604,18 @@ final class PhysicsGPU {
     }
 
     /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from.
-    func upload(slot: Int) {
+    func upload(slot: Int, _ drawn: PhysicsStepper.Drawn) {
         if !uploads.isEmpty {
-            world.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            drawn.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
         }
         if !hairUploads.isEmpty {
-            world.hairVertices.withUnsafeBytes { hairUploads[slot].vertices.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
-            world.bodies.withUnsafeBytes {
+            drawn.hairVertices.withUnsafeBytes { hairUploads[slot].vertices.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            drawn.bodies.withUnsafeBytes {
                 if !$0.isEmpty { hairUploads[slot].bodies.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
             }
         }
         if !bodyUploads.isEmpty {
-            world.bodies.withUnsafeBytes { bodyUploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            drawn.bodies.withUnsafeBytes { bodyUploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
         }
     }
 

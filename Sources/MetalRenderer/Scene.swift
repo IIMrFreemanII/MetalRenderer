@@ -530,6 +530,12 @@ final class Scene {
     /// than catching up.
     var physicsFromInstall = false
     private var physicsOrigin: Float?
+    /// The CPU's steps on a thread of their own, behind the frame (PhysicsStepper): the renderer turns it on
+    /// (PhysicsSettings.asynchronous, for a scene that simulates on the CPU, not a benchmark's unless asked).
+    var physicsAsync = false
+    private(set) var physicsStepper: PhysicsStepper?
+    /// The time the CPU's steps were last asked for (a frame at the same time: paused, a still, waits for them).
+    private var physicsTime: Float?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -569,6 +575,8 @@ final class Scene {
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
     /// `voxelBoxes`: far baked plants are traced as their voxels (VoxelLOD).
     /// `load`: the load to report the build to; a gallery stops loading models when it is cancelled.
+    deinit { physicsStepper?.stop() }
+
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          load: LoadJob? = nil, building: ((Scene) -> Void)? = nil) {
         self.settings = settings
@@ -720,8 +728,8 @@ final class Scene {
         }
         defer {
             // (The loose furniture of an interior: only while some of it is awake.)
-            let bodies = physics.map { p in p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty || !p.cloths.isEmpty
-                || !p.softVertices.isEmpty || !p.hairGroups.isEmpty || settings.kind.simulates } ?? false
+            let bodies = physics.map { p in settings.kind.simulates || p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty
+                || !p.cloths.isEmpty || !p.softVertices.isEmpty || !p.hairGroups.isEmpty } ?? false
             motionThisFrame = changed || crowd != nil || bodies || !deforming.isEmpty || animated == nil
         }
         // A light's pose; `placed`: its position and direction too (otherwise only its scale is taken).
@@ -765,6 +773,13 @@ final class Scene {
                 if physicsOrigin.map({ t < $0 }) ?? true { physicsOrigin = t }
                 physics.advance(to: t - (physicsOrigin ?? t), atMost: 8)
                 placeBodies()
+            } else if physicsAsync {
+                let stepper = physicsStepper ?? PhysicsStepper(world: physics)
+                physicsStepper = stepper
+                stepper.request(to: t)
+                if physicsTime == t { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
+                physicsTime = t
+                placeBodies(stepper.latest)
             } else {
                 physics.advance(to: t)
                 placeBodies()
@@ -806,6 +821,45 @@ final class Scene {
         for p in physics.particles.indices where physics.particles[p].info.x != PhysicsWorld.none {   // (a cloth's vertex has none)
             setTransform(Int(physics.particles[p].info.x), physics.particleTransform(p))
         }
+    }
+
+    /// ...where the stepper's latest steps left them (PhysicsStepper.Drawn).
+    func placeBodies(_ drawn: PhysicsStepper.Drawn) {
+        guard let physics else { return }
+        let fractured = physics.fractures
+        for b in drawn.bodies.indices {
+            let body = drawn.bodies[b]
+            // (PhysicsWorld.drawnScale, from the drawn state.)
+            let scale: Float = !fractured ? 1 : body.info.y & PhysicsWorld.disabledBit != 0 ? 0
+                : b < drawn.fractureState.count ? drawn.fractureState[b].direction.w : 1
+            setTransform(Int(body.info.z), physics.transform(body, scale: scale))
+        }
+        for p in drawn.particles.indices where drawn.particles[p].info.x != PhysicsWorld.none {
+            setTransform(Int(drawn.particles[p].info.x), translate(PhysicsMath.xyz(drawn.particles[p].position)))
+        }
+    }
+
+    /// The body the mouse holds: the stepper's copy (sent with each frame's steps) when it steps the world, the
+    /// world's own otherwise.
+    var physicsGrab: GPUPhysicsGrab {
+        get { physicsStepper?.grab ?? physics?.grab ?? GPUPhysicsGrab() }
+        set {
+            if let physicsStepper { physicsStepper.grab = newValue } else { physics?.grab = newValue }
+        }
+    }
+
+    /// `body` with the world, once the steps asked for are done when a stepper runs them (a pick, a command: they
+    /// then land on the step they would have without it); nil without a world.
+    func withPhysics<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R? {
+        guard let physics else { return nil }
+        if let physicsStepper { return try physicsStepper.sync(body) }
+        return try body(physics)
+    }
+
+    /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
+    var drawnPhysics: PhysicsStepper.Drawn? {
+        if let physicsStepper { return physicsStepper.latest }
+        return physics.map { PhysicsStepper.Drawn($0) }
     }
 
     /// ...where the GPU had them (`poses`: position, rotation per body): the CPU's copy, for what reads it here

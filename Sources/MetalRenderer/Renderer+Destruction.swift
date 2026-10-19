@@ -43,8 +43,13 @@ extension Renderer {
 
     /// A click with Shoot or Blast at `cursor`.
     func fireDestruction(at cursor: SIMD2<Float>) {
-        guard let physics = scene.physics, var rig = scene.destructionRig, !rig.shots.isEmpty else { return }
-        let direction = cursorRayForPainter(cursor)
+        guard scene.physics != nil, var rig = scene.destructionRig, !rig.shots.isEmpty else { return }
+        // (With the steps on their own thread: once those asked for are done, so the command lands on its step.)
+        scene.withPhysics { physics in fire(physics, &rig, direction: cursorRayForPainter(cursor)) }
+        scene.destructionRig = rig
+    }
+
+    private func fire(_ physics: PhysicsWorld, _ rig: inout Scene.DestructionRig, direction: SIMD3<Float>) {
         switch destructionTool {
         case .grab:
             return
@@ -67,6 +72,5 @@ extension Renderer {
             guard let point else { return }
             physics.command(.blast, origin: point, radius: 1.3, magnitude: 10, steps: 6)
         }
-        scene.destructionRig = rig
     }
 }

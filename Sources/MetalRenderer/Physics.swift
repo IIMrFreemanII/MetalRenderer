@@ -707,6 +707,14 @@ final class PhysicsWorld {
 
     /// Body `i`'s instance transform: its shape space in the world (shrunk to nothing if it is disabled, smaller as
     /// it fades: Physics+Fracture.swift).
+    /// Body `b`'s instance transform (its record given: a stepper's drawn copy), drawn at `scale` about its centre.
+    func transform(_ b: GPUPhysicsBody, scale s: Float) -> float4x4 {
+        let shape = shapes[Int(b.info.x)]
+        let q = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(shape.comRotation))
+        let turned = translate(PhysicsMath.xyz(b.position)) * float4x4(PhysicsMath.simdQuat(q))
+        return (s < 1 ? turned * scale(max(s, PhysicsWorld.hiddenScale)) : turned) * translate(-PhysicsMath.xyz(shape.comPosition))
+    }
+
     func transform(_ i: Int) -> float4x4 {
         transform(i, position: PhysicsMath.xyz(bodies[i].position), rotation: bodies[i].rotation, scale: fractures ? drawnScale(i) : 1)
     }

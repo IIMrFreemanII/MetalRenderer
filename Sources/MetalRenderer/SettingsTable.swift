@@ -462,6 +462,10 @@ enum SettingsTable {
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.check("CPU physics behind the frame", \.scene.physics.asynchronous).env(.scene, "physicsasync")
+                .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
+            S.check("CPU physics on every core", \.scene.physics.everyCore).env(.scene, "physicscores")
+                .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.slider("Particle budget", \.scene.particles.budget, ParticleSettings.budgetRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
                 .env(.scene, "budget").when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
             S.check("Particle shadows", \.scene.particles.shadows).env(.scene, "particleshadows")

@@ -1100,6 +1100,11 @@ final class Renderer: NSObject {
                                             clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
                 if onGPU { scene.runPhysicsOnGPU() }
             }
+            // The CPU's steps on their own thread, behind the frame (not a benchmark's, whose stills and timings are
+            // the frame's own, unless METALRENDERER_PHYSICS_ASYNC=1 asks).
+            PhysicsPool.shared.enabled = scene.settings.physics.everyCore
+            scene.physicsAsync = !onGPU && scene.settings.kind.simulates && scene.settings.physics.asynchronous
+                && (benchmark == nil || ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_ASYNC"] == "1")
         }
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
@@ -2161,9 +2166,9 @@ final class Renderer: NSObject {
         if let physicsGPU {
             if physicsGPU.simulates {
                 scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
-                if let physics = scene.physics { physicsGPU.setGrab(slot: slot, physics.grab) }
-            } else {
-                physicsGPU.upload(slot: slot)
+                if scene.physics != nil { physicsGPU.setGrab(slot: slot, scene.physicsGrab) }
+            } else if let drawn = scene.drawnPhysics {
+                physicsGPU.upload(slot: slot, drawn)
             }
         }
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
@@ -5241,11 +5246,11 @@ final class Renderer: NSObject {
         }
         clickAt = cursor
         leftLook = walker == nil
-        guard let physics = scene.physics, !destructionFires else { return }
+        guard scene.physics != nil, !destructionFires else { return }
         let direction = cursorRay(cursor)
-        guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
+        guard let pick = scene.withPhysics({ $0.pick(origin: camera.position, direction: direction) }), let hit = pick else { return }
         let point = camera.position + direction * hit.distance
-        physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
+        scene.physicsGrab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
         holding = (cursor, dot(point - camera.position, camera.forward))
         leftLook = false
     }
@@ -5299,7 +5304,7 @@ final class Renderer: NSObject {
         navDrag = nil
         leftLook = false
         holding = nil
-        scene.physics?.grab.target.w = 0
+        if scene.physics != nil { scene.physicsGrab.target.w = 0 }
     }
 
     /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
@@ -5412,9 +5417,9 @@ final class Renderer: NSObject {
     /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
     /// follows the camera as it moves too).
     private func moveGrab() {
-        guard let holding, let physics = scene.physics, physics.grab.target.w > 0 else { return }
+        guard let holding, scene.physics != nil, scene.physicsGrab.target.w > 0 else { return }
         let direction = cursorRay(holding.cursor)
         let along = holding.depth / max(dot(direction, camera.forward), 0.1)
-        physics.grab.target = SIMD4(camera.position + direction * along, 1)
+        scene.physicsGrab.target = SIMD4(camera.position + direction * along, 1)
     }
 }
