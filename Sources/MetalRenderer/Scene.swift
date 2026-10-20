@@ -255,6 +255,16 @@ final class Scene {
     /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
 
+    /// Tells this scene from every other one the process makes. (Not its ObjectIdentifier: that is its address, which
+    /// the next scene often gets once this one is freed, so "the same scene" would depend on the allocator.)
+    let serial: Int = {
+        Scene.serials.lock(); defer { Scene.serials.unlock() }
+        Scene.lastSerial += 1
+        return Scene.lastSerial
+    }()
+    private static let serials = NSLock()
+    private static var lastSerial = 0
+
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
     private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
@@ -854,6 +864,16 @@ final class Scene {
         guard let physics else { return nil }
         if let physicsStepper { return try physicsStepper.sync(body) }
         return try body(physics)
+    }
+
+    /// Where the CPU's steps broke pieces (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust: the stepper's
+    /// latest, or the world's.
+    var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
+        if let physicsStepper {
+            let drawn = physicsStepper.latest
+            return (drawn.breakLog, drawn.breakSteps, drawn.breakTotal)
+        }
+        return physics.map { ($0.breakLog, $0.breakSteps, $0.breakTotal) }
     }
 
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.

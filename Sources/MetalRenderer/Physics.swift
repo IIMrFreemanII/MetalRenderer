@@ -113,7 +113,9 @@ final class PhysicsWorld {
     /// The state (dynamic bodies, then the static colliders and their world boxes), as the GPU has it.
     var bodies: [GPUPhysicsBody] = []
     private(set) var statics: [GPUPhysicsBody] = []
-    private(set) var staticBounds: [AABB] = []
+    private(set) var staticBounds: [AABB] = [] { didSet { staticsVersion &+= 1 } }
+    /// One more each time a static collider is added or a heightfield's box changes (the broad phase's memo).
+    private(set) var staticsVersion = 0
     /// The statics that are heightfields (a terrain's sectors), in the order they were added.
     private(set) var heightfields: [Int] = []
     /// The state at the start (what a replay starts from).
@@ -221,6 +223,13 @@ final class PhysicsWorld {
     /// it touches: `wake`), kept.
     var sleepAnchors: [SIMD8<Float>] = []
     var stepMotion: [SIMD4<Float>] = []
+    /// With fractured objects stepped here: where pieces broke, for the dust (the GPU's steps write PhysicsGPU.breakRing
+    /// instead; the renderer copies these into a ring of its own, Renderer.cpuBreakRing): the latest `breakLogLength`,
+    /// each one's step, and how many there have been since the start.
+    var breakLog: [GPUBreakEvent] = []
+    var breakSteps: [Int] = []
+    var breakTotal = 0
+    static let breakLogLength = 1024
     /// The particles as a substep's Jacobi pass found them (solveParticles), kept.
     var particleSnapshot: [GPUPhysicsParticle] = []
     /// The broad phases' cells of the bodies and of the particles (PhysicsCellGrid), kept.
@@ -235,6 +244,12 @@ final class PhysicsWorld {
     var narrowPartners: [UInt32] = [], narrowCounts: [UInt32] = []
     var narrowSeen: [SIMD16<UInt32>] = [], narrowChanged: [UInt8] = []
     var narrowEpoch = -1, shapeEpoch = 0
+    /// The broad phase's memo (broadPhase, BroadMemo): each body as the broad phase read it at the last step, and
+    /// whether it is so now; the bodies that aren't, in a grid of their own (the step's levels) and those too big for
+    /// it; the shapes' build, the statics' and the parameters the partners were found with (`broadEpoch` -1: none).
+    var broadSeen: [SIMD16<UInt32>] = [], broadChanged: [UInt8] = []
+    var changedCells = PhysicsCellGrid(), changedBodies: [Int32] = [], changedBigs: [Int32] = []
+    var broadEpoch = -1, broadStatics = 0, broadParams = SIMD4<Float>()
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.
@@ -625,6 +640,10 @@ final class PhysicsWorld {
         welds = initialWelds
         for i in fractureState.indices { fractureState[i] = GPUFractureState() }
         for i in stepMotion.indices { stepMotion[i] = .zero }
+        breakLog.removeAll()
+        breakSteps.removeAll()
+        breakTotal = 0
+        broadEpoch = -1
         resetFluids()
         stepIndex = 0
     }

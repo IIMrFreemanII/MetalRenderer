@@ -2790,9 +2790,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainField.swift": {
-    "mtime": 1792443507.1021097,
-    "seen": 1792445365.467691,
-    "ast_hash": "6cc62a3ca4383ca172070e24286cb18d",
+    "mtime": 1792445674.725913,
+    "seen": 1792446344.630027,
+    "ast_hash": "8c60d991378d1d1e4023ed3011653396",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/TerrainGenerator.swift": {
@@ -2886,9 +2886,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/TerrainEditorTests.swift": {
-    "mtime": 1792443507.1176643,
-    "seen": 1792445365.467745,
-    "ast_hash": "17491e35773e380ade15d0b714ab3bad",
+    "mtime": 1792446318.9456196,
+    "seen": 1792446344.630087,
+    "ast_hash": "9948a159a70c3bb14a20543f711c734a",
     "semantic_hash": ""
   },
   ".claude/notes/terrain-editor-handoff.md": {

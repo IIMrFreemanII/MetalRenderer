@@ -472,6 +472,22 @@ extension PhysicsWorld {
                 }
                 // ...and the welds of what came free broken (two freed pieces share one).
                 for i in 0..<n where freed[i] != 0 { breakWelds(i) }
+                // ...and what broke, for the dust (MSL physicsFractureEventsKernel: in body order, a step's first
+                // `ringEvents`; from the pose phase B left).
+                var logged = 0
+                for i in 0..<n where logged < PhysicsWorld.ringEvents && states[i].strain.w == 1
+                    && before[i].info.y & (PhysicsWorld.pieceBit | PhysicsWorld.disabledBit) == PhysicsWorld.pieceBit {
+                    let b = bodies[i]
+                    breakLog.append(GPUBreakEvent(position: SIMD4(PhysicsMath.xyz(b.position), b.invInertia.w),
+                                                  velocity: SIMD4(PhysicsMath.xyz(b.velocity), nodes[i].extra.w)))
+                    breakSteps.append(stepIndex)
+                    logged += 1
+                }
+                breakTotal += logged
+                if breakLog.count > PhysicsWorld.breakLogLength {
+                    breakLog.removeFirst(breakLog.count - PhysicsWorld.breakLogLength)
+                    breakSteps.removeFirst(breakSteps.count - PhysicsWorld.breakLogLength)
+                }
             }
         }
     }
