@@ -193,6 +193,11 @@ struct PhysicsSDFNode {
     var inverse: simd_quatf   // (the node's rotation's: Node.local's)
     var scale: Float
     var smooth: Float
+    /// Where it is is the shape's origin, unturned and unscaled: its space is the shape's (a fractured piece's object
+    /// and its cell, most often). `sdf` skips the turn, which gives the same point back (but for a zero's sign, which
+    /// no primitive's distance tells apart away from its origin): three buildings' narrow phases' distances, 32 →
+    /// 23 ns each.
+    var plain: Bool
 
     init(_ node: SDFShape.Node, planes: inout [SIMD4<Float>]) {
         op = node.op
@@ -200,6 +205,7 @@ struct PhysicsSDFNode {
         inverse = node.rotation.inverse
         scale = node.scale
         smooth = node.smooth
+        plain = inverse.vector == SIMD4(0, 0, 0, 1) && position == .zero && scale == 1
         first = 0
         count = 0
         switch node.primitive {
@@ -282,7 +288,7 @@ struct PhysicsShapes {
         var d = Float.infinity
         for i in 0..<Int(range.y) {
             let node = nodes[Int(range.x) + i]
-            let b = node.scale * primitive(node, node.inverse.act(p - node.position) / node.scale)
+            let b = node.scale * primitive(node, node.plain ? p : node.inverse.act(p - node.position) / node.scale)
             if i == 0 { d = b; continue }
             d = SDFShape.join(d, b, node.op, node.smooth).0
         }
@@ -391,7 +397,12 @@ struct PhysicsShapes {
         case .sdf: break
         }
         var g = SIMD3<Float>()
-        for k in PhysicsMath.taps { g += k * distance(shape: s, p + k * PhysicsMath.gradientStep) }
+        // (The taps one by one, in their order: through the array, each call took a static object's lazy init.)
+        let t0 = SIMD3<Float>(1, -1, -1), t1 = SIMD3<Float>(-1, -1, 1), t2 = SIMD3<Float>(-1, 1, -1), t3 = SIMD3<Float>(1, 1, 1)
+        g += t0 * distance(shape: s, p + t0 * PhysicsMath.gradientStep)
+        g += t1 * distance(shape: s, p + t1 * PhysicsMath.gradientStep)
+        g += t2 * distance(shape: s, p + t2 * PhysicsMath.gradientStep)
+        g += t3 * distance(shape: s, p + t3 * PhysicsMath.gradientStep)
         let l = length(g)
         return l > 0 ? g / l : SIMD3(0, 1, 0)
     }
@@ -402,6 +413,21 @@ struct PhysicsShapes {
 
     /// The contacts between `a` (shape `sa`) and `b` (shape `sb`) closer than `margin` (negative: overlapping).
     func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold {
+        withPoints(a) { pointsA in withPoints(b) { pointsB in collide(a, b, margin: margin, pointsA: pointsA, pointsB: pointsB) } }
+    }
+
+    /// Body b's samples' world points (Pose.toWorld of each, as SampleCache works them out), for `body`.
+    func withPoints<R>(_ b: GPUPhysicsBody, _ body: (UnsafePointer<SIMD3<Float>>) -> R) -> R {
+        let info = shapes[Int(b.info.x)].info, pose = Pose(b)
+        return withUnsafeTemporaryAllocation(of: SIMD3<Float>.self, capacity: max(Int(info.z), 1)) { points in
+            for m in 0..<Int(info.z) { points[m] = pose.toWorld(PhysicsMath.xyz(samples[Int(info.y) + m])) }
+            return body(UnsafePointer(points.baseAddress!))
+        }
+    }
+
+    /// collide, with each body's samples' world points (`pointsA`, `pointsB`: their poses' toWorld of each).
+    func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float, pointsA: UnsafePointer<SIMD3<Float>>,
+                 pointsB: UnsafePointer<SIMD3<Float>>) -> PhysicsManifold {
         let sa = Int(a.info.x), sb = Int(b.info.x)
         let pa = Pose(a), pb = Pose(b)
         let ra = a.invInertia.w, rb = b.invInertia.w
@@ -414,7 +440,7 @@ struct PhysicsShapes {
         let sampleA = shapes[sa].info
         for i in Int(sampleA.y)..<Int(sampleA.y + sampleA.z) {
             let s = samples[i]
-            let w = pa.toWorld(PhysicsMath.xyz(s))
+            let w = pointsA[i - Int(sampleA.y)]
             if !plane && length_squared(w - pb.position) > (rb + s.w + margin) * (rb + s.w + margin) { continue }
             let q = pb.toBody(w)
             let d = distance(shape: sb, q) - s.w
@@ -427,7 +453,7 @@ struct PhysicsShapes {
         let sampleB = shapes[sb].info
         for i in Int(sampleB.y)..<Int(sampleB.y + sampleB.z) {
             let s = samples[i]
-            let w = pb.toWorld(PhysicsMath.xyz(s))
+            let w = pointsB[i - Int(sampleB.y)]
             if length_squared(w - pa.position) > (ra + s.w + margin) * (ra + s.w + margin) { continue }
             let q = pa.toBody(w)
             let d = distance(shape: sa, q) - s.w

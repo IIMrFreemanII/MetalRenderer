@@ -169,3 +169,40 @@ Next:
 - The refresh narrow phases (7.6 ms at 12 s, 2.4 at 26 s) are real `collide` work on the moving pairs: cheaper
   sample tests (see Next 1 above).
 - The colour stages are about 5 µs each, 16 x 2 x 34 a step: islands.
+
+## Settling in a frame (branch `claude/cpu-settle-frame`)
+
+Three buildings settling, a step at 11 s 29.1 → 18.0 ms, at 26 s 13.9 → 8.0 ms; over the benchmark's settling time
+(11 to 15 s) 14.4 ms on average. The `destructioncpu` settling row: 29.2 → 18.6 ms on the frame thread with the steps
+in the frame (the renderer's own share is about 4.5 ms), 5.3 ms with them behind it. Exact: main's 9 digests, and
+three buildings stepped 1,560 steps (26 s) to d5fded8b02c0054f, as before.
+
+Done (README "CPU physics on every core" has the table):
+- **Contacts without a stop for each colour** (`eachColour`): per pair of `pairOrder`, the pairs before it on its
+  bodies; the pairs by depth (`pairSchedule`) in chunks of 16 (`colourGrain`); each chunk waits on the chunks of those
+  (`pairWaits`, flags `pairDone` a cache line apart, `pairPass` the pass) and is claimed one at a time
+  (`PhysicsPool.parallel(single:)`). Pushes and kicks 9.2 → 7.7 ms at 11 s.
+- **Performance cores only** (`hw.perflevel0.physicalcpu`): 8 threads beat 10 on the M1 Max in every stage.
+- **Narrow phase:** `PhysicsSDFNode.plain` (no turn for a node at its shape's origin: 32 → 23 ns a distance);
+  `SampleCache` (each record's samples' world points once a narrow phase, statics after the bodies); refreshes over
+  `pairEntries` (the coloured pairs in entry order); the memo checked before the partner and the weld (`reset` drops
+  it: welds come back).
+- **Broad phase:** `broadItems` (position and reach per grid item, in its order), `PhysicsBoxFrame` (boxes' frames),
+  `memoPartners` (a body that is as it was takes its partners from last step's and the changed bodies, keys in
+  `broadKeys`); the cells' conversion without the generic SIMD path.
+- **Colouring:** the scan on every core, its counts over the candidates, the rounds over `pairAdjacent`.
+
+Tried and dropped:
+- A piece's cut first, or stopping a sample's distance early (on the shape's prefix, or plane by plane): slower, the
+  branches cost more than what they skipped (34 → 40 ns a distance).
+- Chunks of one depth each, with the unready pairs put last: a little slower (the tail's handoffs).
+- Chunks fixed to threads (cache locality): hung, as a worker parked through many small stages can miss one (the
+  generation is 16 bits), and nobody else takes its chunks.
+- Pairs refreshed in `pairOrder`'s order: slower (a body's pairs on many threads, its samples' points contended).
+
+Next:
+- The contacts' passes: one stage a substep for pushes, the velocities and kicks (each body's chain through all
+  three) would drop two stages and let one pass's tail overlap the next's head. Timed without the waits, the passes
+  take 6.4 ms, against about 7.
+- The refreshes (4.9 ms at 11 s) are real `collide` work: 860,000 distances and 110,000 contacts a step.
+- The M4 Max: its 12 performance cores.

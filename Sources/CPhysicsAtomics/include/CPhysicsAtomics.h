@@ -18,6 +18,9 @@ static inline bool cpa_cas(intptr_t *p, intptr_t expected, intptr_t desired) {
 static inline int32_t cpa_add32(int32_t *p, int32_t v) {
     return atomic_fetch_add_explicit((_Atomic int32_t *)p, v, memory_order_relaxed);
 }
+/// A 32-bit flag's load and store (PhysicsCPU.eachColour's pairs done).
+static inline int32_t cpa_load32(int32_t *p) { return atomic_load_explicit((_Atomic int32_t *)p, memory_order_acquire); }
+static inline void cpa_store32(int32_t *p, int32_t v) { atomic_store_explicit((_Atomic int32_t *)p, v, memory_order_release); }
 /// A spinning thread's hint to the core (arm64's yield, x86's pause).
 static inline void cpa_pause(void) {
 #if defined(__aarch64__)

@@ -128,6 +128,17 @@ final class PhysicsWorld {
     /// last colour is what the rounds left, solved one pair after another.
     var pairOrder: [UInt32] = []
     var pairColourStarts: [UInt32] = [0]
+    /// Those pairs in entry order (the refreshes': PhysicsCPU.narrowPhase).
+    var pairEntries: [Int32] = []
+    /// The colouring's candidates' neighbours (PhysicsCPU.colourPairs): 2 x `maxPairs` places each, how many used.
+    var pairAdjacent: [Int32] = [], pairNeighbours: [UInt8] = []
+    /// `pairOrder`'s pairs in the order PhysicsCPU.eachColour hands them out (by depth: how many pairs it waits on in
+    /// a row at most), per pair there the chunks it waits on (-1: none), and each chunk's done flag (= `pairPass` once
+    /// it is done in the pass that is going on; `PhysicsCPU.flagStride` apart).
+    var pairSchedule: [Int32] = []
+    var pairWaits: [SIMD2<Int32>] = []
+    var pairDone: [Int32] = []
+    var pairPass: Int32 = 0
 
     /// The body the mouse holds, if any (`target.w` = 1), which the substeps pull to the target; the GPU takes a copy
     /// each frame (PhysicsGPU.setGrab).
@@ -244,6 +255,15 @@ final class PhysicsWorld {
     var narrowPartners: [UInt32] = [], narrowCounts: [UInt32] = []
     var narrowSeen: [SIMD16<UInt32>] = [], narrowChanged: [UInt8] = []
     var narrowEpoch = -1, shapeEpoch = 0
+    /// The broad phase's copies, made each step (PhysicsCPU.broadPhase): per grid item its body's position and reach,
+    /// and with fractured objects per body its box in the world.
+    var broadItems: [SIMD4<Float>] = [], broadFrames: [PhysicsBoxFrame] = []
+    /// Per entry, its partner's key as the broad phase kept it (a distance squared, or a gap: PhysicsCPU.consider).
+    var broadKeys: [Float] = []
+    /// Per body (then per static), where its samples' world points start in `sampleWorld`, the points, and whether they
+    /// are this narrow phase's (SampleCache: 2 x `sampleEpoch` + 1 once they are; 2 x it while a thread works them out).
+    var sampleStarts: [Int32] = [], sampleWorld: [SIMD3<Float>] = [], sampleStates: [Int] = []
+    var sampleEpoch = 0
     /// The broad phase's memo (broadPhase, BroadMemo): each body as the broad phase read it at the last step, and
     /// whether it is so now; the bodies that aren't, in a grid of their own (the step's levels) and those too big for
     /// it; the shapes' build, the statics' and the parameters the partners were found with (`broadEpoch` -1: none).
@@ -644,6 +664,7 @@ final class PhysicsWorld {
         breakSteps.removeAll()
         breakTotal = 0
         broadEpoch = -1
+        narrowEpoch = -1   // (its welds are back)
         resetFluids()
         stepIndex = 0
     }
