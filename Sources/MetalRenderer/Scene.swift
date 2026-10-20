@@ -515,6 +515,8 @@ final class Scene {
     var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
     private(set) var physics: PhysicsWorld?
+    /// The destruction scene's shots (Scene+Destruction.swift), if it is that scene.
+    var destructionRig: DestructionRig?
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
@@ -538,6 +540,12 @@ final class Scene {
     /// than catching up.
     var physicsFromInstall = false
     private var physicsOrigin: Float?
+    /// The CPU's steps on a thread of their own, behind the frame (PhysicsStepper): the renderer turns it on
+    /// (PhysicsSettings.asynchronous, for a scene that simulates on the CPU, not a benchmark's unless asked).
+    var physicsAsync = false
+    private(set) var physicsStepper: PhysicsStepper?
+    /// The time the CPU's steps were last asked for (a frame at the same time: paused, a still, waits for them).
+    private var physicsTime: Float?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).
@@ -577,6 +585,8 @@ final class Scene {
     /// `building`: what is in the scene, instead of what `settings.kind` builds (tests).
     /// `voxelBoxes`: far baked plants are traced as their voxels (VoxelLOD).
     /// `load`: the load to report the build to; a gallery stops loading models when it is cancelled.
+    deinit { physicsStepper?.stop() }
+
     init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          load: LoadJob? = nil, building: ((Scene) -> Void)? = nil) {
         self.settings = settings
@@ -621,6 +631,7 @@ final class Scene {
         case .mireland: buildMireland()
         case .painter: buildPainterWorkshop()
         case .terrain: buildTerrainWorkshop()
+        case .destruction: buildDestruction(settings.destruction)
         }
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
@@ -727,8 +738,8 @@ final class Scene {
         }
         defer {
             // (The loose furniture of an interior: only while some of it is awake.)
-            let bodies = physics.map { p in p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty || !p.cloths.isEmpty
-                || !p.softVertices.isEmpty || !p.hairGroups.isEmpty || settings.kind.simulates } ?? false
+            let bodies = physics.map { p in settings.kind.simulates || p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty
+                || !p.cloths.isEmpty || !p.softVertices.isEmpty || !p.hairGroups.isEmpty } ?? false
             motionThisFrame = changed || crowd != nil || bodies || !deforming.isEmpty || animated == nil
         }
         // A light's pose; `placed`: its position and direction too (otherwise only its scale is taken).
@@ -772,6 +783,13 @@ final class Scene {
                 if physicsOrigin.map({ t < $0 }) ?? true { physicsOrigin = t }
                 physics.advance(to: t - (physicsOrigin ?? t), atMost: 8)
                 placeBodies()
+            } else if physicsAsync {
+                let stepper = physicsStepper ?? PhysicsStepper(world: physics)
+                physicsStepper = stepper
+                stepper.request(to: t)
+                if physicsTime == t { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
+                physicsTime = t
+                placeBodies(stepper.latest)
             } else {
                 physics.advance(to: t)
                 placeBodies()
@@ -815,6 +833,55 @@ final class Scene {
         }
     }
 
+    /// ...where the stepper's latest steps left them (PhysicsStepper.Drawn).
+    func placeBodies(_ drawn: PhysicsStepper.Drawn) {
+        guard let physics else { return }
+        let fractured = physics.fractures
+        for b in drawn.bodies.indices {
+            let body = drawn.bodies[b]
+            // (PhysicsWorld.drawnScale, from the drawn state.)
+            let scale: Float = !fractured ? 1 : body.info.y & PhysicsWorld.disabledBit != 0 ? 0
+                : b < drawn.fractureState.count ? drawn.fractureState[b].direction.w : 1
+            setTransform(Int(body.info.z), physics.transform(body, scale: scale))
+        }
+        for p in drawn.particles.indices where drawn.particles[p].info.x != PhysicsWorld.none {
+            setTransform(Int(drawn.particles[p].info.x), translate(PhysicsMath.xyz(drawn.particles[p].position)))
+        }
+    }
+
+    /// The body the mouse holds: the stepper's copy (sent with each frame's steps) when it steps the world, the
+    /// world's own otherwise.
+    var physicsGrab: GPUPhysicsGrab {
+        get { physicsStepper?.grab ?? physics?.grab ?? GPUPhysicsGrab() }
+        set {
+            if let physicsStepper { physicsStepper.grab = newValue } else { physics?.grab = newValue }
+        }
+    }
+
+    /// `body` with the world, once the steps asked for are done when a stepper runs them (a pick, a command: they
+    /// then land on the step they would have without it); nil without a world.
+    func withPhysics<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R? {
+        guard let physics else { return nil }
+        if let physicsStepper { return try physicsStepper.sync(body) }
+        return try body(physics)
+    }
+
+    /// Where the CPU's steps broke pieces (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust: the stepper's
+    /// latest, or the world's.
+    var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
+        if let physicsStepper {
+            let drawn = physicsStepper.latest
+            return (drawn.breakLog, drawn.breakSteps, drawn.breakTotal)
+        }
+        return physics.map { ($0.breakLog, $0.breakSteps, $0.breakTotal) }
+    }
+
+    /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
+    var drawnPhysics: PhysicsStepper.Drawn? {
+        if let physicsStepper { return physicsStepper.latest }
+        return physics.map { PhysicsStepper.Drawn($0) }
+    }
+
     /// ...where the GPU had them (`poses`: position, rotation per body): the CPU's copy, for what reads it here
     /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
     func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
@@ -823,7 +890,8 @@ final class Scene {
         for b in physics.bodies.indices {
             let i = Int(physics.bodies[b].info.z)
             instances[i].prevTransform = instances[i].transform
-            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1]))
+            // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
+            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w))
         }
     }
 
@@ -2224,26 +2292,7 @@ final class Scene {
     func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
         beginObject(model.name, assets: [AssetKey(kind: .model, name: url.lastPathComponent)])   // the outline's: its parts, its lights
         defer { endObject() }
-        var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
-        func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
-            guard let ref else { return .max }
-            let key = ref.image * 2 + (srgb ? 1 : 0)
-            if let i = textureIndex[key] { return i }
-            textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
-                                          name: "\(model.name)/\(model.images[ref.image].name)",
-                                          modelPath: url.path, cacheKey: "\(ref.image)-\(srgb ? "srgb" : "linear")"))
-            textureIndex[key] = UInt32(textures.count - 1)
-            return UInt32(textures.count - 1)
-        }
-        let firstMaterial = materials.count
-        for m in model.materials {
-            materials.append(GPUMaterial(
-                albedo: SIMD4(SIMD3(m.baseColor.x, m.baseColor.y, m.baseColor.z), m.metallic),
-                emission: SIMD4(m.emissive, m.roughness),
-                params: SIMD4(1, m.normalScale, 0, 0),
-                textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
-                                texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
-        }
+        let firstMaterial = addModelMaterials(model, url: url)
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
         addModelLights(model, transform: transform, animation: animation)
         // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
@@ -2278,6 +2327,31 @@ final class Scene {
                 emitterSources[index] = (m.positions, m.uvs, m.indices)
             }
         }
+    }
+
+    /// `model`'s materials (and their textures) one after another; the first's index.
+    func addModelMaterials(_ model: GLTFModel, url: URL) -> Int {
+        var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
+        func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
+            guard let ref else { return .max }
+            let key = ref.image * 2 + (srgb ? 1 : 0)
+            if let i = textureIndex[key] { return i }
+            textures.append(TextureSource(data: model.images[ref.image].data, srgb: srgb,
+                                          name: "\(model.name)/\(model.images[ref.image].name)",
+                                          modelPath: url.path, cacheKey: "\(ref.image)-\(srgb ? "srgb" : "linear")"))
+            textureIndex[key] = UInt32(textures.count - 1)
+            return UInt32(textures.count - 1)
+        }
+        let firstMaterial = materials.count
+        for m in model.materials {
+            materials.append(GPUMaterial(
+                albedo: SIMD4(SIMD3(m.baseColor.x, m.baseColor.y, m.baseColor.z), m.metallic),
+                emission: SIMD4(m.emissive, m.roughness),
+                params: SIMD4(1, m.normalScale, 0, 0),
+                textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
+                                texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
+        }
+        return firstMaterial
     }
 
     /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,

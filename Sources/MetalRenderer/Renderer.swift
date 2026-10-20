@@ -413,6 +413,10 @@ final class Renderer: NSObject {
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
     private var particlesGPU: ParticlesGPU?
+    /// With fractured objects stepped on the CPU: the dust's ring of breaks (PhysicsGPU.breakRing's layout), written
+    /// here from the steps' PhysicsWorld.breakLog, and how many of those it has had.
+    private var cpuBreakRing: MTLBuffer?
+    private var cpuBreaksTaken = 0
     /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
     private var vfxSetup: VFXCompiler.Setup {
         VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
@@ -564,6 +568,8 @@ final class Renderer: NSObject {
                 return
             }
             if settings.giMode != oldValue.giMode { resetGIState() }
+            // Solid shading leaves no history: the light's starts over on the way back (upscalerReset: MetalFX's too).
+            if settings.solid != oldValue.solid { resetGIState(); upscalerReset = true }
             dayChanged(from: oldValue)
             // Any change can change the picture: the reference starts over (a benchmark's starts with its config).
             if !benchmarkAccumulating { resetReference() }
@@ -701,6 +707,8 @@ final class Renderer: NSObject {
     /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
     /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
     private var pickArmed = false
+    /// The destruction scene's tool (Renderer+Destruction.swift).
+    var destructionTool = DestructionTool.grab
     private var pickRequest: SIMD2<Float>?
     private var pickPending: Int?
     private var pickBuffer: MTLBuffer?
@@ -1091,17 +1099,37 @@ final class Renderer: NSObject {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
             // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
             let onGPU = scene.settings.kind.simulates
-                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
+                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
+                                                    fractures: physics.fractures)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
                                             clothPrevOffsets: scene.clothMeshes.map { scene.meshes[$0].prevOffset })
                 if onGPU { scene.runPhysicsOnGPU() }
             }
+            // The CPU's steps on their own thread, behind the frame (not a benchmark's, whose stills and timings are
+            // the frame's own, unless METALRENDERER_PHYSICS_ASYNC=1 asks).
+            PhysicsPool.shared.enabled = scene.settings.physics.everyCore
+            scene.physicsAsync = !onGPU && scene.settings.kind.simulates && scene.settings.physics.asynchronous
+                && (benchmark == nil || ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_ASYNC"] == "1")
         }
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
+            cpuBreakRing = nil
+            if let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty, scene.physics?.fractures == true {
+                if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true {
+                    particlesGPU?.breakRing = ring
+                } else {
+                    let ring = device.makeBuffer(length: PhysicsWorld.ringSlots * (16 + PhysicsWorld.ringEvents * MemoryLayout<GPUBreakEvent>.stride),
+                                                 options: .storageModeShared)
+                    if let ring { memset(ring.contents(), 0, ring.length) }
+                    cpuBreakRing = ring
+                    cpuBreaksTaken = 0
+                    particlesGPU?.breakRing = ring
+                }
+                particlesGPU?.breakProxies = proxies
+            }
             scene.replayParticles()
         }
         try createLightBuffers()
@@ -2155,9 +2183,9 @@ final class Renderer: NSObject {
         if let physicsGPU {
             if physicsGPU.simulates {
                 scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
-                if let physics = scene.physics { physicsGPU.setGrab(slot: slot, physics.grab) }
-            } else {
-                physicsGPU.upload(slot: slot)
+                if scene.physics != nil { physicsGPU.setGrab(slot: slot, scene.physicsGrab) }
+            } else if let drawn = scene.drawnPhysics {
+                physicsGPU.upload(slot: slot, drawn)
             }
         }
         if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
@@ -2710,7 +2738,7 @@ final class Renderer: NSObject {
         }
         if let released = virtualTracing?.takeReleased(), !released.isEmpty { passes.release(released) }   // (before the frame binds)
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
-        if skyActive { encodeSky(passes) }
+        if skyActive && !plan.solid { encodeSky(passes) }
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
@@ -2720,7 +2748,7 @@ final class Renderer: NSObject {
         if plan.pathTrace != nil {
             // Reference "Path traced": one kernel makes the whole picture.
             stages.head = pathTraceStages(plan)
-        } else {
+        } else if !plan.solid {   // (solid shading: encodeOutput draws it)
             stages.lightGrid = lightGridStages(plan)
             stages.head = headStages(plan, targets: t)
             stages.gi = giStages(plan, targets: t)
@@ -2815,6 +2843,8 @@ final class Renderer: NSObject {
     /// made: upscaling is then turned off (SVGF denoises instead) and the frame skipped.
     private func prepareUpscalers(for size: FrameSize) -> Bool {
         let width = size.width, height = size.height, outWidth = size.outWidth, outHeight = size.outHeight
+        // Solid shading uses neither: what is there stays for the way back (made again only if the size changed).
+        if settings.solid { return true }
         if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
@@ -3025,6 +3055,7 @@ final class Renderer: NSObject {
         var accumulating = false                // benchmark reference: raw frames are averaged instead of denoised
         var splitPasses = false                 // benchmark: a command buffer per pass, so its GPU time can be read back
         var overlap = false                     // one concurrent encoder: the cascades and the denoisers overlap on the GPU
+        var solid = false                       // solid shading: solidKernel draws the frame at the output size, nothing else runs
 
         // Lighting
         var giMode = GIMode.pathTraced
@@ -3096,6 +3127,14 @@ final class Renderer: NSObject {
         let width = size.width, height = size.height
         var p = FramePlan(size: size, slot: slot, cur: Int(frameIndex & 1))
         checkReferenceView(width: width, height: height)
+        // Solid shading: one camera ray a pixel at the output size, unjittered. No lights, GI, denoisers, fog or lens.
+        if settings.solid {
+            p.solid = true
+            p.uniforms = makeUniforms(width: size.outWidth, height: size.outHeight, giMode: activeGIMode, directMode: activeDirectMode)
+            p.uniforms.jitter = SIMD4<Float>()
+            p.splitPasses = benchmark != nil && Benchmark.splitPasses
+            return p
+        }
         p.accumulating = accumulating
         p.giMode = activeGIMode
         let directMode = activeDirectMode
@@ -3348,7 +3387,10 @@ final class Renderer: NSObject {
             if physicsGPU.simulates {
                 // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
                 // buffer, past the watchdog: it catches up over the next frames instead.
-                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid ? 20 : .max)
+                // (Liquids and fractured objects: 20 steps a frame at most, so that a replay of thousands of bodies
+                // stays under the GPU's watchdog; the rest wait for the next frames.)
+                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid || physicsGPU.fractures ? 20 : .max)
+                physicsGPU.sendCommands()
                 if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
@@ -3464,7 +3506,8 @@ final class Renderer: NSObject {
                 particlesGPU.programKernels = kernels
                 scene.replayParticles()
             }
-            let (steps, restart) = scene.takeParticleSteps(limit: ParticlesGPU.maxStepsPerFrame)
+            // (Fractured objects' dust comes from the physics' steps, 20 a frame at most in a replay: these keep up with them.)
+            let (steps, restart) = scene.takeParticleSteps(limit: particlesGPU.breakRing != nil ? 20 : ParticlesGPU.maxStepsPerFrame)
             // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
             let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
             let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
@@ -3472,6 +3515,7 @@ final class Renderer: NSObject {
             particlesCamera = camera
             if particlesBuilt[slot] != particlesVersion, let enc = passes.compute("particles", serial: true) {
                 if restart { particlesGPU.encodeReset(enc, pipelines: pipelines, slot: slot) }
+                if steps > 0 { writeCPUBreaks(first: particlesGPU.stepIndex, count: steps) }
                 particlesGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot, wind: windFrame.wind) { [self] in
                     bindScene($0, slot: slot)
                 }
@@ -3528,6 +3572,24 @@ final class Renderer: NSObject {
     private func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
                               passes: FrameEncoder) -> (output: FrameOutput?, between: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
+        // Solid shading: the whole picture, straight into the drawable; then the gizmos and a pick, as below.
+        if plan.solid {
+            let drawableStart = CACurrentMediaTime()
+            var drawable = nextOutput(plan, surface: surface)
+            let drawableWait = CACurrentMediaTime() - drawableStart
+            if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
+            if let drawable, let enc = passes.compute("solid") {
+                bind(enc, .solid, c.uniforms, sceneSlot: plan.slot)
+                enc.setTexture(drawable.texture, index: 0)
+                dispatch(enc, .solid, width: size.outWidth, height: size.outHeight)
+                passes.endCompute()
+            }
+            interpolator?.advance(kept: false)
+            interpolating = false
+            if let drawable { encodeGizmos([drawable.texture], slot: plan.slot, passes: passes) }
+            encodePick(plan, passes: passes)
+            return (drawable, nil, drawableWait)
+        }
         // Reference "Path traced": the paths' mean, exposed and tone mapped into the drawable.
         if let pt = plan.pathTrace {
             let drawableStart = CACurrentMediaTime()
@@ -4586,6 +4648,32 @@ final class Renderer: NSObject {
     /// What is still coming in now that the scene is installed, for the loading overlay (`loadActivity`), ten times a
     /// second: texture levels and virtual geometry pages while a new scene settles; the sky image, the
     /// noise tiles and shader variants whenever they are being made.
+    /// The CPU's breaks not yet had (Scene.physicsBreaks) into `cpuBreakRing`'s slots for particle steps `first` on,
+    /// each in its step's, as the GPU's steps write theirs (physicsFractureEventsKernel); those of steps before `first`
+    /// (the stepper's, a frame behind) in its: the dust at most a frame late. Those of later steps wait.
+    private func writeCPUBreaks(first: Int, count: Int) {
+        guard let ring = cpuBreakRing, let (log, steps, total) = scene.physicsBreaks else { return }
+        if total < cpuBreaksTaken { cpuBreaksTaken = 0 }   // (the world started again)
+        let stride = MemoryLayout<GPUBreakEvent>.stride, headers = PhysicsWorld.ringSlots * 16
+        var k = max(log.count - (total - cpuBreaksTaken), 0)   // (the first not had)
+        log.withUnsafeBytes { raw in
+            for step in first..<(first + count) {
+                let slot = step % PhysicsWorld.ringSlots
+                let events = ring.contents().advanced(by: headers + slot * PhysicsWorld.ringEvents * stride)
+                var n = 0
+                while k < log.count && steps[k] <= step {
+                    if n < PhysicsWorld.ringEvents {
+                        events.advanced(by: n * stride).copyMemory(from: raw.baseAddress!.advanced(by: k * stride), byteCount: stride)
+                        n += 1
+                    }
+                    k += 1
+                }
+                ring.contents().storeBytes(of: SIMD4<UInt32>(UInt32(step + 1), UInt32(n), 0, 0), toByteOffset: slot * 16, as: SIMD4<UInt32>.self)
+            }
+        }
+        cpuBreaksTaken = total - (log.count - k)
+    }
+
     private func publishStreams() {
         let now = CACurrentMediaTime()
         guard now - streamsPublished >= 0.1 else { return }
@@ -4897,7 +4985,7 @@ final class Renderer: NSObject {
         if frozenLOD != nil && lodFreezes { sceneName += " — LOD frozen" }
         surface?.title = String(format: "MetalRenderer%@ — %@ — %@ — %@ noise — denoiser %@ — %@%@",
                                 sceneName, stats, gi, s.blueNoise ? "blue" : "white", s.denoiser.enabled ? "on" : "off",
-                                RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
+                                s.solid ? "solid" : RenderSettings.viewModes[s.viewMode].lowercased(), s.paused ? " — paused" : "")
         statsLine = stats
         cpuMs = frameIntervalCount > 0 ? frameIntervalSum / Double(frameIntervalCount) : 0
         frameIntervalSum = 0
@@ -4917,6 +5005,8 @@ final class Renderer: NSObject {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
+        status.destruction = scene.settings.kind == .destruction
+            ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
         status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
@@ -5148,11 +5238,13 @@ final class Renderer: NSObject {
             return
         }
         if isRepeat { return }
+        if destructionKey(key) { return }
         switch key {
         case " ": settings.paused.toggle()
         case "g": settings.giEnabled.toggle()
         case "m": settings.giMode = GIMode(rawValue: (settings.giMode.rawValue + 1) % GIMode.allCases.count) ?? .pathTraced
         case "b": settings.blueNoise.toggle()
+        case "`": settings.solid.toggle()
         case "n": settings.denoiser.enabled.toggle()
         case "[", "]":
             let step = key == "[" ? -1 : 1
@@ -5228,11 +5320,11 @@ final class Renderer: NSObject {
         }
         clickAt = cursor
         leftLook = walker == nil
-        guard let physics = scene.physics else { return }
+        guard scene.physics != nil, !destructionFires else { return }
         let direction = cursorRay(cursor)
-        guard let hit = physics.pick(origin: camera.position, direction: direction) else { return }
+        guard let pick = scene.withPhysics({ $0.pick(origin: camera.position, direction: direction) }), let hit = pick else { return }
         let point = camera.position + direction * hit.distance
-        physics.grab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
+        scene.physicsGrab = GPUPhysicsGrab(target: SIMD4(point, 1), anchor: SIMD4(hit.anchor, 0), body: UInt32(hit.body))
         holding = (cursor, dot(point - camera.position, camera.forward))
         leftLook = false
     }
@@ -5273,6 +5365,8 @@ final class Renderer: NSObject {
                 pickRequest = c
                 pickSelects = false
                 pickArmed = false
+            } else if destructionFires {
+                fireDestruction(at: c)
             } else if walker != nil {
                 use(cursorRay(c))
             } else {
@@ -5284,7 +5378,7 @@ final class Renderer: NSObject {
         navDrag = nil
         leftLook = false
         holding = nil
-        scene.physics?.grab.target.w = 0
+        if scene.physics != nil { scene.physicsGrab.target.w = 0 }
     }
 
     /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
@@ -5397,9 +5491,9 @@ final class Renderer: NSObject {
     /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
     /// follows the camera as it moves too).
     private func moveGrab() {
-        guard let holding, let physics = scene.physics, physics.grab.target.w > 0 else { return }
+        guard let holding, scene.physics != nil, scene.physicsGrab.target.w > 0 else { return }
         let direction = cursorRay(holding.cursor)
         let along = holding.depth / max(dot(direction, camera.forward), 0.1)
-        physics.grab.target = SIMD4(camera.position + direction * along, 1)
+        scene.physicsGrab.target = SIMD4(camera.position + direction * along, 1)
     }
 }

@@ -338,32 +338,54 @@ extension PhysicsWorld {
     /// The tets' volumes, a colour at a time (Gauss-Seidel), each an XPBD constraint on six times its volume with
     /// Macklin et al. 2016's damping along its gradient (one iteration a substep, so its lambda starts at 0).
     func solveTets(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w
-        for c in 0..<(tetStarts.count - 1) {
-            for k in Int(tetStarts[c])..<Int(tetStarts[c + 1]) { solveTet(tets[k], h) }
+        guard tetStarts.count > 1 else { return }
+        let h = p.gravity.w, starts = tetStarts, tets = self.tets, fibres = self.fibres, activations = self.activations
+        tets.withUnsafeBufferPointer { tets in
+            fibres.withUnsafeBufferPointer { fibres in
+                activations.withUnsafeBufferPointer { activations in
+                    withParticleBuffers { s in
+                        for c in 0..<(starts.count - 1) {
+                            let lo = Int(starts[c]), hi = Int(starts[c + 1])
+                            PhysicsPool.shared.parallel(hi - lo, grain: 128) { range in   // (a colour's tets share no particle)
+                                for t in range { PhysicsWorld.solveTet(tets[lo + t], s.particles, fibres, activations, h) }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
-    private func solveTet(_ t: GPUPhysicsTet, _ h: Float) {
+    @inline(__always) static func solveTet(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+                                           _ fibres: UnsafeBufferPointer<GPUFleshFibre>, _ activations: UnsafeBufferPointer<Float>, _ h: Float) {
         // A muscle's fibre first, then the volume: the last word is the volume's, so a contracting tet bulges (after
         // it, each pass's fibre took back the volume the pass before had put back).
-        if t.fibre != 0 { solveFibre(t, h) }
-        let i = [Int(t.ids.x), Int(t.ids.y), Int(t.ids.z), Int(t.ids.w)]
-        let x = i.map { PhysicsMath.xyz(particles[$0].position) }
-        let w = i.map { particles[$0].prevPosition.w }
-        let a = x[1] - x[0], b = x[2] - x[0], c = x[3] - x[0]
+        if t.fibre != 0 { solveFibre(t, particles, fibres, activations, h) }
+        let i0 = Int(t.ids.x), i1 = Int(t.ids.y), i2 = Int(t.ids.z), i3 = Int(t.ids.w)
+        let x0 = PhysicsMath.xyz(particles[i0].position), x1 = PhysicsMath.xyz(particles[i1].position)
+        let x2 = PhysicsMath.xyz(particles[i2].position), x3 = PhysicsMath.xyz(particles[i3].position)
+        let w0 = particles[i0].prevPosition.w, w1 = particles[i1].prevPosition.w
+        let w2 = particles[i2].prevPosition.w, w3 = particles[i3].prevPosition.w
+        let a = x1 - x0, b = x2 - x0, c = x3 - x0
         let g1 = cross(b, c), g2 = cross(c, a), g3 = cross(a, b)
-        let g = [-(g1 + g2 + g3), g1, g2, g3]
+        let g0 = -(g1 + g2 + g3)
         let alpha = t.compliance / (h * h), gamma = t.compliance * t.damping / h
         var sum: Float = 0, moved: Float = 0
-        for k in 0..<4 {
-            sum += w[k] * length_squared(g[k])
-            moved += dot(g[k], x[k] - PhysicsMath.xyz(particles[i[k]].prevPosition))
-        }
+        sum += w0 * length_squared(g0)
+        moved += dot(g0, x0 - PhysicsMath.xyz(particles[i0].prevPosition))
+        sum += w1 * length_squared(g1)
+        moved += dot(g1, x1 - PhysicsMath.xyz(particles[i1].prevPosition))
+        sum += w2 * length_squared(g2)
+        moved += dot(g2, x2 - PhysicsMath.xyz(particles[i2].prevPosition))
+        sum += w3 * length_squared(g3)
+        moved += dot(g3, x3 - PhysicsMath.xyz(particles[i3].prevPosition))
         let denominator = (1 + gamma) * sum + alpha
         guard denominator > 1e-12 else { return }
         let lambda = (-(dot(g3, c) - t.rest) - gamma * moved) / denominator   // 6V = (a x b) . c
-        for k in 0..<4 { particles[i[k]].position += SIMD4(g[k] * (lambda * w[k]), 0) }
+        particles[i0].position += SIMD4(g0 * (lambda * w0), 0)
+        particles[i1].position += SIMD4(g1 * (lambda * w1), 0)
+        particles[i2].position += SIMD4(g2 * (lambda * w2), 0)
+        particles[i3].position += SIMD4(g3 * (lambda * w3), 0)
     }
 
     /// Soft body `body`'s volume now (m^3): its tets'.

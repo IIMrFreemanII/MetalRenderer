@@ -15,7 +15,7 @@ enum CharacterHairCap {
     private static let lock = NSLock()
     private static var recent: [(key: String, cap: Cap?)] = []
 
-    static let version: UInt32 = 3
+    static let version: UInt32 = 4
 
     /// `dna`'s style's cap (nil: no hair on the scalp), kept for the last few styles asked for, and in a cache file
     /// next to the character library's.
@@ -163,6 +163,11 @@ enum CharacterHairCap {
         guard !indices.isEmpty else { return nil }
         positions = positions.map { simd_clamp($0, lo, hi) }
         (positions, indices) = CharacterBase.largestPart(positions, indices)
+        // Where the shell is thinner than a cell (down the sides of the neck), surface nets pinch it to edges of four
+        // triangles. The simplifier locks those vertices, and at the coarse levels they keep the few hundred vertices
+        // left there, and the crown fans to the nape in triangles half a metre long. Split, they're open edges, which
+        // slide along themselves.
+        (positions, indices) = manifold(positions, indices)
         var cap = Cap(levels: [])
         var target = 6000
         let box = (lo: lo - 0.01, hi: hi + 0.01)
@@ -180,5 +185,48 @@ enum CharacterHairCap {
             target /= 2
         }
         return cap
+    }
+
+    /// The mesh with each vertex split into one per fan of its triangles joined across edges of two triangles: edges
+    /// of more than two triangles come apart into open edges (the copies where they were).
+    static func manifold(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> ([SIMD3<Float>], [UInt32]) {
+        let triangles = indices.count / 3
+        @inline(__always) func key(_ a: UInt32, _ b: UInt32) -> UInt64 { UInt64(min(a, b)) << 32 | UInt64(max(a, b)) }
+        var edgeUse: [UInt64: Int] = [:]
+        edgeUse.reserveCapacity(indices.count)
+        for t in 0..<triangles {
+            for k in 0..<3 { edgeUse[key(indices[3 * t + k], indices[3 * t + (k + 1) % 3]), default: 0] += 1 }
+        }
+        guard edgeUse.values.contains(where: { $0 > 2 }) else { return (positions, indices) }
+        // Each corner's fan: union-find over the corners of a vertex, joined where two triangles share a two-triangle edge.
+        var parent = Array(0..<indices.count)
+        func root(_ c: Int) -> Int {
+            var c = c
+            while parent[c] != c { parent[c] = parent[parent[c]]; c = parent[c] }
+            return c
+        }
+        var cornerAt: [UInt64: Int] = [:]   // (vertex, other end) of a two-triangle edge -> the first corner met
+        cornerAt.reserveCapacity(indices.count * 2)
+        for t in 0..<triangles {
+            for k in 0..<3 {
+                let c = 3 * t + k, v = indices[c]
+                for other in [indices[3 * t + (k + 1) % 3], indices[3 * t + (k + 2) % 3]] where edgeUse[key(v, other)] == 2 {
+                    let directed = UInt64(v) << 32 | UInt64(other)
+                    if let first = cornerAt[directed] { parent[root(c)] = root(first) } else { cornerAt[directed] = c }
+                }
+            }
+        }
+        var outP = positions, outI = indices
+        var copyOf: [Int: UInt32] = [:], firstFan = [Int](repeating: -1, count: positions.count)
+        for c in 0..<indices.count {
+            let v = Int(indices[c]), r = root(c)
+            if firstFan[v] < 0 { firstFan[v] = r }
+            if firstFan[v] == r { continue }
+            if let copy = copyOf[r] { outI[c] = copy; continue }
+            copyOf[r] = UInt32(outP.count)
+            outI[c] = UInt32(outP.count)
+            outP.append(positions[v])
+        }
+        return (outP, outI)
     }
 }

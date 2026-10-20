@@ -7,7 +7,7 @@ import simd
 extension Benchmark {
     /// Every mode by name. Any other value of METALRENDERER_BENCH (the documented one is `1`) runs `standard`.
     static let modes: [String: () -> [Config]] = [
-        "shot": shot, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
+        "shot": shot, "solid": solid, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
@@ -26,6 +26,7 @@ extension Benchmark {
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
         "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
+     .merging(destructionModes) { a, _ in a }
 
     static func configs(for mode: String) -> [Config] {
         if let build = modes[mode] { return build() }
@@ -97,6 +98,20 @@ extension Benchmark {
     private static func shot() -> [Config] {
         let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
         return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+    }
+
+    /// Solid shading (RenderSettings.solid) against the look each scene opens with, moving: the physics scene (its
+    /// physics look), the destruction courtyard, the city, the crowd (skinned characters) and the stress building's
+    /// rooms, then those rooms again with the look back on (the scene stays: solid shading turned off live). Time whole
+    /// frames with METALRENDERER_BENCH_SPLIT=0; each setting leaves its last frame.
+    private static func solid() -> [Config] {
+        func app(_ kind: SceneKind) -> Config { Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: kind)) }
+        let looks: [(String, Config)] = [
+            ("physics", Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .physics)) { $0.usePhysicsLook() }),
+            ("destruction", app(.destruction)), ("city", app(.city)), ("crowd", app(.crowd)), ("stress", app(.stress)),
+        ]
+        return looks.flatMap { name, look in [look.named(name), look.named("\(name) solid").with { $0.solid = true }] }
+            + [app(.stress).named("stress after solid")]
     }
 
     /// The showcase (Scene+Showcase.swift): every model of Assets/ on its set as the app shows it (cascades, MetalFX 3x
@@ -1199,7 +1214,7 @@ extension Benchmark {
     /// API (the GPU's steps put the bodies in the same places on both; Tools/eval/pngdiff.py), the
     /// CPU's steps there too (their own pile: 300 steps
     /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
-    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) where they keep up.
+    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) at the same counts (Settings' PhysicsSettings.runsOnGPU).
     private static func physics() -> [Config] {
         let scene = SceneSettings(kind: .physics)
         var out: [Config] = []
@@ -1214,7 +1229,7 @@ extension Benchmark {
         for bodies in [96, 512, 2048] {
             out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .gpu })
         }
-        for bodies in [32, 96] {
+        for bodies in [96, 512, 2048] {
             out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .cpu })
         }
         return out
@@ -1264,7 +1279,7 @@ extension Benchmark {
         for ragdolls in [8, 24, 96] {
             out.append(base.named("gpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .gpu })
         }
-        for ragdolls in [8, 24] {
+        for ragdolls in [8, 24, 96] {
             out.append(base.named("cpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .cpu })
         }
         return out

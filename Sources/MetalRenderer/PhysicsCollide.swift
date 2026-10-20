@@ -84,15 +84,41 @@ struct PhysicsCandidate {
     var radiusB: Float
     /// Where it touches, for choosing the manifold's spread.
     var middle: SIMD3<Float> { (pointA - normal * radiusA + pointB + normal * radiusB) * 0.5 }
+    static let none = PhysicsCandidate(pointA: .zero, pointB: .zero, normal: .zero, separation: 0, radiusA: 0, radiusB: 0)
 }
 
 /// Up to four contacts, kept as Bullet keeps a persistent manifold: the deepest always, the rest to cover the most
-/// area. Points are added one at a time (the GPU has no room for a pair's every candidate).
+/// area. Points are added one at a time (the GPU has no room for a pair's every candidate). Four fixed slots, no array:
+/// the narrow phase makes one a pair, on every core.
 struct PhysicsManifold {
     static let capacity = 4
-    var points: [PhysicsCandidate] = []
+    private var p0 = PhysicsCandidate.none, p1 = PhysicsCandidate.none, p2 = PhysicsCandidate.none, p3 = PhysicsCandidate.none
+    /// How many of the slots hold a point.
+    private(set) var count = 0
     /// Every candidate's normal, weighted by how deep it is (margin - separation): what most of them say.
     var normalSum = SIMD3<Float>()
+
+    subscript(i: Int) -> PhysicsCandidate {
+        @inline(__always) get {
+            switch i {
+            case 0: return p0
+            case 1: return p1
+            case 2: return p2
+            default: return p3
+            }
+        }
+        @inline(__always) set {
+            switch i {
+            case 0: p0 = newValue
+            case 1: p1 = newValue
+            case 2: p2 = newValue
+            default: p3 = newValue
+            }
+        }
+    }
+
+    /// The points (outside the narrow phase's loop: it reads the slots).
+    var points: [PhysicsCandidate] { (0..<count).map { self[$0] } }
 
     /// Twice the largest area of a quad of these four points (Bullet's calcArea4Points).
     static func area(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, _ p3: SIMD3<Float>) -> Float {
@@ -105,25 +131,36 @@ struct PhysicsManifold {
     /// `merge`: closer than this to a point it has, the deeper of the two stays.
     mutating func add(_ c: PhysicsCandidate, merge: Float, margin: Float) {
         normalSum += c.normal * (margin - c.separation)
-        for i in points.indices where length_squared(points[i].middle - c.middle) < merge * merge {
-            if c.separation < points[i].separation { points[i] = c }
+        let cm = c.middle
+        for i in 0..<count where length_squared(self[i].middle - cm) < merge * merge {
+            if c.separation < self[i].separation { self[i] = c }
             return
         }
-        if points.count < PhysicsManifold.capacity { points.append(c); return }
+        if count < PhysicsManifold.capacity {
+            self[count] = c
+            count += 1
+            return
+        }
         // Full: the deepest of the five stays; of the others, replace the one whose place the new point covers more.
         var deepest = -1   // -1: the new one
         var depth = c.separation
-        for i in 0..<4 where points[i].separation < depth { depth = points[i].separation; deepest = i }
-        let m = points.map(\.middle)
+        for i in 0..<4 where self[i].separation < depth { depth = self[i].separation; deepest = i }
+        let m0 = p0.middle, m1 = p1.middle, m2 = p2.middle, m3 = p3.middle
         var best = -1
-        var bestArea: Float = deepest < 0 ? -1 : PhysicsManifold.area(m[0], m[1], m[2], m[3])   // (no infinities: the GPU's fast math)
+        var bestArea: Float = deepest < 0 ? -1 : PhysicsManifold.area(m0, m1, m2, m3)   // (no infinities: the GPU's fast math)
         for i in 0..<4 where i != deepest {
-            var q = m
-            q[i] = c.middle
-            let a = PhysicsManifold.area(q[0], q[1], q[2], q[3])
+            let a = PhysicsManifold.area(i == 0 ? cm : m0, i == 1 ? cm : m1, i == 2 ? cm : m2, i == 3 ? cm : m3)
             if a > bestArea { bestArea = a; best = i }
         }
-        if best >= 0 { points[best] = c }
+        if best >= 0 { self[best] = c }
+    }
+
+    /// The deepest point (the first of equals), if any.
+    var deepest: PhysicsCandidate? {
+        guard count > 0 else { return nil }
+        var d = p0
+        for i in 1..<count where self[i].separation < d.separation { d = self[i] }
+        return d
     }
 
     /// One normal for the contacts that roughly agree: the candidates' weighted mean. A corner against a corner or
@@ -133,16 +170,165 @@ struct PhysicsManifold {
         let l = length(normalSum)
         guard l > 0 else { return }
         let n = normalSum / l
-        for i in points.indices where dot(points[i].normal, n) > 0.5 {
-            var c = points[i]
+        for i in 0..<count where dot(self[i].normal, n) > 0.5 {
+            var c = self[i]
             c.normal = n
             c.separation = dot(c.pointA - c.pointB, n) - c.radiusA - c.radiusB
-            points[i] = c
+            self[i] = c
         }
     }
 }
 
-extension PhysicsWorld {
+/// An SDF shape's node as the physics reads it (SDFShape.Node, flat: no arrays, nothing counted): its primitive's
+/// kind and numbers, its op, where it is. A cell's planes are a run of PhysicsShapeTable.planes.
+struct PhysicsSDFNode {
+    enum Kind: UInt32 { case sphere, box, torus, capsule, cylinder, cone, volume, cell }
+    var kind: Kind
+    var op: SDFShape.Op
+    /// sphere: (r); box: (half extents, rounding); torus: (major, minor); capsule: (half length, r); cylinder:
+    /// (half height, r, rounding); cone: (half height, bottom, top); volume: (its index); cell: (first plane, planes).
+    var params: SIMD4<Float>
+    var first: Int, count: Int
+    var position: SIMD3<Float>
+    var inverse: simd_quatf   // (the node's rotation's: Node.local's)
+    var scale: Float
+    var smooth: Float
+
+    init(_ node: SDFShape.Node, planes: inout [SIMD4<Float>]) {
+        op = node.op
+        position = node.position
+        inverse = node.rotation.inverse
+        scale = node.scale
+        smooth = node.smooth
+        first = 0
+        count = 0
+        switch node.primitive {
+        case .sphere(let r): (kind, params) = (.sphere, SIMD4(r, 0, 0, 0))
+        case .box(let b, let r): (kind, params) = (.box, SIMD4(b, r))
+        case .torus(let major, let minor): (kind, params) = (.torus, SIMD4(major, minor, 0, 0))
+        case .capsule(let h, let r): (kind, params) = (.capsule, SIMD4(h, r, 0, 0))
+        case .cylinder(let h, let r, let rr): (kind, params) = (.cylinder, SIMD4(h, r, rr, 0))
+        case .cone(let h, let r1, let r2): (kind, params) = (.cone, SIMD4(h, r1, r2, 0))
+        case .volume(let v): (kind, params, first) = (.volume, .zero, v)
+        case .cell(let p, _, _):
+            (kind, params, first, count) = (.cell, .zero, planes.count, p.count)
+            planes += p
+        }
+    }
+}
+
+/// The world's shapes as the steps read them, in buffers of its own (no arrays to count references to: ten threads
+/// asking one shape's distance contended on its arrays' counts, and the hair scene's step took ten times as long): the
+/// shapes, their samples, the SDF shapes' nodes (PhysicsSDFNode) and planes, the baked grids. Made again when the
+/// world's shapes change (PhysicsWorld.shapeData).
+final class PhysicsShapeTable {
+    let shapes: UnsafeMutableBufferPointer<GPUPhysicsShape>
+    let samples: UnsafeMutableBufferPointer<SIMD4<Float>>
+    let nodes: UnsafeMutableBufferPointer<PhysicsSDFNode>
+    /// Per SDF shape, its nodes: first, count.
+    let sdfRanges: UnsafeMutableBufferPointer<SIMD2<Int32>>
+    let planes: UnsafeMutableBufferPointer<SIMD4<Float>>
+    let volumes: UnsafeMutableBufferPointer<SDFVolume>
+
+    init(shapes: [GPUPhysicsShape], samples: [SIMD4<Float>], sdfShapes: [SDFShape], volumes: [SDFVolume]) {
+        func copy<T>(_ a: [T]) -> UnsafeMutableBufferPointer<T> {
+            let b = UnsafeMutableBufferPointer<T>.allocate(capacity: max(a.count, 1))
+            _ = b.initialize(from: a)
+            return UnsafeMutableBufferPointer(rebasing: b[0..<a.count])
+        }
+        var flat: [PhysicsSDFNode] = [], ranges: [SIMD2<Int32>] = [], planes: [SIMD4<Float>] = []
+        for shape in sdfShapes {
+            ranges.append(SIMD2(Int32(flat.count), Int32(shape.nodes.count)))
+            for node in shape.nodes { flat.append(PhysicsSDFNode(node, planes: &planes)) }
+        }
+        self.shapes = copy(shapes)
+        self.samples = copy(samples)
+        self.nodes = copy(flat)
+        self.sdfRanges = copy(ranges)
+        self.planes = copy(planes)
+        self.volumes = copy(volumes)
+    }
+
+    deinit {
+        for b in [UnsafeMutableRawBufferPointer(shapes), UnsafeMutableRawBufferPointer(samples), UnsafeMutableRawBufferPointer(nodes),
+                  UnsafeMutableRawBufferPointer(sdfRanges), UnsafeMutableRawBufferPointer(planes)] {
+            b.baseAddress.map { $0.deallocate() }
+        }
+        _ = volumes.baseAddress.map { $0.deinitialize(count: volumes.count) }
+        volumes.baseAddress.map { $0.deallocate() }
+    }
+
+    /// Its buffers, as the steps read them.
+    var view: PhysicsShapes {
+        PhysicsShapes(shapes: UnsafeBufferPointer(shapes), samples: UnsafeBufferPointer(samples), nodes: UnsafeBufferPointer(nodes),
+                      sdfRanges: UnsafeBufferPointer(sdfRanges), planes: UnsafeBufferPointer(planes), volumes: UnsafeBufferPointer(volumes))
+    }
+}
+
+/// What a body's shape is to the steps, read-only while they run (PhysicsShapeTable's buffers, valid while the world's
+/// shapes don't change: take one before a stage, `PhysicsWorld.shapeData`): the distance, the gradient and a pair's
+/// contacts, on any thread.
+struct PhysicsShapes {
+    let shapes: UnsafeBufferPointer<GPUPhysicsShape>
+    let samples: UnsafeBufferPointer<SIMD4<Float>>
+    let nodes: UnsafeBufferPointer<PhysicsSDFNode>
+    let sdfRanges: UnsafeBufferPointer<SIMD2<Int32>>
+    let planes: UnsafeBufferPointer<SIMD4<Float>>
+    let volumes: UnsafeBufferPointer<SDFVolume>
+
+    /// SDF shape `index`'s distance at `p` (SDFShape.distance's `d`, the same steps).
+    @inline(__always) func sdf(_ index: Int, _ p: SIMD3<Float>) -> Float {
+        let range = sdfRanges[index]
+        var d = Float.infinity
+        for i in 0..<Int(range.y) {
+            let node = nodes[Int(range.x) + i]
+            let b = node.scale * primitive(node, node.inverse.act(p - node.position) / node.scale)
+            if i == 0 { d = b; continue }
+            d = SDFShape.join(d, b, node.op, node.smooth).0
+        }
+        return d
+    }
+
+    /// A node's primitive's distance at `q` (its own space): SDFShape.primitive's, case by case.
+    @inline(__always) func primitive(_ node: PhysicsSDFNode, _ q: SIMD3<Float>) -> Float {
+        let k = node.params
+        switch node.kind {
+        case .sphere:
+            return length(q) - k.x
+        case .box:
+            let b = SIMD3(k.x, k.y, k.z), r = k.w
+            let e = abs(q) - (b - r)
+            return length(simd_max(e, .zero)) + min(max(e.x, max(e.y, e.z)), 0) - r
+        case .torus:
+            let t = SIMD2(length(SIMD2(q.x, q.z)) - k.x, q.y)
+            return length(t) - k.y
+        case .capsule:
+            let h = k.x, r = k.y
+            return length(SIMD3(q.x, q.y - min(max(q.y, -h), h), q.z)) - r
+        case .cylinder:
+            let h = k.x, r = k.y, rr = k.z
+            let e = SIMD2(length(SIMD2(q.x, q.z)) - (r - rr), abs(q.y) - (h - rr))
+            return min(max(e.x, e.y), 0) + length(simd_max(e, .zero)) - rr
+        case .cone:
+            let h = k.x, r1 = k.y, r2 = k.z
+            let p = SIMD2(length(SIMD2(q.x, q.z)), q.y)
+            let k1 = SIMD2(r2, h), k2 = SIMD2(r2 - r1, 2 * h)
+            let ca = SIMD2(p.x - min(p.x, p.y < 0 ? r1 : r2), abs(p.y) - h)
+            let cb = p - k1 + k2 * min(max(dot(k1 - p, k2) / dot(k2, k2), 0), 1)
+            let s: Float = cb.x < 0 && ca.y < 0 ? -1 : 1
+            return s * sqrt(min(dot(ca, ca), dot(cb, cb)))
+        case .volume:
+            return volumes[node.first].distance(q)
+        case .cell:
+            var d = -Float.infinity
+            for j in node.first..<(node.first + node.count) {
+                let plane = planes[j]
+                d = max(d, dot(SIMD3(plane.x, plane.y, plane.z), q) - plane.w)
+            }
+            return d
+        }
+    }
+
     // MARK: - A terrain's heightfield
 
     /// A heightfield's height under (x, z) (its body's space): bilinear between its samples, held at its edges. Its
@@ -187,7 +373,7 @@ extension PhysicsWorld {
         case .heightfield: return heightfieldDistance(shape, p)
         case .sdf:
             let q = PhysicsMath.qrot(shape.comRotation, p) + PhysicsMath.xyz(shape.comPosition)
-            return sdfShapes[Int(shape.info.w)].distance(q, volumes: sdfVolumes).d
+            return sdf(Int(shape.info.w), q)
         }
     }
 
@@ -212,15 +398,7 @@ extension PhysicsWorld {
 
     // MARK: - Narrow phase
 
-    /// A body's pose: its centre of mass and rotation (`b` is a body, or a static collider's record).
-    struct Pose {
-        var position: SIMD3<Float>
-        var rotation: SIMD4<Float>
-        init(_ b: GPUPhysicsBody) { position = PhysicsMath.xyz(b.position); rotation = b.rotation }
-        func toBody(_ p: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(rotation), p - position) }
-        func toWorld(_ p: SIMD3<Float>) -> SIMD3<Float> { position + PhysicsMath.qrot(rotation, p) }
-        func direction(_ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(rotation, v) }
-    }
+    typealias Pose = PhysicsWorld.Pose
 
     /// The contacts between `a` (shape `sa`) and `b` (shape `sb`) closer than `margin` (negative: overlapping).
     func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold {
@@ -260,9 +438,12 @@ extension PhysicsWorld {
         }
         // Two flat-sided shapes: the deepest point of each one's surface inside the other, found by stepping down the
         // other's field and back onto the surface. It catches what corners miss: an edge across an edge, a face on a face.
-        if PhysicsWorld.flat(shapes[sa].info.x) && PhysicsWorld.flat(shapes[sb].info.x) {
+        // (Not for a fractured object's pieces: on a cell's distance, the largest of its planes', whose gradient jumps at
+        // every edge, the walk ended somewhere new each step with a normal off the patch's, which tipped the pair's
+        // normal, and a heap of pieces rocked, crept flat and never slept. Their samples run along their edges.)
+        if PhysicsWorld.flat(shapes[sa].info.x) && PhysicsWorld.flat(shapes[sb].info.x) && (a.info.y | b.info.y) & PhysicsWorld.pieceBit == 0 {
             var start = (pa.position + pb.position) * 0.5
-            if let deepest = manifold.points.min(by: { $0.separation < $1.separation }) { start = deepest.middle }
+            if let deepest = manifold.deepest { start = deepest.middle }
             let step0 = 0.25 * min(ra, rb)
             for side in 0..<2 {
                 let (onX, intoY) = side == 0 ? ((pa, sa), (pb, sb)) : ((pb, sb), (pa, sa))
@@ -289,6 +470,35 @@ extension PhysicsWorld {
         manifold.agree()
         return manifold
     }
+
+}
+
+extension PhysicsWorld {
+    /// A body's pose: its centre of mass and rotation (`b` is a body, or a static collider's record).
+    struct Pose {
+        var position: SIMD3<Float>
+        var rotation: SIMD4<Float>
+        init(_ b: GPUPhysicsBody) { position = PhysicsMath.xyz(b.position); rotation = b.rotation }
+        func toBody(_ p: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(rotation), p - position) }
+        func toWorld(_ p: SIMD3<Float>) -> SIMD3<Float> { position + PhysicsMath.qrot(rotation, p) }
+        func direction(_ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(rotation, v) }
+    }
+
+    /// The shapes as the steps read them (PhysicsShapes, on PhysicsShapeTable's buffers, made again after the shapes
+    /// change): take one before a loop.
+    var shapeData: PhysicsShapes {
+        if let view = shapeView { return view }   // (raw buffers: nothing counted, from any thread)
+        let table = PhysicsShapeTable(shapes: shapes, samples: samples, sdfShapes: sdfShapes, volumes: sdfVolumes)
+        shapeTable = table
+        shapeEpoch += 1   // (what the narrow phase kept was found on the shapes before)
+        shapeView = table.view
+        return table.view
+    }
+
+    func heightfieldHeight(_ shape: GPUPhysicsShape, _ x: Float, _ z: Float) -> Float { shapeData.heightfieldHeight(shape, x, z) }
+    func distance(shape s: Int, _ p: SIMD3<Float>) -> Float { shapeData.distance(shape: s, p) }
+    func gradient(shape s: Int, _ p: SIMD3<Float>) -> SIMD3<Float> { shapeData.gradient(shape: s, p) }
+    func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold { shapeData.collide(a, b, margin: margin) }
 
     static let refineSteps = 6
     /// Shapes with flat faces and edges (their samples alone miss edge-to-edge contacts).

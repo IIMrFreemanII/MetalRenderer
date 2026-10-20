@@ -78,6 +78,21 @@ final class ParticlesGPU {
     var programKernels: ParticleKernels?
     /// Whether it has programs (and so wants the VFX library's kernels).
     var hasPrograms: Bool { system.programSource != nil }
+
+    /// Destruction's dust (Physics+Fracture.swift): the physics' ring of breaks (PhysicsGPU.breakRing), and per
+    /// FractureMaterial the proxy emitter its breaks are events of (Scene.destructionDust). Before each step's begin.
+    var breakRing: MTLBuffer?
+    var breakProxies: [UInt32] = []
+
+    /// MSL ParticleInject.
+    struct Inject {
+        var step: UInt32
+        var parity: UInt32
+        var slots = UInt32(PhysicsWorld.ringSlots)
+        var perSlot = UInt32(PhysicsWorld.ringEvents)
+        var proxies0 = SIMD4<UInt32>(repeating: ParticleSystem.none)
+        var proxies1 = SIMD4<UInt32>(repeating: ParticleSystem.none)
+    }
     /// Per pool slot the light its particle scatters, averaged over the frames, and whose it is (particleLightKernel).
     let lighting: MTLBuffer
 
@@ -292,6 +307,16 @@ final class ParticlesGPU {
         let k = kernels(pipelines), begin = k.begin, emit = k.emit, simulate = k.simulate
         let group = MTLSize(width: 64, height: 1, depth: 1)
         for k in 0..<steps {
+            if let ring = breakRing, !breakProxies.isEmpty {
+                var inject = Inject(step: UInt32(stepIndex + k), parity: UInt32((stepIndex + k) & 1))
+                for (m, e) in breakProxies.prefix(8).enumerated() {
+                    if m < 4 { inject.proxies0[m] = e } else { inject.proxies1[m - 4] = e }
+                }
+                enc.setComputePipelineState(pipelines[.particleInject])
+                enc.setBytes(&inject, length: MemoryLayout<Inject>.stride, index: 0)
+                enc.setBuffer(ring, offset: 0, index: 30)
+                enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+            }
             enc.setBuffer(params, offset: k * MemoryLayout<GPUParticleStep>.stride, index: 0)
             enc.setComputePipelineState(begin)
             enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 32, height: 1, depth: 1))

@@ -5,6 +5,7 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, glass, liquid, liquidApply, geometryDebug, lightMap
+    case solid                  // solid shading: the whole frame (RenderSettings.solid, Output.metal)
     case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
     case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
     case waterNear              // the near patch's vertices, moved by the waves
@@ -27,6 +28,10 @@ enum Kernel: Int, CaseIterable {
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
+    case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow, physicsFractureClear, physicsFractureInsert,
+         physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourCount,
+         physicsColourStarts, physicsColourScatter, physicsColourExtra,
+         physicsWideStart, physicsWideIntegrate, physicsWideVelocities, physicsWideArgs, physicsWidePush, physicsWideKick, physicsWideJoints, physicsWideTail   // destruction (Physics+Fracture.swift)
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder
@@ -37,6 +42,7 @@ enum Kernel: Int, CaseIterable {
     // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
     // records and boxes for the rays.
     case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose
+    case particleInject         // destruction's dust: the physics' breaks as a proxy emitter's events
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
     case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
     // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).
@@ -58,7 +64,7 @@ enum Kernel: Int, CaseIterable {
         case .restirSpatial: return F.specular
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
-        case .rcProbe, .rcTraceMerge, .lightMap: return F.wind
+        case .rcProbe, .rcTraceMerge, .lightMap, .solid: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
         }

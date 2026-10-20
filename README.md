@@ -242,6 +242,7 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | - = | Lower / raise render resolution |
 | U | Upscaling (MetalFX denoiser): off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
 | B | Toggle blue-noise sampling (on by default; the tile is generated once, in the background of the first launch, and kept in `~/Library/Caches/MetalRenderer`) |
+| ` (backtick), ⇧⌘S | Solid shading: every surface flat grey under a studio light, nothing else drawn (see "Solid shading") |
 | 1–8 | View: final, raw direct, raw indirect, normals, albedo, history length, indirect only, GI debug (cascades: probe grid over interpolation confidence) |
 | 9, 0 | Cycle the geometry debug views (see below); back to the final image |
 | L | Freeze LOD: virtual geometry keeps choosing detail for where the camera is now |
@@ -1412,7 +1413,7 @@ On the M1 Max a frame then renders in 5 ms instead of 15. The breakdown of the 1
     | 96 (1056) | 7.1 ms | 12.5 ms | |
 * **Grabbing.** A click on a body grabs it where the cursor meets it: the ray is sphere-traced through each body's distance, from the poses the frame was drawn with (on the GPU, the 3-frames-late snapshot). A drag moves the grab point on a plane through it facing the camera, and the scroll wheel moves it nearer or farther. Each substep pulls the point 3 % of the way to the target, through the body's inverse mass and inertia there, so a body held off its centre swings and hangs; its velocities fade at 8/s while held, so it doesn't swing about the cursor. Contacts are solved after the pull, so a held body can't be pushed through the floor. Release lets it go with its speed, so a flick throws it. The GPU reads the grab from a small buffer per frame slot.
 * **The CPU's copy** of the bodies comes from a snapshot the pose kernel writes per frame slot. It is read once the slot's frame is done: three frames late, but the same three every time.
-* **Backend.** `auto` steps on the CPU below 64 bodies and particles, where a dispatch costs more than the work. Then the CPU writes the instances, and a cloth is uploaded each frame for the GPU to draw.
+* **Backend.** `auto` steps on the CPU below 64 bodies and particles, where a dispatch costs more than the work, and with fractured objects at any size (Destruction, "Big worlds on the GPU": the CPU's steps are as fast or faster there, and run beside the frame). Then the CPU writes the instances, and a cloth is uploaded each frame for the GPU to draw.
 * **Checked:** `PhysicsTests` covers:
   * resting, stacking, bouncing (restitution), sliding or holding on a slope (friction);
   * crossed bars' edge contact;
@@ -1558,6 +1559,130 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
   * A frame takes at most 20 steps: a still at 6 s catches up over its first frames, so the GPU's watchdog never sees seconds of steps in one command buffer.
   * Stepped on the CPU (`physics=cpu`), the liquids aren't drawn: their particles stay on the CPU (it is the GPU's reference, and slow).
   * Metal 4 is untested (the M1 Max has no Metal 4 ray tracing).
+
+### Destruction
+
+Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fracture.swift`, `Fracture/`, `Scene+Fracture.swift`, `Shaders/Physics.metal`): fractured ahead of time into pieces, whole until something hits them hard enough, then pieces held together by welds until those break too, with dust and debris where they part. On the GPU, with the same steps on the CPU as their reference. The **Destruction** scene (`METALRENDERER_SCENE=destruction`, `Scene+Destruction.swift`) is a paved courtyard under an afternoon sun: a concrete wall a wrecking ball swings into at 2 s, a brick wall, two concrete pillars with a wooden beam across them, two glass panes in wooden frames, a concrete tower a weight falls on at 6 s, a stone bust, and the gallery's golem as a statue (its mesh cut piece by piece). Cannonballs hit a pane, the brick wall, a pillar and the golem. It keeps its full look (GI and reflections: the glass needs them). Its settings: `pieces` (scales every object's pieces), `toughness`, `strength` (welds), `dust`, `fade`, `demo` (the wrecking ball, the weight and the shots), `statues`, `massive` (a three-storey building of fractured walls and floors behind the courtyard, over 4,000 bodies, its ground floor's corners blasted by the demo at 2.5 s and 3.5 s, its welds a twentieth as strong so that it comes down: offline), `buildings` (1 to 3 of those buildings side by side, each with its own seeds and corner blasts: over 10,000 bodies with three). In the scene, 1, 2 and 3 pick what a click does: grab a piece (as in the other physics scenes), shoot a ball from the camera, or blast where you point; a box in the view's top-left corner names the tool.
+
+* **Fracturing** (`FractureTree`, `FracturePatterns`, `ConvexCell`): an object is a tree of convex cells, the object's box at its root, each node cut into its children by its material's pattern, up to three levels; a cell is a list of planes, clipped one at a time, its faces' polygons kept for its volume, inertia and neighbours. **Concrete and stone** are Voronoi cells of random sites kept apart (clustered toward a point by `clustering`, Chaos's clustered Voronoi); **wood** is slabs across the grain, then Voronoi cells in a metric squashed along the grain (cells `stretch` times longer: splinters), which are still convex, their bisectors mapped back by the metric; **bricks** are staggered courses, then each brick in halves; **glass** is radial cracks and rings round a point, each wedge cut into shards by tilted chords, then each shard across. A non-convex object (a cylinder, a statue) is cut inside its box and its cells keep only what is inside it (a 7³ sample of its distance: cells with less than 4 % of it inside go). Neighbours that share a face, at any level, and neither holding the other, are welded (Chaos's connection graph), the weld's area the shared faces' part inside the object.
+* **Pieces** are SDF shapes: the object's own nodes, then a new primitive, `.cell`, the cell's cut planes intersected (`SDFShapes.swift`; its distance the largest plane's, exact inside and a bound outside; its planes after the nodes in the nodes' buffer, `SDF_CELL` in `Shaders/SDF.metal`), with the interior material on the cut faces (the node's material offset). A box's pieces are their cells, their mass and samples from the polytope exactly; the others' are built from their fields side by side. A model's (`addFracturedModel`, `MeshCutter`): its parts merged into one mesh, each piece its triangles clipped by the cell (normals, texture coordinates and materials kept) with caps on the cuts by marching squares of the model's baked distance grid on each cut face (no loops of cut edges to close: a generated model is rarely watertight), colliding as the grid cut by the cell.
+* **Breaking** (`addFracture`, `endFractureStep`): every node of every object is a body from the start (a world's bodies are fixed once it is built); all but the root are disabled (`disabledBit`: in no cell of the broad phase, moved by nothing, drawn shrunk to nothing). A step adds up each piece's **impacts**, the normal impulses (the position pass's and the velocity pass's) of contacts closing faster than 1 m/s, so resting, settling and sliding break nothing. At the step's end a piece whose impacts pass its threshold (its material's toughness times its volume^2/3, and for a piece at least its mass at the material's speed, up to four times that) breaks: it is disabled and its children take its place, moving as it moved, each taking over the impacts by its distance from where they were (the further past the threshold, the further, by its cube root); a child that takes over more than its own threshold comes free (all its welds broken, pushed along the impacts' way at up to 4 m/s), and breaks again the next step if it took more than that. The ground holds the pieces of an object within 25 cm of it (`foundation`): they don't move until something frees them. Both phases read only the step's state and write their own body's, so the GPU's verdict and apply kernels give the CPU's numbers.
+* **Shots go through** (`giveWay`, `holdAfterBreak`). A shot meets a held object whole in the step it breaks, and the ground stops it dead; the pieces are only there from the next step. So a projectile (a body that isn't a piece) keeps its speed at the step's start and its hardest hit of the step on a held piece (in its own fracture state, otherwise unused), and if that piece broke or came free, it goes on at that speed, into the pieces. And the pieces of a held piece that broke stay held for 0.25 s, but those its impacts freed (Chaos keeps an anchored cluster's rest in place): the shot's push goes into the ground while the pieces it knocks out get away, then the rest stands on its welds. Let go at once, the welded rest took the push piece to piece, one weld solve a substep, and the wall round the hole toppled after the shot.
+* **Welds** are solved as their pair's contact: the narrow phase gives a welded pair one marked contact (lambda.w = 1) instead of its manifold, so welds need no colours of their own (the pairs' colouring has them) and welded pieces don't collide. A weld is a joint fixed in place: its pieces' turn about each other back to rest, then their anchors together, no compliance. It breaks when its load (force over what it holds, plus moment over that times the shared face's radius, as XPBD's lambda / h²) averaged over about a step passes 1 (a substep's alone made tens of kN of a jolt), or when it is pulled 3 mm apart or twisted 0.03 rad (shutting a centimetre in a substep flung pieces at 10 m/s: a piece takes its parent's place where that had moved to). Its anchors are where its shared face is in the world (they were in the object's own space once, as far from the pieces as the object from the origin, so the first small turn after a break snapped every weld of an object away from the origin).
+* **Heaps.** Rubble is thousands of flat convex pieces lying on each other, and three things kept it from ever coming to rest (it rocked, crept flat across the courtyard and never slept):
+  * The narrow phase's walk for the deepest point between two flat shapes (an edge across an edge) isn't taken between pieces: on a cell's distance, whose gradient jumps at every edge, it ended somewhere new each step with a normal off the patch's, which tipped the pair's normal. Their corners and edge midpoints are enough.
+  * With fractured objects a body's 16 partners are those whose boxes (each shape's in its body's space, from its samples: `shapeBoxes`) overlap, nearest by the gap between the boxes (`physicsFracturePairsKernel`): a flat piece's bounding sphere is far bigger than it is, and in a heap more spheres overlap than a body keeps.
+  * A pair only one of its bodies lists (the other's list is full: a slab under a heap touches more than 16 pieces) is kept by that one (`physicsFractureLinkKernel`, pad = `oneSided`): without it the piece sank into the slab and was pushed back out. What the colouring leaves, these most of all, thread 0 colours once a step, in entry order, into up to 32 more colours after the rest (each body in each at most once), each solved in parallel; only what is left after those goes one pair after another (`physColourPairs`).
+
+  `DestructionTests.testTheBuildingSettles` (`DESTRUCTION_SETTLE=1`) prints the building's heap every half second: it is down by 8 s, and from 8 s to 20 s it keeps its reach (7.5 m) and its height (1.0 to 0.93 m); before the heap fixes, it spread on and stirred at 0.18 m/s. A heap that is still but not yet asleep is the solver's last few mm/s, under the sleep test's turn.
+* **Heaps that sleep** (`PhysicsCPU.settle`, `wake`, `idle`; the same on the GPU). The pieces of a settled heap creep at around a cm and 2 degrees a second on the solver's last corrections, and about 44 of the massive building's rock past the wake speed each step, in place. So with the old tests they never stayed asleep: at 17 s, 761 of its 2,300 pieces woke over 2 s and 771 slept. Now, in a world with fractured objects:
+  * Rubble is a piece more than 0.5 m from where it began (`fallen`), welded or not. A structure still standing, or sagging on its way down, sleeps and wakes by each step's speed, as before: a collapse starts slowly, and rules that let it sleep while it sagged held the building up for a second.
+  * Rubble is still while it stays near where its still time began: moved less than the sleep speed × the sleep time (2.5 cm), and turned its mass less than the sleep turn × the sleep time. Its timer no longer restarts on each step's jitter.
+  * What wakes a sleeper is how far a partner went over the last step (`stepMotion`), not its velocity after the last substep. Rubble wakes only for a hit (a partner going 10× the wake speed, 1 m/s), a partner moving on (it left its still place within a quarter second of arriving there), or a partner under it (its centre lower) leaving its still place at all. A piece just woken starts its time there, so it wakes nothing. Without the last rule, what rested on a piece that slid off slowly stayed where it was: a loose heap shot, blasted or pulled at, let sleep again and then woken all at once, moved up to 9 cm in a second (`testASleepingHeapWakesWhereItIsTouched`, now 0.8 cm at most, before the heaps slept 1.4 cm).
+  * A pair neither of whose bodies moves, other than a weld, takes no colour and isn't solved (`idle`, pad = `idlePair`, which the colouring's rounds pass by). Left uncoloured but in the rounds, they kept their neighbours from ever winning, and the building's welds, solved last as leftovers, held it up.
+  * On the GPU, those pairs find no contacts (`physicsFractureNarrowKernel`), and the pairs the colouring leaves are solved from a list. Thread 0 had scanned all 170,000 entries for them, twice a substep: a second a step.
+
+  Three buildings at 25 s on the CPU: 632 pieces awake (before: 4,457), a step 20 ms (66 ms); settling in `METALRENDERER_BENCH=destructioncpu` (from 10 s), the CPU's frame thread 78.8 → 31.0 ms. On the GPU (`testTheBuildingSettles`), 88 % of the heap is asleep from 14 s on (before: about 50 %), and its height holds at 0.94 m. Scenes without fractured objects step as before, bit for bit (CPU digests, GPU states).
+* **Big worlds on the GPU** (with fractured objects; `PhysicsGPU.wide`, `wideSteps`). The step had been a few kernels around one threadgroup, one GPU core, that coloured the pairs and ran every substep; three buildings settling took 66 ms, timed part by part: the broad phase 16 ms, the colouring 12 ms, the substeps 22 ms, the narrow phase 10.
+  * The broad phase's grid has levels, as the CPU's (`physicsFractureInsertKernel`, `physPairs` with `levels`): 16 → 3 ms, the same pairs.
+  * The colouring's rounds are dispatches over the live pairs (`physicsColour*Kernel`, two a round, indirect: the GPU knows how many there are), the same colours: 12 → about 2 ms.
+  * The substeps' stages are dispatches over every body and each colour (`physicsWide*Kernel`), with nothing but bodies and joints. A dispatch costs a few µs however small, so only the big colours, the rounds' first 10 and the left-over pairs' first 4 (the colouring hands its lowest out first: in a settled heap 400 to 3,000 pairs each, the rest 1 to 200), are; the rest, and the pairs no colour took, run in one threadgroup (`physicsWideTailKernel`). All 64 colours as dispatches made the collapse 45 % slower than one core.
+
+  Three buildings (`METALRENDERER_BENCH=destructioncpu`), the GPU's physics pass: settling 46.7 → 29.8 ms, collapsing 15.6 → 16.7 ms. The colouring and the grid give the same numbers as before (the GPU states in the scenes equal main's); the substeps' dispatches round a last bit differently from the one threadgroup (the same functions in other kernels), so a fractured world's GPU steps are no longer main's bit for bit, as they never were the CPU's.
+
+  Where the GPU's settling step goes now, three buildings at 12 s (6,156 live pieces, 4,127 asleep), each part timed alone in turn on a real step: the broad phase 4.1 ms, the first narrow phase 2.1, each contact refresh 1.6 (three), the colouring 1.8, each run of 4 substeps 3.8 to 4.6. A run of 4 substeps is about 140 dispatches, one after another: each colour's must see the last one's bodies. They cost about 20 µs each, but most of that is the colour's own work, the chain of reads and writes of one pair, not the dispatch. What was tried, and dropped:
+  * **The runs in one dispatch** (a few threadgroups that wait for each other between stages, on a device-wide barrier: an atomic count, spun on with a read-modify-write, since a plain atomic load read a core's stale copy for ever; Metal 3.2's device-scope fences; 2 µs a barrier). A run took 4.5 ms against 2.1 by dispatches on the same state: the fences send every read after a barrier past the core's cache. And the data a threadgroup reads of another's writes was only right with `coherent(device)` buffers past 8 threadgroups.
+  * **Everything in the one threadgroup** (`physicsWideTailKernel` for every colour): 5.1 ms.
+  * **More colours as dispatches**: 14 and 8 (against 10 and 4) made the settling heap's run 2.25 → 1.9 ms, but the courtyard's and the massive building's steps slower (empty colours still cost a dispatch). An indirect command buffer the GPU writes with only the colours there are would remove those.
+
+  So the GPU's steps of a settling heap are about a thousand colours one after another, each a few µs at best, and the CPU's are as fast: on the M1 Max (`destructioncpu`) the CPU's step and the GPU's physics pass were 2.0 and 4.7 ms for the courtyard, 13 and 16 ms for the massive building settling, 31 and 30 ms for three buildings settling. The CPU's run beside the frame; the GPU's are the frame's (in the window, the massive building settling drew at 16 to 23 fps with the GPU's steps and 120 with the CPU's). Automatic steps worlds with fractured objects on the CPU (`PhysicsSettings.runsOnGPU`); the GPU's stay a choice ("Physics on").
+
+* **Commands** (`FractureCommand`: shoot, blast, wake, release) are kept with the step they start at and done by the step's first kernel, so a replay does them again and any time's state is the same however it was reached (the scripted demo is a list of them). A shot launches one of a pool of disabled balls from the camera; a blast pushes what is round it out and up (a held piece takes only the impact).
+* **Dust and debris**: each step's breaks go into a ring of 64 steps on the GPU (`physicsFractureEventsKernel`, in body order: the same every run), and before each particle step `particleInjectKernel` makes them events of a proxy emitter per material, whose children are a puff of smoke-atlas dust (none for glass) and mesh chunks of the inside that bounce off the scene (Particles.swift). In a replay the physics and the particles both take 20 steps a frame, so they keep pace. The CPU's steps log their breaks the same way (`PhysicsWorld.breakLog`, `breakSteps`: the latest 1,024, each with its step), and the renderer writes each into its step's slot of a ring of its own before the frame's particle steps (`Renderer.writeCPUBreaks`); behind the frame, a step the stepper finished after its particle step was taken goes into the frame's first: its dust comes a frame late.
+* **Fading**: a small leaf (under 10 cm, 6 cm for a statue's) lying still for 6 s shrinks away over 1.5 s and is disabled (`fade`).
+* **The Fracture Editor** (Shift-F, or Shift-Cmd-F; `FractureEditor/`): the scene's objects, each one's recipe (material, pattern, seed, pieces at each level, toughness, weld strength, clustering, jitter, and the pattern's own grain, brick size or crack centre), a preview of its pieces at a level held apart (`DestructionSettings.preview`), and what it is made of. An edit builds the scene again with it (`DestructionSettings.recipes`); Save writes the recipes to `Assets/Fracture/recipes.json` (`FractureStore`; `METALRENDERER_FRACTURE=builtin` leaves them out).
+* What it costs (M1 Max, `METALRENDERER_BENCH=destruction`: the first 10 s moving; `destructionmassive` at the physics look). The courtyard is 917 bodies (about 700 enabled at most):
+
+  | Setting | "physics" pass (GPU) | Whole frame (GPU) |
+  |---|---|---|
+  | Pieces 1x | 1.8 ms | 12.0 ms |
+  | Pieces 2x | 2.2 ms | 12.4 ms |
+  | Massive (4,190 bodies, physics look) | 8.8 ms | 15.1 ms (p95 26 ms) |
+
+  Paused, the scene renders in 9 to 13 ms (more as dust and pieces fill it). Building it takes a few seconds (the golem's cut and its pieces' mass properties most of it).
+* **Checked:** `DestructionTests` covers the cells filling each node exactly (every material's pattern), the same seed making the same pieces, an anchored wall standing, a shot breaking a wall where it hits, knocking pieces out and the rest standing (the scene's brick wall and its cannonball too: bricks knocked out, under 30 % of the wall moved, nothing flung over 6 m), a loose heap of 196 shards four deep asleep in 8 s on both the CPU and the GPU and still a heap, a blast breaking a wall and a replay doing the same to the bit, small pieces fading, and on the GPU the same pieces breaking as on the CPU through a shot's break (within 3 cm after 16 steps: a weld at its strength breaks on one and holds on the other; 20 steps later, as the shot goes on, a piece at its threshold can break a step apart on the two), and the scene's census along its demo (`DESTRUCTION_SCENE=1`). Scenes without fractures step and draw bit for bit as before (the fracture paths are kernels and functions of their own: a branch inside the old ones changed the GPU's rounding).
+* **Limits:**
+  * Pieces are made ahead of time: glass cracks round its pattern's point, not where it is hit, and a piece never breaks into anything its tree hasn't.
+  * A piece of a non-convex object cut by a convex cell can be two parts that move as one.
+  * Separate objects aren't welded to each other: a beam rests on its pillars, a building's storeys on their floors.
+  * Welds hold rigidly (no bending before they break), and a body keeps 16 partners: a pair neither of two crowded pieces lists is dropped (rare, after the boxes and the one-sided pairs).
+  * A shot that breaks a held piece goes on at its whole speed (breaking takes nothing from it), and only its hardest hit of a step counts. What it does next is sensitive to the start: the brick wall loses 14 to 22 of its 103 pieces depending on the last bit of a float.
+  * The rest of a broken held piece is held for a fixed 0.25 s, whatever hit it: a slow, heavy push that lasts longer (a wrecking ball leaning on a wall) goes into the welds after that.
+  * Dust comes from where a piece broke, not along the crack.
+  * The golem's sign is the baked grid's three-axis vote: a model with shells inside shells can get caps where it is hollow.
+  * Metal 4 and the M4 Max are untested.
+
+### CPU physics on every core
+
+The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference, and a scene can run on it (`physics=cpu`). It runs on every core and gives the same numbers, bit for bit, as it did on one thread, whatever the number of threads (`PhysicsThreads.swift`):
+* **A pool of workers** (`PhysicsPool`: one fewer than the cores, `METALRENDERER_PHYSICS_THREADS=n` for n threads in all) runs each stage's items in chunks with the stepping thread, each thread claiming a run of them at a time, a quarter of what is left over the threads (one chunk at least). Which thread runs which items changes nothing: a stage's items are independent. Its atomics are C11's (`CPhysicsAtomics`), and the ticket, the count done and the count of threads inside each have a cache line of their own: on one line, a stage of 3,000 empty items took 150 µs, and now takes 36 µs. A step has hundreds of stages (a colour of contacts or joints is one, 16 substeps over), so the workers spin between them and park on a semaphore after about 50 µs without one. A stage of one chunk, or one started while another runs (a parallel loop inside another), runs on the thread that asked.
+* **What stays bit for bit:**
+  * Each item writes only its own elements: a body, a particle, a pair's entry, or, within a colour, its pair's two bodies, link's two particles or tet's four, which no other item of that colour shares.
+  * Jacobi passes read a snapshot taken before them: the particles' solve, wake, settle, and the fracture verdicts and breaks.
+  * Nothing adds floats across chunks. The liquids' sums (the bodies' impulses, MPM's grid) were already fixed-point integers, so they are atomic integer adds, the same total in any order (as on the GPU).
+  * Serial stays serial: the colouring's last greedy pass and its rest, the ragdolls' settling, breaking welds, commands.
+* **What made the step fit for threads:**
+  * Stages read and write raw buffers (`StepBuffers`, `ParticleBuffers`, `HairBuffers`, `FluidContext`). Swift moves an array out of its property while its buffer is lent, so a stage never reads the world's arrays through the world.
+  * Collision reads shapes from a flat table without counted references (`PhysicsShapeTable`: SDF nodes, planes, samples, baked grids). Ten threads asking one shape's distance contended on its arrays' reference counts, and hair took 87 s instead of 1.6 s.
+  * The broad phases' cells are flat arrays behind an open-addressed table (`PhysicsCellGrid`), with each cell's items in the order a dictionary of arrays had them.
+  * The bodies' grid has levels (`PhysicsLevels`): each level's cells are twice the size of the one before, and a body goes in the first whose cells are twice its reach. A query looks at each level's cells within its reach plus half that level's cell, so it finds every body within reach, as one grid sized by the largest body did (the GPU's), and the nearest 16 are kept by a total order. Sized by the largest body, a fractured building's cells were the size of the building, its whole being a body. Sized by the largest piece (1.5 m against a median of 0.33 m), each of a heap's cells held hundreds of candidates.
+  * Manifolds have four fixed slots, and partners and neighbours are kept nearest first as they are found (the same as sorting all of them: the order is total). None of this allocates per item: `Tools/perf/hotcalls.py` holds the stages to the fast subset (`Tools/perf/hot-functions.txt`).
+* **Skipping what can't change:**
+  * A pair neither of whose bodies moves (asleep, held, kinematic or static), other than a weld, is passed over in the solves: its push is 0 and no kick follows.
+  * At a step's start, a pair whose two bodies are bit for bit as they were at the last step's start, with the same partner, keeps the contacts found then (`NarrowMemo`): that is what `collide` would find again. A pair found again mid-step isn't kept.
+  * The substeps' body loops (integrate, the velocities) go over the bodies that can move (`movingBodies`), listed after the liquids, which wake what they push.
+  * The box test between two pieces stops at the first axis that parts them.
+  * A body whose partners can't have changed keeps the last step's (`BroadMemo`): it is bit for bit as the broad phase read it then (pose, speed, radius, shape, flags), so is each partner it kept, and no body that changed (in a grid of their own) reaches it now. Its partners are the nearest 16 within reach by a total order, so a body that changed, kept no place among them and doesn't reach it now can't make it keep others. The statics, the shapes and the parameters must be as they were too. A settled heap's sleepers keep theirs, but for those a moving piece reaches: three buildings at 25 s (500 of 6,152 pieces awake), the broad phase 5.1 → 3.1 ms; the digests, at 25 s too, are the same.
+  * A colour of fewer than 32 pairs is solved on the stepping thread: handing it out costs more. A settling heap's colours are mostly small (the two passes 5.3 → 4.9 ms a step at 25 to 35 s; 64 or 128 were slower).
+* **Behind the frame** (`PhysicsStepper`, `PhysicsSettings.asynchronous`, "CPU physics behind the frame", on by default):
+  * A CPU-stepped scene's world steps on a thread of its own. Each frame asks for the steps up to its time, with the body the mouse holds then, and draws the bodies where the steps before left them (a copy-on-write snapshot of bodies, particles, hair and fracture state).
+  * A pick, a shot or a blast waits for the steps asked before it (`Scene.withPhysics`), so it lands on the same step as it would in the frame. Paused, or a still, the frame waits for its steps.
+  * Benchmarks step in the frame unless `METALRENDERER_PHYSICS_ASYNC=1`. "CPU physics on every core" (`physicscores`) is the pool's switch.
+* **What it costs** (M1 Max, 10 threads):
+
+  | World (each scene's digest run) | One thread (main) | Every core |
+  |---|---|---|
+  | Massive building, 8 s (4,127 bodies) | 33.5 s | 4.7 s |
+  | Liquids, 2 s | 22.2 s | 3.8 s |
+  | Muscles, 2 s | 11.5 s | 1.5 s |
+  | Soft bodies, 3 s | 6.3 s | 1.4 s |
+  | Physics, 4 s | 4.2 s | 1.2 s |
+  | Destruction courtyard, 10 s | 3.8 s | 1.4 s |
+  | Ragdolls, 4 s | 1.5 s | 0.9 s |
+  | Hair, 3 s (parallel before) | 1.6 s | 1.1 s |
+
+  Three buildings (`buildings=3`, 10,637 bodies, 6,049 of them enabled once the buildings are down), a step from 10 to 13 s while the heaps settle, M1 Max (bit for bit the same as before, digests checked):
+
+  | | Before (PR #91) | Now |
+  |---|---|---|
+  | One thread | 480 ms | 395 ms |
+  | Ten threads | 88 ms | 66 ms |
+  | Broad phase, ten threads | 17.7 ms | 5.0 ms |
+  | Contact solves, ten threads | 34.6 ms | 28.0 ms |
+
+  Three buildings' first 7 s, every core: 9.0 s, now 7.9 s; the massive building's 8 s: 4.85 s, now 4.25 s. Settling, their pieces didn't sleep (at 20 s, 4,605 of 6,060 were awake): now they do (Destruction, "Heaps that sleep"), and a step at 25 s is 20 ms, from 66 ms; the frame thread's 34 ms, from 79 ms, in the benchmark from 10 s.
+
+  With the broad phase's memo and small colours on the stepping thread (Skipping what can't change), three buildings' step at 25 s is 17.4 → 13.5 ms (500 pieces awake), and the benchmark's settling rows (from 10 s, the steps in the frame) 31.1 → 29.2 ms on the frame's thread, against the GPU's 29.7 ms physics pass.
+
+  On the frame's thread (`METALRENDERER_BENCH=destructioncpu`, the first 5 s moving, at the physics look), the massive building goes from 9.8 ms with the steps in the frame to 2.9 ms behind it. Three buildings (over 10,000 bodies) go from 19.0 ms to 5.4 ms, with an 11.0 ms GPU frame. The same three buildings stepped on the GPU make a 23.6 ms frame.
+* **Checked:** `PhysicsThreadsTests` steps every physics scene's world (physics, ragdolls, hair, soft bodies, muscles, liquids, the courtyard through its demo, the massive building, three buildings) on one thread and on all of them: the same bytes. `testDigests` (`PHYSICS_DIGEST=1`) prints each world's hash after its seconds, and those match a build of main from before the threads. `testTheStepperStepsAsTheFrameDoes` checks the stepper against stepping in the frame: frames of uneven lengths, a grab held, a blast between, the same bytes.
+* **Limits:**
+  * The grids are built on one thread.
+  * A stage hands out its chunks through one ticket: a colour's claims queue on one cache line, about 5 µs a stage with ten threads.
+  * A sleeper that a moving piece reaches runs its whole query again (it finds who comes near it), and the grids are built from every body each step.
+  * With three buildings the frame's own CPU time is mostly the renderer's per-instance work, not physics.
+  * The workers spin for about 50 µs after each stage, which costs power.
+  * Not yet tried by hand in the window: grab, shoot and blast with the stepper on.
 
 ### Particles
 
@@ -1888,6 +2013,44 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | Traversal cost | The candidates (triangles and boxes) Metal's traversal hands each primary ray's query, log scale: blue few, red ~250. Metal can't count its nodes; the candidates are what can be seen of its work. |
 
 The views work in both virtual-geometry runtimes (with virtual geometry off, the clusters, groups and LOD views are grey). In `METALRENDERER_VG_MODE=clusters`, cluster colours follow a cluster's place in the page pool, so they change when it is streamed again.
+
+### Solid shading
+
+For iterating on scenes, physics and destruction, solid shading draws the frame the way Blender's Solid viewport does: every surface flat grey, lit by a studio light fixed to the camera (a key light from the upper left, a weak fill from the right, and an ambient that goes from sky to ground). Each pixel uses the surface's smooth normal. Turn it on with ` (backtick), App menu → Solid Shading (⇧⌘S), the Rendering section's "Solid shading" checkbox, or `METALRENDERER_VIEW="solid=1"`, which also works in benchmarks. The setting is saved with the others, and the window title says "solid" while it is on.
+
+One kernel (`solidKernel`, Shaders/Output.metal) traces one camera ray per pixel and writes the drawable. Nothing else runs:
+* no shadows, light grid, ReSTIR, MegaLights or many-light sampling;
+* no GI, reflections, denoisers, fog or sky;
+* no TAA, MetalFX or lens.
+
+The scene's update still runs every frame: physics, cloth, soft bodies, hair, liquids, destruction, the crowd's skinning, the plants' wind, virtual geometry, and the TLAS. Everything that moves therefore shows where it is: rigid bodies, debris, ragdolls, cloth, the crowd and liquids' surfaces.
+
+What isn't drawn:
+* window glass, so rooms show through their windows;
+* the lights' shapes;
+* billboard particles, which aren't in the TLAS;
+* terrain water.
+
+Turning solid shading off starts the denoisers' and MetalFX's histories over. Gizmos and click-picking work as usual.
+
+The picture is drawn at the output size, which is what MetalFX would have made, so it stays sharp. Its cost scales with the pixel count. On the M1 Max (no hardware ray tracing), the stress building costs 0.37 ms at 640×400, 1.2 ms at 1280×800 and 2.5 ms at 1920×1200. U (upscaling off) draws it at the traced size; − and = change that size.
+
+Whole frames on the M1 Max, measured with `METALRENDERER_BENCH_SPLIT=0` in release (`-m solid`), each scene's own look against solid shading, all moving:
+
+| Scene | Look | Normal (ms) | Solid (ms) |
+|---|---|---|---|
+| Physics | physics look, 480×300 → 1440×900 | 11.8 | 9.9 |
+| Destruction | cascades, 640×400 → 1920×1200 | 14.9 | 8.6 |
+| City | cascades, 640×400 → 1920×1200 | 9.1 | 2.4 |
+| Stress building (rooms) | cascades, 640×400 → 1920×1200 | 13.1 | 2.6 |
+| Crowd | cascades, 640×400 → 1920×1200 | 17.6 | 12.9 |
+
+In the city and the stress building, solid shading is 4–5× faster: the solid pass is the whole frame. The other scenes keep their own work.
+* Physics: the simulation's steps, 6.9 ms.
+* Destruction: the steps, 4.9 ms.
+* Crowd: the skinned characters' BLAS refits, 6.2 ms. Its solid pass also costs more, 6.1 ms, because refitted trees trace slower.
+
+Split timings come from the same mode without `METALRENDERER_BENCH_SPLIT=0`.
 
 ### Reference rendering
 

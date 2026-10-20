@@ -10,8 +10,11 @@ let package = Package(
     targets: [
         // The renderer, the scenes and the editors: everything but the entry point. A library, so that the app and
         // the tests share one build of it (an executable target is compiled twice, once more for `@testable import`).
+        // Atomic operations for the CPU physics' worker pool (PhysicsThreads.swift).
+        .target(name: "CPhysicsAtomics", path: "Sources/CPhysicsAtomics"),
         .target(
             name: "MetalRenderer",
+            dependencies: ["CPhysicsAtomics"],
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.

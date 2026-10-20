@@ -448,9 +448,26 @@ enum SettingsTable {
                 .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
             S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
                 .env(.scene, "fluid").when { $0.scene.kind == .fluids },
+            S.slider("Pieces", \.scene.destruction.pieces, DestructionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "pieces").when { $0.scene.kind == .destruction },
+            S.slider("Toughness", \.scene.destruction.toughness, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "toughness").when { $0.scene.kind == .destruction },
+            S.slider("Weld strength", \.scene.destruction.strength, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "strength").when { $0.scene.kind == .destruction },
+            S.check("Dust and debris", \.scene.destruction.dust).env(.scene, "dust").when { $0.scene.kind == .destruction },
+            S.check("Small pieces fade", \.scene.destruction.fade).env(.scene, "fade").when { $0.scene.kind == .destruction },
+            S.check("Scripted demo", \.scene.destruction.demo).env(.scene, "demo").when { $0.scene.kind == .destruction },
+            S.check("Statues (cut meshes)", \.scene.destruction.statues).env(.scene, "statues").when { $0.scene.kind == .destruction },
+            S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
+            S.slider("Buildings", \.scene.destruction.buildings, DestructionSettings.buildingRange, live: false).env(.scene, "buildings")
+                .when { $0.scene.kind == .destruction && $0.scene.destruction.massive },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.check("CPU physics behind the frame", \.scene.physics.asynchronous).env(.scene, "physicsasync")
+                .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
+            S.check("CPU physics on every core", \.scene.physics.everyCore).env(.scene, "physicscores")
+                .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.slider("Particle budget", \.scene.particles.budget, ParticleSettings.budgetRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
                 .env(.scene, "budget").when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
             S.check("Particle shadows", \.scene.particles.shadows).env(.scene, "particleshadows")
@@ -574,6 +591,7 @@ enum SettingsTable {
                 .available { FrameInterpolation.allCases[$0] == .off || Capabilities.current.frameInterpolator },
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
+            S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
             S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),

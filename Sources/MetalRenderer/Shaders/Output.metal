@@ -128,6 +128,63 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 }
 
 // ---------------------------------------------------------------------------------------------
+// Solid shading (RenderSettings.solid), Blender's viewport look: the whole frame. One camera ray a pixel; what it hits
+// is grey under a studio light fixed to the camera (a key from the upper left, a weak fill from the right, a sky-to-
+// ground ambient), with the smooth normal. No lights, materials, textures or shadows. The miss is a grey gradient.
+// Linear light into the drawable (sRGB).
+// ---------------------------------------------------------------------------------------------
+
+inline float3 solidShade(float3 n, float3 dir, constant Uniforms& u) {
+    if (dot(n, dir) > 0.0f) n = -n;   // the side the camera sees
+    float3 right = u.camRight.xyz, up = u.camUp.xyz, back = -u.camForward.xyz;
+    float3 key = normalize(-0.5f * right + 0.7f * up + 0.6f * back);
+    float3 fill = normalize(0.8f * right - 0.2f * up + 0.5f * back);
+    float ambient = mix(0.06f, 0.16f, n.y * 0.5f + 0.5f);
+    float light = ambient + 0.80f * max(dot(n, key), 0.0f) + 0.15f * max(dot(n, fill), 0.0f);
+    return float3(0.6f * light);
+}
+
+kernel void solidKernel(constant Uniforms&               u          [[buffer(0)]],
+                        SCENE_ACCEL                      accel      [[buffer(1)]],
+                        device const float3*             positions  [[buffer(2)]],
+                        device const float3*             normals    [[buffer(3)]],
+                        device const uint*               indices    [[buffer(4)]],
+                        device const MeshData*           meshes     [[buffer(5)]],
+                        device const InstanceData*       instances  [[buffer(6)]],
+                        constant SceneShading&           shading    [[buffer(7)]],
+                        texture2d<float, access::write>  output     [[texture(0)]],
+                        uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float3 dir = primaryDirection(u, tid);
+    // Everything but window glass (rooms show through their windows) and the lights' shapes and camera-only motes.
+    Hit res = intersectClosest(makeRay(u.camPos.xyz, dir, 0.0f, INFINITY), MASK_ALL & ~(MASK_GLASS | MASK_LIGHTS), accel);
+    if (!res.hit) {
+        float v = float(tid.y) / float(u.height);
+        output.write(float4(float3(mix(0.050f, 0.018f, v)), 1.0f), tid);
+        return;
+    }
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, nullptr, 0u);   // no lights
+    InstanceData inst = instanceRecord(s.instances, res.instance);
+    float3 n;
+    if (VOXELS && res.part == HIT_VOXEL) {
+        n = -dir;   // a far plant's voxel: lit as if facing the camera
+    } else if (SDF_SHAPES && res.part == HIT_SDF) {
+        n = (inst.normalMatrix * float4(sdfOctDecode(res.barycentrics), 0.0f)).xyz;
+    } else if (HAIR_CURVES && res.part == HIT_CURVE) {
+        n = -dir;   // a strand
+    } else {
+        HitVertices hv = fetchHitVertices(res, inst, accel, s);
+        float2 bc = res.barycentrics;
+        float3 objN = hv.n[0] * (1.0f - bc.x - bc.y) + hv.n[1] * bc.x + hv.n[2] * bc.y;
+        if (length_squared(objN) < 1e-12f) objN = cross(hv.p[1] - hv.p[0], hv.p[2] - hv.p[0]);
+        n = (inst.normalMatrix * float4(objN, 0.0f)).xyz;
+    }
+    n = length_squared(n) > 1e-20f ? normalize(n) : -dir;
+    output.write(float4(solidShade(n, dir, u), 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4. Composite: re-apply albedo, add emission, tonemap and write to the drawable.
 // ---------------------------------------------------------------------------------------------
 

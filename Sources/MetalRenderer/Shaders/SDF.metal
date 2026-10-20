@@ -8,6 +8,7 @@
 // material: nothing after the hit needs the shapes (traceSurface).
 
 constant uint SDF_SPHERE = 0, SDF_BOX = 1, SDF_TORUS = 2, SDF_CAPSULE = 3, SDF_CYLINDER = 4, SDF_CONE = 5, SDF_VOLUME = 6;
+constant uint SDF_CELL = 7;   // a convex polytope (a fractured piece): params.x planes (n, d) as float4s from `volume`
 constant uint SDF_UNION = 0, SDF_SUBTRACT = 1, SDF_INTERSECT = 2;
 
 struct SDFNode {
@@ -21,7 +22,7 @@ struct SDFNode {
     float  k;          // the blend's radius (0 = sharp)
     float  scale;      // its distances are the primitive's x this
     uint   material;   // offset from the instance's material
-    uint   volume;     // SDF_VOLUME: its grid
+    uint   volume;     // SDF_VOLUME: its grid; SDF_CELL: its first plane, in float4s from SDFScene.nodes
     uint   pad0, pad1;
 };
 static_assert(sizeof(SDFNode) == 96, "SDFNode: GPUSDFNode");
@@ -94,6 +95,12 @@ inline float sdfPrimitive(SDFScene sc, device const SDFNode& n, float3 q) {
             float2 cb = p - k1 + k2 * saturate(dot(k1 - p, k2) / dot(k2, k2));
             float s = cb.x < 0.0f && ca.y < 0.0f ? -1.0f : 1.0f;
             return s * sqrt(min(dot(ca, ca), dot(cb, cb)));
+        }
+        case SDF_CELL: {   // the largest of its planes' distances: exact inside, a bound outside
+            device const float4* planes = (device const float4*)sc.nodes + n.volume;
+            float d = -1e30f;   // (no infinities: fast math)
+            for (uint k = 0, count = uint(a.x); k < count; ++k) d = max(d, dot(planes[k].xyz, q) - planes[k].w);
+            return d;
         }
         default:
             return sdfVolume(sc, sc.volumes[n.volume], q);
