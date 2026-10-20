@@ -14,8 +14,10 @@ import CPhysicsAtomics
 final class PhysicsPool {
     static let shared = PhysicsPool()
 
-    /// Threads besides the stepping one (METALRENDERER_PHYSICS_THREADS: all of them, the stepping one included; 1:
-    /// none, every stage on the stepping thread).
+    /// Threads besides the stepping one: one fewer than the performance cores (METALRENDERER_PHYSICS_THREADS: all of
+    /// them, the stepping one included; 1: none, every stage on the stepping thread). Not the efficiency cores: a
+    /// stage waits for its slowest chunk, and theirs are slow (three buildings settling, on the M1 Max's 8 + 2: the
+    /// same broad and narrow phases with 8 threads as with 10, the contacts' colours faster, 27.5 → 26.4 ms a step).
     let workers: Int
     /// While false (tests, A/Bs), every stage runs on the calling thread, in chunk order.
     var enabled = true
@@ -38,6 +40,9 @@ final class PhysicsPool {
     /// The stage out: a run of chunks -> their items. Written before the ticket that publishes it, read only by a
     /// thread that claimed some of its chunks (so it never changes under one).
     private var stage: ((Range<Int>) -> Void)?
+    /// Whether a claim is one chunk (the stage's chunks wait on chunks before them: a thread's run of them would wait
+    /// on another's), not a share of what is left. Written before the ticket, as `stage` is.
+    private var single = false
     private let wake = DispatchSemaphore(value: 0)
 
     private static let mask = (1 << 24) - 1
@@ -46,7 +51,9 @@ final class PhysicsPool {
 
     private init() {
         let asked = Int(ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_THREADS"] ?? "") ?? 0
-        let all = asked > 0 ? asked : ProcessInfo.processInfo.activeProcessorCount
+        var performance: Int32 = 0, size = MemoryLayout<Int32>.size
+        if sysctlbyname("hw.perflevel0.physicalcpu", &performance, &size, nil, 0) != 0 { performance = 0 }
+        let all = asked > 0 ? asked : performance > 0 ? Int(performance) : ProcessInfo.processInfo.activeProcessorCount
         workers = max(min(all, 64) - 1, 0)
         words = UnsafeMutableRawPointer.allocate(byteCount: 4 * PhysicsPool.line * MemoryLayout<Int>.stride, alignment: 128)
             .bindMemory(to: Int.self, capacity: 4 * PhysicsPool.line)
@@ -78,8 +85,9 @@ final class PhysicsPool {
 
     /// Items `0..<count` in chunks of `grain`, `body` called with each chunk's range, on the workers and the calling
     /// thread, back when all are done. Inline (in chunk order) when there are no workers, outside `run`, for a
-    /// stage within a stage, or when it is a chunk or two.
-    func parallel(_ count: Int, grain: Int, _ body: (Range<Int>) -> Void) {
+    /// stage within a stage, or when it is a chunk or two. `single`: each claim is one chunk (the chunks are claimed
+    /// in order either way, and each thread runs a claim's in order: PhysicsWorld.eachColour's wait on those before).
+    func parallel(_ count: Int, grain: Int, single: Bool = false, _ body: (Range<Int>) -> Void) {
         guard count > 0 else { return }
         let chunks = (count + grain - 1) / grain
         guard chunks > 1, workers > 0, cpa_load(awake) != 0, cpa_cas(busy, 0, 1) else {
@@ -92,6 +100,7 @@ final class PhysicsPool {
         }
         withoutActuallyEscaping(body) { body in
             stage = { c in body(c.lowerBound * grain..<min(c.upperBound * grain, count)) }
+            self.single = single
             cpa_store(done, 0)
             let generation = ((cpa_load(ticket) >> 48) + 1) & 0xFFFF
             cpa_store(ticket, generation << 48 | chunks << 24)
@@ -135,7 +144,7 @@ final class PhysicsPool {
             let t = cpa_load(ticket)
             let next = t & PhysicsPool.mask, chunks = (t >> 24) & PhysicsPool.mask
             guard t >> 48 == generation, next < chunks else { return nil }
-            let take = max((chunks - next) / (4 * threads), 1)
+            let take = single ? 1 : max((chunks - next) / (4 * threads), 1)
             if cpa_cas(ticket, t, t + take) { return next..<(next + take) }
         }
     }
@@ -239,6 +248,59 @@ struct NarrowMemo {
                b.velocity.x.bitPattern, b.velocity.y.bitPattern, b.velocity.z.bitPattern,
                b.angular.x.bitPattern, b.angular.y.bitPattern, b.angular.z.bitPattern,
                b.invInertia.w.bitPattern, b.info.x, b.info.y)
+    }
+}
+
+/// A body's box in the world, as PhysicsWorld.boxGap works it out: its axes, and its centre (`box`: the shape's box's
+/// centre, in the body's space).
+struct PhysicsBoxFrame {
+    var x = SIMD3<Float>(), y = SIMD3<Float>(), z = SIMD3<Float>(), centre = SIMD3<Float>()
+
+    init() {}
+    @inline(__always) init(_ b: GPUPhysicsBody, _ box: SIMD4<Float>) {
+        x = PhysicsMath.qrot(b.rotation, [1, 0, 0])
+        y = PhysicsMath.qrot(b.rotation, [0, 1, 0])
+        z = PhysicsMath.qrot(b.rotation, [0, 0, 1])
+        centre = PhysicsMath.xyz(b.position) + PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(box))
+    }
+}
+
+/// The bodies' samples' world points (each its pose's toWorld), worked out once a narrow phase per body, by the first
+/// thread to want them (one wanting them meanwhile waits): a body is in a few pairs, and each pair worked them out
+/// again, the same points. (Three buildings settling: 2.3 million samples a step, a third of them near enough the
+/// other body to ask its distance.)
+struct SampleCache {
+    let starts: UnsafeBufferPointer<Int32>
+    let world: UnsafeMutablePointer<SIMD3<Float>>
+    let states: UnsafeMutablePointer<Int>
+    let epoch: Int
+
+    /// Record i's points (`b`: body i, or past the bodies a static).
+    @inline(__always) func points(_ i: Int, _ b: GPUPhysicsBody, _ shapes: PhysicsShapes) -> UnsafePointer<SIMD3<Float>> {
+        let base = world + Int(starts[i]), state = states + i, ready = 2 * epoch + 1, working = 2 * epoch
+        let seen = cpa_load(state)
+        if seen == ready { return UnsafePointer(base) }
+        if seen != working && cpa_cas(state, seen, working) {
+            let info = shapes.shapes[Int(b.info.x)].info, pose = PhysicsWorld.Pose(b)
+            for m in 0..<Int(info.z) { base[m] = pose.toWorld(PhysicsMath.xyz(shapes.samples[Int(info.y) + m])) }
+            cpa_store(state, ready)
+        } else {
+            while cpa_load(state) != ready { cpa_pause() }
+        }
+        return UnsafePointer(base)
+    }
+}
+
+extension PhysicsWorld {
+    /// `body` with the samples' world points lent (SampleCache), for a narrow phase.
+    func withSampleCache<R>(_ body: (SampleCache) throws -> R) rethrows -> R {
+        try sampleStarts.withUnsafeBufferPointer { starts in
+            try sampleWorld.withUnsafeMutableBufferPointer { world in
+                try sampleStates.withUnsafeMutableBufferPointer { states in
+                    try body(SampleCache(starts: starts, world: world.baseAddress!, states: states.baseAddress!, epoch: sampleEpoch))
+                }
+            }
+        }
     }
 }
 
