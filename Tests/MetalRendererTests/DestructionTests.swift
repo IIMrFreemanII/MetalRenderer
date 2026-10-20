@@ -203,8 +203,7 @@ final class DestructionTests: XCTestCase {
 
     // MARK: GPU
 
-    private static let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+    private static let shaders = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
     /// The massive setting's building through its demo on the GPU, a line every half second: the building's live and
     /// sleeping pieces, their speeds and kinetic energy, the heap's height and reach, pieces faded, bodies with full pair

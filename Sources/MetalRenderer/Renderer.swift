@@ -317,10 +317,11 @@ final class Renderer: NSObject {
     let queue: MTLCommandQueue
     private weak var surface: RenderSurface?
     private(set) var scene = Scene()
-    /// The shaders' entry file: next to this source file, or `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which
-    /// lets one binary run another copy of the shaders (an A/B of a shader change without a second build).
+    /// The shaders' entry file: at the top of the sources (`SourceTree.target`), or
+    /// `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which lets one binary run another copy of the shaders (an A/B
+    /// of a shader change without a second build).
     private let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
-        ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("Shaders.metal")
+        ?? SourceTree.target.appendingPathComponent("Shaders.metal")
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.

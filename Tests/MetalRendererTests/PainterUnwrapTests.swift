@@ -24,8 +24,7 @@ final class PainterUnwrapTests: XCTestCase {
         return PaintMesh(positions: c.positions, normals: c.normals, uvs: c.uvs, indices: c.indices)
     }
     private func model() throws -> PaintMesh {
-        let url = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Assets/fiery demon 3d model.glb")
+        let url = SourceTree.packageRoot.appendingPathComponent("Assets/fiery demon 3d model.glb")
         guard FileManager.default.fileExists(atPath: url.path), let m = try? GLTFLoader.load(url), let mesh = m.meshes.max(by: { $0.indices.count < $1.indices.count })
         else { throw XCTSkip("no \(url.lastPathComponent)") }
         return PaintMesh(positions: mesh.positions, normals: mesh.normals, uvs: mesh.uvs, indices: mesh.indices)

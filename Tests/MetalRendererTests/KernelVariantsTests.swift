@@ -5,8 +5,7 @@ import Metal
 /// Kernel variants (Pipelines.swift): a kernel with a configuration's flags compiled in. The flag words are made
 /// twice, in Swift for the variant's constants and in the shaders for the general pipeline, and must agree.
 final class KernelVariantsTests: XCTestCase {
-    private let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+    private let shaders = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
     /// `constant uint NAME = value` (also in a comma-separated list) in the shader source.
     private func shaderConstants() throws -> [String: UInt32] {

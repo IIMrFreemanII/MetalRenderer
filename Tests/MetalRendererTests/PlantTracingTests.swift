@@ -6,8 +6,7 @@ import simd
 /// The plants in Metal's structures (PlantTracing.swift): each plant names its assembly's variant for its phase bucket
 /// and the share of leaves it keeps, and plantWindKernel poses a variant's parts as the shading turns their points.
 final class PlantTracingTests: XCTestCase {
-    private static let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+    private static let shaders = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
     private func forest(trees: Int = 40) -> Scene {
         var settings = SceneSettings(kind: .forest)

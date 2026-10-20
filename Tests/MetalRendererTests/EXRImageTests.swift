@@ -5,8 +5,7 @@ import XCTest
 /// fixtures in Tools/test-assets/exr, which make.py there writes (with the library's Python package) together with
 /// the library's decodes.
 final class EXRImageTests: XCTestCase {
-    private static let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Tools/test-assets/exr")
+    private static let folder = SourceTree.packageRoot.appendingPathComponent("Tools/test-assets/exr")
     private static let width = 37, height = 41
     /// Each fixture image's channels, in name order (the order of the reference files).
     private static let images = ["color": ["A", "B", "G", "R", "Z", "id"], "gray": ["Y"], "floatrgb": ["B", "G", "R"]]

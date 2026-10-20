@@ -274,8 +274,7 @@ final class FoliageRuntimeTests: XCTestCase {
 
     /// The numbers the shaders and the Swift side each hold a copy of.
     func testTheShadersHoldTheSameNumbers() throws {
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders")
+        let folder = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders")
         func constant(_ name: String, in file: String) throws -> Float {
             let text = try String(contentsOf: folder.appendingPathComponent(file), encoding: .utf8)
             let regex = try NSRegularExpression(pattern: "constant +(?:float|uint) +\(name) *= *([0-9.]+)")
@@ -435,8 +434,7 @@ final class FoliageRuntimeTests: XCTestCase {
             XCTAssertLessThan(step, inside * 3 + bark.width * 4, kind.name)
         }
 
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders/Surface.metal")
+        let folder = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders/Surface.metal")
         XCTAssertTrue(try String(contentsOf: folder, encoding: .utf8).contains("GENERATED_TEXTURE_MEAN = \(FoliageTextures.mean)f"))
 
         let scene = forest(trees: 60), again = forest(trees: 60)

@@ -205,8 +205,7 @@ final class MuscleTests: XCTestCase {
 
     // MARK: GPU
 
-    private static let shaders = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+    private static let shaders = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
     private static var compiled: (device: MTLDevice, queue: MTLCommandQueue, pipelines: Pipelines)?
 
     private func metal() throws -> (device: MTLDevice, queue: MTLCommandQueue, pipelines: Pipelines) {

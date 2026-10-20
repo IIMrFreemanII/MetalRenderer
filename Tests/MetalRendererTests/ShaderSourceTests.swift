@@ -4,8 +4,7 @@ import Metal
 
 /// ShaderSource.swift: Shaders.metal lists the pieces in Shaders/, and the loader splices them in.
 final class ShaderSourceTests: XCTestCase {
-    private let entry = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-        .deletingLastPathComponent().appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
+    private let entry = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
     /// A scratch folder with an entry file and its pieces.
     private func scratch(entry text: String, pieces: [String: String]) throws -> URL {
