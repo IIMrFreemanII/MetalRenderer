@@ -461,9 +461,29 @@ enum SettingsTable {
             S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
             S.slider("Buildings", \.scene.destruction.buildings, DestructionSettings.buildingRange, live: false).env(.scene, "buildings")
                 .when { $0.scene.kind == .destruction && $0.scene.destruction.massive },
+            S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
+                .when { $0.scene.kind == .demolition },
+            S.slider("Office seed", \.scene.demolition.seed, DemolitionSettings.seedRange, live: false).env(.scene, "demseed")
+                .when { $0.scene.kind == .demolition },
+            S.slider("Width", \.scene.demolition.width, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "demwidth").when { $0.scene.kind == .demolition },
+            S.slider("Depth", \.scene.demolition.depth, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "demdepth").when { $0.scene.kind == .demolition },
+            S.slider("Pieces", \.scene.demolition.pieces, DemolitionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "dempieces").when { $0.scene.kind == .demolition },
+            S.slider("Toughness", \.scene.demolition.toughness, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "demtough").when { $0.scene.kind == .demolition },
+            S.slider("Weld strength", \.scene.demolition.strength, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "demstrength").when { $0.scene.kind == .demolition },
+            S.check("Furniture", \.scene.demolition.furniture).env(.scene, "demfurniture").when { $0.scene.kind == .demolition },
+            S.check("Window glass", \.scene.demolition.glass).env(.scene, "demglass").when { $0.scene.kind == .demolition },
+            S.check("Dust and debris", \.scene.demolition.dust).env(.scene, "demdust").when { $0.scene.kind == .demolition },
+            S.check("Small pieces fade", \.scene.demolition.fade).env(.scene, "demfade").when { $0.scene.kind == .demolition },
+            S.check("Scripted demo", \.scene.demolition.demo).env(.scene, "demdemo").when { $0.scene.kind == .demolition },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
-            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics")
+                .when { $0.scene.kind.simulates && $0.scene.kind != .demolition },
             S.check("CPU physics behind the frame", \.scene.physics.asynchronous).env(.scene, "physicsasync")
                 .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.check("CPU physics on every core", \.scene.physics.everyCore).env(.scene, "physicscores")
@@ -592,6 +612,19 @@ enum SettingsTable {
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
+            S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },
+            S.check("Material colours", \.solidLook.materials).env(.view, "solidmaterials").when { $0.solid && !$0.solidLook.classic },
+            S.slider("Object tint", \.solidLook.tint, SolidLook.tintRange, step: 0.01, fmt("%.2f")).env(.view, "solidtint")
+                .when { $0.solid && !$0.solidLook.classic },
+            S.check("Broken faces", \.solidLook.cutFaces).env(.view, "solidcut").when { $0.solid && !$0.solidLook.classic },
+            S.check("Outlines", \.solidLook.edges).env(.view, "solidedges").when { $0.solid && !$0.solidLook.classic },
+            S.slider("Outline width", \.solidLook.edgeWidth, SolidLook.edgeRange).env(.view, "solidedgewidth")
+                .when { $0.solid && !$0.solidLook.classic && $0.solidLook.edges },
+            S.check("Sun shadows", \.solidLook.shadows).env(.view, "solidshadows").when { $0.solid && !$0.solidLook.classic },
+            S.check("Ambient occlusion", \.solidLook.ao).env(.view, "solidao").when { $0.solid && !$0.solidLook.classic },
+            S.slider("AO rays", \.solidLook.aoRays, SolidLook.aoRayRange).env(.view, "solidaorays").when { $0.solid && !$0.solidLook.classic && $0.solidLook.ao },
+            S.slider("AO reach", \.solidLook.aoRadius, SolidLook.aoRadiusRange, step: 0.1, fmt("%.1f m")).env(.view, "solidaoradius")
+                .when { $0.solid && !$0.solidLook.classic && $0.solidLook.ao },
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
             S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),

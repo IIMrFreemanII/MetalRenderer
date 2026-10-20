@@ -21,6 +21,8 @@ protocol InputHandler: AnyObject {
     func otherMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>)
     func mouseMoved(at: SIMD2<Float>)
     func pressure(_ p: Float)
+    /// The mouse moved while it is captured (`RenderView.captured`): by how much (points), not where.
+    func mouseLook(dx: Float, dy: Float)
 }
 
 extension InputHandler {
@@ -31,6 +33,7 @@ extension InputHandler {
     func otherMouseDragged(dx: Float, dy: Float, at: SIMD2<Float>) {}
     func mouseMoved(at: SIMD2<Float>) {}
     func pressure(_ p: Float) {}
+    func mouseLook(dx: Float, dy: Float) {}
 }
 
 /// The window's view: its layer is the CAMetalLayer the render thread draws into (`surface`), and it forwards keyboard
@@ -98,6 +101,27 @@ final class RenderView: NSView {
         return true
     }
 
+    /// The mouse captured (the demolition scene's aim): the cursor hidden and held in the view's middle, its moves
+    /// sent as looks (InputHandler.mouseLook); clicks still come as clicks. Off: the cursor back where it was.
+    var captured = false {
+        didSet {
+            guard captured != oldValue else { return }
+            if captured {
+                NSCursor.hide()
+                if let window, let screen = window.screen ?? NSScreen.main {
+                    let mid = window.convertPoint(toScreen: convert(NSPoint(x: bounds.midX, y: bounds.midY), to: nil))
+                    // (Quartz's points: y down from the main screen's top.)
+                    let top = NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY
+                    CGWarpMouseCursorPosition(CGPoint(x: mid.x, y: top - mid.y))
+                }
+                CGAssociateMouseAndMouseCursorPosition(0)
+            } else {
+                CGAssociateMouseAndMouseCursorPosition(1)
+                NSCursor.unhide()
+            }
+        }
+    }
+
     override var acceptsFirstResponder: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -118,12 +142,14 @@ final class RenderView: NSView {
     }
     override func mouseUp(with event: NSEvent) { inputHandler?.mouseUp() }
     override func mouseDragged(with event: NSEvent) {
+        if captured { inputHandler?.mouseLook(dx: Float(event.deltaX), dy: Float(event.deltaY)); return }
         inputHandler?.pressure(event.subtype == .tabletPoint ? event.pressure : 1)
         inputHandler?.mouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
     }
     override func rightMouseDown(with event: NSEvent) { inputHandler?.rightMouseDown(at: cursor(event)) }
     override func rightMouseUp(with event: NSEvent) { inputHandler?.rightMouseUp() }
     override func rightMouseDragged(with event: NSEvent) {
+        if captured { inputHandler?.mouseLook(dx: Float(event.deltaX), dy: Float(event.deltaY)); return }
         inputHandler?.rightMouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event))
     }
     override func otherMouseDown(with event: NSEvent) {
@@ -132,7 +158,10 @@ final class RenderView: NSView {
     override func otherMouseDragged(with event: NSEvent) {
         if event.buttonNumber == 2 { inputHandler?.otherMouseDragged(dx: Float(event.deltaX), dy: Float(event.deltaY), at: cursor(event)) }
     }
-    override func mouseMoved(with event: NSEvent) { inputHandler?.mouseMoved(at: cursor(event)) }
+    override func mouseMoved(with event: NSEvent) {
+        if captured { inputHandler?.mouseLook(dx: Float(event.deltaX), dy: Float(event.deltaY)); return }
+        inputHandler?.mouseMoved(at: cursor(event))
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let moves { removeTrackingArea(moves) }

@@ -24,15 +24,7 @@ kernel void pickKernel(constant Uniforms&         u          [[buffer(0)]],
     Hit h = intersectClosest(r, MASK_ALL, accel);
     if (!h.hit) { out[0] = float4(-1.0f); return; }
     InstanceData inst = instanceRecord(s.instances, h.instance);
-    uint material = inst.materialIndex;
-    if (SDF_SHAPES && h.part == HIT_SDF) {
-        material += h.primitive;
-    } else if (!(VOXELS && h.part == HIT_VOXEL) && !(HAIR_CURVES && h.part == HIT_CURVE)) {
-        HitVertices hv = fetchHitVertices(h, inst, accel, s);
-        if (hv.leaf) material += 1u;
-        if (MULTI_MATERIAL && hv.triangle != ~0u) material += s.triangleMaterials[hv.triangle];
-        if (STREAMED) material += hv.material;
-    }
+    uint material = hitMaterialIndex(h, inst, accel, s);
     Surface sf = surfaceFromHit(h, r, accel, s, 0.0f, false);
     out[0] = float4(float(h.instance), float(material), h.distance, 1.0f);
     out[1] = float4(sf.albedo, 0.0f);

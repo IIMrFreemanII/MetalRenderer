@@ -48,6 +48,7 @@ extension Scene {
         let tree = FractureTree(recipe: recipe, cell: cell, inside: convex ? nil : { shape.distance($0, volumes: volumes).d })
         // Each node's shape: the object's, then its cell's cuts (outer faces are the object's own).
         let offset = interior - material
+        if offset > 0 { markCutFace(interior) }
         var shapes: [SDFShape] = []
         for (k, node) in tree.nodes.enumerated() {
             guard k > 0 else { shapes.append(shape); continue }
@@ -118,7 +119,9 @@ extension Scene {
         // Its materials, a grey for parts without one, then the inside's.
         let firstMaterial = addModelMaterials(model, url: url)
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7]) - firstMaterial
-        let inside = addPBRMaterial(baseColor: interior, metallic: 0, roughness: 0.9) - firstMaterial
+        let insideMaterial = addPBRMaterial(baseColor: interior, metallic: 0, roughness: 0.9)
+        markCutFace(insideMaterial)
+        let inside = insideMaterial - firstMaterial
         precondition(inside < 256, "\(name): more materials than a triangle's offset holds")
         // Its parts in one mesh, in model space.
         var merged = MeshCutter.Mesh()

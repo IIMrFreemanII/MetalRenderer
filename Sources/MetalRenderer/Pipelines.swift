@@ -5,7 +5,8 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 enum Kernel: Int, CaseIterable {
     case trace, glass, liquid, liquidApply, geometryDebug, lightMap
-    case solid                  // solid shading: the whole frame (RenderSettings.solid, Output.metal)
+    case solid                  // solid shading: the whole frame (RenderSettings.solid, Output.metal), the classic look
+    case solidTrace, solidResolve   // ...the look that tells things apart (RenderSettings.solidLook): its rays, then its picture
     case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
     case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
     case waterNear              // the near patch's vertices, moved by the waves
@@ -64,7 +65,7 @@ enum Kernel: Int, CaseIterable {
         case .restirSpatial: return F.specular
         case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
-        case .rcProbe, .rcTraceMerge, .lightMap, .solid: return F.wind
+        case .rcProbe, .rcTraceMerge, .lightMap, .solid, .solidTrace: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
         }

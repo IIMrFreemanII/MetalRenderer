@@ -6,6 +6,8 @@ import simd
 /// numbers (Fracture/FractureTree.swift, Physics+Fracture.swift).
 enum FractureMaterial: Int, Codable, CaseIterable {
     case concrete, stone, brick, glass, wood
+    /// The demolition scene's partitions (plasterboard on studs) and its steel furniture (cabinets, desks' frames).
+    case plaster, metal
 
     var title: String {
         switch self {
@@ -14,6 +16,8 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return "Brick"
         case .glass: return "Glass"
         case .wood: return "Wood"
+        case .plaster: return "Plaster"
+        case .metal: return "Metal"
         }
     }
 
@@ -25,6 +29,8 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return 1100
         case .glass: return 1600
         case .wood: return 550
+        case .plaster: return 700
+        case .metal: return 1800
         }
     }
 
@@ -36,6 +42,8 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return 300
         case .glass: return 45
         case .wood: return 260
+        case .plaster: return 120
+        case .metal: return 700
         }
     }
 
@@ -47,6 +55,8 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return 4
         case .glass: return 1.2
         case .wood: return 6
+        case .plaster: return 3
+        case .metal: return 8
         }
     }
 
@@ -58,6 +68,8 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return 2e6
         case .glass: return 1.5e6
         case .wood: return 5e6
+        case .plaster: return 8e5
+        case .metal: return 8e6
         }
     }
 
@@ -72,13 +84,15 @@ enum FractureMaterial: Int, Codable, CaseIterable {
         case .brick: return ([0.45, 0.2, 0.12], 0.9)
         case .glass: return ([0.8, 0.85, 0.9], 0)
         case .wood: return ([0.4, 0.3, 0.2], 0.35)
+        case .plaster: return ([0.72, 0.7, 0.66], 1.2)
+        case .metal: return ([0.4, 0.42, 0.45], 0)
         }
     }
 
     /// The pattern it breaks in, by default.
     var pattern: FracturePattern {
         switch self {
-        case .concrete, .stone: return .voronoi
+        case .concrete, .stone, .plaster, .metal: return .voronoi
         case .brick: return .bricks
         case .glass: return .radial
         case .wood: return .splinters
@@ -137,6 +151,7 @@ struct FractureRecipe: Codable, Equatable {
         case .brick: return FractureRecipe(material: material, pattern: .bricks, counts: [0, 2])
         case .glass: return FractureRecipe(material: material, pattern: .radial, counts: [12, 2], jitter: 0.5)
         case .wood: return FractureRecipe(material: material, pattern: .splinters, counts: [3, 5])
+        case .plaster, .metal: return FractureRecipe(material: material, pattern: .voronoi, counts: [6, 3])
         }
     }
 

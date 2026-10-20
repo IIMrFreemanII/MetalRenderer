@@ -676,7 +676,7 @@ extension PhysicsWorld {
     /// those it shares a body with has (at most 31: a pair shares its bodies with 30 others at most). What
     /// `maxRounds` rounds leave (pad = `leftover`) is solved one pair after another, after the colours.
     private func colourPairs() {
-        let k = PhysicsWorld.maxPairs, entries = pairs.count, n = bodies.count, fractured = fractures
+        let k = PhysicsWorld.maxPairs, entries = pairs.count, n = bodies.count, fractured = fractures, idleWelds = self.idleWelds
         let held = grab.target.w > 0 ? grab.body : PhysicsWorld.none
         var left: [Int32] = [], oneSided: [Int32] = []
         var won = [UInt8](repeating: 0, count: entries)
@@ -692,7 +692,7 @@ extension PhysicsWorld {
                             let e = i * k + m, mark = s.pairs[e].pad
                             s.pairs[e].pad = PhysicsWorld.none
                             guard m < count && s.pairs[e].link == UInt32(e) && s.pairs[e].contacts > 0 else { continue }
-                            if fractured && PhysicsWorld.idle(s, e, held: held) { s.pairs[e].pad = PhysicsWorld.idlePair; continue }
+                            if fractured && PhysicsWorld.idle(s, e, held: held, welds: idleWelds) { s.pairs[e].pad = PhysicsWorld.idlePair; continue }
                             if mark == PhysicsWorld.oneSided {
                                 s.pairs[e].pad = PhysicsWorld.leftover
                                 kind[e] = 2
@@ -881,9 +881,11 @@ extension PhysicsWorld {
     /// kinematic, static; the held one, which its first substep wakes, moves), not a weld (it counts its load): its
     /// contacts push and kick nothing, so it takes no colour and isn't solved. A sleeping heap's pairs took colours,
     /// and each colour is a stage a substep.
-    @inline(__always) static func idle(_ s: StepBuffers, _ e: Int, held: UInt32) -> Bool {
+    /// With `welds` (PhysicsWorld.idleWelds), a weld's pair too: one between two bodies that don't move does nothing
+    /// (solveWeld, kickFracturePair pass it by) and needn't take a colour.
+    @inline(__always) static func idle(_ s: StepBuffers, _ e: Int, held: UInt32, welds: Bool) -> Bool {
         let i = e / maxPairs, code = s.pairs[e].partner
-        if moves(s.bodies[i]) || UInt32(i) == held || s.contacts[e * maxContacts].lambda.w == 1 { return false }
+        if moves(s.bodies[i]) || UInt32(i) == held || (!welds && s.contacts[e * maxContacts].lambda.w == 1) { return false }
         return code & staticBit != 0 || !(moves(s.bodies[Int(code)]) || code == held)
     }
 

@@ -39,6 +39,15 @@ extension PhysicsWorld {
         case wake
         /// Body `info.z` freed from its anchor.
         case release
+        /// A bullet (the CPU's only, as the three after it: Physics+Demolition.swift): body `info.z` hit at `origin`
+        /// along `direction`, an impulse of `direction.w` (N s), and enough impact to break it a level.
+        case hit
+        /// Rocket `info.z` (a disabled ball with the fuse flag) sent from `origin` along `direction` at its speed, to
+        /// go off where it meets something: a blast of radius `origin.w`.
+        case rocket
+        /// The walker's input from this step on: `direction.xz` its speed over the ground (m/s), `direction.y` a jump's
+        /// speed (once), `info.z` DemolitionState.Drive flags, `origin` where to put it (a teleport).
+        case drive
     }
 
     /// GPUFractureNode.info.w flags.
@@ -182,6 +191,18 @@ extension PhysicsWorld {
         }
     }
 
+    /// A weld between bodies `a` and `b` (pieces of two objects that touch: the demolition scene's slab's panels), of
+    /// `area` (m^2) about `centre` (the world), holding `sigma` x that (N), as an object's own welds are. Before `finish`.
+    func addWeld(_ a: Int, _ b: Int, centre: SIMD3<Float>, area: Float, sigma: Float) {
+        let x = bodies[a], y = bodies[b]
+        var weld = GPUFractureWeld()
+        weld.anchorA = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(x.rotation), centre - PhysicsMath.xyz(x.position)), sigma * area)
+        weld.anchorB = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(y.rotation), centre - PhysicsMath.xyz(y.position)), (area / .pi).squareRoot())
+        weld.rest = PhysicsMath.qnormalize(PhysicsMath.qmul(PhysicsMath.qconj(x.rotation), y.rotation))
+        weld.info = SIMD4(UInt32(a), UInt32(b), 0, 0)
+        welds.append(weld)
+    }
+
     /// The Fracture Editor's preview of fractured object `tree` (its root body `first`): its pieces at `level` (and
     /// leaves above it) enabled, held where they are moved apart from its middle by `explode` x their distance, asleep;
     /// the rest disabled. Before `finish`.
@@ -216,8 +237,47 @@ extension PhysicsWorld {
                  magnitude: Float = 0, at step: Int? = nil, steps: Int = 1) -> GPUFractureCommand {
         let c = GPUFractureCommand(info: SIMD4(UInt32(step ?? stepIndex), kind.rawValue, UInt32(body), UInt32(max(steps, 1))),
                                    origin: SIMD4(origin, radius), direction: SIMD4(direction, magnitude))
-        fractureCommands.append(c)
+        add(c)
         return c
+    }
+
+    /// Command `c` kept (its start step `PhysicsWorld.none`: the next one to run), and indexed by its start.
+    func add(_ c: GPUFractureCommand) {
+        var c = c
+        if c.info.x == PhysicsWorld.none { c.info.x = UInt32(stepIndex) }
+        let index = Int32(fractureCommands.count)
+        fractureCommands.append(c)
+        longestCommand = max(longestCommand, c.info.w)
+        // After every command that starts no later (those of a step stay in the order they came).
+        var lo = 0, hi = commandOrder.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if fractureCommands[Int(commandOrder[mid])].info.x <= c.info.x { lo = mid + 1 } else { hi = mid }
+        }
+        commandOrder.insert(index, at: lo)
+    }
+
+    /// The commands live at step `clock` (`liveCommands`), in the order they were added: those that start in the
+    /// window a command lasts at most, found by their start.
+    private func findLiveCommands(_ clock: UInt32) {
+        liveCommands.removeAll(keepingCapacity: true)
+        let low = clock >= longestCommand ? clock - longestCommand + 1 : 0
+        commandOrder.withUnsafeBufferPointer { order in
+            fractureCommands.withUnsafeBufferPointer { all in
+                var lo = 0, hi = order.count
+                while lo < hi {
+                    let mid = (lo + hi) / 2
+                    if all[Int(order[mid])].info.x < low { lo = mid + 1 } else { hi = mid }
+                }
+                var k = lo
+                while k < order.count, all[Int(order[k])].info.x <= clock {
+                    let c = all[Int(order[k])]
+                    if clock < c.info.x + c.info.w { liveCommands.append(order[k]) }
+                    k += 1
+                }
+            }
+        }
+        liveCommands.sort()
     }
 
     static let maxCommands = 1024
@@ -227,7 +287,9 @@ extension PhysicsWorld {
     /// The step's commands (PhysicsCPU.step's first stage; MSL physicsFractureCommandKernel).
     func beginFractureStep() {
         let clock = UInt32(stepIndex)
-        for c in fractureCommands where c.info.x <= clock && clock < c.info.x + c.info.w {
+        findLiveCommands(clock)
+        for k in liveCommands.indices {
+            let c = fractureCommands[Int(liveCommands[k])]
             switch FractureCommand(rawValue: c.info.y) {
             case .shoot:
                 let i = Int(c.info.z)
@@ -244,9 +306,13 @@ extension PhysicsWorld {
                 let i = Int(c.info.z)
                 guard bodies.indices.contains(i) else { continue }
                 PhysicsWorld.free(&bodies[i], fractureNodes[i])
+            case .hit: hitBody(c)
+            case .rocket: launchRocket(c, clock: clock)
+            case .drive: demolition.walker.take(c, clock: clock)
             case nil: continue
             }
         }
+        if demolition.active { beginDemolitionStep(clock) }   // the rockets' fuses, the blasts they set off, the walker
         for i in bodies.indices where bodies[i].info.y & PhysicsWorld.pieceBit == 0 {
             PhysicsWorld.startProjectile(bodies[i], &fractureState[i])
         }
@@ -321,7 +387,7 @@ extension PhysicsWorld {
             let push = PhysicsWorld.contactPush(contact, a, b, h: h)
             s.contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
             guard push.lambda > 0 else { continue }
-            if -push.speed > PhysicsWorld.impactSpeed {   // an impact, not a rest or a slide
+            if -push.speed > PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0 {   // an impact, not a rest, a slide or the walker's step
                 let impulse = push.lambda / h, point = PhysicsWorld.points(contact, a, b).pa, n = PhysicsMath.xyz(contact.normal)
                 if a.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&s.fractureState[i], point, n, impulse) }
                 if dynamic && b.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&s.fractureState[Int(code)], point, -n, impulse) }
@@ -344,7 +410,8 @@ extension PhysicsWorld {
         for c in 0..<Int(s.pairs[e].contacts) {
             let contact = s.contacts[e * PhysicsWorld.maxContacts + c]
             guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { continue }
-            if contact.lambda.y < -PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.pieceBit != 0 {
+            if contact.lambda.y < -PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.pieceBit != 0
+                && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0 {
                 let n = PhysicsMath.xyz(contact.normal), impulse = max(dot(kick.impulse, n), 0)
                 if impulse > 0 {
                     let point = PhysicsWorld.points(contact, a, b).pa
@@ -493,7 +560,7 @@ extension PhysicsWorld {
     }
 
     /// Every weld of body `i` broken (it came free).
-    private func breakWelds(_ i: Int) {
+    func breakWelds(_ i: Int) {
         for k in Int(weldStarts[i])..<Int(weldStarts[i + 1]) { welds[Int(weldList[k].y)].info.z = 1 }
     }
 

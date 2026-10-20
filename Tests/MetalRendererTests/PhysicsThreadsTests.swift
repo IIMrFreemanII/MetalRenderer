@@ -39,6 +39,7 @@ final class PhysicsThreadsTests: XCTestCase {
             ("fluids", 2, scene(.fluids)),
             ("destruction", 10, scene(.destruction)),
             ("massive", 8, scene(.destruction) { $0.destruction.massive = true; $0.destruction.statues = false }),
+            ("demolition", 12, scene(.demolition) { $0.demolition.demo = true; $0.demolition.dust = false }),
             ("3 buildings", 7, scene(.destruction) {
                 $0.destruction.massive = true; $0.destruction.statues = false; $0.destruction.buildings = 3
             }),
@@ -48,7 +49,7 @@ final class PhysicsThreadsTests: XCTestCase {
     /// Each physics scene's world stepped on one thread and on all of them: the same state, bit for bit.
     func testOneThreadAndAllAgree() throws {
         let short: [String: Float] = ["physics": 1.5, "ragdolls": 1.5, "hair": 1, "soft bodies": 1, "muscles": 0.5,
-                                      "fluids": 0.5, "destruction": 5, "massive": 6.5, "3 buildings": 4]
+                                      "fluids": 0.5, "destruction": 5, "massive": 6.5, "3 buildings": 4, "demolition": 8]
         for world in PhysicsThreadsTests.worlds {
             let seconds = short[world.name] ?? 1
             var digests: [UInt64] = []

@@ -251,6 +251,8 @@ final class Scene {
     static let maskVoxels: UInt32 = 8
     /// A liquid's surface (FluidSurface.swift): only liquidKernel's rays meet it, which bend the camera's through it.
     static let maskLiquid: UInt32 = 32
+    /// An effect's glowing shape (the demolition scene's fireballs): camera rays meet it, shadow and GI rays don't.
+    static let maskEffect: UInt32 = 64
     /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0). No ray's
     /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
@@ -517,6 +519,17 @@ final class Scene {
     private(set) var physics: PhysicsWorld?
     /// The destruction scene's shots (Scene+Destruction.swift), if it is that scene.
     var destructionRig: DestructionRig?
+    /// The demolition scene's tools (Scene+Demolition.swift), if it is that scene.
+    var demolitionRig: DemolitionRig?
+    /// Per material, what the solid look should know of it (Scene.cutFace): a fractured object's broken inside.
+    private(set) var materialFlags: [UInt8] = []
+    static let cutFace: UInt8 = 1
+
+    /// Material `m` is a fractured object's broken inside (the solid look draws it darker and warmer).
+    func markCutFace(_ m: Int) {
+        if materialFlags.count <= m { materialFlags.append(contentsOf: repeatElement(0, count: m + 1 - materialFlags.count)) }
+        materialFlags[m] |= Scene.cutFace
+    }
     private(set) var physicsOnGPU = false
     /// The GPU's: the steps `update` asked for since the renderer last took them, and whether from the start.
     private var physicsPending = (steps: 0, restart: false)
@@ -632,6 +645,7 @@ final class Scene {
         case .painter: buildPainterWorkshop()
         case .terrain: buildTerrainWorkshop()
         case .destruction: buildDestruction(settings.destruction)
+        case .demolition: buildDemolition(settings.demolition)
         }
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
@@ -789,10 +803,13 @@ final class Scene {
                 stepper.request(to: t)
                 if physicsTime == t { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
                 physicsTime = t
-                placeBodies(stepper.latest)
+                let drawn = stepper.latest
+                placeBodies(drawn)
+                if demolitionRig != nil { placeDemolition(drawn.bodies, drawn.demolition, step: drawn.stepIndex) }
             } else {
                 physics.advance(to: t)
                 placeBodies()
+                if demolitionRig != nil { placeDemolition(physics.bodies, physics.demolition, step: physics.stepIndex) }
             }
         }
         if let particles {
@@ -856,6 +873,12 @@ final class Scene {
         set {
             if let physicsStepper { physicsStepper.grab = newValue } else { physics?.grab = newValue }
         }
+    }
+
+    /// Command `c` for the world's next steps (its start step PhysicsWorld.none: where they begin), without waiting
+    /// for the steps a stepper is running (PhysicsStepper.command).
+    func physicsCommand(_ c: GPUFractureCommand) {
+        if let physicsStepper { physicsStepper.command(c) } else { physics?.add(c) }
     }
 
     /// `body` with the world, once the steps asked for are done when a stepper runs them (a pick, a command: they
@@ -966,7 +989,7 @@ final class Scene {
         return taken
     }
 
-    private func setTransform(_ i: Int, _ transform: float4x4) {
+    func setTransform(_ i: Int, _ transform: float4x4) {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }

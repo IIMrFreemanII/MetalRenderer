@@ -545,6 +545,9 @@ final class PhysicsStepper {
         var breakLog: [GPUBreakEvent]
         var breakSteps: [Int]
         var breakTotal: Int
+        /// The rockets, the fireballs, the walker (PhysicsWorld.demolition), and the step these are before.
+        var demolition: DemolitionState
+        var stepIndex: Int
 
         init(_ w: PhysicsWorld) {
             bodies = w.bodies
@@ -554,6 +557,8 @@ final class PhysicsStepper {
             breakLog = w.breakLog
             breakSteps = w.breakSteps
             breakTotal = w.breakTotal
+            demolition = w.demolition
+            stepIndex = w.stepIndex
         }
     }
 
@@ -563,7 +568,10 @@ final class PhysicsStepper {
     var grab: GPUPhysicsGrab
 
     private let condition = NSCondition()
-    private var times: [(time: Float, grab: GPUPhysicsGrab)] = []   // asked for, not begun
+    private var times: [(time: Float, grab: GPUPhysicsGrab, commands: [GPUFractureCommand])] = []   // asked for, not begun
+    /// Commands for the next frame's steps (Scene.physicsCommand), sent with them: each kept at the step the world is
+    /// at when they begin (as one given to the world between frames is), without the frame waiting for its steps.
+    private var commands: [GPUFractureCommand] = []
     private var busy = false
     private var stopping = false
     private var drawn: Drawn
@@ -588,8 +596,16 @@ final class PhysicsStepper {
     func request(to time: Float) {
         condition.lock()
         while times.count >= PhysicsStepper.queued && !stopping { condition.wait() }
-        times.append((time, grab))
+        times.append((time, grab, commands))
+        commands.removeAll()
         condition.broadcast()
+        condition.unlock()
+    }
+
+    /// Command `c` (its start step PhysicsWorld.none: the step its frame's steps begin at) sent with the next frame's.
+    func command(_ c: GPUFractureCommand) {
+        condition.lock()
+        commands.append(c)
         condition.unlock()
     }
 
@@ -638,6 +654,7 @@ final class PhysicsStepper {
             condition.broadcast()   // (room for another frame's)
             condition.unlock()
             world.grab = next.grab
+            for c in next.commands { world.add(c) }
             world.advance(to: next.time)
             let now = Drawn(world)
             condition.lock()

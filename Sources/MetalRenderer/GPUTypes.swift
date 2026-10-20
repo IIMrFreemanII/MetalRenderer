@@ -441,6 +441,14 @@ struct GPUFractureWeld {
 }
 
 /// A fractured body's step: what hit it, and what the step's end makes of it. MSL PhysicsFractureState.
+/// Solid shading's look (RenderSettings.solidLook): MSL SolidParams (Shaders/Output.metal).
+struct GPUSolidParams {
+    var sun: SIMD4<Float>     // xyz: toward the sun when the scene has none; w: shadows (1 / 0)
+    var look: SIMD4<Float>    // x: each object's tint, y: broken faces (1 / 0), z: AO's reach (m), w: AO rays (0: none)
+    var edges: SIMD4<Float>   // x: outlines (1 / 0), y: their width (pixels), z: material colours (1 / 0)
+    var info: SIMD4<UInt32>   // x: how many materials the flags buffer has
+}
+
 struct GPUFractureState {
     var strain = SIMD4<Float>()              // x = this step's impacts (N s), y = how long it has lain still (s), z = what
                                              // it took over from its parent's break (N s), w = the step's verdict

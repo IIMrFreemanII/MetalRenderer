@@ -25,6 +25,7 @@ struct SourceIndex: Equatable {
         .buildings: "buildBuildingWorkshop", .characters: "buildCharacterWorkshop", .materials: "buildMaterialWorkshop",
         .mireland: "buildMireland", .painter: "buildPainterWorkshop", .terrain: "buildTerrainWorkshop",
         .destruction: "buildDestruction",
+        .demolition: "buildDemolition",
     ]
 
     /// The types each system is.

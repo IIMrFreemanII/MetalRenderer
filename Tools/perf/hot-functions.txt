@@ -60,4 +60,11 @@ static PhysicsWorld.rubbleStirs(_:_:rubble:below:_:)
 static PhysicsWorld.rubble(_:_:)
 static PhysicsWorld.near(_:_:_:)
 static PhysicsWorld.motion(_:_:_:)
-static PhysicsWorld.idle(_:_:held:)
+static PhysicsWorld.idle(_:_:held:welds:)
+
+# The demolition scene's per-step loops (Physics+Demolition.swift): serial,
+# once a step, over every body (a blast, a rocket's look ahead, what is near the walker) or those near the walker.
+static PhysicsWorld.gather(_:around:reach:skip:into:)
+static PhysicsWorld.inside(_:_:_:_:by:)
+static PhysicsWorld.nearest(_:_:list:_:_:length:skipping:)
+static PhysicsWorld.blastAll(_:_:_:_:)

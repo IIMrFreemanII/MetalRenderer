@@ -616,6 +616,11 @@ final class Renderer: NSObject {
     private var upscalerReset = true          // drop the upscaler's history on the next frame
     private var interpolator: FrameInterpolator?   // MetalFX's frame interpolator, while upscaling with it on
     private var interpolating = false         // the last frame presented an in-between picture (Auto's switch)
+    /// The solid look's targets (its colour and sun, its normal, depth and AO, its objects' ids: solidTraceKernel's)
+    /// while it is on, and the scene's material flags (Scene.materialFlags) as the kernel reads them.
+    var solidTargetsStore: [MTLTexture] = []
+    var solidFlagsStore: MTLBuffer?
+    var solidFlagsCopyStore: [UInt8] = []
     /// Presents interpolated frames' pictures once they are done (FrameInterpolator.Presenter): the window's layer only.
     private lazy var presenter = (surface as? LayerSurface).flatMap { FrameInterpolator.Presenter(device: device, layer: $0.layer) }
     /// The GPU's time a frame, smoothed: Auto's switch and how long each picture is held. Not the time between frames,
@@ -670,12 +675,12 @@ final class Renderer: NSObject {
     /// This project's denoisers (SVGF, the shadow denoiser) are on.
     private var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     private var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
-    private var heldKeys = Set<String>()
+    var heldKeys = Set<String>()
     /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
     private static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
     /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).
     private static let arrowTurnSpeed: Float = 400
-    private var shiftHeld = false
+    var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     private var holding: (cursor: SIMD2<Float>, depth: Float)?
     /// What the camera turns about (the scene view's pivot, `pivot`): the point it looks at, and how far it is from it.
@@ -691,7 +696,7 @@ final class Renderer: NSObject {
     /// The left button looks around: pressed on nothing that took the press (a stroke, a handle, a body).
     private var leftLook = false
     /// A button that looks around is held: W A S D Q E fly, the scroll wheel sets their speed.
-    private var lookHeld: Bool { rightHeld || leftLook }
+    private var lookHeld: Bool { rightHeld || leftLook || demolition.captured }
     private var commandHeld = false
     /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
     private var walker: Walker?
@@ -709,6 +714,8 @@ final class Renderer: NSObject {
     private var pickArmed = false
     /// The destruction scene's tool (Renderer+Destruction.swift).
     var destructionTool = DestructionTool.grab
+    /// The demolition scene's player: its tool, its captured look, its walking (Renderer+Demolition.swift).
+    var demolition = DemolitionPlayer()
     private var pickRequest: SIMD2<Float>?
     private var pickPending: Int?
     private var pickBuffer: MTLBuffer?
@@ -1098,7 +1105,8 @@ final class Renderer: NSObject {
         if let physics = scene.physics {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
             // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
-            let onGPU = scene.settings.kind.simulates
+            // (The demolition scene's rockets and walker are the CPU's step's alone: Physics+Demolition.swift.)
+            let onGPU = scene.settings.kind.simulates && scene.settings.kind != .demolition
                 && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
                                                     fractures: physics.fractures)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
@@ -1117,7 +1125,8 @@ final class Renderer: NSObject {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
             cpuBreakRing = nil
-            if let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty, scene.physics?.fractures == true {
+            if let proxies = scene.destructionRig?.dustProxies ?? scene.demolitionRig?.dustProxies, !proxies.isEmpty,
+               scene.physics?.fractures == true {
                 if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true {
                     particlesGPU?.breakRing = ring
                 } else {
@@ -2280,6 +2289,7 @@ final class Renderer: NSObject {
     private func updateCamera(dt: Float) {
         turnByArrows(dt)
         if flight != nil { fly(); return }
+        if updateDemolition(dt) { return }
         if walker != nil {
             walk(dt)
             return
@@ -3578,11 +3588,27 @@ final class Renderer: NSObject {
             var drawable = nextOutput(plan, surface: surface)
             let drawableWait = CACurrentMediaTime() - drawableStart
             if let d = drawable, d.texture.width != size.outWidth || d.texture.height != size.outHeight { drawable = nil }
-            if let drawable, let enc = passes.compute("solid") {
+            if let drawable, settings.solidLook.classic, let enc = passes.compute("solid") {
                 bind(enc, .solid, c.uniforms, sceneSlot: plan.slot)
                 enc.setTexture(drawable.texture, index: 0)
                 dispatch(enc, .solid, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
+            } else if let drawable, let targets = solidTargets(width: size.outWidth, height: size.outHeight) {
+                var params = solidParams()
+                let flags = solidFlagBuffer()
+                if let enc = passes.compute("solid") {
+                    bind(enc, .solidTrace, c.uniforms, sceneSlot: plan.slot)
+                    enc.setBytes(&params, length: MemoryLayout<GPUSolidParams>.stride, index: 9)
+                    enc.setBuffer(flags, offset: 0, index: 10)
+                    for (k, t) in targets.enumerated() { enc.setTexture(t, index: k) }
+                    dispatch(enc, .solidTrace, width: size.outWidth, height: size.outHeight)
+                    bind(enc, .solidResolve, c.uniforms)
+                    enc.setBytes(&params, length: MemoryLayout<GPUSolidParams>.stride, index: 9)
+                    for (k, t) in targets.enumerated() { enc.setTexture(t, index: k) }
+                    enc.setTexture(drawable.texture, index: 3)
+                    dispatch(enc, .solidResolve, width: size.outWidth, height: size.outHeight)
+                    passes.endCompute()
+                }
             }
             interpolator?.advance(kept: false)
             interpolating = false
@@ -5005,6 +5031,7 @@ final class Renderer: NSObject {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
+        status.demolition = demolitionStatus
         status.destruction = scene.settings.kind == .destruction
             ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
         status.cameraPosition = camera.position
@@ -5209,6 +5236,7 @@ final class Renderer: NSObject {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     func keyDown(_ key: String, isRepeat: Bool) {
+        if demolitionKey(key, isRepeat: isRepeat) { return }
         if key == "v" && !isRepeat { toggleWalk(); return }
         if let w = walker {
             switch key {
@@ -5294,6 +5322,7 @@ final class Renderer: NSObject {
     // Walking: a drag looks, a click uses.
 
     func mouseDown(at cursor: SIMD2<Float>) {
+        if demolitionMouseDown() { return }
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
         // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
@@ -5355,6 +5384,7 @@ final class Renderer: NSObject {
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
+        demolition.firing = false
         if paintMouseUp() { return }
         if terrainMouseUp() { return }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
@@ -5384,6 +5414,7 @@ final class Renderer: NSObject {
     /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
     /// paint mode the camera turns about the object.
     func rightMouseDown(at cursor: SIMD2<Float>) {
+        if demolition.captured { detonateCharges(); return }
         if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
         rightHeld = true
         rightDrag = walker == nil && optionHeld ? .dolly : .look
