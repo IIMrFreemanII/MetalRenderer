@@ -129,3 +129,54 @@ Next:
 - an indirect command buffer that the GPU writes with only the colours there are;
 - the narrow phase's refresh passes, about 3 ms each mostly in launching 170,000 empty entries: run them over the
   coloured pairs only.
+
+## Fast settling: Automatic on the CPU, CPU dust (branch `claude/fast-settling`)
+
+A window test (Oct 19, solid shading) found the GPU's steps slow while a heap settles. The massive building settling
+drew at 16 to 23 fps (GPU frame 33 to 50 ms) with the GPU's steps, and at 120 fps (9 ms) with the CPU's. Automatic
+had picked the GPU (64 bodies or more).
+
+The GPU's settling step, three buildings at 12 s, each part timed alone in turn on a real step (a temporary probe
+test with `encodeProbe`, since removed):
+- broad phase 4.1 ms;
+- first narrow phase 2.1 ms;
+- each of the three refreshes 1.6 ms;
+- colouring 1.8 ms;
+- each run of 4 substeps 3.8 to 4.6 ms.
+
+A run of substeps is about 140 dependent dispatches at about 20 µs each, and most of that is one pair's chain of
+memory reads and writes, not dispatch overhead.
+
+Tried and dropped (numbers on the same state):
+- **The runs in one dispatch (`physicsGridSubstepsKernel`):** 8 threadgroups with a device-wide barrier. 4.5 ms
+  against 2.1 by dispatches.
+  - Polling a plain `atomic_load` never saw the other threadgroups (a stale per-core copy); a read-modify-write
+    poll (`fetch_add 0`) does.
+  - Plain data written by other threadgroups read stale past 8 groups, unless the buffers were `coherent(device)`.
+  - Standalone barrier test: 2 µs a sync. The kernel was not committed.
+- **Every colour in the tail threadgroup:** 5.1 ms.
+- **The wide split:**
+  - 14/8: 1.9 ms on three buildings, but more empty dispatches made the courtyard and the massive building slower.
+  - 4/1: 3.3 ms; 2/0: 4.1 ms.
+- An indirect command buffer with only the non-empty colours would help the small worlds. It's untried.
+
+Done:
+- **Automatic → CPU for any world with fractured objects** (`PhysicsSettings.runsOnGPU(bodies:fractures:)`).
+  - `destructioncpu` (M1 Max), CPU step against GPU physics pass:
+    - courtyard 2.0 / 4.7 ms;
+    - massive building settling 13 / 16 ms;
+    - three buildings settling 29 / 30 ms.
+  - The CPU's steps run beside the frame.
+  - The `destruction` mode's per-API stills now set `.gpu` explicitly.
+- **CPU dust:**
+  - `endFractureStep` logs breaks (`breakLog`, `breakSteps`, `breakTotal`; same rule as the GPU's `broke[]`).
+  - `PhysicsStepper.Drawn` carries them.
+  - `Renderer.writeCPUBreaks` writes them into its own ring (`cpuBreakRing`, the GPU's layout), each at its step's
+    slot. Late ones go into the frame's first slot.
+  - Checked offscreen: the `destruction` mode's cpu still now has dust like the GPU's.
+- **CPU broad-phase memo** (`BroadMemo`, `keepsPartners`) and colours under 32 pairs inline (`colourInline`): see
+  the CPU handoff.
+
+Not done / not checked:
+- The window hand test with Automatic (now the CPU) in the Destruction scene, dust in the window.
+- The M4 Max: whether its GPU changes the picture (more cores, faster dispatch) and the rule should depend on it.
