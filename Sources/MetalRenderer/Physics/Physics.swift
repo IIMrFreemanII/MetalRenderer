@@ -226,7 +226,7 @@ final class PhysicsWorld {
     private(set) var weldStarts: [UInt32] = [0]
     private(set) var weldList: [SIMD2<UInt32>] = []
     var fractureState: [GPUFractureState] = []
-    /// A flag a body for the CPU step's stages (PhysicsCPU.swift: who wakes, who sleeps, who came free), kept.
+    /// A flag a body for the CPU step's stages (PhysicsCPU+Broad.swift: who wakes, who sleeps, who came free), kept.
     var wakeFlags: [UInt8] = []
     /// With fractured objects: each body's pose when its still time began (position, rotation; `settle`), and how
     /// fast its mass went over the last step (x: its move, y: its turn x its radius of gyration, each over the step;
