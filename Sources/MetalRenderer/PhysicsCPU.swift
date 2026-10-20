@@ -13,6 +13,7 @@ extension PhysicsWorld {
     }
 
 
+
     private func stepStages() {
         _ = shapeData   // (made here, if the shapes changed: the stages read it from every core)
         let p = params
@@ -575,8 +576,23 @@ extension PhysicsWorld {
         withNarrowMemo { m in
             withSampleCache { cache in
                 withStepBuffers { s in
-                    PhysicsPool.shared.parallel(n, grain: 16) { range in
-                        for i in range { PhysicsWorld.narrow(i, s, shapes, p, refresh: refresh, memo: m, samples: cache) }
+                    guard refresh else {
+                        PhysicsPool.shared.parallel(n, grain: 16) { range in
+                            for i in range { PhysicsWorld.narrow(i, s, shapes, p, refresh: false, memo: m, samples: cache) }
+                        }
+                        return
+                    }
+                    // A refresh's pairs are the coloured ones (`pairEntries`: with contacts at the step's start), each
+                    // on its own, not every entry: three buildings settling, 8,000 of 170,000, and a partner read for
+                    // each of 24,000 owned. (In entry order: a body's together, its samples' points worked out once.)
+                    pairEntries.withUnsafeBufferPointer { order in
+                        PhysicsPool.shared.parallel(order.count, grain: 16) { range in
+                            for t in range {
+                                let e = Int(order[t]), i = e / PhysicsWorld.maxPairs
+                                PhysicsWorld.narrowEntry(e, i, s.bodies[i], e % PhysicsWorld.maxPairs < Int(s.pairCounts[i]), s, shapes, p,
+                                                         refresh: true, memo: m, samples: cache)
+                            }
+                        }
                     }
                 }
             }
@@ -586,53 +602,60 @@ extension PhysicsWorld {
     /// Body i's owned entries' contacts (narrowPhase).
     @inline(__always) static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool,
                                          memo m: NarrowMemo, samples: SampleCache) {
-        let k = PhysicsWorld.maxPairs, mc = PhysicsWorld.maxContacts
+        let k = PhysicsWorld.maxPairs
         let a = s.bodies[i], count = Int(s.pairCounts[i])
-        for n in 0..<k {
-            let e = i * k + n
-            guard n < count && s.pairs[e].link == UInt32(e) else {
-                if !refresh { m.partners[e] = PhysicsWorld.none }   // (its contacts aren't this step's)
-                continue
-            }
-            let code = s.pairs[e].partner
-            let b = s.partner(code)
-            // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
-            if refresh && (s.pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { continue }
-            // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
-            if let w = liveWeld(i, code, bodies: UnsafeBufferPointer(s.bodies), starts: s.weldStarts,
-                                list: s.weldList, welds: UnsafeBufferPointer(s.welds)) {
-                s.pairs[e].contacts = 1
-                s.contacts[e * mc] = PhysicsWorld.weldContact(w)
-                m.partners[e] = PhysicsWorld.none
-                continue
-            }
-            // As they were at the last step's start, and found then: those contacts.
-            if !refresh && m.partners[e] == code && m.changed[i] == 0 && (code & PhysicsWorld.staticBit != 0 || m.changed[Int(code)] == 0) {
-                let kept = Int(m.counts[e])
-                s.pairs[e].contacts = UInt32(kept)
-                for c in 0..<kept { s.contacts[e * mc + c].lambda = .zero }
-                continue
-            }
-            let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
-                           + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
-                           + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
-            // (Each one's samples' world points from the cache: a static's after the bodies'.)
-            let other = code & PhysicsWorld.staticBit != 0 ? s.bodies.count + Int(code & ~PhysicsWorld.staticBit) : Int(code)
-            let manifold = shapes.collide(a, b, margin: p.grid.y + closing, pointsA: samples.points(i, a, shapes),
-                                          pointsB: samples.points(other, b, shapes))
-            let pa = Pose(a), pb = Pose(b)
-            s.pairs[e].contacts = UInt32(manifold.count)
-            for c in 0..<manifold.count {
-                let point = manifold[c]
-                s.contacts[e * mc + c] = GPUPhysicsContact(
-                    normal: SIMD4(point.normal, point.separation),
-                    anchorA: SIMD4(pa.toBody(point.pointA), point.radiusA),
-                    anchorB: SIMD4(pb.toBody(point.pointB), point.radiusB),
-                    lambda: .zero)
-            }
-            m.partners[e] = refresh ? PhysicsWorld.none : code
-            m.counts[e] = UInt32(manifold.count)
+        for n in 0..<k { narrowEntry(i * k + n, i, a, n < count, s, shapes, p, refresh: refresh, memo: m, samples: samples) }
+    }
+
+    /// Entry e's contacts (narrow; a refresh's on their own): `a` its body, body i; `listed`, whether it is one of i's
+    /// entries this step.
+    @inline(__always) static func narrowEntry(_ e: Int, _ i: Int, _ a: GPUPhysicsBody, _ listed: Bool, _ s: StepBuffers, _ shapes: PhysicsShapes,
+                                              _ p: GPUPhysicsParams, refresh: Bool, memo m: NarrowMemo, samples: SampleCache) {
+        let mc = PhysicsWorld.maxContacts
+        guard listed && s.pairs[e].link == UInt32(e) else {
+            if !refresh { m.partners[e] = PhysicsWorld.none }   // (its contacts aren't this step's)
+            return
         }
+        let code = s.pairs[e].partner
+        // As they were at the last step's start, and found then: those contacts. (Before the weld's: they were found
+        // with none alive between them, and a weld only breaks, but at a reset, which drops the memo. Most of a
+        // settling heap's pairs, and none of them reads the partner.)
+        if !refresh && m.partners[e] == code && m.changed[i] == 0 && (code & PhysicsWorld.staticBit != 0 || m.changed[Int(code)] == 0) {
+            let kept = Int(m.counts[e])
+            s.pairs[e].contacts = UInt32(kept)
+            for c in 0..<kept { s.contacts[e * mc + c].lambda = .zero }
+            return
+        }
+        let b = s.partner(code)
+        // A refresh: the coloured pairs (with contacts at the step's start) of which a body moves.
+        if refresh && (s.pairs[e].pad == PhysicsWorld.none || !PhysicsWorld.moves(a) && !PhysicsWorld.moves(b)) { return }
+        // Two welded pieces: the weld is the pair's one contact (Physics+Fracture.swift).
+        if let w = liveWeld(i, code, bodies: UnsafeBufferPointer(s.bodies), starts: s.weldStarts,
+                            list: s.weldList, welds: UnsafeBufferPointer(s.welds)) {
+            s.pairs[e].contacts = 1
+            s.contacts[e * mc] = PhysicsWorld.weldContact(w)
+            m.partners[e] = PhysicsWorld.none
+            return
+        }
+        let closing = (length(PhysicsMath.xyz(a.velocity)) + length(PhysicsMath.xyz(b.velocity))
+                       + length(PhysicsMath.xyz(a.angular)) * a.invInertia.w
+                       + length(PhysicsMath.xyz(b.angular)) * b.invInertia.w) * p.grid.w
+        // (Each one's samples' world points from the cache: a static's after the bodies'.)
+        let other = code & PhysicsWorld.staticBit != 0 ? s.bodies.count + Int(code & ~PhysicsWorld.staticBit) : Int(code)
+        let manifold = shapes.collide(a, b, margin: p.grid.y + closing, pointsA: samples.points(i, a, shapes),
+                                      pointsB: samples.points(other, b, shapes))
+        let pa = Pose(a), pb = Pose(b)
+        s.pairs[e].contacts = UInt32(manifold.count)
+        for c in 0..<manifold.count {
+            let point = manifold[c]
+            s.contacts[e * mc + c] = GPUPhysicsContact(
+                normal: SIMD4(point.normal, point.separation),
+                anchorA: SIMD4(pa.toBody(point.pointA), point.radiusA),
+                anchorB: SIMD4(pb.toBody(point.pointB), point.radiusB),
+                lambda: .zero)
+        }
+        m.partners[e] = refresh ? PhysicsWorld.none : code
+        m.counts[e] = UInt32(manifold.count)
     }
 
     // MARK: Colours
@@ -686,47 +709,77 @@ extension PhysicsWorld {
                 }
             }
             let candidates = left
-            /// The pairs with contacts beside pair e (through either body), e itself among them, each through `visit`.
-            @inline(__always) func around(_ e: Int, _ visit: (Int) -> Bool) -> Bool {
-                let code = s.pairs[e].partner
-                for body in 0..<2 {
-                    guard body == 0 || code & PhysicsWorld.staticBit == 0 else { break }
-                    let i = body == 0 ? e / k : Int(code)
-                    for m in 0..<Int(s.pairCounts[i]) {
-                        let link = s.pairs[i * k + m].link
-                        guard link != PhysicsWorld.none && s.pairs[Int(link)].contacts > 0 && s.pairs[Int(link)].pad != PhysicsWorld.idlePair else { continue }
-                        if !visit(Int(link)) { return false }
-                    }
-                }
-                return true
+            // Those pairs, all of them in entry order: the refreshes' (narrowPhase).
+            pairEntries.removeAll(keepingCapacity: true)
+            var c = 0, o = 0
+            while c < left.count || o < oneSided.count {
+                if o == oneSided.count || c < left.count && left[c] < oneSided[o] { pairEntries.append(left[c]); c += 1 } else { pairEntries.append(oneSided[o]); o += 1 }
             }
+            // Each candidate's neighbours: the pairs with contacts beside it (through either body), but itself, as
+            // the rounds read them (`adjacent`, `maxNeighbours` apart; the same each round: links, contacts and the
+            // idle pairs don't change while they run).
+            let roundGrain = 256, wide = 2 * k, listed = candidates.count
+            if pairAdjacent.count < listed * wide { pairAdjacent.append(contentsOf: repeatElement(0, count: listed * wide - pairAdjacent.count)) }
+            if pairNeighbours.count < listed { pairNeighbours.append(contentsOf: repeatElement(0, count: listed - pairNeighbours.count)) }
             var rounds = 0
-            won.withUnsafeMutableBufferPointer { won in
-                while !left.isEmpty && rounds < PhysicsWorld.maxRounds {
-                    left.withUnsafeBufferPointer { left in
-                        // Who outranks every uncoloured pair beside it (winners never share a body)...
-                        PhysicsPool.shared.parallel(left.count, grain: 256) { range in
-                            for t in range {
-                                let e = Int(left[t]), mine = PhysicsWorld.priority(UInt32(e))
-                                won[e] = around(e) { q in q == e || s.pairs[q].pad != PhysicsWorld.none || PhysicsWorld.priority(UInt32(q)) < mine } ? 1 : 0
+            candidates.withUnsafeBufferPointer { candidates in
+            pairAdjacent.withUnsafeMutableBufferPointer { adjacent in
+            pairNeighbours.withUnsafeMutableBufferPointer { neighbours in
+                PhysicsPool.shared.parallel(listed, grain: roundGrain) { range in
+                    for c in range {
+                        let e = Int(candidates[c]), code = s.pairs[e].partner
+                        var count = 0
+                        for body in 0..<2 {
+                            guard body == 0 || code & PhysicsWorld.staticBit == 0 else { break }
+                            let i = body == 0 ? e / k : Int(code)
+                            for m in 0..<Int(s.pairCounts[i]) {
+                                let link = s.pairs[i * k + m].link
+                                guard link != PhysicsWorld.none && Int(link) != e && s.pairs[Int(link)].contacts > 0
+                                        && s.pairs[Int(link)].pad != PhysicsWorld.idlePair else { continue }
+                                adjacent[c * wide + count] = Int32(link)
+                                count += 1
                             }
                         }
-                        // ...takes the lowest colour none beside it has.
-                        PhysicsPool.shared.parallel(left.count, grain: 256) { range in
-                            for t in range where won[Int(left[t])] != 0 {
-                                let e = Int(left[t])
-                                var used: UInt64 = 0
-                                _ = around(e) { q in
-                                    if q != e && s.pairs[q].pad != PhysicsWorld.none { used |= 1 << UInt64(s.pairs[q].pad) }
-                                    return true
-                                }
-                                s.pairs[e].pad = UInt32((~used).trailingZeroBitCount)
-                            }
-                        }
+                        neighbours[c] = UInt8(count)
                     }
-                    left.removeAll { s.pairs[Int($0)].pad != PhysicsWorld.none }
-                    rounds += 1
                 }
+                // The rounds over the candidates (by their place in `candidates`; `won` theirs).
+                var open = [Int32](0..<Int32(listed))
+                won.withUnsafeMutableBufferPointer { won in
+                    while !open.isEmpty && rounds < PhysicsWorld.maxRounds {
+                        open.withUnsafeBufferPointer { open in
+                            // Who outranks every uncoloured pair beside it (winners never share a body)...
+                            PhysicsPool.shared.parallel(open.count, grain: roundGrain) { range in
+                                for t in range {
+                                    let c = Int(open[t]), mine = PhysicsWorld.priority(UInt32(candidates[c]))
+                                    var wins: UInt8 = 1
+                                    for m in 0..<Int(neighbours[c]) {
+                                        let q = Int(adjacent[c * wide + m])
+                                        if !(s.pairs[q].pad != PhysicsWorld.none || PhysicsWorld.priority(UInt32(q)) < mine) { wins = 0; break }
+                                    }
+                                    won[c] = wins
+                                }
+                            }
+                            // ...takes the lowest colour none beside it has.
+                            PhysicsPool.shared.parallel(open.count, grain: roundGrain) { range in
+                                for t in range where won[Int(open[t])] != 0 {
+                                    let c = Int(open[t])
+                                    var used: UInt64 = 0
+                                    for m in 0..<Int(neighbours[c]) {
+                                        let q = Int(adjacent[c * wide + m])
+                                        if s.pairs[q].pad != PhysicsWorld.none { used |= 1 << UInt64(s.pairs[q].pad) }
+                                    }
+                                    s.pairs[Int(candidates[c])].pad = UInt32((~used).trailingZeroBitCount)
+                                }
+                            }
+                        }
+                        open.removeAll { s.pairs[Int(candidates[Int($0)])].pad != PhysicsWorld.none }
+                        rounds += 1
+                    }
+                }
+                left = open.map { candidates[Int($0)] }
+            }
+            }
             }
             for e in left { s.pairs[Int(e)].pad = PhysicsWorld.leftover }
             if !oneSided.isEmpty { left = (left + oneSided).sorted() }   // (in entry order, as the GPU's one thread takes them)

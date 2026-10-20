@@ -128,6 +128,10 @@ final class PhysicsWorld {
     /// last colour is what the rounds left, solved one pair after another.
     var pairOrder: [UInt32] = []
     var pairColourStarts: [UInt32] = [0]
+    /// Those pairs in entry order (the refreshes': PhysicsCPU.narrowPhase).
+    var pairEntries: [Int32] = []
+    /// The colouring's candidates' neighbours (PhysicsCPU.colourPairs): 2 x `maxPairs` places each, how many used.
+    var pairAdjacent: [Int32] = [], pairNeighbours: [UInt8] = []
     /// `pairOrder`'s pairs in the order PhysicsCPU.eachColour hands them out (by depth: how many pairs it waits on in
     /// a row at most), per pair there the chunks it waits on (-1: none), and each chunk's done flag (= `pairPass` once
     /// it is done in the pass that is going on; `PhysicsCPU.flagStride` apart).
@@ -660,6 +664,7 @@ final class PhysicsWorld {
         breakSteps.removeAll()
         breakTotal = 0
         broadEpoch = -1
+        narrowEpoch = -1   // (its welds are back)
         resetFluids()
         stepIndex = 0
     }

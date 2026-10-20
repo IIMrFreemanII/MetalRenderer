@@ -174,8 +174,11 @@ Done:
   - `Renderer.writeCPUBreaks` writes them into its own ring (`cpuBreakRing`, the GPU's layout), each at its step's
     slot. Late ones go into the frame's first slot.
   - Checked offscreen: the `destruction` mode's cpu still now has dust like the GPU's.
-- **CPU broad-phase memo** (`BroadMemo`, `keepsPartners`) and colours under 32 pairs inline (`colourInline`): see
-  the CPU handoff.
+- **CPU broad-phase memo** (`BroadMemo`, now `memoPartners`) and colours under 32 pairs inline (since replaced by
+  the contacts' chains): see the CPU handoff.
+- **Three buildings settling, CPU** (branch `claude/cpu-settle-frame`): a step 29.1 → 18.0 ms at 11 s, 14.4 ms on
+  average over the benchmark's 11–15 s; the `destructioncpu` settling row 29.2 → 18.6 ms on the frame thread (steps
+  in the frame), 5.3 ms with them behind it. Bit for bit as before. See the CPU handoff, "Settling in a frame".
 
 Not done / not checked:
 - The window hand test with Automatic (now the CPU) in the Destruction scene, dust in the window.
