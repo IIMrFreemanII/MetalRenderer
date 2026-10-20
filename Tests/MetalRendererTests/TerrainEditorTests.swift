@@ -75,6 +75,26 @@ final class TerrainEditorTests: XCTestCase {
         TerrainDocuments.shared.close("terrain map test")
     }
 
+    /// A block of heights read at once (a sector mesh's) is what the samples read one by one are: across a tile's edge,
+    /// over an edited tile, a tile whose base heights are cached and one whose aren't, and `step` apart.
+    func testHeightsAtOnceAreTheSamples() {
+        let base = NoiseTerrainBase(size: 512, cells: 512, seed: 4, relief: 12)
+        let n = base.grid.tileCells
+        let edited = TerrainTile(delta: (0..<(n * n)).map { Float($0 % 97) * 0.01 })
+        let s = TerrainField(base: base, tiles: [SIMD2(1, 0): edited]).snapshot()
+        _ = s.baseCache.heights(SIMD2(0, 0), base: base)   // tile (0, 0) from the cache, (1, 0) from the base
+        for step in [1, 3] {
+            let first = SIMD2(n - 70, 10), count = SIMD2(120, 40)
+            let block = s.heights(from: first, count: count, step: step)
+            for b in 0..<count.y {
+                for a in 0..<count.x {
+                    let i = first.x + a * step, j = first.y + b * step
+                    XCTAssertEqual(block[b * count.x + a], s.height(i, j), "sample (\(i), \(j)), step \(step)")
+                }
+            }
+        }
+    }
+
     /// TERRAIN_EDITOR_PNG=<folder>: the window drawn offscreen with each tab.
     func testPictures() throws {
         guard let path = ProcessInfo.processInfo.environment["TERRAIN_EDITOR_PNG"] else { throw XCTSkip("TERRAIN_EDITOR_PNG not set") }

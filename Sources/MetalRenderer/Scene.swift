@@ -255,6 +255,16 @@ final class Scene {
     /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
 
+    /// Tells this scene from every other one the process makes. (Not its ObjectIdentifier: that is its address, which
+    /// the next scene often gets once this one is freed, so "the same scene" would depend on the allocator.)
+    let serial: Int = {
+        Scene.serials.lock(); defer { Scene.serials.unlock() }
+        Scene.lastSerial += 1
+        return Scene.lastSerial
+    }()
+    private static let serials = NSLock()
+    private static var lastSerial = 0
+
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
     private(set) var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
@@ -856,6 +866,16 @@ final class Scene {
         return try body(physics)
     }
 
+    /// Where the CPU's steps broke pieces (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust: the stepper's
+    /// latest, or the world's.
+    var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
+        if let physicsStepper {
+            let drawn = physicsStepper.latest
+            return (drawn.breakLog, drawn.breakSteps, drawn.breakTotal)
+        }
+        return physics.map { ($0.breakLog, $0.breakSteps, $0.breakTotal) }
+    }
+
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
     var drawnPhysics: PhysicsStepper.Drawn? {
         if let physicsStepper { return physicsStepper.latest }
@@ -866,12 +886,23 @@ final class Scene {
     /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
     func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
         guard let physics else { return }
-        physics.drawnPoses = Array(poses)   // what picking sees
-        for b in physics.bodies.indices {
-            let i = Int(physics.bodies[b].info.z)
-            instances[i].prevTransform = instances[i].transform
-            // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
-            setTransform(i, physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w))
+        // What picking sees: over the last frame's copy (made anew only when the count changes).
+        if physics.drawnPoses.count == poses.count {
+            physics.drawnPoses.withUnsafeMutableBufferPointer { _ = $0.update(fromContentsOf: poses) }
+        } else {
+            physics.drawnPoses = Array(poses)
+        }
+        // Through the instances' buffer (as setTransform does, without its exclusivity check per body).
+        let count = physics.bodies.count
+        instances.withUnsafeMutableBufferPointer { inst in
+            for b in 0..<count {
+                let i = Int(physics.bodies[b].info.z)
+                // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
+                let m = physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w)
+                inst[i].prevTransform = inst[i].transform
+                inst[i].transform = m
+                inst[i].normalMatrix = m.inverse.transpose
+            }
         }
     }
 

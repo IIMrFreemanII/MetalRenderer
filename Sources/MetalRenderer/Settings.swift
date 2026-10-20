@@ -489,7 +489,7 @@ struct DestructionSettings: Equatable, Codable {
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
 struct PhysicsSettings: Equatable, Codable {
     /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the
-    /// scene's size (the CPU below `PhysicsSettings.gpuFrom` bodies, where a dispatch costs more than the work).
+    /// scene (`runsOnGPU`).
     enum Backend: Int, CaseIterable, Codable {
         case auto, gpu, cpu
         var title: String { ["Automatic", "GPU", "CPU"][rawValue] }
@@ -572,8 +572,16 @@ struct PhysicsSettings: Equatable, Codable {
     static let fluidRange = 1024...262144
     static let gpuFrom = 64
 
-    /// Whether a world of `bodies` bodies and particles is stepped on the GPU.
-    func runsOnGPU(bodies: Int) -> Bool { backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom) }
+    /// Whether a world of `bodies` bodies and particles is stepped on the GPU. Automatic: the CPU below `gpuFrom`
+    /// (where a dispatch costs more than the work), and with fractured objects at any size: the GPU's substeps solve
+    /// the contacts a colour after another, each colour waiting for the last (about a thousand a step), and its steps
+    /// are the frame's while the CPU's run beside it. On the M1 Max (Benchmark+Destruction.swift's destructioncpu) the
+    /// CPU's step took 2.0 ms against the GPU's 4.7 in the courtyard, 13 against 16 for a building settling, and 31
+    /// against 30 for three; with the GPU's in the window, a settling building drew at 16 to 23 fps, with the CPU's
+    /// at 120.
+    func runsOnGPU(bodies: Int, fractures: Bool = false) -> Bool {
+        backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom && !fractures)
+    }
 }
 
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).

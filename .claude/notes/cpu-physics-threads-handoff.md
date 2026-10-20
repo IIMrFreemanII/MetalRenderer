@@ -136,3 +136,36 @@ What did nothing, or got worse:
 - Measure a stage by timers around its calls in `stepStages` and a gated test; `sample <pid>` on the xctest process
   shows the hot functions. Two test runs at once slow each other: time them one after the other.
 - `related.sh` maps a `Package.swift` change to the whole suite. Give it the suite list instead.
+
+## Fast settling (branch `claude/fast-settling`)
+
+Three buildings, stage by stage at 11 to 12 s (31 to 37 ms a step), measured with a temporary stage clock:
+- refresh narrow phases 7.6 ms;
+- positions 5.7 ms;
+- broad phase 5.3 ms;
+- velocities 5.1 ms;
+- first narrow phase 3.8 ms;
+- colouring 2.3 ms.
+
+Over 10 to 60 s the step averages 17 ms, and the broad phase stays at 5.1 ms however many pieces sleep.
+
+Done (exact: the 9 digests at their seconds and three buildings at 25 s match with the memo on and off):
+- **`BroadMemo`** (`PhysicsWorld.broadPhase`, `keepsPartners`, `reaches`). A body keeps the last step's partners
+  when:
+  - its bits the broad phase reads are unchanged (`BroadMemo.key`);
+  - so are its kept partners';
+  - no changed body (in `changedCells` / `changedBigs`) reaches it now;
+  - shapes, statics (`staticsVersion`, bumped by `staticBounds`' didSet) and params are unchanged.
+  Three buildings at 25 s: broad 5.1 → 3.1 ms. About 330 bodies change a step, and their neighbours still query in
+  full: 2.2 ms of the 3.1.
+- **`colourInline = 32`:** a colour under 32 pairs is solved on the stepping thread. 64 and 128 were slower.
+
+Three buildings at 25 s: 17.4 → about 13.5 ms a step. Benchmark settling rows (from 10 s): 31.1 → 29.2 ms.
+
+Next:
+- A partial update for a sleeper beside a changed body. Keep each entry's key (box gap): an untruncated list (fewer
+  than 16) can drop its changed partners and insert the changed bodies in reach, by the total order. A truncated one
+  can only insert, unless a changed partner leaves it.
+- The refresh narrow phases (7.6 ms at 12 s, 2.4 at 26 s) are real `collide` work on the moving pairs: cheaper
+  sample tests (see Next 1 above).
+- The colour stages are about 5 µs each, 16 x 2 x 34 a step: islands.

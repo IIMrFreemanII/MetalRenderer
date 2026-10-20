@@ -103,7 +103,7 @@ final class CharacterHairTests: XCTestCase {
                     let p = (0..<3).map { level.positions[Int(level.indices[3 * t + $0])] }
                     longest = max(longest, max(simd_distance(p[0], p[1]), max(simd_distance(p[1], p[2]), simd_distance(p[0], p[2]))))
                 }
-                XCTAssertLessThan(longest, 0.45, "\(style): a triangle across the scene (long hair's coarse levels are 0.36 m)")
+                XCTAssertLessThan(longest, 0.45, "\(style): a triangle across the scene (long hair's coarsest is 0.39 m)")
             }
             heights[style] = top.positions.map { sculpt.local($0).y }.max()! - top.positions.map { sculpt.local($0).y }.min()!
         }

@@ -1214,7 +1214,7 @@ extension Benchmark {
     /// API (the GPU's steps put the bodies in the same places on both; Tools/eval/pngdiff.py), the
     /// CPU's steps there too (their own pile: 300 steps
     /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
-    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) where they keep up.
+    /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) at the same counts (Settings' PhysicsSettings.runsOnGPU).
     private static func physics() -> [Config] {
         let scene = SceneSettings(kind: .physics)
         var out: [Config] = []
@@ -1229,7 +1229,7 @@ extension Benchmark {
         for bodies in [96, 512, 2048] {
             out.append(base.named("gpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .gpu })
         }
-        for bodies in [32, 96] {
+        for bodies in [96, 512, 2048] {
             out.append(base.named("cpu \(bodies) moving").with { $0.scene.physics.bodies = bodies; $0.scene.physics.backend = .cpu })
         }
         return out
@@ -1279,7 +1279,7 @@ extension Benchmark {
         for ragdolls in [8, 24, 96] {
             out.append(base.named("gpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .gpu })
         }
-        for ragdolls in [8, 24] {
+        for ragdolls in [8, 24, 96] {
             out.append(base.named("cpu \(ragdolls) moving").with { $0.scene.physics.ragdolls = ragdolls; $0.scene.physics.backend = .cpu })
         }
         return out
