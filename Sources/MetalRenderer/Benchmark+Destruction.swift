@@ -17,12 +17,12 @@ extension Benchmark {
         Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .destruction))
     }
 
-    /// Paused at 9 s on each API and on the CPU (the same breaks on all: Tools/eval/pngdiff.py), then the first 10 s
-    /// moving for timing at a few piece counts.
+    /// Paused at 9 s with the GPU's steps on each API and with the CPU's (Automatic's: PhysicsSettings.runsOnGPU), the
+    /// same breaks on all (Tools/eval/pngdiff.py), then the first 10 s moving for timing at a few piece counts.
     private static func destruction() -> [Config] {
         var out: [Config] = []
         for api in RenderAPI.allCases {
-            out.append(destructionBase(api.envName).with { $0.api = api }.still(at: 9))
+            out.append(destructionBase(api.envName).with { $0.api = api; $0.scene.physics.backend = .gpu }.still(at: 9))
         }
         out.append(destructionBase("cpu").with { $0.scene.physics.backend = .cpu }.still(at: 9))
         for pieces: Float in [1, 2] {
@@ -42,14 +42,14 @@ extension Benchmark {
             $0.usePhysicsLook()
             $0.scene.physics.backend = .cpu
         }
-        let three = base.with {
-            $0.scene.destruction.massive = true
-            $0.scene.destruction.buildings = 3
-        }
-        return [base.named("courtyard cpu moving"), base.named("massive cpu moving").with { $0.scene.destruction.massive = true },
-                three.named("3 buildings cpu moving"), three.named("3 buildings gpu moving").with { $0.scene.physics.backend = .gpu },
-                settling(three.named("3 buildings cpu settling")),
-                settling(three.named("3 buildings gpu settling").with { $0.scene.physics.backend = .gpu })]
+        let massive = base.with { $0.scene.destruction.massive = true }
+        let three = massive.with { $0.scene.destruction.buildings = 3 }
+        func gpu(_ c: Config) -> Config { c.with { $0.scene.physics.backend = .gpu } }
+        return [base.named("courtyard cpu moving"), gpu(base.named("courtyard gpu moving")),
+                massive.named("massive cpu moving"), gpu(massive.named("massive gpu moving")),
+                settling(massive.named("massive cpu settling")), settling(gpu(massive.named("massive gpu settling"))),
+                three.named("3 buildings cpu moving"), gpu(three.named("3 buildings gpu moving")),
+                settling(three.named("3 buildings cpu settling")), settling(gpu(three.named("3 buildings gpu settling")))]
     }
 
     /// The demo paused at each of its moments (the default API).

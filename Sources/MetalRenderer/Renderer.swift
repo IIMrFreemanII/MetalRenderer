@@ -413,6 +413,10 @@ final class Renderer: NSObject {
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
     private var particlesGPU: ParticlesGPU?
+    /// With fractured objects stepped on the CPU: the dust's ring of breaks (PhysicsGPU.breakRing's layout), written
+    /// here from the steps' PhysicsWorld.breakLog, and how many of those it has had.
+    private var cpuBreakRing: MTLBuffer?
+    private var cpuBreaksTaken = 0
     /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
     private var vfxSetup: VFXCompiler.Setup {
         VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
@@ -1095,7 +1099,8 @@ final class Renderer: NSObject {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
             // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
             let onGPU = scene.settings.kind.simulates
-                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid)
+                && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
+                                                    fractures: physics.fractures)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,
@@ -1111,8 +1116,18 @@ final class Renderer: NSObject {
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
-            if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true, let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty {
-                particlesGPU?.breakRing = ring
+            cpuBreakRing = nil
+            if let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty, scene.physics?.fractures == true {
+                if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true {
+                    particlesGPU?.breakRing = ring
+                } else {
+                    let ring = device.makeBuffer(length: PhysicsWorld.ringSlots * (16 + PhysicsWorld.ringEvents * MemoryLayout<GPUBreakEvent>.stride),
+                                                 options: .storageModeShared)
+                    if let ring { memset(ring.contents(), 0, ring.length) }
+                    cpuBreakRing = ring
+                    cpuBreaksTaken = 0
+                    particlesGPU?.breakRing = ring
+                }
                 particlesGPU?.breakProxies = proxies
             }
             scene.replayParticles()
@@ -3500,6 +3515,7 @@ final class Renderer: NSObject {
             particlesCamera = camera
             if particlesBuilt[slot] != particlesVersion, let enc = passes.compute("particles", serial: true) {
                 if restart { particlesGPU.encodeReset(enc, pipelines: pipelines, slot: slot) }
+                if steps > 0 { writeCPUBreaks(first: particlesGPU.stepIndex, count: steps) }
                 particlesGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot, wind: windFrame.wind) { [self] in
                     bindScene($0, slot: slot)
                 }
@@ -4632,6 +4648,32 @@ final class Renderer: NSObject {
     /// What is still coming in now that the scene is installed, for the loading overlay (`loadActivity`), ten times a
     /// second: texture levels and virtual geometry pages while a new scene settles; the sky image, the
     /// noise tiles and shader variants whenever they are being made.
+    /// The CPU's breaks not yet had (Scene.physicsBreaks) into `cpuBreakRing`'s slots for particle steps `first` on,
+    /// each in its step's, as the GPU's steps write theirs (physicsFractureEventsKernel); those of steps before `first`
+    /// (the stepper's, a frame behind) in its: the dust at most a frame late. Those of later steps wait.
+    private func writeCPUBreaks(first: Int, count: Int) {
+        guard let ring = cpuBreakRing, let (log, steps, total) = scene.physicsBreaks else { return }
+        if total < cpuBreaksTaken { cpuBreaksTaken = 0 }   // (the world started again)
+        let stride = MemoryLayout<GPUBreakEvent>.stride, headers = PhysicsWorld.ringSlots * 16
+        var k = max(log.count - (total - cpuBreaksTaken), 0)   // (the first not had)
+        log.withUnsafeBytes { raw in
+            for step in first..<(first + count) {
+                let slot = step % PhysicsWorld.ringSlots
+                let events = ring.contents().advanced(by: headers + slot * PhysicsWorld.ringEvents * stride)
+                var n = 0
+                while k < log.count && steps[k] <= step {
+                    if n < PhysicsWorld.ringEvents {
+                        events.advanced(by: n * stride).copyMemory(from: raw.baseAddress!.advanced(by: k * stride), byteCount: stride)
+                        n += 1
+                    }
+                    k += 1
+                }
+                ring.contents().storeBytes(of: SIMD4<UInt32>(UInt32(step + 1), UInt32(n), 0, 0), toByteOffset: slot * 16, as: SIMD4<UInt32>.self)
+            }
+        }
+        cpuBreaksTaken = total - (log.count - k)
+    }
+
     private func publishStreams() {
         let now = CACurrentMediaTime()
         guard now - streamsPublished >= 0.1 else { return }
