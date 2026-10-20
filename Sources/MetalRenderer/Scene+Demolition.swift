@@ -24,6 +24,15 @@ extension Scene {
         var fireballs: [Int] = []
         var objects: [Fractured] = []
         var dustProxies: [UInt32] = []
+        /// TNT stuck on pieces (Renderer+Demolition.swift): each on its body (that body's space), and where it was.
+        struct Charge {
+            var body: Int
+            var local: SIMD3<Float>
+            var normal: SIMD3<Float>
+            var world: SIMD3<Float>
+            var worldNormal: SIMD3<Float>
+        }
+        var placed: [Charge] = []
         /// Blocks by kind (DemolitionBlueprint.Kind) and the storeys' floors.
         var counts: [Int] = []
         var floors: [Float] = []
@@ -36,6 +45,7 @@ extension Scene {
         let kit = Kit(self)
         let world = physicsWorld()
         world.fractureTuning.x = settings.fade ? 6 : 1e9
+        world.idleWelds = true
         let blueprint = DemolitionBlueprint(settings)
 
         // Materials: each look's outside, then its broken inside (flagged as a cut face for the solid look).
@@ -115,6 +125,7 @@ extension Scene {
             rig.dustProxies = addDestructionDust(kit, interiors: interiors)
         }
         if settings.demo { demolitionDemo(blueprint, rig) }
+        world.keepBuiltCommands()
         demolitionRig = rig
 
         // The afternoon sun from the front left, a blue sky.
@@ -187,32 +198,6 @@ extension Scene {
                 }
             }
         }
-        // The stair's lanes, each storey's on the one below it (their slopes aren't faces of their boxes) (the flights' slopes slide on each other otherwise):
-        // root to root where one's underside meets the other's top.
-        for i in blocks.indices where blocks[i].kind == .stair {
-            for j in blocks.indices where blocks[j].kind == .stair && blocks[j].storey == blocks[i].storey - 1 {
-                let a = blocks[i], b = blocks[j]
-                let lo = simd_max(SIMD2(a.lo.x, a.lo.z), SIMD2(b.lo.x, b.lo.z)), hi = simd_min(SIMD2(a.hi.x, a.hi.z), SIMD2(b.hi.x, b.hi.z))
-                guard hi.x - lo.x > 0.1, hi.y - lo.y > 0.1 else { continue }
-                // Where along a vertical line through the overlap's middle a's underside and b's top are.
-                let mid = (lo + hi) / 2
-                func surface(_ x: DemolitionBlueprint.Block, from y: Float, step: Float) -> Float? {
-                    let inverse = x.transform.inverse
-                    var t = y
-                    for _ in 0..<4000 {
-                        let q = inverse * SIMD4(mid.x, t, mid.y, 1)
-                        if x.shape.distance(SIMD3(q.x, q.y, q.z), volumes: []).d < 0 { return t }
-                        t += step
-                    }
-                    return nil
-                }
-                guard let under = surface(a, from: a.lo.y - 0.01, step: 0.002), let top = surface(b, from: b.hi.y + 0.01, step: -0.002),
-                      abs(under - top) < 0.01 else { continue }
-                world.addWeld(objects[i].firstBody, objects[j].firstBody, centre: SIMD3(mid.x, (under + top) / 2, mid.y),
-                              area: (hi.x - lo.x) * (hi.y - lo.y), sigma: 0.3 * a.look.material.strength * settings.strength)
-                made += 1
-            }
-        }
         _ = made
     }
 
@@ -232,7 +217,7 @@ extension Scene {
         world.command(.blast, origin: [4, 1, 2], radius: 1.8, magnitude: 18, at: step(4), steps: 4)
         // A hole in the fourth floor, and the walker into it.
         let hole = SIMD3<Float>(-6, f[3] - 0.1, -3)
-        world.command(.blast, origin: hole, radius: 1.6, magnitude: 14, at: step(6), steps: 4)
+        world.command(.blast, origin: hole, radius: DemolitionPlayer.tntRadius, magnitude: DemolitionPlayer.tntPush, at: step(6), steps: 4)
         world.command(.drive, body: Int(DemolitionState.Walker.enableFlag | DemolitionState.Walker.placeFlag),
                       origin: [hole.x, f[3] + PhysicsWorld.walkerHalf + PhysicsWorld.walkerRadius + 0.05, hole.z + 3.2], at: step(6.5))
         world.command(.drive, direction: [0, 0, -2.5], at: step(7))
@@ -249,6 +234,56 @@ extension Scene {
         for (x, z) in [(b.outline.lo.x, b.outline.lo.y), (b.outline.hi.x, b.outline.lo.y), (b.outline.lo.x, b.outline.hi.y), (b.outline.hi.x, b.outline.hi.y)] {
             world.command(.blast, origin: [x + (x < 0 ? 1 : -1), 1, z + (z < 0 ? 1 : -1)], radius: 2.2, magnitude: 18, at: step(10), steps: 4)
         }
+    }
+
+    /// The TNT charges where their bodies are now (`drawn`: the poses drawn this frame), and the fireballs of the rockets
+    /// that went off lately: each grows to most of its blast's radius in 0.15 s, then shrinks away by 0.45 s.
+    func placeDemolition(_ drawn: [GPUPhysicsBody], _ state: DemolitionState, step: Int) {
+        guard var rig = demolitionRig, let physics else { return }
+        let hidden = translate([0, -60, 0]) * scale(PhysicsWorld.hiddenScale)
+        let nodes = physics.fractureNodes
+        for k in rig.placed.indices {
+            var c = rig.placed[k]
+            // Its body broke: onto the piece of it nearest where it was.
+            while drawn.indices.contains(c.body), drawn[c.body].info.y & PhysicsWorld.disabledBit != 0, c.body < nodes.count, nodes[c.body].info.z > 0 {
+                let first = Int(nodes[c.body].info.y), count = Int(nodes[c.body].info.z)
+                var best = first, nearest = Float.infinity
+                for j in first..<first + count {
+                    let d = length_squared(PhysicsMath.xyz(drawn[j].position) - c.world)
+                    if d < nearest { (best, nearest) = (j, d) }
+                }
+                let b = drawn[best]
+                c.body = best
+                c.local = PhysicsMath.qrot(PhysicsMath.qconj(b.rotation), c.world - PhysicsMath.xyz(b.position))
+                c.normal = PhysicsMath.qrot(PhysicsMath.qconj(b.rotation), c.worldNormal)
+            }
+            if drawn.indices.contains(c.body), drawn[c.body].info.y & PhysicsWorld.disabledBit == 0 {
+                let b = drawn[c.body]
+                c.world = PhysicsMath.xyz(b.position) + PhysicsMath.qrot(b.rotation, c.local)
+                c.worldNormal = PhysicsMath.qrot(b.rotation, c.normal)
+            }
+            rig.placed[k] = c
+        }
+        for (k, instance) in rig.charges.enumerated() {
+            guard k < rig.placed.count else { setTransform(instance, hidden); continue }
+            let c = rig.placed[k], n = c.worldNormal
+            // Lying on the surface: its thin side along the normal.
+            let up = abs(n.y) < 0.9 ? SIMD3<Float>(0, 1, 0) : SIMD3<Float>(1, 0, 0)
+            let x = normalize(cross(up, n)), y = cross(n, x)
+            let turn = float4x4(columns: (SIMD4(x, 0), SIMD4(y, 0), SIMD4(n, 0), SIMD4(0, 0, 0, 1)))
+            setTransform(instance, translate(c.world + n * 0.06) * turn * scale([0.22, 0.14, 0.12]))
+        }
+        var shown = 0
+        for (d, s) in zip(state.detonations, state.detonationSteps).reversed() where shown < rig.fireballs.count {
+            let age = Float(step - s) * PhysicsWorld.stepLength
+            guard age >= 0, age < 0.45 else { continue }
+            let most = d.w * 0.6
+            let r = age < 0.15 ? most * (1 - pow(1 - age / 0.15, 3)) : most * (1 - (age - 0.15) / 0.3)
+            setTransform(rig.fireballs[shown], translate(PhysicsMath.xyz(d)) * scale(SIMD3(repeating: max(r, PhysicsWorld.hiddenScale))))
+            shown += 1
+        }
+        for k in shown..<rig.fireballs.count { setTransform(rig.fireballs[k], hidden) }
+        demolitionRig = rig
     }
 
     /// A look's colour outside and broken (linear), its metalness and roughness: told apart at a glance in the solid

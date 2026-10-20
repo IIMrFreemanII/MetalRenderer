@@ -65,6 +65,8 @@ struct DemolitionBlueprint {
     static let pier: Float = 3, partitionRun: Float = 4, panel: Float = 4, gap: Float = 0.001
     /// Narrower than this (m), a slab's cell is joined to its neighbour and a partition's run left out.
     static let sliver: Float = 0.6
+    /// How thick a flight and a landing are (m, upright).
+    static let stairSlab: Float = 0.22
     /// The furniture kept on a storey (the biggest), and what is too flat or loose to be worth a fracture.
     static let furniturePerStorey = 24
     static let skipped: Set<FurnitureItem.Kind> = [.rug, .plant, .tallPlant, .frame, .coatRack]
@@ -113,11 +115,7 @@ struct DemolitionBlueprint {
             let y = f.floor - base, height = f.ceiling - f.floor
             outerWalls(s, f, footprint: footprint, y: y, height: height, settings: settings)
             let lines = partitions(s, f, footprint: footprint, y: y, height: height)
-            if let stair = f.stair, f.climbs {
-                let under = s > 0 ? plan.storeys[s - 1] : nil
-                let below = under.flatMap { u in u.stair == stair && u.climbs ? (y: u.floor - base, rise: u.top - u.floor) : nil }
-                flights(s, stair, y: y, rise: f.top - f.floor, below: below)
-            }
+            if let stair = f.stair, f.climbs { flights(s, stair, y: y, rise: f.top - f.floor) }
             columns(s, f, footprint: footprint, y: y, height: height, lines: lines)
             slab(s, f, y0: f.ceiling - base, y1: f.top - base)
         }
@@ -379,71 +377,56 @@ struct DemolitionBlueprint {
 
     // MARK: The stair
 
-    /// A stair's lanes across it (v0, v1) and the top of each along it, piece by piece (u0, u1 and the height at each,
-    /// over its storey's floor): the first flight up to the half landing, the spine, the second flight back up to the
-    /// next floor; the half landing's over the far end.
-    private func lanes(_ st: StairPlan, rise: Float, width: Float, long: Float)
-        -> [(v0: Float, v1: Float, top: [(u0: Float, u1: Float, ya: Float, yb: Float)], spine: Bool)] {
-        let w = st.flightWidth, l = StairPlan.landing, run = StairPlan.run
-        let (n1, n2, h) = StairPlan.steps(rise)
-        let top1 = l + Float(n1) * run, start2 = l + Float(n2) * run, mid = Float(n1) * h
-        var out: [(v0: Float, v1: Float, top: [(u0: Float, u1: Float, ya: Float, yb: Float)], spine: Bool)] = [
-            (0, w, [(l, top1, 0, mid), (top1, long, mid, mid)], false),
-            (width - w, width, [(l, start2, rise, mid), (start2, long, mid, mid)], false),
-        ]
-        if width - 2 * w > 0.03 { out.append((w, width - w, [(l, start2, rise, rise), (start2, long, mid, mid)], true)) }
-        return out
-    }
-
-    /// Storey `s`'s part of the stair (its floor at `y`, `rise` to the next), as InteriorBuilder's but as slopes: each
-    /// lane from what the storey below's left (or the ground) up to its own top, in pieces where either bends.
-    private mutating func flights(_ s: Int, _ st: StairPlan, y: Float, rise: Float, below: (y: Float, rise: Float)?) {
+    /// Storey `s`'s flights from its floor (`y`) up `rise` to the next, as InteriorBuilder's but as slopes (a walker
+    /// climbs a slope where it would trip on a step): the first flight up its side to the half landing at the far end,
+    /// the second back up the other side to the next floor's landing over the entry; the spine between them. The flights
+    /// and the landing are slabs `stairSlab` thick with the storey's height over them, held by their welds to the spine
+    /// and the stair's walls (Scene.weldNeighbours), their ends on the floors' slabs.
+    private mutating func flights(_ s: Int, _ st: StairPlan, y: Float, rise: Float) {
         // (Inside the partitions round it, which stand half in it.)
         let inset = building.plan.partition / 2
         let long = (st.alongX ? st.rect.size.x : st.rect.size.y) - 2 * inset, width = (st.alongX ? st.rect.size.y : st.rect.size.x) - 2 * inset
+        let w = st.flightWidth, l = StairPlan.landing, run = StairPlan.run, t = DemolitionBlueprint.stairSlab
+        let (n1, n2, h) = StairPlan.steps(rise)
+        let top1 = l + Float(n1) * run, start2 = l + Float(n2) * run, mid = Float(n1) * h
         func point(_ u: Float, _ v: Float) -> SIMD2<Float> {
             let r = CityPlan.Rect(lo: st.rect.lo + inset, hi: st.rect.hi - inset)
             let along = st.alongX ? (st.entryLow ? r.lo.x + u : r.hi.x - u) : (st.entryLow ? r.lo.y + u : r.hi.y - u)
             let across = st.alongX ? (st.firstLow ? r.lo.y + v : r.hi.y - v) : (st.firstLow ? r.lo.x + v : r.hi.x - v)
             return st.alongX ? SIMD2(along, across) : SIMD2(across, along)
         }
+        func corners(_ u0: Float, _ u1: Float, _ v0: Float, _ v1: Float, _ y0: Float, _ y1: Float) -> (SIMD3<Float>, SIMD3<Float>) {
+            let p = point(u0, v0), q = point(u1, v1)
+            return (SIMD3(min(p.x, q.x), y + y0, min(p.y, q.y)), SIMD3(max(p.x, q.x), y + y1, max(p.y, q.y)))
+        }
         // Increasing u, in the world (x, z).
         let eu = point(1, 0) - point(0, 0)
-        /// The plane under the line from height `ya` at `ua` to `yb` at `ub` along u (world heights; n . p <= d).
+        /// The plane under the line from height `ya` at `ua` to `yb` at `ub` along u (heights over the floor; the
+        /// world's n . p <= d).
         func under(_ ua: Float, _ ya: Float, _ ub: Float, _ yb: Float) -> SIMD4<Float> {
             let slope = (yb - ya) / (ub - ua)
             var n = SIMD3(-slope * eu.x, 1, -slope * eu.y)
-            let d = ya - slope * dot(point(ua, 0), eu)
+            let d = y + ya - slope * dot(point(ua, 0), eu)
             let len = simd_length(n)
             n /= len
             return SIMD4(n, d / len)
         }
-        /// Height (world) of piecewise line `top` at `u`.
-        func height(_ top: [(u0: Float, u1: Float, ya: Float, yb: Float)], _ u: Float, _ base: Float) -> Float {
-            let p = top.first { u >= $0.u0 - 1e-4 && u <= $0.u1 + 1e-4 } ?? top[top.count - 1]
-            return base + p.ya + (p.yb - p.ya) * (u - p.u0) / max(p.u1 - p.u0, 1e-6)
+        /// A flight: the slab between the slope from `ya` at `ua` to `yb` at `ub` and `t` under it (not under the floor).
+        func flight(_ ua: Float, _ ya: Float, _ ub: Float, _ yb: Float, _ v0: Float, _ v1: Float) {
+            let (lo, hi) = corners(min(ua, ub), max(ua, ub), v0, v1, max(min(ya, yb) - t, 0), max(ya, yb))
+            cut(.stair, .stair, s, lo, hi, planes: [under(ua, ya, ub, yb), -under(ua, ya - t, ub, yb - t)])
         }
-        let mine = lanes(st, rise: rise, width: width, long: long)
-        let theirs = below.map { lanes(st, rise: $0.rise, width: width, long: long) }
-        for (k, lane) in mine.enumerated() {
-            let floorLane = theirs?[k]
-            var cuts = lane.top.flatMap { [$0.u0, $0.u1] } + (floorLane?.top.flatMap { [$0.u0, $0.u1] } ?? [])
-            cuts = cuts.sorted()
-            var us: [Float] = []
-            for c in cuts where us.last.map({ c - $0 > 0.02 }) ?? true { us.append(c) }
-            for i in 0..<(us.count - 1) {
-                let u0 = us[i], u1 = us[i + 1]
-                let t0 = height(lane.top, u0, y), t1 = height(lane.top, u1, y)
-                let b0 = floorLane.map { height($0.top, u0, below!.y) } ?? y, b1 = floorLane.map { height($0.top, u1, below!.y) } ?? y
-                guard max(t0 - b0, t1 - b1) > 0.02 else { continue }
-                let p = point(u0, lane.v0), q = point(u1, lane.v1)
-                let lo = SIMD3(min(p.x, q.x), min(b0, b1), min(p.y, q.y)), hi = SIMD3(max(p.x, q.x), max(t0, t1), max(p.y, q.y))
-                var planes: [SIMD4<Float>] = []
-                if abs(t0 - t1) > 1e-4 { planes.append(under(u0, t0, u1, t1)) }
-                if abs(b0 - b1) > 1e-4 { planes.append(-under(u0, b0, u1, b1)) }
-                let look: Look = lane.spine && abs(t0 - t1) < 1e-4 && t0 > y + rise - 0.01 ? .plaster : .stair
-                if planes.isEmpty { box(.stair, look, s, lo, hi) } else { cut(.stair, look, s, lo, hi, planes: planes) }
-            }
+        flight(l, 0, top1, mid, 0, w)
+        flight(start2, mid, l, rise, width - w, width)
+        // The half landing across the far end, at the first flight's top.
+        let (a, b) = corners(top1, long, 0, w, mid - t, mid)
+        box(.stair, .stair, s, a, b)
+        let (c, d) = corners(start2, long, w, width, mid - t, mid)
+        box(.stair, .stair, s, c, d)
+        // The spine between the flights, from the floor to the next.
+        if width - 2 * w > 0.03 {
+            let (e, f) = corners(l, start2, w, width - w, 0, rise)
+            box(.stair, .plaster, s, e, f)
         }
     }
 

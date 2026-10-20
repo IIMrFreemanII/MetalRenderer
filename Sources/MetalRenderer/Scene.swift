@@ -803,10 +803,13 @@ final class Scene {
                 stepper.request(to: t)
                 if physicsTime == t { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
                 physicsTime = t
-                placeBodies(stepper.latest)
+                let drawn = stepper.latest
+                placeBodies(drawn)
+                if demolitionRig != nil { placeDemolition(drawn.bodies, drawn.demolition, step: drawn.stepIndex) }
             } else {
                 physics.advance(to: t)
                 placeBodies()
+                if demolitionRig != nil { placeDemolition(physics.bodies, physics.demolition, step: physics.stepIndex) }
             }
         }
         if let particles {

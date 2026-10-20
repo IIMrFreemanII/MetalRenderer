@@ -66,6 +66,8 @@ struct DemolitionState {
     var startWalker = Walker()
     /// Bodies near the walker this step (scratch).
     var near: [Int32] = []
+    /// How many of the world's commands its build made (PhysicsWorld.keepBuiltCommands).
+    var builtCommands = 0
 
     var active: Bool { !rockets.isEmpty || walker.body >= 0 }
     static let logLength = 32
@@ -92,6 +94,10 @@ extension PhysicsWorld {
     static let walkerHalf: Float = 0.6, walkerRadius: Float = 0.3
     /// How fast the walker gets to the speed asked for (m/s^2), standing and in the air.
     static let walkerGrip: Float = 25, walkerAir: Float = 4
+    /// A bullet's impact on a piece: this many times what breaks (or frees) it.
+    static let bulletBreak: Float = 3
+    /// How fast a piece a bullet knocks out goes (m/s).
+    static let chipSpeed: Float = 3.5
 
     // MARK: Building
 
@@ -109,6 +115,47 @@ extension PhysicsWorld {
         demolition.startWalker = demolition.walker
     }
 
+    /// The commands the scene was built with (its demo's), and the player's after them: dropped by `dropPlayerCommands`.
+    func keepBuiltCommands() { demolition.builtCommands = fractureCommands.count }
+
+    /// The player's commands dropped (a restart: the world replays its build's alone from the start).
+    func dropPlayerCommands() {
+        let n = demolition.builtCommands
+        guard fractureCommands.count > n else { return }
+        fractureCommands.removeLast(fractureCommands.count - n)
+        commandOrder.removeAll { Int($0) >= n }
+        longestCommand = max(1, fractureCommands.map(\.info.w).max() ?? 1)
+    }
+
+    /// The nearest body of `drawn` (a stepper's latest poses: any thread), but disabled ones, rockets and the walker,
+    /// that the ray from `origin` along `direction` (unit) meets within `limit`: it, how far, and its surface's normal
+    /// there (the world).
+    func pick(drawn: [GPUPhysicsBody], origin: SIMD3<Float>, direction: SIMD3<Float>, limit: Float = 500)
+        -> (body: Int, t: Float, normal: SIMD3<Float>)? {
+        var best: (body: Int, t: Float)?
+        let skip = PhysicsWorld.disabledBit | PhysicsWorld.fuseBit | PhysicsWorld.walkerBit
+        drawn.withUnsafeBufferPointer { b in
+            for i in b.indices where b[i].info.y & skip == 0 {
+                let x = PhysicsWorld.xyz(b[i].position), q = b[i].rotation, radius = b[i].invInertia.w, oc = origin - x
+                let p = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = p * p - c
+                guard disc >= 0 else { continue }
+                var t = max(-p - sqrt(disc), 0)
+                let end = min(-p + sqrt(disc), best?.t ?? limit)
+                for _ in 0..<64 where t < end {
+                    let d = distance(shape: Int(b[i].info.x), PhysicsMath.qrot(PhysicsMath.qconj(q), origin + direction * t - x))
+                    if d < 1e-3 { best = (i, t); break }
+                    t += max(d, 1e-4)
+                }
+            }
+        }
+        guard let best else { return nil }
+        let o = drawn[best.body]
+        let local = PhysicsMath.qrot(PhysicsMath.qconj(o.rotation), origin + direction * best.t - PhysicsWorld.xyz(o.position))
+        var n = PhysicsMath.qrot(o.rotation, gradient(shape: Int(o.info.x), local))
+        n = length(n) > 1e-6 ? normalize(n) : -direction
+        return (best.body, best.t, n)
+    }
+
     // MARK: Commands
 
     /// A bullet: its body (or, if that broke since it was aimed at, the piece of it nearest the hit) takes the hit's
@@ -118,17 +165,27 @@ extension PhysicsWorld {
         guard bodies.indices.contains(Int(c.info.z)) else { return }
         let i = livePiece(Int(c.info.z), near: point)
         guard i >= 0 else { return }
+        var push = impulse
         if bodies[i].info.y & PhysicsWorld.pieceBit != 0 {
             let node = fractureNodes[i]
-            let breaks = node.info.z > 0 ? node.offset.w : node.extra.y
-            PhysicsWorld.strike(&fractureState[i], point, dir, max(impulse, breaks * 1.02))
+            if node.info.z > 0 {
+                // Well past what breaks it: its pieces by the hit take over a share of it.
+                PhysicsWorld.strike(&fractureState[i], point, dir, max(impulse, node.offset.w * PhysicsWorld.bulletBreak))
+            } else if node.info.x != PhysicsWorld.none {
+                // The smallest piece: knocked out at once (its welds broken now, not at the step's end, where they
+                // would have held the push back), and away along the bullet.
+                breakWelds(i)
+                PhysicsWorld.free(&bodies[i], node)
+                fractureState[i].hold.x = 0
+                if bodies[i].position.w > 0 { push = max(impulse, PhysicsWorld.chipSpeed / bodies[i].position.w) }
+            }
         }
         guard bodies[i].position.w > 0, bodies[i].info.y & PhysicsWorld.kinematicBit == 0 else { return }
         bodies[i].info.y &= ~PhysicsWorld.asleep
         bodies[i].prevPosition.w = 0
         let r = point - PhysicsWorld.xyz(bodies[i].position)
         var b = bodies[i]
-        PhysicsWorld.kick(&b, dir * impulse, r, .zero)
+        PhysicsWorld.kick(&b, dir * push, r, .zero)
         bodies[i] = b
     }
 
@@ -181,7 +238,11 @@ extension PhysicsWorld {
             var goes = clock - rocket.launched > PhysicsWorld.rocketLife || x.y < radius * 1.5 || speed < rocket.speed * 0.5
                 || !(x.x.isFinite && x.y.isFinite && x.z.isFinite)
             if !goes && speed > 1e-3 {
-                goes = probe(x, v / speed, length: speed * h + radius * 2, skipping: PhysicsWorld.fuseBit | PhysicsWorld.walkerBit) != nil
+                let shapes = shapeData
+                goes = bodies.withUnsafeBufferPointer { b in
+                    PhysicsWorld.nearest(b, shapes, list: nil, x, v / speed, length: speed * h + radius * 2,
+                                         skipping: PhysicsWorld.fuseBit | PhysicsWorld.walkerBit).body >= 0
+                }
             }
             guard goes else { continue }
             demolition.rockets[r].armed = false
@@ -200,7 +261,11 @@ extension PhysicsWorld {
         }
         if !demolition.blasts.isEmpty {
             for c in demolition.blasts where c.info.x <= clock && clock < c.info.x + c.info.w {
-                for i in bodies.indices { PhysicsWorld.blast(&bodies[i], &fractureState[i], fractureNodes[i], c) }
+                bodies.withUnsafeMutableBufferPointer { b in
+                    fractureState.withUnsafeMutableBufferPointer { s in
+                        fractureNodes.withUnsafeBufferPointer { PhysicsWorld.blastAll(c, b, s, $0) }
+                    }
+                }
             }
             demolition.blasts.removeAll { clock + 1 >= $0.info.x + $0.info.w }
         }
@@ -240,21 +305,14 @@ extension PhysicsWorld {
             return
         }
         // What is round it: the bodies whose spheres come within reach of its capsule.
-        let reach = PhysicsWorld.walkerHalf + PhysicsWorld.walkerRadius + 0.4
-        demolition.near.removeAll(keepingCapacity: true)
-        for k in bodies.indices where k != i {
-            let o = bodies[k]
-            guard o.info.y & (PhysicsWorld.disabledBit | PhysicsWorld.fuseBit) == 0 else { continue }
-            let d = PhysicsWorld.xyz(o.position) - x
-            let r = o.invInertia.w + reach
-            if dot(d, d) < r * r { demolition.near.append(Int32(k)) }
+        let reach = PhysicsWorld.walkerHalf + PhysicsWorld.walkerRadius + 0.4, shapes = shapeData
+        if demolition.near.count != bodies.count { demolition.near = [Int32](repeating: 0, count: bodies.count) }
+        let near = bodies.withUnsafeBufferPointer { b in
+            demolition.near.withUnsafeMutableBufferPointer { PhysicsWorld.gather(b, around: x, reach: reach, skip: i, into: $0) }
         }
         // Inside something (rubble fell onto it): out upward, a little a step.
-        var inside = false
-        for k in demolition.near {
-            let o = bodies[Int(k)]
-            let local = PhysicsMath.qrot(PhysicsMath.qconj(o.rotation), x - PhysicsWorld.xyz(o.position))
-            if distance(shape: Int(o.info.x), local) < -0.1 { inside = true; break }
+        let inside = bodies.withUnsafeBufferPointer { b in
+            demolition.near.withUnsafeBufferPointer { PhysicsWorld.inside(b, shapes, UnsafeBufferPointer(rebasing: $0[0..<near]), x, by: 0.1) }
         }
         w.stuck = inside ? w.stuck + 1 : 0
         if w.stuck > 20 {
@@ -265,19 +323,23 @@ extension PhysicsWorld {
         // What it stands on: rays down from its middle and round it, to just under its feet.
         let foot = PhysicsWorld.walkerHalf + PhysicsWorld.walkerRadius
         var ground: (body: Int, t: Float)?
-        var groundNormal = SIMD3<Float>(0, 1, 0)
-        let around: [SIMD2<Float>] = [.zero, [0.18, 0], [-0.18, 0], [0, 0.18], [0, -0.18]]
-        for o in around {
+        for k in 0..<5 {
+            // (Its middle, then a little to each side.)
+            let o = k == 0 ? SIMD2<Float>() : SIMD2<Float>(k == 1 ? 0.18 : k == 2 ? -0.18 : 0, k == 3 ? 0.18 : k == 4 ? -0.18 : 0)
             let from = x + SIMD3(o.x, 0, o.y)
-            guard let hit = probeNear(from, [0, -1, 0], length: foot + 0.12) else { continue }
+            let hit = bodies.withUnsafeBufferPointer { b in
+                demolition.near.withUnsafeBufferPointer {
+                    PhysicsWorld.nearest(b, shapes, list: UnsafeBufferPointer(rebasing: $0[0..<near]), from, [0, -1, 0], length: foot + 0.12, skipping: 0)
+                }
+            }
+            guard hit.body >= 0 else { continue }
             let j = hit.body, oj = bodies[j]
             let local = PhysicsMath.qrot(PhysicsMath.qconj(oj.rotation), from + SIMD3(0, -hit.t, 0) - PhysicsWorld.xyz(oj.position))
             let n = PhysicsMath.qrot(oj.rotation, gradient(shape: Int(oj.info.x), local))
             let ln = length(n)
             guard ln > 1e-6, n.y / ln > 0.55 else { continue }
-            if ground == nil || hit.t < ground!.t { (ground, groundNormal) = (hit, n / ln) }
+            if ground == nil || hit.t < ground!.t { ground = (hit.body, hit.t) }
         }
-        _ = groundNormal
         let onFloor = x.y - foot < 0.12   // (the ground plane)
         var under = SIMD3<Float>()
         if let g = ground {
@@ -319,39 +381,73 @@ extension PhysicsWorld {
         bodies[i].angular = SIMD4(.zero, bodies[i].angular.w)
     }
 
-    /// The nearest enabled body (but those with a flag of `skipping`) the ray from `origin` along `direction` (unit)
-    /// meets within `length`, and how far along: sphere-traced through each whose bounding sphere it crosses.
-    func probe(_ origin: SIMD3<Float>, _ direction: SIMD3<Float>, length: Float, skipping: UInt32) -> (body: Int, t: Float)? {
-        var best: (body: Int, t: Float)?
-        for i in bodies.indices where bodies[i].info.y & (PhysicsWorld.disabledBit | skipping) == 0 {
-            if let t = trace(i, origin, direction, until: best?.t ?? length) { best = (i, t) }
+    // MARK: Over the bodies (buffers, nothing allocated: Tools/perf/hot-functions.txt)
+
+    /// The bodies of `b` whose spheres come within `reach` of `x` (but `skip`, disabled ones and rockets): their indices
+    /// into `out`, and how many.
+    static func gather(_ b: UnsafeBufferPointer<GPUPhysicsBody>, around x: SIMD3<Float>, reach: Float, skip: Int,
+                       into out: UnsafeMutableBufferPointer<Int32>) -> Int {
+        var n = 0
+        for k in 0..<b.count where k != skip && b[k].info.y & (disabledBit | fuseBit) == 0 {
+            let d = xyz(b[k].position) - x, r = b[k].invInertia.w + reach
+            if dot(d, d) < r * r && n < out.count {
+                out[n] = Int32(k)
+                n += 1
+            }
+        }
+        return n
+    }
+
+    /// Whether `x` is deeper than `by` inside any of `list`'s bodies.
+    static func inside(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, _ list: UnsafeBufferPointer<Int32>, _ x: SIMD3<Float>,
+                       by depth: Float) -> Bool {
+        for k in list {
+            let o = b[Int(k)]
+            if shapes.distance(shape: Int(o.info.x), PhysicsMath.qrot(PhysicsMath.qconj(o.rotation), x - xyz(o.position))) < -depth { return true }
+        }
+        return false
+    }
+
+    /// The nearest of `b`'s bodies (those of `list`, or every enabled one but those with a flag of `skipping`) the ray
+    /// from `origin` along `direction` (unit) meets within `length`, and how far along (body -1: none).
+    static func nearest(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, list: UnsafeBufferPointer<Int32>?,
+                        _ origin: SIMD3<Float>, _ direction: SIMD3<Float>, length: Float, skipping: UInt32) -> (body: Int, t: Float) {
+        var best = (body: -1, t: length)
+        if let list {
+            for k in list {
+                let t = trace(b[Int(k)], shapes, origin, direction, until: best.t)
+                if t >= 0 { best = (Int(k), t) }
+            }
+        } else {
+            for i in 0..<b.count where b[i].info.y & (disabledBit | skipping) == 0 {
+                let t = trace(b[i], shapes, origin, direction, until: best.t)
+                if t >= 0 { best = (i, t) }
+            }
         }
         return best
     }
 
-    /// ...among the walker's `near` bodies.
-    private func probeNear(_ origin: SIMD3<Float>, _ direction: SIMD3<Float>, length: Float) -> (body: Int, t: Float)? {
-        var best: (body: Int, t: Float)?
-        for k in demolition.near {
-            if let t = trace(Int(k), origin, direction, until: best?.t ?? length) { best = (Int(k), t) }
-        }
-        return best
-    }
-
-    /// How far along the ray body `i`'s surface is, if it is before `end`.
-    @inline(__always) private func trace(_ i: Int, _ origin: SIMD3<Float>, _ direction: SIMD3<Float>, until end: Float) -> Float? {
-        let x = PhysicsWorld.xyz(bodies[i].position), q = bodies[i].rotation
-        let radius = bodies[i].invInertia.w, oc = origin - x
+    /// How far along the ray body `o`'s surface is, if before `end` (else -1): sphere-traced through its distance from
+    /// where the ray enters its bounding sphere.
+    @inline(__always) static func trace(_ o: GPUPhysicsBody, _ shapes: PhysicsShapes, _ origin: SIMD3<Float>, _ direction: SIMD3<Float>,
+                                        until end: Float) -> Float {
+        let x = xyz(o.position), q = PhysicsMath.qconj(o.rotation)
+        let radius = o.invInertia.w, oc = origin - x
         let b = dot(oc, direction), c = dot(oc, oc) - radius * radius, disc = b * b - c
-        guard disc >= 0 else { return nil }
+        guard disc >= 0 else { return -1 }
         var t = max(-b - sqrt(disc), 0)
         let last = min(-b + sqrt(disc), end)
         for _ in 0..<48 where t < last {
-            let local = PhysicsMath.qrot(PhysicsMath.qconj(q), origin + direction * t - x)
-            let d = distance(shape: Int(bodies[i].info.x), local)
+            let d = shapes.distance(shape: Int(o.info.x), PhysicsMath.qrot(q, origin + direction * t - x))
             if d < 1e-3 { return t }
             t += max(d, 1e-4)
         }
-        return nil
+        return -1
+    }
+
+    /// Blast `c`'s push on every body this step (as beginFractureStep's).
+    static func blastAll(_ c: GPUFractureCommand, _ b: UnsafeMutableBufferPointer<GPUPhysicsBody>, _ s: UnsafeMutableBufferPointer<GPUFractureState>,
+                         _ nodes: UnsafeBufferPointer<GPUFractureNode>) {
+        for i in 0..<b.count { blast(&b[i], &s[i], nodes[i], c) }
     }
 }

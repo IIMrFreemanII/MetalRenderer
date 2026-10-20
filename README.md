@@ -1622,6 +1622,54 @@ Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fra
   * The golem's sign is the baked grid's three-axis vote: a model with shells inside shells can get caps where it is hollow.
   * Metal 4 and the M4 Max are untested.
 
+### Demolition
+
+A generated office to wreck (`METALRENDERER_SCENE=demolition`, `Scene+Demolition.swift`, `DemolitionBlueprint.swift`, `Physics+Demolition.swift`, `Renderer+Demolition.swift`). Fly round it or walk through it, and break it with a machine gun, rockets and TNT. It opens in solid shading (its own look, below), and its physics always runs on the CPU, behind the frame.
+
+* **The office** is the building generator's (`BuildingGenerator`, the office style made plainer: one block, no shops or podium, windows in bays). Its plan and openings are cut into about 760 blocks at 5 storeys. Each block is fractured as the destruction scene's objects are, about 10,850 bodies in all:
+  * outer walls as piers and spandrels, with glass in the windows (windows and doorways go up to the slab, so there are no lintels: a light block between heavy ones is what an awake stack fails to hold);
+  * each storey's slab in panels of at most 4 m, cut round the stair well and the lift shaft;
+  * columns where the panels meet in open rooms;
+  * partitions between rooms;
+  * the stair as thin sloped flights, landings and a spine (a walker climbs a slope where it would trip on a step);
+  * the furniture as one box each (`Interior.furniture`, which the interior builder now keeps).
+
+  No two blocks start inside each other (a millimetre apart), and each stands on something (`DemolitionBlueprintTests`).
+* **Welded across objects** (`Scene.weldNeighbours`, `PhysicsWorld.addWeld`). Every structural block is welded to the blocks it touches, at every level of both fracture trees, as Chaos's connection graph is. The office is one structure: a broken panel's edge pieces stay held to the panel beside it, and the slab is a plate, not panels each on its own. Before this, interior panels dropped where a column was missing, thin partitions and panes toppled, and the whole office came down when woken.
+  * Everything starts asleep. A pair of welded bodies neither of which moves takes no colour in the demolition world (`idleWelds`, a flag the other scenes leave off, so their numbers are unchanged). Standing, a step and a frame went from 6.5 to 4.6 ms of CPU.
+* **Tools** (keys 1 to 4), aimed with the crosshair while the mouse is captured:
+
+  | Tool | What it does |
+  |---|---|
+  | Machine gun | 12 bullets a second. A bullet breaks the piece it hits a level (3× what breaks it); a smallest piece is knocked out at once and away at 3.5 m/s |
+  | Rocket launcher | One of 8 balls, sent at 28 m/s with its drop allowed for. It goes off where it would meet something in the step, or on the ground, or when a hit slows it, or after 4 s: a 2.5 m blast over 6 steps, and a fireball |
+  | TNT | A charge stuck where you aim (up to 16, carried by their piece, moved onto the nearest of its pieces when that breaks). The right button sets them all off: 1.8 m blasts |
+  | Grab | As in the other physics scenes, with the cursor free |
+
+  They are commands (`hit`, `rocket`; a blast for TNT), sent with the next frame's steps (`Scene.physicsCommand`), so a click never waits for the steps running, and kept with their step, so a replay does them again.
+* **The walker** (Shift-V walks or flies; W A S D, Shift runs, Space jumps, Return goes back to where you last stood) is a capsule body that doesn't turn (`walkerBit`). Each step its speed over what it stands on (rays down from its middle and round it) is brought toward the input, so it walks up the flights, rides what falls under it, falls through holes and is pushed by debris. Its contacts break nothing. If it falls out of the world or is buried, it is put back where it last stood. The camera is its eyes, eased over 30 ms.
+* **The mouse** (`RenderView.captured`, `RendererController.setCaptured`). The first click in the view captures it: the cursor is hidden and held in the middle, and its moves turn the camera. Esc, the Grab tool, another scene, or leaving the window or the app lets it go. The HUD (`DemolitionHUD.swift`: crosshair, tools, charges, keys) is a view over the render, never in frames. R restarts: the player's commands are dropped and time goes back to 0.
+* **Settings:** `demfloors` (4 to 6), `demseed`, `demwidth`, `demdepth`, `dempieces`, `demtough`, `demstrength`, `demfurniture`, `demglass`, `demdust`, `demfade`, `demdemo` (a scripted rocket, TNT, a burst and the walker into a hole: the benchmark's).
+* **What it costs** (M1 Max, release, `METALRENDERER_BENCH=demolitioncpu`, solid look at 1920×1200):
+
+  | | Physics in the frame: `cpu` | Behind it: frame thread | GPU |
+  |---|---|---|---|
+  | Standing (asleep) | 4.6 ms | 4.0 ms | 7.8 ms |
+  | Corners blown, falling | 9.1 ms | 4.3 ms | 12.1 ms |
+
+* **Checked** (`DemolitionTests`):
+  * it stands when everything is woken at once (a few cm of settling; a few light pieces jolt);
+  * a blast stays where it is;
+  * a burst knocks pieces out of a pier;
+  * a rocket goes off within 0.2 m of where it was aimed;
+  * the walker climbs a flight to its landing, and falls through a hole TNT blew;
+  * a replay with the player's commands is the same to the bit;
+  * one thread and all agree (`PhysicsThreadsTests`).
+* **Limits:**
+  * The office is sturdy: corner TNT takes the corners, not the building. Weld strength (`demstrength`) is the lever.
+  * The window's capture, HUD and play are untested by hand.
+  * The new commands are the CPU's alone.
+
 ### CPU physics on every core
 
 The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference, and a scene can run on it (`physics=cpu`). It runs on every core and gives the same numbers, bit for bit, as it did on one thread, whatever the number of threads (`PhysicsThreads.swift`):
@@ -2042,9 +2090,17 @@ The views work in both virtual-geometry runtimes (with virtual geometry off, the
 
 ### Solid shading
 
-For iterating on scenes, physics and destruction, solid shading draws the frame the way Blender's Solid viewport does: every surface flat grey, lit by a studio light fixed to the camera (a key light from the upper left, a weak fill from the right, and an ambient that goes from sky to ground). Each pixel uses the surface's smooth normal. Turn it on with ` (backtick), App menu → Solid Shading (⇧⌘S), the Rendering section's "Solid shading" checkbox, or `METALRENDERER_VIEW="solid=1"`, which also works in benchmarks. The setting is saved with the others, and the window title says "solid" while it is on.
+For iterating on scenes, physics and destruction, solid shading draws the frame plainly, as Blender's Solid viewport does. Its look (`RenderSettings.solidLook`, `solidTraceKernel` then `solidResolveKernel`) tells things apart:
+* each surface is its material's colour (its texture's too), each object a few per cent lighter or darker than the next (`solidtint`);
+* a fractured object's broken faces are darker and warmer (`Scene.markCutFace`);
+* thin outlines show where objects meet, or where a surface turns or steps (`solidedges`);
+* the scene's sun casts its shadow (`solidshadows`);
+* corners and gaps darken with ambient occlusion: `solidaorays` short rays a pixel (1 by default), turned in a 4 × 4 pattern and filtered over that block, with no noise from frame to frame (`solidao`, `solidaoradius`);
+* window glass is a tinted, outlined film over what is behind it.
 
-One kernel (`solidKernel`, Shaders/Output.metal) traces one camera ray per pixel and writes the drawable. Nothing else runs:
+`solidclassic=1` is the old look: every surface flat grey, lit by a studio light fixed to the camera (a key light from the upper left, a weak fill from the right, and an ambient that goes from sky to ground), with the surface's smooth normal. Its images are main's to the bit. The demolition scene opens in solid shading and gives it back when you leave it. The new look costs more than the classic one: in the demolition scene at 1920×1200, 7.3 ms against 2.8 (no shadows or AO: 5.2; each AO ray about 1 ms more). Turn it on with ` (backtick), App menu → Solid Shading (⇧⌘S), the Rendering section's "Solid shading" checkbox, or `METALRENDERER_VIEW="solid=1"`, which also works in benchmarks. The setting is saved with the others, and the window title says "solid" while it is on.
+
+The classic look is one kernel (`solidKernel`, Shaders/Output.metal) that traces one camera ray per pixel and writes the drawable; the new one is two (the rays into three targets, then the picture). Nothing else runs:
 * no shadows, light grid, ReSTIR, MegaLights or many-light sampling;
 * no GI, reflections, denoisers, fog or sky;
 * no TAA, MetalFX or lens.
@@ -2052,7 +2108,7 @@ One kernel (`solidKernel`, Shaders/Output.metal) traces one camera ray per pixel
 The scene's update still runs every frame: physics, cloth, soft bodies, hair, liquids, destruction, the crowd's skinning, the plants' wind, virtual geometry, and the TLAS. Everything that moves therefore shows where it is: rigid bodies, debris, ragdolls, cloth, the crowd and liquids' surfaces.
 
 What isn't drawn:
-* window glass, so rooms show through their windows;
+* window glass in the classic look, so rooms show through their windows;
 * the lights' shapes;
 * billboard particles, which aren't in the TLAS;
 * terrain water.
@@ -2061,7 +2117,7 @@ Turning solid shading off starts the denoisers' and MetalFX's histories over. Gi
 
 The picture is drawn at the output size, which is what MetalFX would have made, so it stays sharp. Its cost scales with the pixel count. On the M1 Max (no hardware ray tracing), the stress building costs 0.37 ms at 640×400, 1.2 ms at 1280×800 and 2.5 ms at 1920×1200. U (upscaling off) draws it at the traced size; − and = change that size.
 
-Whole frames on the M1 Max, measured with `METALRENDERER_BENCH_SPLIT=0` in release (`-m solid`), each scene's own look against solid shading, all moving:
+Whole frames on the M1 Max, measured with `METALRENDERER_BENCH_SPLIT=0` in release (`-m solid`), each scene's own look against the classic solid look, all moving:
 
 | Scene | Look | Normal (ms) | Solid (ms) |
 |---|---|---|---|

@@ -560,7 +560,7 @@ extension PhysicsWorld {
     }
 
     /// Every weld of body `i` broken (it came free).
-    private func breakWelds(_ i: Int) {
+    func breakWelds(_ i: Int) {
         for k in Int(weldStarts[i])..<Int(weldStarts[i + 1]) { welds[Int(weldList[k].y)].info.z = 1 }
     }
 

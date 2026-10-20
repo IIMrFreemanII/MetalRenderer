@@ -545,8 +545,9 @@ final class PhysicsStepper {
         var breakLog: [GPUBreakEvent]
         var breakSteps: [Int]
         var breakTotal: Int
-        /// The rockets, the fireballs, the walker (PhysicsWorld.demolition).
+        /// The rockets, the fireballs, the walker (PhysicsWorld.demolition), and the step these are before.
         var demolition: DemolitionState
+        var stepIndex: Int
 
         init(_ w: PhysicsWorld) {
             bodies = w.bodies
@@ -557,6 +558,7 @@ final class PhysicsStepper {
             breakSteps = w.breakSteps
             breakTotal = w.breakTotal
             demolition = w.demolition
+            stepIndex = w.stepIndex
         }
     }
 

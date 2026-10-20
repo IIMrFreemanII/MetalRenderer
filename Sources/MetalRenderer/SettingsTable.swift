@@ -612,6 +612,19 @@ enum SettingsTable {
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
+            S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },
+            S.check("Material colours", \.solidLook.materials).env(.view, "solidmaterials").when { $0.solid && !$0.solidLook.classic },
+            S.slider("Object tint", \.solidLook.tint, SolidLook.tintRange, step: 0.01, fmt("%.2f")).env(.view, "solidtint")
+                .when { $0.solid && !$0.solidLook.classic },
+            S.check("Broken faces", \.solidLook.cutFaces).env(.view, "solidcut").when { $0.solid && !$0.solidLook.classic },
+            S.check("Outlines", \.solidLook.edges).env(.view, "solidedges").when { $0.solid && !$0.solidLook.classic },
+            S.slider("Outline width", \.solidLook.edgeWidth, SolidLook.edgeRange).env(.view, "solidedgewidth")
+                .when { $0.solid && !$0.solidLook.classic && $0.solidLook.edges },
+            S.check("Sun shadows", \.solidLook.shadows).env(.view, "solidshadows").when { $0.solid && !$0.solidLook.classic },
+            S.check("Ambient occlusion", \.solidLook.ao).env(.view, "solidao").when { $0.solid && !$0.solidLook.classic },
+            S.slider("AO rays", \.solidLook.aoRays, SolidLook.aoRayRange).env(.view, "solidaorays").when { $0.solid && !$0.solidLook.classic && $0.solidLook.ao },
+            S.slider("AO reach", \.solidLook.aoRadius, SolidLook.aoRadiusRange, step: 0.1, fmt("%.1f m")).env(.view, "solidaoradius")
+                .when { $0.solid && !$0.solidLook.classic && $0.solidLook.ao },
             S.popup("View", \.viewMode, RenderSettings.viewModes.enumerated().map { ($1, $0) }).env(.view, "view", interactiveOnly: true),
             S.popup("Reference", \.reference.mode, titled(\.title)).env(.view, "reference"),
             S.slider("Ref. bounces", \.reference.bounces, ReferenceSettings.bounceRange).env(.view, "refbounces").when(reference),

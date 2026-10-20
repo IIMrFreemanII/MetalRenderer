@@ -490,6 +490,31 @@ struct DestructionSettings: Equatable, Codable {
     static let toughnessRange: ClosedRange<Float> = 0.1...10
 }
 
+/// Solid shading's look (RenderSettings.solidLook): what tells things apart in it. `classic` is the old one, every
+/// surface the same grey under a light on the camera.
+struct SolidLook: Equatable, Codable {
+    var classic = false
+    /// Each surface its material's colour (its texture's too), each object a little lighter or darker than the next,
+    /// a fractured object's broken faces darker and warmer (Scene.markCutFace).
+    var materials = true
+    var tint: Float = 0.08
+    var cutFaces = true
+    /// Lines where one object meets another, or a surface turns or steps (the width in pixels).
+    var edges = true
+    var edgeWidth = 1
+    /// The sun's shadows (the scene's sun, else one from the upper left), and the dark in corners and gaps (rays out
+    /// to `aoRadius` metres, filtered over 4 x 4 pixels).
+    var shadows = true
+    var ao = true
+    var aoRays = 1
+    var aoRadius: Float = 0.8
+
+    static let tintRange: ClosedRange<Float> = 0...0.3
+    static let edgeRange = 1...3
+    static let aoRayRange = 1...16
+    static let aoRadiusRange: ClosedRange<Float> = 0.1...4
+}
+
 /// The demolition scene's (Scene+Demolition.swift). Changing any of it builds the scene again.
 struct DemolitionSettings: Equatable, Codable {
     /// The office: its storeys, its seed (another plan, other rooms), its lot (m, x and z).
@@ -1318,6 +1343,8 @@ struct RenderSettings: Equatable, Codable {
     /// pixel and nothing else (no shadows, GI, reflections, fog, sky, denoisers, MetalFX or lens). For iterating on
     /// scenes and physics fast (Renderer: FramePlan.solid, Shaders/Output.metal solidKernel).
     var solid = false
+    /// What solid shading draws (Shaders/Output.metal solidTraceKernel, solidResolveKernel).
+    var solidLook = SolidLook()
     /// `solid` was turned on by entering the demolition scene (applySceneDefaults turns it back when leaving).
     var solidFromScene = false
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)

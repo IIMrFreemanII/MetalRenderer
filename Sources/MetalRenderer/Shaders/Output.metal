@@ -185,6 +185,178 @@ kernel void solidKernel(constant Uniforms&               u          [[buffer(0)]
 }
 
 // ---------------------------------------------------------------------------------------------
+// The solid look that tells things apart (RenderSettings.solidLook, Renderer's encodeOutput): each surface its
+// material's colour (a fractured object's broken faces darker and warmer, each object a shade of its own), lit by the
+// scene's sun with its shadow and a sky's light dimmed in corners (ambient occlusion), outlined where objects meet or
+// a surface turns. Two passes over the output's pixels: solidTraceKernel's rays (one camera ray, past one pane of
+// glass, a shadow ray, a few short AO rays) into three targets, then solidResolveKernel: the AO filtered over 4 x 4
+// pixels (its rays turn with the pixel in a 4 x 4 pattern: 16 x as many directions over the block, no noise from
+// frame to frame), the outlines, the light. Linear light into the drawable (sRGB).
+// ---------------------------------------------------------------------------------------------
+
+struct SolidParams {
+    float4 sun;      // xyz: toward the sun when the scene has none; w: shadows (1 / 0)
+    float4 look;     // x: each object's tint, y: broken faces (1 / 0), z: AO's reach (m), w: AO rays (0: none)
+    float4 edges;    // x: outlines (1 / 0), y: their width (pixels), z: material colours (1 / 0)
+    uint4 info;      // x: how many materials `flags` has
+};
+
+constant uint SOLID_CUT_FACE = 1;   // Scene.cutFace
+constant uint MASK_EFFECT = 64;     // Scene.maskEffect: a fireball's glow
+
+// Object `instance`'s shade: lighter or darker by up to `amount`, a little warmer or cooler.
+inline float3 solidTint(uint instance, float amount) {
+    uint h = pcgHash(instance * 0x9E3779B9u + 0x51ED27u);
+    float a = float(h & 0xFFFFu) / 65535.0f * 2.0f - 1.0f, b = float(h >> 16) / 65535.0f * 2.0f - 1.0f;
+    return float3(1.0f + amount * a) * float3(1.0f + 0.4f * amount * b, 1.0f, 1.0f - 0.4f * amount * b);
+}
+
+inline float3 solidSky(float v) { return mix(float3(0.62f, 0.68f, 0.74f), float3(0.30f, 0.36f, 0.44f), v); }
+
+kernel void solidTraceKernel(constant Uniforms&               u          [[buffer(0)]],
+                             SCENE_ACCEL                      accel      [[buffer(1)]],
+                             device const float3*             positions  [[buffer(2)]],
+                             device const float3*             normals    [[buffer(3)]],
+                             device const uint*               indices    [[buffer(4)]],
+                             device const MeshData*           meshes     [[buffer(5)]],
+                             device const InstanceData*       instances  [[buffer(6)]],
+                             constant SceneShading&           shading    [[buffer(7)]],
+                             device const Light*              lights     [[buffer(8)]],
+                             constant SolidParams&            p          [[buffer(9)]],
+                             device const uchar*              flags      [[buffer(10)]],
+                             texture2d<float, access::write>  colour     [[texture(0)]],
+                             texture2d<float, access::write>  geometry   [[texture(1)]],
+                             texture2d<uint, access::write>   ids        [[texture(2)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float3 dir = primaryDirection(u, tid);
+    SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, nullptr, 0u);
+    Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
+    uint mask = MASK_ALL & ~MASK_LIGHTS;
+    Hit res = intersectClosest(r, mask, accel);
+    // A pane of glass: its tint over what is behind it, and its outline.
+    float3 filter = float3(1.0f);
+    uint glass = 0u;
+    if (res.hit && (instanceRecord(s.instances, res.instance).pad0 & MASK_GLASS) != 0u) {
+        InstanceData g = instanceRecord(s.instances, res.instance);
+        float3 tint = s.materials[hitMaterialIndex(res, g, accel, s)].albedo.xyz;
+        filter = mix(float3(1.0f), tint, 0.6f) * 0.82f;
+        glass = res.instance + 1u;
+        r.tmin = res.distance + 1e-3f;
+        mask &= ~MASK_GLASS;
+        res = intersectClosest(r, mask, accel);
+    }
+    uint id = glass * 0x9E3779B9u;
+    if (!res.hit) {
+        colour.write(float4(solidSky(float(tid.y) / float(u.height)) * filter, -1.0f), tid);
+        geometry.write(float4(0.0f, 0.0f, 1e9f, 1.0f), tid);
+        ids.write(uint4(id), tid);
+        return;
+    }
+    InstanceData inst = instanceRecord(s.instances, res.instance);
+    id ^= res.instance + 1u;
+    float depth = res.distance * dot(dir, u.camForward.xyz);
+    Surface sf = surfaceFromHit(res, r, accel, s, 0.0f, false);
+    if ((inst.pad0 & MASK_EFFECT) != 0u) {   // a fireball: its glow, unlit
+        colour.write(float4(min(sf.albedo + sf.emission * 0.08f, float3(1.0f)) * filter, -1.0f), tid);
+        geometry.write(float4(0.0f, 0.0f, depth, 1.0f), tid);
+        ids.write(uint4(id), tid);
+        return;
+    }
+    float3 n = sf.normal;
+    if (length_squared(n) < 1e-12f) n = -dir;
+    n = normalize(n);
+    if (dot(n, dir) > 0.0f) n = -n;   // the side the camera sees
+    float3 albedo = p.edges.z > 0.0f ? sf.albedo : float3(0.6f);
+    uint m = hitMaterialIndex(res, inst, accel, s);
+    if (p.look.y > 0.0f && m < p.info.x && (uint(flags[m]) & SOLID_CUT_FACE) != 0u) albedo *= float3(0.78f, 0.66f, 0.52f);
+    albedo = max(albedo * solidTint(res.instance, p.look.x), float3(0.03f)) * filter;
+    // The sun, and its shadow.
+    float3 toSun = u.lightTable.y > 0u ? normalize(lights[u.lightTable.z].axis.xyz) : normalize(p.sun.xyz);
+    float3 origin = sf.position + n * max(2e-3f, res.distance * 1e-4f);
+    float sun = max(dot(n, toSun), 0.0f);
+    if (p.sun.w > 0.0f && sun > 0.0f) {
+        float t;
+        if (intersectAny(makeRay(origin, toSun, 0.0f, INFINITY), MASK_GEOMETRY, accel, t)) sun = 0.0f;
+    }
+    // What of the sky the surface sees within the AO's reach (rays about the normal, cosine-weighted).
+    float ao = 1.0f;
+    uint rays = uint(p.look.w);
+    if (rays > 0u) {
+        float3 t1 = normalize(abs(n.y) < 0.9f ? cross(n, float3(0, 1, 0)) : cross(n, float3(1, 0, 0))), t2 = cross(n, t1);
+        uint cell = (tid.x & 3u) + 4u * (tid.y & 3u), total = 16u * rays;
+        float open = 0.0f;
+        for (uint k = 0; k < rays; k++) {
+            uint i = cell + 16u * k;
+            float u1 = (float(i) + 0.5f) / float(total), u2 = fract(float(i) * 0.618034f + 0.31f);
+            float rr = sqrt(u1), phi = 6.2831853f * u2;
+            float3 d = normalize(t1 * (rr * cos(phi)) + t2 * (rr * sin(phi)) + n * sqrt(max(1.0f - u1, 0.0f)));
+            float t;
+            if (!intersectAny(makeRay(origin, d, 0.0f, p.look.z), MASK_GEOMETRY, accel, t)) open += 1.0f;
+            else open += smoothstep(0.0f, p.look.z, t) * 0.6f;   // (far things darken less)
+        }
+        ao = open / float(rays);
+    }
+    float2 e = sdfOctEncode(n);
+    colour.write(float4(albedo, sun), tid);
+    geometry.write(float4(e, depth, ao), tid);
+    ids.write(uint4(id), tid);
+}
+
+kernel void solidResolveKernel(constant Uniforms&              u        [[buffer(0)]],
+                               constant SolidParams&           p        [[buffer(9)]],
+                               texture2d<float, access::read>  colour   [[texture(0)]],
+                               texture2d<float, access::read>  geometry [[texture(1)]],
+                               texture2d<uint, access::read>   ids      [[texture(2)]],
+                               texture2d<float, access::write> output   [[texture(3)]],
+                               uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height) return;
+    float4 c = colour.read(tid);
+    if (c.w < 0.0f) { output.write(float4(c.xyz, 1.0f), tid); return; }
+    float4 g = geometry.read(tid);
+    float3 n = sdfOctDecode(g.xy);
+    float z = g.z;
+    int2 last = int2(u.width, u.height) - 1;
+    // The AO over the 4 x 4 block round it (each of the pattern's cells once), where the surface goes on.
+    float ao = g.w;
+    if (p.look.w > 0.0f) {
+        float sum = 0.0f, weights = 0.0f;
+        for (int dy = -1; dy <= 2; dy++) {
+            for (int dx = -1; dx <= 2; dx++) {
+                uint2 q = uint2(clamp(int2(tid) + int2(dx, dy), int2(0), last));
+                float4 gq = geometry.read(q);
+                float w = exp(-abs(gq.z - z) / (0.02f * z + 1e-3f)) * pow(max(dot(n, sdfOctDecode(gq.xy)), 0.0f), 8.0f);
+                sum += w * gq.w;
+                weights += w;
+            }
+        }
+        ao = weights > 1e-4f ? sum / weights : g.w;
+    }
+    // Outlines: where the object, the surface's turn or its depth changes against a neighbour.
+    float edge = 0.0f;
+    if (p.edges.x > 0.0f) {
+        uint id = ids.read(tid).x;
+        int w = max(int(p.edges.y), 1);
+        int2 offsets[4] = { int2(w, 0), int2(-w, 0), int2(0, w), int2(0, -w) };
+        for (int k = 0; k < 4; k++) {
+            uint2 q = uint2(clamp(int2(tid) + offsets[k], int2(0), last));
+            float4 gq = geometry.read(q);
+            bool other = ids.read(q).x != id;
+            bool turn = dot(n, sdfOctDecode(gq.xy)) < 0.8f;
+            bool step = abs(gq.z - z) > 0.02f * z + 0.01f;
+            if (other || turn || step) edge = 1.0f;
+        }
+    }
+    float sky = mix(0.42f, 0.62f, n.y * 0.5f + 0.5f);
+    float fill = 0.12f * max(dot(n, -u.camForward.xyz), 0.0f);
+    float3 light = float3(sky * ao) + float3(1.0f, 0.96f, 0.88f) * (0.75f * c.w) + fill;
+    float3 col = c.xyz * light * mix(1.0f, 0.4f, edge);
+    output.write(float4(col, 1.0f), tid);
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4. Composite: re-apply albedo, add emission, tonemap and write to the drawable.
 // ---------------------------------------------------------------------------------------------
 

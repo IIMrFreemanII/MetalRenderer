@@ -283,6 +283,10 @@ final class PhysicsWorld {
     var liveCommands: [Int32] = []
     /// The demolition scene's rockets in flight, blasts going on and walker (Physics+Demolition.swift).
     var demolition = DemolitionState()
+    /// Welded pairs neither of whose bodies moves left out of the colouring (PhysicsWorld.idle): the demolition
+    /// scene's office, every block welded to its neighbours and asleep, would otherwise solve 10,000 of them each
+    /// substep for nothing. (Off elsewhere: the colours, and so the numbers, stay as they were.)
+    var idleWelds = false
     /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
     var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
     var fractures: Bool { !fractureNodes.isEmpty }

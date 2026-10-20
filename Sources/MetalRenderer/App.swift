@@ -73,6 +73,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // From here on the renderer belongs to the render thread: the main thread goes through the controller.
         controller = RendererController(renderer: renderer)
         view.inputHandler = controller
+        controller.renderView = view
+        // The mouse let go as soon as the window or the app is left (not at the next tick).
+        for name in [NSWindow.didResignKeyNotification, NSApplication.didResignActiveNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.controller.setCaptured(false) }
+        }
         view.onDropModels = { [weak self] urls in self?.controller.addModels(urls) }
 
         if !Benchmark.isEnabled {
@@ -97,6 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let tools = DestructionOverlay()
             tools.attach(to: view)
             controller.observeTick { [weak self, weak tools] in tools?.show(self?.controller.status?.destruction) }
+            // The demolition scene's crosshair and tools.
+            let hud = DemolitionHUD()
+            hud.attach(to: view)
+            controller.observeTick { [weak self, weak hud] in hud?.show(self?.controller.status?.demolition) }
             // The day bar: the time of day, and the day's times to switch to (held there until play).
             let bar = DayBar()
             bar.attach(to: view)

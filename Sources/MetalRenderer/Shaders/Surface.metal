@@ -394,6 +394,21 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     return v;
 }
 
+// The full material index of hit `h` on instance `inst`: an SDF shape's node's offset, a leaf's, a mesh's triangles'
+// (MULTI_MATERIAL), a streamed cluster's. (Pick's click and the solid look's colours.)
+inline uint hitMaterialIndex(Hit h, InstanceData inst, SCENE_ACCEL accel, thread const SceneData& s) {
+    uint material = inst.materialIndex;
+    if (SDF_SHAPES && h.part == HIT_SDF) {
+        material += h.primitive;
+    } else if (!(VOXELS && h.part == HIT_VOXEL) && !(HAIR_CURVES && h.part == HIT_CURVE)) {
+        HitVertices hv = fetchHitVertices(h, inst, accel, s);
+        if (hv.leaf) material += 1u;
+        if (MULTI_MATERIAL && hv.triangle != ~0u) material += s.triangleMaterials[hv.triangle];
+        if (STREAMED) material += hv.material;
+    }
+    return material;
+}
+
 // TERRAIN: a terrain's sector (Scene+Terrain.swift). Its vertices' layer weights at the hit (layer 0: the sector's own
 // material, as it is shaded; layers 1...15 the layer table's materials, TerrainDocument.layers), the three strongest
 // layers blended over it: each sampled in the world's x, z (its table's UV per metre), and where the ground is steeper
