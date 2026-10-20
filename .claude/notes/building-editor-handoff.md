@@ -20,8 +20,8 @@ editor" section has the design and how to use it.
   `World.version` 7).
 - **Walking:** `Walker.swift` (+ `ColliderGrid`), `InteriorControls.swift`, `InteriorLifts.swift`; the renderer's
   walk mode, `chooseInterior` and the motion-gated top-level refit (`lastMotionFrame`) are in `Renderer.swift`.
-- **Editor:** `BuildingEditor/` (model behind `BuildingEditorHost`, panel, tabs, Floor Plan window),
-  `BuildingParams.swift` (+ `BuildingMutate`). Shared slider rows: `PlantEditor/PlantControls.swift` (`EditorDrag`).
+- **Editor:** `Buildings/Editor/` (model behind `BuildingEditorHost`, panel, tabs, Floor Plan window),
+  `BuildingParams.swift` (+ `BuildingMutate`). Shared slider rows: `Plants/Editor/PlantControls.swift` (`EditorDrag`).
 - Bench mode `buildings`; tests `BuildingPlanTests`, `BuildingEditorTests`, `BuildingWorkshopTests`, `WalkerTests`,
   and new cases in `CityTests` and `WorldTests`.
 

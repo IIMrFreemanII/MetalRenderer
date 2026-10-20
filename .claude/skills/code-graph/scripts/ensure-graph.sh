@@ -4,7 +4,8 @@
 #   ensure-graph.sh               build graphify-out/graph.json with `graphify update .` if it is missing
 #   ensure-graph.sh --check       only report: exit 0 when the graph is there, 1 when it is missing
 #
-# graphify-out/ is gitignored, so every new worktree starts without a graph. The build is AST only (no API cost).
+# graphify-out/ is committed, so a checkout has the graph of its last commit; one without it (an older branch) builds it
+# here. The build is AST only (no API cost).
 # A graph that is already there is left alone: refresh it with `graphify update .` after changing code.
 set -euo pipefail
 

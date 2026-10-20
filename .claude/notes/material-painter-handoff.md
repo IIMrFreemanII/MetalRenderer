@@ -24,7 +24,7 @@ Branch `claude/graphify-update-746c89` (PR #60, with the Material Designer and M
 - `MaterialShaders/PaintBake.metal`: AO/thickness (RT), curvature, generators, position/normal maps.
 - Shading: `Surface.metal` reads painted corners when the extras' `textures.z` has its top bit set (offset to the GPU UV buffer).
 - `Intersect.metal` `rtOpacity`: the mesh index's top bit means the same.
-- `PainterEditor/`: window (`PainterPanel`, `PainterModel`, `PainterView`). V opens, Shift-V walks.
+- `Painter/Editor/`: window (`PainterPanel`, `PainterModel`, `PainterView`). V opens, Shift-V walks.
 
 ## Verified (offscreen, tests)
 - `-m painter`: bricks laid by UV on sphere, cube, cylinder, plane, character, demon.

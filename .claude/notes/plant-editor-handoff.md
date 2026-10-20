@@ -12,7 +12,7 @@ editor" section has the design and how to use it.
   `Scene.remadeOften` makes its structures quick to build: one leaf-keep level (`PlantTracing`), no compaction and
   fast-build mesh BLAS (`SceneBuffers`). The orbit camera, `frameWorkshop` and the fast reload (kept textures, GI
   kept, one load in flight, no overlay job: `SceneSettings.isSameWorkshop`) are in `Renderer.swift`.
-- The editor: `PlantEditor/` (model behind `PlantEditorHost`, panel, views, `CurveEditor`), `PlantParams.swift` (every
+- The editor: `Plants/Editor/` (model behind `PlantEditorHost`, panel, views, `CurveEditor`), `PlantParams.swift` (every
   slider's range; Mutate reads it), `PlantMutate.swift`.
 - Bench mode `plants`; tests `PlantGoldenTests` (the built-in plants, forest, valley and world placement as they were
   before the editor: any change of them must change these hashes on purpose), `PlantCatalogTests`,

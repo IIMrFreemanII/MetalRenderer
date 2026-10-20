@@ -33,7 +33,7 @@ The particle effects as node graphs, and an editor for them (README "VFX graphs"
 
 ## Phase 2 (the editor window): done, at check-in 2
 
-- `Sources/MetalRenderer/VFXEditor/`:
+- `Sources/MetalRenderer/VFX/Editor/`:
   - `VFXEditorModel` (behind `VFXEditorHost`, testable without a window): the catalog as edited and as saved, undo by snapshots
     (a drag is one step), the draft, Save, Revert, Copy as Swift, the graph's edits, copy and paste of nodes;
   - `VFXLayout` (the canvas's geometry; arranges effects never laid out);

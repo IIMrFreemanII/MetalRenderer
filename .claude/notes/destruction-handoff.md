@@ -5,7 +5,7 @@ README's "Destruction" section is the design; this is where things stand and wha
 
 ## Done
 
-- Fracture trees (`Fracture/`): convex cells, Voronoi / splinters / bricks / radial glass, up to 3 levels, welds at any
+- Fracture trees (`Destruction/Fracture/`): convex cells, Voronoi / splinters / bricks / radial glass, up to 3 levels, welds at any
   level between neighbours neither holding the other.
 - `.cell` SDF primitive (CPU and `SDF_CELL` on the GPU, planes after the nodes in the nodes buffer).
 - Physics (`Physics+Fracture.swift`, `Shaders/Physics.metal`): dormant bodies (`disabledBit`), impact strain (both passes'

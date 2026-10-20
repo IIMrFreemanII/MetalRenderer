@@ -38,7 +38,7 @@ delta over the procedural ground, live ray-traced sculpting, physics/walk/water/
 - **Water** (`TerrainWater.swift`): sea plane, lake flood fill, river bed carving + ribbon; surfaces made with the scene.
 - **Physics**: `PhysicsShapeKind.heightfield` (CPU `PhysicsCollide.swift`, GPU `Physics.metal`), one static per
   sector (`addTerrainColliders`), refreshed when sectors are meshed again.
-- **Editor** (`TerrainEditor/`): window (Shift-T, Shift-Cmd-T), tools + brush, 2D map (height/slope/layers/edits,
+- **Editor** (`Terrain/Editor/`): window (Shift-T, Shift-Cmd-T), tools + brush, 2D map (height/slope/layers/edits,
   tile selection, double-click flies there, brush on the map), tabs: layers, generate, erosion, scatter, water, files
   (16-bit PNG / EXR heightmaps, RGBA splat maps, JSON sidecar).
 
