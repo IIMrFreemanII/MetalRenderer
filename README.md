@@ -670,7 +670,7 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 
 ### The plant editor
 
-The Plant Editor (K or ⌘E, a SwiftUI panel: `PlantEditor/`) shapes every species of plant and makes new ones; the
+The Plant Editor (K or ⌘E, a SwiftUI panel: `Plants/Editor/`) shapes every species of plant and makes new ones; the
 **Plant workshop** scene (`METALRENDERER_SCENE=plants`, `Scene+Plants.swift`) shows what it edits. Entering the workshop
 opens the editor.
 
@@ -711,7 +711,7 @@ opens the editor.
 
 ### The building editor
 
-The Building Editor (J or ⌘B, a SwiftUI panel and a Floor Plan window: `BuildingEditor/`) shapes the styles the city's
+The Building Editor (J or ⌘B, a SwiftUI panel and a Floor Plan window: `Buildings/Editor/`) shapes the styles the city's
 buildings are made in, and single buildings' own floor plans; the **Building workshop** scene
 (`METALRENDERER_SCENE=buildings`, `Scene+Buildings.swift`) shows what it edits, inside and out, and can be walked in.
 
@@ -808,7 +808,7 @@ buildings are made in, and single buildings' own floor plans; the **Building wor
 
 ### The character editor
 
-The Character Editor (H or ⌘Y, a SwiftUI panel: `CharacterEditor/`) makes people. The **Character workshop** scene
+The Character Editor (H or ⌘Y, a SwiftUI panel: `Characters/Editor/`) makes people. The **Character workshop** scene
 (`METALRENDERER_SCENE=people`, `Scene+Characters.swift`) shows what it edits; entering the workshop opens the editor.
 
 * **A character is data** (`CharacterDNA.swift`): a seed, six macro sliders (male … female, age, thin … heavy, slight …
@@ -1562,7 +1562,7 @@ The scene list's keys are `liquid=all|water|blood|honey` (one lane alone), `solv
 
 ### Destruction
 
-Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fracture.swift`, `Fracture/`, `Scene+Fracture.swift`, `Shaders/Physics.metal`): fractured ahead of time into pieces, whole until something hits them hard enough, then pieces held together by welds until those break too, with dust and debris where they part. On the GPU, with the same steps on the CPU as their reference. The **Destruction** scene (`METALRENDERER_SCENE=destruction`, `Scene+Destruction.swift`) is a paved courtyard under an afternoon sun: a concrete wall a wrecking ball swings into at 2 s, a brick wall, two concrete pillars with a wooden beam across them, two glass panes in wooden frames, a concrete tower a weight falls on at 6 s, a stone bust, and the gallery's golem as a statue (its mesh cut piece by piece). Cannonballs hit a pane, the brick wall, a pillar and the golem. It keeps its full look (GI and reflections: the glass needs them). Its settings: `pieces` (scales every object's pieces), `toughness`, `strength` (welds), `dust`, `fade`, `demo` (the wrecking ball, the weight and the shots), `statues`, `massive` (a three-storey building of fractured walls and floors behind the courtyard, over 4,000 bodies, its ground floor's corners blasted by the demo at 2.5 s and 3.5 s, its welds a twentieth as strong so that it comes down: offline), `buildings` (1 to 3 of those buildings side by side, each with its own seeds and corner blasts: over 10,000 bodies with three). In the scene, 1, 2 and 3 pick what a click does: grab a piece (as in the other physics scenes), shoot a ball from the camera, or blast where you point; a box in the view's top-left corner names the tool.
+Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fracture.swift`, `Destruction/Fracture/`, `Scene+Fracture.swift`, `Shaders/Physics.metal`): fractured ahead of time into pieces, whole until something hits them hard enough, then pieces held together by welds until those break too, with dust and debris where they part. On the GPU, with the same steps on the CPU as their reference. The **Destruction** scene (`METALRENDERER_SCENE=destruction`, `Scene+Destruction.swift`) is a paved courtyard under an afternoon sun: a concrete wall a wrecking ball swings into at 2 s, a brick wall, two concrete pillars with a wooden beam across them, two glass panes in wooden frames, a concrete tower a weight falls on at 6 s, a stone bust, and the gallery's golem as a statue (its mesh cut piece by piece). Cannonballs hit a pane, the brick wall, a pillar and the golem. It keeps its full look (GI and reflections: the glass needs them). Its settings: `pieces` (scales every object's pieces), `toughness`, `strength` (welds), `dust`, `fade`, `demo` (the wrecking ball, the weight and the shots), `statues`, `massive` (a three-storey building of fractured walls and floors behind the courtyard, over 4,000 bodies, its ground floor's corners blasted by the demo at 2.5 s and 3.5 s, its welds a twentieth as strong so that it comes down: offline), `buildings` (1 to 3 of those buildings side by side, each with its own seeds and corner blasts: over 10,000 bodies with three). In the scene, 1, 2 and 3 pick what a click does: grab a piece (as in the other physics scenes), shoot a ball from the camera, or blast where you point; a box in the view's top-left corner names the tool.
 
 * **Fracturing** (`FractureTree`, `FracturePatterns`, `ConvexCell`): an object is a tree of convex cells, the object's box at its root, each node cut into its children by its material's pattern, up to three levels; a cell is a list of planes, clipped one at a time, its faces' polygons kept for its volume, inertia and neighbours. **Concrete and stone** are Voronoi cells of random sites kept apart (clustered toward a point by `clustering`, Chaos's clustered Voronoi); **wood** is slabs across the grain, then Voronoi cells in a metric squashed along the grain (cells `stretch` times longer: splinters), which are still convex, their bisectors mapped back by the metric; **bricks** are staggered courses, then each brick in halves; **glass** is radial cracks and rings round a point, each wedge cut into shards by tilted chords, then each shard across. A non-convex object (a cylinder, a statue) is cut inside its box and its cells keep only what is inside it (a 7³ sample of its distance: cells with less than 4 % of it inside go). Neighbours that share a face, at any level, and neither holding the other, are welded (Chaos's connection graph), the weld's area the shared faces' part inside the object.
 * **Pieces** are SDF shapes: the object's own nodes, then a new primitive, `.cell`, the cell's cut planes intersected (`SDFShapes.swift`; its distance the largest plane's, exact inside and a bound outside; its planes after the nodes in the nodes' buffer, `SDF_CELL` in `Shaders/SDF.metal`), with the interior material on the cut faces (the node's material offset). A box's pieces are their cells, their mass and samples from the polytope exactly; the others' are built from their fields side by side. A model's (`addFracturedModel`, `MeshCutter`): its parts merged into one mesh, each piece its triangles clipped by the cell (normals, texture coordinates and materials kept) with caps on the cuts by marching squares of the model's baked distance grid on each cut face (no loops of cut edges to close: a generated model is rarely watertight), colliding as the grid cut by the cell.
@@ -1600,7 +1600,7 @@ Objects that break apart as Unreal's Chaos Destruction breaks them (`Physics+Fra
 * **Commands** (`FractureCommand`: shoot, blast, wake, release) are kept with the step they start at and done by the step's first kernel, so a replay does them again and any time's state is the same however it was reached (the scripted demo is a list of them). A shot launches one of a pool of disabled balls from the camera; a blast pushes what is round it out and up (a held piece takes only the impact).
 * **Dust and debris**: each step's breaks go into a ring of 64 steps on the GPU (`physicsFractureEventsKernel`, in body order: the same every run), and before each particle step `particleInjectKernel` makes them events of a proxy emitter per material, whose children are a puff of smoke-atlas dust (none for glass) and mesh chunks of the inside that bounce off the scene (Particles.swift). In a replay the physics and the particles both take 20 steps a frame, so they keep pace. The CPU's steps log their breaks the same way (`PhysicsWorld.breakLog`, `breakSteps`: the latest 1,024, each with its step), and the renderer writes each into its step's slot of a ring of its own before the frame's particle steps (`Renderer.writeCPUBreaks`); behind the frame, a step the stepper finished after its particle step was taken goes into the frame's first: its dust comes a frame late.
 * **Fading**: a small leaf (under 10 cm, 6 cm for a statue's) lying still for 6 s shrinks away over 1.5 s and is disabled (`fade`).
-* **The Fracture Editor** (Shift-F, or Shift-Cmd-F; `FractureEditor/`): the scene's objects, each one's recipe (material, pattern, seed, pieces at each level, toughness, weld strength, clustering, jitter, and the pattern's own grain, brick size or crack centre), a preview of its pieces at a level held apart (`DestructionSettings.preview`), and what it is made of. An edit builds the scene again with it (`DestructionSettings.recipes`); Save writes the recipes to `Assets/Fracture/recipes.json` (`FractureStore`; `METALRENDERER_FRACTURE=builtin` leaves them out).
+* **The Fracture Editor** (Shift-F, or Shift-Cmd-F; `Destruction/Fracture/Editor/`): the scene's objects, each one's recipe (material, pattern, seed, pieces at each level, toughness, weld strength, clustering, jitter, and the pattern's own grain, brick size or crack centre), a preview of its pieces at a level held apart (`DestructionSettings.preview`), and what it is made of. An edit builds the scene again with it (`DestructionSettings.recipes`); Save writes the recipes to `Assets/Fracture/recipes.json` (`FractureStore`; `METALRENDERER_FRACTURE=builtin` leaves them out).
 * What it costs (M1 Max, `METALRENDERER_BENCH=destruction`: the first 10 s moving; `destructionmassive` at the physics look). The courtyard is 917 bodies (about 700 enabled at most):
 
   | Setting | "physics" pass (GPU) | Whole frame (GPU) |
@@ -1886,7 +1886,7 @@ Every particle effect is a graph (`Sources/MetalRenderer/VFX`), as Unity's VFX G
 
 ### The VFX editor
 
-The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effects' graphs while they run.
+The VFX Editor (X or ⇧⌘E, a window of its own: `VFX/Editor/`) edits the effects' graphs while they run.
 * **The canvas:** a dark grid with the effect's emitters as columns of their four contexts' blocks and its operator nodes,
   each header coloured by its family. Pins are coloured by type (float, vector, colour, bool) and the wires are curves.
   * Drag from an output to an input to wire them; drag a wired input to move its wire elsewhere or let it go.
@@ -1937,7 +1937,7 @@ The VFX Editor (X or ⇧⌘E, a window of its own: `VFXEditor/`) edits the effec
 
 ### The Material Designer
 
-The Material Designer (O or ⇧⌘M, a window of its own: `MaterialEditor/`, the graphs in `MaterialGraph/`) makes
+The Material Designer (O or ⇧⌘M, a window of its own: `MaterialGraph/Editor/`, the graphs in `MaterialGraph/`) makes
 materials as node graphs, after Substance Designer: image nodes wired into each other, baked on the GPU, ending in
 output nodes that name the renderer's channels (base colour, normal, roughness, metallic, ambient occlusion, height,
 opacity, emissive).
@@ -2027,7 +2027,7 @@ opacity, emissive).
 
 ### The Material Painter
 
-The Material Painter (V or ⇧⌘P, a window of its own: `PainterEditor/`, the engine in `Painter/`) paints materials
+The Material Painter (V or ⇧⌘P, a window of its own: `Painter/Editor/`, the engine in `Painter/`) paints materials
 onto an object, after Substance Painter: a stack of layers, each a fill (values, or a Material Designer graph's bake
 projected onto it, triplanar or by UV) or what a brush put there, channel by channel (colour, roughness, metallic,
 height, emissive, opacity), through masks, into a texture set of its own (1K, 2K or 4K).
@@ -2156,6 +2156,32 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 | Edge tolerance (σ) | 2 | How different in brightness a neighbor can be and still be blended, in standard deviations. Lower is sharper and noisier. |
 | History length | 16 frames | Temporal accumulation. Shorter means less lag on moving lights and shadows, and more flicker. |
 | Anti-lag | off | Shortens the history where a fast and a slow running average disagree, which happens when the lighting changes. It helps most with long histories. |
+
+## Source layout
+
+`Sources/MetalRenderer` is one module, in a folder per feature. A `Type+Feature.swift` extension (`Scene+Water`,
+`Renderer+Terrain`, `Benchmark+Demolition`) sits in its feature's folder, and an editor sits inside its feature
+(`Buildings/Editor`). The shaders stay at the top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`,
+`ShadersMaterial*.metal` and `MaterialShaders/`. Code finds them, the assets and the fixtures through `SourceTree`
+(`Util/SourceTree.swift`), not from its own path. The tests in `Tests/MetalRendererTests` use the same folders.
+
+| Folder | What is in it |
+|---|---|
+| `App/` | The window, the view, the controller, panels and overlays, the day bar, the graph editors' canvas |
+| `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store, the panel |
+| `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), pipelines, the backends; `Lighting/` and `Post/` |
+| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`), its buffers, navigation, the walker; `Builders/` for the scenes with no feature of their own |
+| `Geometry/` | BVH, meshes, simplification; `VirtualGeometry/` (Nanite-like), `SDF/` |
+| `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids; `Scenes/` |
+| `Destruction/` | The courtyard; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` |
+| `Buildings/` | The generator, plans, styles; `Interior/`, `City/`, `Editor/` |
+| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/`; each with its `Editor/` |
+| `Terrain/`, `Water/`, `World/` | The terrain system and its editor, water, the open world |
+| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer and its editor, the Material Painter, texture sets and streaming |
+| `Particles/`, `VFX/` | GPU particles; effects as graphs and their editor |
+| `ProjectGraph/` | Outlines, overrides, the Project Graph and its window |
+| `Benchmark/` | The modes (`Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`), the renderer's side |
+| `IO/`, `Util/` | glTF, EXR, cache and section files, glTF models in scenes; maths, catalogs, `SourceTree` |
 
 ## How a frame works
 

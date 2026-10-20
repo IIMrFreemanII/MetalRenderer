@@ -13,7 +13,7 @@ final class MatCompiler {
     /// The entry files: next to Shaders.metal (`METALRENDERER_SHADERS`'s folder, if set).
     static var folder: URL {
         ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
-            ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            ?? SourceTree.target
     }
 
     private let lock = NSLock()

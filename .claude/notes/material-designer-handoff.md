@@ -16,14 +16,14 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
 
 ## Done (commits on the branch)
 
-- P0 `GraphEditor/GraphCanvas.swift`: the VFX editor's canvas shared (GraphCanvasModel, GraphHostingView...).
+- P0 `App/GraphCanvas.swift`: the VFX editor's canvas shared (GraphCanvasModel, GraphHostingView...).
 - P1 `MaterialGraph/`: MaterialGraph, MatNodes (catalogue), MatFunction, MaterialStore/Catalog, MatPlan, MatLayout.
 - P2-P3 MatEngine (+ `ShadersMaterial.metal`, `MaterialShaders/`), MatCompiler, MatExport.
 - P4 renderer: GPUMaterialExtra / MaterialExtra (MATERIAL_EXTRAS bit 15), parallax, AO, opacity (OPACITY bit 14:
   TraceScene.opacity, OpacityLevels, non-opaque instances, raster skips them), per-slot texture tables, hot swap
   (Renderer.applyProcedural / updateProcedural / editMaterials), MaterialBake.
 - P5 SceneKind.materials (appended last), Scene+Materials, benchmark `materials`.
-- P6 `MaterialEditor/` window; P7 Pick (Shaders/Pick.metal, Renderer.encodePick/readPick), MaterialAssignments
+- P6 `MaterialGraph/Editor/` window; P7 Pick (Shaders/Pick.metal, Renderer.encodePick/readPick), MaterialAssignments
   (Assets/Materials/assignments.json, SceneSettings.materialAssignments), planar UVs on UV-less meshes; mode `matedit`.
 - P8 MatShaderCode (PROCEDURAL_CODE bit 13, Shaders/Procedural.metal splice marker, SceneShading.procParams; pipeline
   sets know their splice). P9 starters, README, this note.
@@ -78,7 +78,7 @@ A Substance-Designer-like procedural material editor (README "The Material Desig
 - Opacity on meshes without UVs (the alpha test reads the mesh's UVs); SDF shapes.
 - The open world's tiles can't take assignments. Multi-material meshes: opacity per instance's own material only.
 - The tests skill's map (.claude/skills/tests) lacks the new suites: MaterialGraph*/MatEngine/MatShaderCode ->
-  MaterialGraphTests MaterialEngineTests; MaterialEditor/* -> MaterialEditorTests; Scene+Procedural, Scene+Materials,
+  MaterialGraphTests MaterialEngineTests; MaterialGraph/Editor/* -> MaterialEditorTests; Scene+Procedural, Scene+Materials,
   Shaders/Procedural.metal, Shaders/Pick.metal -> MaterialEditorTests ShaderSourceTests KernelVariantsTests.
   (Protected path: edit it by hand.)
 

@@ -2,6 +2,12 @@
 
 Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`). Benchmark runs (`METALRENDERER_BENCH`) have no window and don't take the focus. Never launch the app without `METALRENDERER_BENCH`, or with `METALRENDERER_WINDOW=1`, unless the user asks: they work on this Mac while you iterate.
 
+## Source layout
+
+`Sources/MetalRenderer` is in a folder per feature (README, "Source layout"): a new `Type+Feature.swift` goes in its
+feature's folder, an editor inside its feature, a test in the matching folder of `Tests/MetalRendererTests`. Find the
+package's files with `SourceTree`, never by counting folders up from `#filePath`.
+
 ## New features
 
 Plan and build them with the `data-oriented` skill (`.claude/skills/data-oriented`): what runs every frame over many

@@ -37,7 +37,7 @@ is made of, and the assets they share, drawn as a graph. Key **Y**, or **⇧⌘G
   - `visible(open:)` returns the part under the open nodes. Edges into closed branches end at the branch.
 - **Layouts** (`GraphLayout.swift`): force (Barnes–Hut; dragged nodes are pinned), radial, tidy tree, and a 3D cone
   tree.
-- **Window** (`ProjectGraphEditor/`): the outliner (drag a row onto another to move it), the graph, the inspector,
+- **Window** (`ProjectGraph/Editor/`): the outliner (drag a row onto another to move it), the graph, the inspector,
   search, Pick (click in the view to select), and Show in Viewport (the camera flies there; another scene loads first).
   - Double-click opens the asset's editor.
   - The cone view is its own Metal view, `ConeTreeView.swift`, with inline shaders.
