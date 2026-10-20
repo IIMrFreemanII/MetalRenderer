@@ -1,0 +1,217 @@
+diff --git a/Sources/MetalRenderer/Benchmark+Modes.swift b/Sources/MetalRenderer/Benchmark+Modes.swift
+index fb61b44..29ee4ab 100644
+--- a/Sources/MetalRenderer/Benchmark+Modes.swift
++++ b/Sources/MetalRenderer/Benchmark+Modes.swift
+@@ -20,6 +20,7 @@ extension Benchmark {
+         "physics": physics, "physicsdemo": physicsDemo, "ragdolls": ragdolls, "ragdollsdemo": ragdollsDemo,
+         "hair": hair, "hairdemo": hairDemo, "hairviews": hairViews, "soft": soft, "softdemo": softDemo, "muscles": muscles, "musclesdemo": musclesDemo,
+         "fluids": fluids, "fluidsdemo": fluidsDemo,
++        "expshowcase": expShowcase, "expswitch": expSwitch,   // EXP
+         "particles": particles, "particlesdemo": particlesDemo, "plants": plants, "buildings": buildings, "buildingsdemo": buildingsDemo,
+         "interiormotion": interiorMotion, "exposurewalk": exposureWalk, "darkroom": darkRoom,
+         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
+@@ -1381,6 +1382,21 @@ extension Benchmark {
+     /// scene, SVGF denoises), and path traced at 0.75x (the reference: its particles stop paths by their opacity, scatter
+     /// or glow); without particle shadows, without particles in reflections; then 5 s moving for timing at a quarter,
+     /// once and four times the particles (ParticleSettings.budget).
++    // EXP: the Metal 4 hang's repros (metal4-hang-handoff.md), not committed.
++    private static func expShowcase() -> [Config] {
++        (0..<12).map { i in
++            var scene = SceneSettings(kind: .showcase)
++            scene.realism = [Realism.on, .off, .high][i % 3]
++            return Config("showcase \(i)", scale: 0.75, upscale: 3, gi: .radianceCascades, scene: scene).moving().frames(30)
++        }
++    }
++    private static func expSwitch() -> [Config] {
++        (0..<12).map { i in
++            Config("switch \(i)", scale: 0.75, upscale: 3, gi: .radianceCascades,
++                   scene: SceneSettings(kind: i % 2 == 0 ? .cornell : .forest)).moving().frames(30)
++        }
++    }
++
+     private static func particles() -> [Config] {
+         let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
+         var out: [Config] = []
+diff --git a/Sources/MetalRenderer/EXP.swift b/Sources/MetalRenderer/EXP.swift
+new file mode 100644
+index 0000000..a9ada32
+--- /dev/null
++++ b/Sources/MetalRenderer/EXP.swift
+@@ -0,0 +1,7 @@
++import Foundation
++
++/// EXP: the Metal 4 hang's experiment switches (not committed).
++enum EXP {
++    static func on(_ key: String) -> Bool { ProcessInfo.processInfo.environment[key] != nil }
++    static func int(_ key: String, _ fallback: Int) -> Int { ProcessInfo.processInfo.environment[key].flatMap(Int.init) ?? fallback }
++}
+diff --git a/Sources/MetalRenderer/Metal4Backend.swift b/Sources/MetalRenderer/Metal4Backend.swift
+index 2e6b74c..9a36680 100644
+--- a/Sources/MetalRenderer/Metal4Backend.swift
++++ b/Sources/MetalRenderer/Metal4Backend.swift
+@@ -138,6 +138,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+     /// idle), so a camera move whose virtual geometry left thousands of retired BLASes in it until the next sweep
+     /// stalled (the Storeroom's: a p95 of 70-90 ms, 4 ms with this).
+     func release(_ resources: [MTLResource]) {
++        if EXP.on("EXP_NORELEASE") { return }   // EXP
+         for resource in resources {
+             guard let entry = resident.removeValue(forKey: ObjectIdentifier(resource)) else { continue }
+             residency.removeAllocation(entry.allocation)
+@@ -148,6 +149,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+     /// Lets go of what no frame has bound for `residencyLife` frames (render targets of another size), or since
+     /// frame `since`.
+     private func releaseUnused(since: UInt32? = nil) {
++        if EXP.on("EXP_NORELEASE") { return }   // EXP
+         for (id, entry) in resident where since.map({ entry.used <= $0 }) ?? (frameCount &- entry.used > Metal4Frame.residencyLife) {
+             residency.removeAllocation(entry.allocation)
+             resident[id] = nil
+@@ -222,6 +224,9 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+ 
+     func endCompute() {
+         guard let enc else { return }
++        if EXP.on("EXP_PRODUCER") {   // EXP: what follows on the queue waits for this encoder's work
++            enc.barrier(afterStages: Metal4Frame.stages, beforeQueueStages: Metal4Frame.queueStages, visibilityOptions: .device)
++        }
+         enc.endEncoding()
+         self.enc = nil
+     }
+@@ -373,8 +378,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+         cmd = nil
+         if residencyChanged {
+             residency.commit()
++            if EXP.on("EXP_REQ") { residency.requestResidency() }   // EXP
+             residencyChanged = false
+         }
++        let expSerial = EXP.on("EXP_SERIAL") && frameCount <= UInt32(EXP.int("EXP_FRAMES", 4))   // EXP
++        if EXP.on("EXP_SLEEP") && frameCount <= UInt32(EXP.int("EXP_FRAMES", 4)) { usleep(UInt32(EXP.int("EXP_SLEEP", 500)) * 1000) }   // EXP
+         let done = wait ? DispatchSemaphore(value: 0) : nil
+         let split = split
+         let commandBuffers = buffers.filter { if case .mappings = $0 { return false } else { return true } }.count
+@@ -387,11 +395,22 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+             switch buffer {
+             case .metal4(let name, let cb):
+                 let options = MTL4CommitOptions()
++                let expFrame = frameCount   // EXP
+                 options.addFeedbackHandler { feedback in
+-                    if let error = feedback.error { print("Metal 4 command buffer \(name) failed: \(error)") }
++                    if let error = feedback.error {   // EXP: the frame and how long it ran
++                        print(String(format: "EXP frame %d %@ ran %.1f ms", expFrame, name, (feedback.gpuEndTime - feedback.gpuStartTime) * 1000))
++                        print("Metal 4 command buffer \(name) failed: \(error)")
++                    }
+                     collector.add(name: split && name != "capture" ? name : nil, start: feedback.gpuStartTime, end: feedback.gpuEndTime)
+                 }
++                if expSerial {   // EXP: each command buffer done before the next is committed
++                    let s = DispatchSemaphore(value: 0)
++                    options.addFeedbackHandler { _ in s.signal() }
++                    queue.commit([cb], options: options)
++                    s.wait()
++                } else {
+                 queue.commit([cb], options: options)
++                }
+             case .metal3(let name, let cb, let value):
+                 queue.signalEvent(event, value: value)         // once what was committed so far is done
+                 cb.addCompletedHandler { cb in
+@@ -455,7 +474,28 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+ 
+     // MARK: - ComputePass
+ 
+-    func setComputePipelineState(_ state: MTLComputePipelineState) { enc?.setComputePipelineState(state) }
++    func setComputePipelineState(_ state: MTLComputePipelineState) {
++        if expDispatch && enc == nil { _ = encoder(state.label ?? "kernel", newBuffer: true) }   // EXP
++        expKernel = state.label ?? "?"
++        expState = state
++        enc?.setComputePipelineState(state)
++    }
++    // EXP: a command buffer per dispatch, named after its kernel (split runs only).
++    private lazy var expDispatch = EXP.on("EXP_DISPATCHCB")
++    private var expKernel = ""
++    private var expState: MTLComputePipelineState?
++    private func expBeforeDispatch() {
++        guard expDispatch, enc == nil, let expState else { return }
++        _ = encoder(expKernel, newBuffer: true)
++        enc?.setComputePipelineState(expState)
++    }
++    private func expAfterDispatch() {
++        guard expDispatch, split, let last = buffers.indices.last, case .metal4(let name, let cb) = buffers[last] else { return }
++        buffers[last] = .metal4(name: name.contains(":") ? name : "\(name):\(expKernel)", cmd: cb)
++        endCompute()
++        cmd?.endCommandBuffer()
++        cmd = nil
++    }
+ 
+     /// Metal 4 has no inline constants: they go into the slot's constants buffer, and their address into the table.
+     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {
+@@ -500,20 +540,26 @@ final class Metal4Frame: FrameEncoder, ComputePass {
+     func memoryBarrier(scope: MTLBarrierScope) { barrier() }
+ 
+     func dispatchThreads(_ threadsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
++        expBeforeDispatch()
+         order(.dispatch)
+         enc?.dispatchThreads(threadsPerGrid: threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
++        expAfterDispatch()
+     }
+ 
+     func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
++        expBeforeDispatch()
+         order(.dispatch)
+         enc?.dispatchThreadgroups(threadgroupsPerGrid: threadgroupsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
++        expAfterDispatch()
+     }
+ 
+     func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize) {
+         keep(indirectBuffer)
++        expBeforeDispatch()
+         order(.dispatch)
+         enc?.dispatchThreadgroups(indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset),
+                                   threadsPerThreadgroup: threadsPerThreadgroup)
++        expAfterDispatch()
+     }
+ }
+ 
+diff --git a/Sources/MetalRenderer/Pipelines.swift b/Sources/MetalRenderer/Pipelines.swift
+index 1e07cfb..a822d22 100644
+--- a/Sources/MetalRenderer/Pipelines.swift
++++ b/Sources/MetalRenderer/Pipelines.swift
+@@ -278,6 +278,7 @@ struct Pipelines {
+             specialized.constantValues = constants
+             let descriptor = MTL4ComputePipelineDescriptor()
+             descriptor.computeFunctionDescriptor = specialized
++            descriptor.label = kernel.function   // EXP
+             return try compiler.makeComputePipelineState(descriptor: descriptor)
+         }
+         let function = try library.makeFunction(name: kernel.function, constantValues: constants)
+diff --git a/Sources/MetalRenderer/Renderer.swift b/Sources/MetalRenderer/Renderer.swift
+index c7898a1..ef25315 100644
+--- a/Sources/MetalRenderer/Renderer.swift
++++ b/Sources/MetalRenderer/Renderer.swift
+@@ -3786,7 +3786,7 @@ final class Renderer: NSObject {
+         let handOver = plan.interpolate && output != nil ? interpolator : nil, presenter = presenter
+         let withBetween = between != nil
+         let hold = FrameInterpolation.hold(frameMs: smoothedGPUMs, refreshMs: surface?.refreshInterval.map { $0 * 1000 })
+-        passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
++        passes.commit(presenting: output?.drawable, wait: benchmark != nil && ProcessInfo.processInfo.environment["EXP_OVERLAP"] == nil) { [weak self] frame in   // EXP
+             if let handOver {
+                 if let presenter { presenter.present(handOver, slot: slot, withBetween: withBetween, hold: hold) } else { handOver.release(slot) }
+             }
+@@ -4344,7 +4344,7 @@ final class Renderer: NSObject {
+             clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max,
+             particleCasters: particlesGPU?.parts[slot].casters?.structure, particleOthers: particlesGPU?.parts[slot].others?.structure,
+             particleRender: particlesGPU?.render[slot], particleAtlas: particlesGPU?.atlas,
+-            particleCounts: particlesGPU?.traceCounts(slot: slot) ?? .zero,
++            particleCounts: EXP.on("EXP_NOTRACE") && frameIndex < UInt32(EXP.int("EXP_FRAMES", 4)) ? .zero : particlesGPU?.traceCounts(slot: slot) ?? .zero,   // EXP
+             particleFlags: scene.particlesReflected ? 1 : 0,
+             particleTrails: particlesGPU?.trails[slot]?.structure, trailPoints: particlesGPU?.trailPoints[slot],
+             trailRecords: particlesGPU?.trailRecords[slot], trailShape: particlesGPU?.trailShape ?? .zero,
+diff --git a/Sources/MetalRenderer/SceneBuffers.swift b/Sources/MetalRenderer/SceneBuffers.swift
+index eceadd8..fd91c82 100644
+--- a/Sources/MetalRenderer/SceneBuffers.swift
++++ b/Sources/MetalRenderer/SceneBuffers.swift
+@@ -379,7 +379,7 @@ struct SceneBuffers {
+         }
+         instanceCount = total
+         structureInstances = total + options.extraInstances
+-        indirect = options.api == .metal4 || scene.hasGroups || scene.usesVirtualGeometry || !scene.assemblies.isEmpty
++        indirect = options.api == .metal4 || scene.hasGroups || scene.usesVirtualGeometry || !scene.assemblies.isEmpty || EXP.on("EXP_INDIRECT")   // EXP
+         leafFall = options.leafFall
+         let recordStride = MemoryLayout<GPUInstanceData>.stride
+         var data = try (0..<sets).map { try empty(count * recordStride, "instanceData\($0)") }

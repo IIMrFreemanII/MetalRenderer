@@ -116,7 +116,7 @@ if [[ $suites == " " ]]; then
           GLTFLoader.swift) add GLTFLoaderTests ;;
           ProceduralTextures.swift|MaterialTextures.swift) add ProceduralTextureTests ;;
           Scene.swift) add SceneBuffersTests ProjectGraphTests ;;   # (its outline's tags, the overrides' way in)
-          SceneBuffers.swift) add SceneBuffersTests ;;
+          SceneBuffers.swift) add SceneBuffersTests SDFTests ;;   # (the SDF boxes' descriptors, Metal 4's too)
           LightTree.swift) add LightTreeTests ;;
           TextureStreamer.swift) add TextureStreamerTests ;;
           LoadActivity.swift) add LoadActivityTests ;;

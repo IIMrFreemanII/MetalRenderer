@@ -88,7 +88,7 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 | `HairBSDF.swift`, `Shaders/Hair.metal` | HairTests (the shader: + the shader pair) |
 | `GLTFLoader` | GLTFLoaderTests |
 | `ProceduralTextures`, `MaterialTextures` | ProceduralTextureTests |
-| `Scene.swift`, `SceneBuffers` | SceneBuffersTests |
+| `Scene.swift`, `SceneBuffers` | SceneBuffersTests (`SceneBuffers`: SDFTests too, for the SDF boxes' descriptors) |
 | `LightTree.swift`, `Shaders/LightTree.metal` | LightTreeTests (the shader: plus the shader pair) |
 | `TextureStreamer` | TextureStreamerTests |
 | `LoadActivity` (the loading overlay's model) | LoadActivityTests (the overlay itself, `LoadingOverlay`: none, it is AppKit) |
