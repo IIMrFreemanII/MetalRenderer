@@ -382,6 +382,14 @@ struct FurnitureItem {
     }
 
     /// Its colliders (its own frame): the ones it says, or its bounds.
+    /// What most of it is made of: the role of the most of its boxes' volume.
+    var mainRole: Role {
+        var volume = [Float](repeating: 0, count: Role.allCases.count)
+        for b in boxes { let e = b.hi - b.lo; volume[b.role.rawValue] += e.x * e.y * e.z }
+        for c in cylinders { volume[c.role.rawValue] += .pi * c.radius * c.radius * c.height }
+        return Role(rawValue: volume.indices.max { volume[$0] < volume[$1] } ?? 0) ?? .wood
+    }
+
     var collisionBoxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)] {
         if let colliders { return colliders }
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)

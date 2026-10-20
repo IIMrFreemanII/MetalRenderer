@@ -275,6 +275,14 @@ final class PhysicsWorld {
     /// them overlap than a body keeps partners.
     var shapeBoxes: [SIMD4<Float>] = []
     var fractureCommands: [GPUFractureCommand] = []
+    /// The CPU's index of them (beginFractureStep): their indices by start step (in the order added among those of a
+    /// step), the most steps one lasts, and a step's live ones (scratch). A step looks at the few that may be live, not
+    /// at every command of a session (a machine gun adds a dozen a second).
+    var commandOrder: [Int32] = []
+    var longestCommand: UInt32 = 1
+    var liveCommands: [Int32] = []
+    /// The demolition scene's rockets in flight, blasts going on and walker (Physics+Demolition.swift).
+    var demolition = DemolitionState()
     /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
     var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
     var fractures: Bool { !fractureNodes.isEmpty }
@@ -663,6 +671,7 @@ final class PhysicsWorld {
         breakLog.removeAll()
         breakSteps.removeAll()
         breakTotal = 0
+        demolition.reset()
         broadEpoch = -1
         narrowEpoch = -1   // (its welds are back)
         resetFluids()

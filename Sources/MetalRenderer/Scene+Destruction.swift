@@ -311,7 +311,7 @@ extension Scene {
     /// Dust and debris where pieces break (Physics+Fracture.swift's break events, ParticlesGPU.breakRing): per material
     /// a proxy emitter that spawns nothing of its own, whose events are the breaks, and its children: a puff of dust
     /// (none for glass) and chunks of the broken inside that tumble and bounce. Returns the proxies by material.
-    private func addDestructionDust(_ kit: Kit, interiors: [FractureMaterial: Int]) -> [UInt32] {
+    func addDestructionDust(_ kit: Kit, interiors: [FractureMaterial: Int]) -> [UInt32] {
         var emitters: [ParticleEmitter] = []
         var proxies = [UInt32](repeating: ParticleSystem.none, count: FractureMaterial.allCases.count)
         for material in FractureMaterial.allCases {

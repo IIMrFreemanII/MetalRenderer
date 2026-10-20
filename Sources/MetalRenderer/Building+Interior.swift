@@ -32,6 +32,16 @@ struct Interior {
     /// The glTF props (PropLibrary): which, where in its storey's frame (fitted into a piece's box of `size`), on
     /// which storey.
     var models: [(entry: Int, frame: float4x4, size: SIMD3<Float>, storey: Int)] = []
+    /// Every piece of furniture as boxes (the demolition scene's, which fractures them): its kind, its frame in the lot
+    /// (on its storey's floor), its collision boxes in that frame, what most of it is made of, its storey.
+    var furniture: [Furniture] = []
+    struct Furniture {
+        var kind: FurnitureItem.Kind
+        var frame: float4x4
+        var boxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]
+        var role: FurnitureItem.Role
+        var storey: Int
+    }
     /// It is night: every room's lights are there to switch (by day only the lit ones'; a light that is off still
     /// costs its sampling).
     var night = false
@@ -249,6 +259,10 @@ enum InteriorBuilder {
                     colliders.append(Interior.Collider(lo: simd_min(SIMD3(a4.x, a4.y, a4.z), SIMD3(b4.x, b4.y, b4.z)),
                                                        hi: simd_max(SIMD3(a4.x, a4.y, a4.z), SIMD3(b4.x, b4.y, b4.z)), kind: .furniture))
                 }
+            }
+            for p in furnisher.placed + furnisher.props {
+                interior.furniture.append(Interior.Furniture(kind: p.item.kind, frame: translate([0, f.floor, 0]) * p.frame,
+                                                             boxes: p.item.collisionBoxes, role: p.item.mainRole, storey: s))
             }
             for p in furnisher.props {
                 interior.props.append(Interior.Prop(item: p.item, frame: p.frame, storey: s,

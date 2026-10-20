@@ -461,9 +461,29 @@ enum SettingsTable {
             S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
             S.slider("Buildings", \.scene.destruction.buildings, DestructionSettings.buildingRange, live: false).env(.scene, "buildings")
                 .when { $0.scene.kind == .destruction && $0.scene.destruction.massive },
+            S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
+                .when { $0.scene.kind == .demolition },
+            S.slider("Office seed", \.scene.demolition.seed, DemolitionSettings.seedRange, live: false).env(.scene, "demseed")
+                .when { $0.scene.kind == .demolition },
+            S.slider("Width", \.scene.demolition.width, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "demwidth").when { $0.scene.kind == .demolition },
+            S.slider("Depth", \.scene.demolition.depth, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
+                .env(.scene, "demdepth").when { $0.scene.kind == .demolition },
+            S.slider("Pieces", \.scene.demolition.pieces, DemolitionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "dempieces").when { $0.scene.kind == .demolition },
+            S.slider("Toughness", \.scene.demolition.toughness, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "demtough").when { $0.scene.kind == .demolition },
+            S.slider("Weld strength", \.scene.demolition.strength, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
+                .env(.scene, "demstrength").when { $0.scene.kind == .demolition },
+            S.check("Furniture", \.scene.demolition.furniture).env(.scene, "demfurniture").when { $0.scene.kind == .demolition },
+            S.check("Window glass", \.scene.demolition.glass).env(.scene, "demglass").when { $0.scene.kind == .demolition },
+            S.check("Dust and debris", \.scene.demolition.dust).env(.scene, "demdust").when { $0.scene.kind == .demolition },
+            S.check("Small pieces fade", \.scene.demolition.fade).env(.scene, "demfade").when { $0.scene.kind == .demolition },
+            S.check("Scripted demo", \.scene.demolition.demo).env(.scene, "demdemo").when { $0.scene.kind == .demolition },
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
-            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics").when { $0.scene.kind.simulates },
+            S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics")
+                .when { $0.scene.kind.simulates && $0.scene.kind != .demolition },
             S.check("CPU physics behind the frame", \.scene.physics.asynchronous).env(.scene, "physicsasync")
                 .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.check("CPU physics on every core", \.scene.physics.everyCore).env(.scene, "physicscores")

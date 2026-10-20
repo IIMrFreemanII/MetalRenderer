@@ -1098,7 +1098,8 @@ final class Renderer: NSObject {
         if let physics = scene.physics {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
             // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
-            let onGPU = scene.settings.kind.simulates
+            // (The demolition scene's rockets and walker are the CPU's step's alone: Physics+Demolition.swift.)
+            let onGPU = scene.settings.kind.simulates && scene.settings.kind != .demolition
                 && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
                                                     fractures: physics.fractures)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
@@ -1117,7 +1118,8 @@ final class Renderer: NSObject {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
             cpuBreakRing = nil
-            if let proxies = scene.destructionRig?.dustProxies, !proxies.isEmpty, scene.physics?.fractures == true {
+            if let proxies = scene.destructionRig?.dustProxies ?? scene.demolitionRig?.dustProxies, !proxies.isEmpty,
+               scene.physics?.fractures == true {
                 if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true {
                     particlesGPU?.breakRing = ring
                 } else {

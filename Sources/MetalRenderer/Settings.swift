@@ -297,6 +297,9 @@ enum SceneKind: Int, CaseIterable, Codable {
     case destruction        // destruction (Scene+Destruction.swift, Physics+Fracture.swift): a courtyard of fractured walls,
                             // pillars, a tower, glass panes, beams and statues broken by a wrecking ball, a weight and
                             // shots (`SceneSettings.destruction`)
+    case demolition         // demolition (Scene+Demolition.swift): a generated office, every wall, slab, column, stair and
+                            // desk of it fractured, to fly round or walk through and wreck with a machine gun, rockets
+                            // and TNT (`SceneSettings.demolition`); drawn in the solid look
 
     var title: String {
         switch self {
@@ -335,16 +338,17 @@ enum SceneKind: Int, CaseIterable, Codable {
         case .painter: return "Painter workshop"
         case .terrain: return "Terrain workshop"
         case .destruction: return "Destruction"
+        case .demolition: return "Demolition"
         }
     }
 
     /// The scenes the physics steps (Physics.swift): they share its settings and look (RenderSettings.usePhysicsLook).
     var simulates: Bool {
         self == .physics || self == .ragdolls || self == .hair || self == .softBodies || self == .muscles || self == .fluids
-            || self == .destruction
+            || self == .destruction || self == .demolition
     }
     /// ...and those of them drawn with its plain look: destruction has its full look (its glass needs reflections).
-    var usesPhysicsLook: Bool { simulates && self != .destruction }
+    var usesPhysicsLook: Bool { simulates && self != .destruction && self != .demolition }
     /// Scenes built with `SceneSettings.lights` lights (the panel's Lights slider).
     var hasLightCount: Bool { self == .stress || self == .market }
     /// Length of the sun's day cycle in seconds (Scene+Lights: the sun scene's `day`, the valley's two `half`s; the
@@ -483,6 +487,34 @@ struct DestructionSettings: Equatable, Codable {
     var preview: FracturePreview?
 
     static let pieceRange: ClosedRange<Float> = 0.25...4
+    static let toughnessRange: ClosedRange<Float> = 0.1...10
+}
+
+/// The demolition scene's (Scene+Demolition.swift). Changing any of it builds the scene again.
+struct DemolitionSettings: Equatable, Codable {
+    /// The office: its storeys, its seed (another plan, other rooms), its lot (m, x and z).
+    var floors = 5
+    var seed = 7
+    var width: Float = 24
+    var depth: Float = 16
+    /// Scales every object's pieces (as DestructionSettings.pieces), what breaks them and what their welds hold.
+    var pieces: Float = 1
+    var toughness: Float = 1
+    var strength: Float = 1
+    /// The rooms' furniture, fractured too; the windows' glass.
+    var furniture = true
+    var glass = true
+    /// Dust and debris where pieces part, and small pieces fading away once still.
+    var dust = true
+    var fade = true
+    /// The scripted demo (a rocket, TNT, a burst, the walker into a hole: the benchmark's and the tests'); off: only
+    /// what the player does.
+    var demo = false
+
+    static let floorRange = 4...6
+    static let seedRange = 1...999
+    static let sizeRange: ClosedRange<Float> = 12...36
+    static let pieceRange: ClosedRange<Float> = 0.25...2
     static let toughnessRange: ClosedRange<Float> = 0.1...10
 }
 
@@ -638,6 +670,8 @@ struct SceneSettings: Equatable, Codable {
     var physics = PhysicsSettings()
     /// The destruction scene: its objects and how they break.
     var destruction = DestructionSettings()
+    /// The demolition scene: its building and how it breaks.
+    var demolition = DemolitionSettings()
     var particles = ParticleSettings()
     /// The plant workshop: what it shows.
     var plants = PlantSceneSettings()
@@ -993,7 +1027,7 @@ struct FogSettings: Equatable, Codable {
         var f = FogSettings()
         switch kind {
         case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter, .destruction:   // at night: thousands of lit windows scatter in blotches
+             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter, .destruction, .demolition:   // at night: thousands of lit windows scatter in blotches
             break
         case .city:
             // Haze: the far end of an avenue fades toward the sky.
@@ -1145,7 +1179,7 @@ struct SkySettings: Equatable, Codable {
         case .terrain:
             s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
             s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
-        case .destruction:   // a courtyard under an afternoon sun, a few clouds
+        case .destruction, .demolition:   // a courtyard (a lot) under an afternoon sun, a few clouds
             s.mode = .atmosphere; s.coverage = 0.25; s.cloudBase = 1300; s.cloudThickness = 1000; s.cloudScale = 2600
         case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
             s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
@@ -1284,6 +1318,8 @@ struct RenderSettings: Equatable, Codable {
     /// pixel and nothing else (no shadows, GI, reflections, fog, sky, denoisers, MetalFX or lens). For iterating on
     /// scenes and physics fast (Renderer: FramePlan.solid, Shaders/Output.metal solidKernel).
     var solid = false
+    /// `solid` was turned on by entering the demolition scene (applySceneDefaults turns it back when leaving).
+    var solidFromScene = false
     var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     var denoiser = DenoiserSettings()
     var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
@@ -1335,6 +1371,14 @@ struct RenderSettings: Equatable, Codable {
     /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
+        // The demolition scene in the solid look (its own: the look is the user's again when they leave it).
+        if scene.kind == .demolition && !solid {
+            solid = true
+            solidFromScene = true
+        } else if scene.kind != .demolition && solidFromScene {
+            solid = defaults.solid
+            solidFromScene = false
+        }
         if scene.kind.usesPhysicsLook {
             usePhysicsLook()
         } else if !giEnabled && !specular && renderScale == RenderSettings.physicsScale {
