@@ -509,7 +509,7 @@ final class Renderer: NSObject {
     private var skyImageLoading = false         // one is being decoded in the background
     private var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
     private var skyActive = false               // this frame uses the sky texture
-    private var skyRefreshed: (sky: SkySettings, scene: ObjectIdentifier)?   // what the sky texture was fully drawn for
+    private var skyRefreshed: (sky: SkySettings, scene: Int)?   // what the sky texture was fully drawn for
     private var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
     /// (16-byte aligned), then the extras', the programs' parameters' and the water's addresses.
@@ -1655,7 +1655,7 @@ final class Renderer: NSObject {
             orbit = (focus.centroid, length(camera.position - focus.centroid))
         }
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
-        if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, ObjectIdentifier(scene)) }
+        if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, scene.serial) }
         if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
@@ -2059,8 +2059,8 @@ final class Renderer: NSObject {
             lights[i].axis = SIMD4(sunDir, 0)
             lights[i].positionRadius.w = sunRadius
         }
-        let full = skyRefreshed == nil || skyRefreshed!.sky != sky || skyRefreshed!.scene != ObjectIdentifier(scene)
-        skyRefreshed = (sky, ObjectIdentifier(scene))
+        let full = skyRefreshed == nil || skyRefreshed!.sky != sky || skyRefreshed!.scene != scene.serial
+        skyRefreshed = (sky, scene.serial)
         let windAngle = sky.windDirection * .pi / 180
         let sphere = scene.sceneSphere
         var p = GPUSkyParams()

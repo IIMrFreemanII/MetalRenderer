@@ -46,8 +46,8 @@ final class WaterSystem {
     private let lock = NSLock()
     private var generation = 0
     private static let queue = DispatchQueue(label: "MetalRenderer.waterMap", qos: .userInitiated)
-    /// The scene the looks were written for.
-    private var sceneID: ObjectIdentifier?
+    /// The scene the looks were written for (Scene.serial).
+    private var sceneID: Int?
     /// The highest and lowest any water's surface reaches (the scene's y): its still surfaces', and the waves'.
     private var top: Float = 0
     private var bottom: Float = 0
@@ -192,8 +192,8 @@ final class WaterSystem {
     /// drawn again (at once: the first frame has it).
     func adopt(_ scene: Scene, camera: SIMD2<Double>) {
         guard let w = scene.water else { return }
-        if sceneID != ObjectIdentifier(scene) {
-            sceneID = ObjectIdentifier(scene)
+        if sceneID != scene.serial {
+            sceneID = scene.serial
             let table = w.looks.prefix(256).map(\.gpu)
             if table.count * 64 > looks.length, let b = device.makeBuffer(length: table.count * 64, options: .storageModeShared) { looks = b }
             table.withUnsafeBytes { looks.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }

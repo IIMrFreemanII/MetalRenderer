@@ -282,7 +282,11 @@ extension Scene {
         w.bodyLooks = looks
         w.field = TerrainWaterField(snapshot: s, bodies: bodies, looks: looks)
         w.offset = offset
-        let described = (try? JSONEncoder().encode(bodies)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+        // (Sorted keys: JSONEncoder writes an object's keys in an order that can change from one encoding to the next, and
+        // the same water would then look like other water: its map drawn again where it was kept, or kept where not.)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let described = (try? encoder.encode(bodies)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         w.key = "\(terrain?.name ?? "")|\(described.hashValue)|\(s.editsFingerprint)"
     }
 
