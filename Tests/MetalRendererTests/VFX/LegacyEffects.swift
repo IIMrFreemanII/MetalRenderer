@@ -2,6 +2,7 @@ import Foundation
 import simd
 @testable import Characters
 @testable import Editors
+@testable import Effects
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer

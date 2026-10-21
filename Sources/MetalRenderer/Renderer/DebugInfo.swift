@@ -1,4 +1,5 @@
 import Characters
+import Effects
 import Foundation
 import Physics
 import Plants

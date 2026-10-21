@@ -39,7 +39,7 @@ package struct ParticleEmitter {
     }
 
     /// How a particle faces a ray (Shaders/ParticleTrace.metal).
-    enum Orientation {
+    package enum Orientation {
         /// A disc square to every ray: a puff, a spark's glow.
         case rayFacing
         /// A quad along its velocity, as long as its radius plus its speed x `stretch`: sparks, rain.
@@ -65,8 +65,9 @@ package struct ParticleEmitter {
 
     /// GPUParticleEmitter.ids.w; the low 8 bits reach the rays (GPUParticleRender.info.x >> 24; bits 3 and 4 hold the
     /// orientation there).
-    struct Flags: OptionSet {
-        let rawValue: UInt32
+    package struct Flags: OptionSet {
+        package let rawValue: UInt32
+        package init(rawValue: UInt32) { self.rawValue = rawValue }
         static let emissive = Flags(rawValue: 1)          // unlit: its colour is the light it sends
         static let shadows = Flags(rawValue: 2)           // it shadows what is behind it from the lights
         static let frameBlend = Flags(rawValue: 4)        // flipbook frames blend into the next
@@ -78,25 +79,25 @@ package struct ParticleEmitter {
         static let sceneCollisions = Flags(rawValue: 1 << 11)    // it bounces off the scene's geometry (a ray a step)
     }
 
-    var name: String
-    var capacity: Int
-    var position: SIMD3<Float>
+    package var name: String
+    package var capacity: Int
+    package var position: SIMD3<Float>
     /// The shape's and the velocity's axis.
-    var direction: SIMD3<Float> = [0, 1, 0]
+    package var direction: SIMD3<Float> = [0, 1, 0]
     package var shape: Shape = .point
     /// Particles a second, from `start` to `stop`.
-    var rate: Float = 0
+    package var rate: Float = 0
     /// The rate times a curve over time (an effect's Rate block): its keys as its program has them (VFXProgram
     /// .rateIntegral), for the bound on how many can be alive; nil: the rate alone.
-    var rateCurve: [SIMD4<Float>]?
-    var start: Float = 0
-    var stop: Float = .greatestFiniteMagnitude
+    package var rateCurve: [SIMD4<Float>]?
+    package var start: Float = 0
+    package var stop: Float = .greatestFiniteMagnitude
     /// `count` at `time`, then every `period` (0: once), `repeats` times (0: no end).
-    var burst: (time: Float, count: Int, period: Float, repeats: Int)?
+    package var burst: (time: Float, count: Int, period: Float, repeats: Int)?
     package var lifetime: ClosedRange<Float> = 1...1
     package var speed: ClosedRange<Float> = 0...0
     /// Half angle about `direction` (rad).
-    var spread: Float = 0
+    package var spread: Float = 0
     /// Outward from `position` instead of along `direction`.
     package var radial = false
     package var velocity: SIMD3<Float> = .zero
@@ -107,7 +108,7 @@ package struct ParticleEmitter {
     /// How fast the particle takes the air's velocity (1/s).
     package var drag: Float = 0
     /// Share of the scene's wind in that air.
-    var wind: Float = 0
+    package var wind: Float = 0
     /// Curl noise: a divergence-free swirl (m/s^2), its frequency (1/m) and how fast it scrolls (1/s).
     package var curl: Float = 0
     package var curlFrequency: Float = 1
@@ -117,19 +118,19 @@ package struct ParticleEmitter {
     package var bakedCurl = false
     /// A vector field (the system's `fields[index]`): with `follow`, the air's velocity there, which the particle
     /// takes at `strength` (1/s, as drag does); otherwise an acceleration, times `strength`.
-    var field: (index: Int, strength: Float, follow: Bool)?
+    package var field: (index: Int, strength: Float, follow: Bool)?
     /// Spin about `direction` through `attractor` (m/s^2), and pull toward it.
-    var vortex: Float = 0
-    var attraction: Float = 0
-    var attractor: SIMD3<Float>?
+    package var vortex: Float = 0
+    package var attraction: Float = 0
+    package var attractor: SIMD3<Float>?
 
     // Collisions.
     /// The system's colliders it meets (bit i: collider i).
-    var colliders: UInt32 = 0
+    package var colliders: UInt32 = 0
     package var restitution: Float = 0.3
     package var friction: Float = 0.2
     /// It dies where it first meets one (rain).
-    var dieOnCollision = false
+    package var dieOnCollision = false
     /// It bounces off the scene's geometry too (on the GPU: a ray along each step; the CPU's reference has no scene).
     package var collidesWithScene = false
     /// It meets the colliders as a ball this big (m): a mesh particle's size, so it rests on the floor, not in it.
@@ -143,14 +144,14 @@ package struct ParticleEmitter {
     package var colors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = ([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 0])
     package var midpoint: Float = 0.5
     /// Unlit, sending its colour x this (W/sr/m^2 per unit of colour); 0: lit by the scene's lights.
-    var emission: Float = 0
+    package var emission: Float = 0
     package var atlas: ParticleTextures.Kind = .dot
     /// Frames of its flipbook it plays (up to ParticleTextures.frames), `fps` a second (0: once over its life).
     package var frames: Int = 1
-    var fps: Float = 0
+    package var fps: Float = 0
     package var randomFrame = false
-    var frameBlend = true
-    var orientation: Orientation = .rayFacing
+    package var frameBlend = true
+    package var orientation: Orientation = .rayFacing
     /// Most spin (rad/s), either way.
     package var spin: Float = 0
     /// Fades over this distance in front of what is behind it (m).
@@ -165,8 +166,8 @@ package struct ParticleEmitter {
     /// as a ribbon that faces every ray (flat Catmull-Rom curves in a structure of their own: ParticleTrace.metal),
     /// tapering to nothing at its end and fading along it; as wide as the particle times `trailWidth` at its head.
     /// Its look is the particle's (emissive or lit). Every trail emitter keeps the same number of points.
-    var trail: (points: Int, every: Int)?
-    var trailWidth: Float = 1
+    package var trail: (points: Int, every: Int)?
+    package var trailWidth: Float = 1
     /// How much of its opacity a shadow ray takes (0...1): a billboard stands for a soft volume, and a ray through a
     /// column of them at their full opacity sees far denser smoke than there is.
     package var shadowDensity: Float = 1
@@ -174,11 +175,11 @@ package struct ParticleEmitter {
     /// (radians), each a disc that faces the ray, its opacity over life (`colors`' alpha) how much of it there is
     /// (Shaders/ParticleLight.metal particleDistortKernel). 0: an ordinary emitter. Its slots aren't boxes: no ray but the
     /// camera's meets it.
-    var distortion: Float = 0
+    package var distortion: Float = 0
 
     /// What its particles' random numbers start from (with each one's spawn id): nil, its place in the system. An
     /// effect's emitters keep theirs wherever it is placed (VFXEmitter.seed), so it looks the same in any scene.
-    var seed: UInt32?
+    package var seed: UInt32?
 
     // A child.
     package var parent: Int?
@@ -194,7 +195,7 @@ package struct ParticleEmitter {
         self.position = position
     }
 
-    var flags: Flags {
+    package var flags: Flags {
         var f: Flags = []
         if emission > 0 { f.insert(.emissive) }
         if castsShadows { f.insert(.shadows) }
@@ -217,7 +218,7 @@ package enum ParticleCollider {
     /// Instance `instance` of SDF shape `shape` (Scene.addInstance(sdf:) and addSDFShape's numbers).
     case shape(instance: Int, shape: Int)
 
-    var gpu: GPUParticleCollider {
+    package var gpu: GPUParticleCollider {
         switch self {
         case .plane(let n, let p):
             let u = normalize(n)
@@ -239,7 +240,7 @@ package struct ParticleField {
     var size: SIMD3<Float>
     var dims: SIMD3<Int32>
     var periodic = false
-    var samples: [SIMD3<Float>]
+    package var samples: [SIMD3<Float>]
 
     /// `f` at the nodes of a `dims` grid over the box at `center`.
     package init(center: SIMD3<Float>, halfExtents: SIMD3<Float>, dims: SIMD3<Int32>, periodic: Bool = false, _ f: (SIMD3<Float>) -> SIMD3<Float>) {
@@ -360,7 +361,7 @@ package final class ParticleSystem {
     /// The air's speed at wind strength 1 (WindFrame.wind.z), m/s.
     package static let windSpeed: Float = 4
     /// Steps run (or claimed by the GPU).
-    private(set) var stepIndex = 0
+    package private(set) var stepIndex = 0
 
     package init(emitters: [ParticleEmitter], colliders: [ParticleCollider] = [], fields: [ParticleField] = [], programs: [VFXProgram?] = []) {
         precondition(!emitters.isEmpty && emitters.count <= ParticleSystem.maxEmitters, "1 to \(ParticleSystem.maxEmitters) emitters")

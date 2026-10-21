@@ -202,7 +202,7 @@ package enum VFXLibrary {
     package static func named(_ name: String) -> VFXEffect? {
         switch name {
         case "campfire": return campfire(fire: [0, 0.95, 0])
-        case "grinder": return grinder(contact: [0, 1.2, 0], out: [cos(Scene.degrees(66)), sin(Scene.degrees(66)), 0])
+        case "grinder": return grinder(contact: [0, 1.2, 0], out: [cos(Geo.degrees(66)), sin(Geo.degrees(66)), 0])
         case "magic": return magic(at: [0, 1.1, 0])
         case "rain": return rain(center: [0, 6.5, 0], half: [1.6, 0, 2.2])
         case "rubble": return rubble(at: [0, 0.05, 0])

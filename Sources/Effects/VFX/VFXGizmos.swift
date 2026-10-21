@@ -11,9 +11,16 @@ import simd
 package enum VFXGizmos {
     /// MSL GizmoSegment.
     package struct Segment: Equatable {
-        var a: SIMD4<Float>
-        var b: SIMD4<Float>
-        var color: SIMD4<Float>
+        package var a: SIMD4<Float>
+        package var b: SIMD4<Float>
+        package var color: SIMD4<Float>
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(a: SIMD4<Float>, b: SIMD4<Float>, color: SIMD4<Float>) {
+            self.a = a
+            self.b = b
+            self.color = color
+        }
     }
 
     /// MSL GizmoView.
@@ -28,6 +35,20 @@ package enum VFXGizmos {
         package var count: UInt32
         package var samples: UInt32
         package var pad = SIMD2<UInt32>.zero
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(position: SIMD4<Float>, right: SIMD4<Float>, up: SIMD4<Float>, forward: SIMD4<Float>, size: SIMD2<Float>, tanY: Float, aspect: Float, count: UInt32, samples: UInt32, pad: SIMD2<UInt32> = SIMD2<UInt32>.zero) {
+            self.position = position
+            self.right = right
+            self.up = up
+            self.forward = forward
+            self.size = size
+            self.tanY = tanY
+            self.aspect = aspect
+            self.count = count
+            self.samples = samples
+            self.pad = pad
+        }
     }
 
     /// What is shown: the effect (by name), and the selected emitter (by name), which gets the handle.
@@ -110,7 +131,7 @@ package enum VFXGizmos {
 
     /// Unit vectors square to `n` and each other.
     package static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
-        let t = Scene.perpendicular(n)
+        let t = Geo.perpendicular(n)
         return (t, cross(n, t))
     }
 

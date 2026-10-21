@@ -9,11 +9,11 @@ import QuartzCore
 /// The step's and the pose's kernels a particle system runs (ParticlesGPU): the main library's, or the VFX library's
 /// for a system with programs (they call them, and read their buffers at 27 to 29).
 package struct ParticleKernels {
-    let begin: MTLComputePipelineState
-    let emit: MTLComputePipelineState
-    let simulate: MTLComputePipelineState
-    let pose: MTLComputePipelineState
-    let programs: Bool
+    package let begin: MTLComputePipelineState
+    package let emit: MTLComputePipelineState
+    package let simulate: MTLComputePipelineState
+    package let pose: MTLComputePipelineState
+    package let programs: Bool
 
     package init(_ p: Pipelines) {
         begin = p[.particleBegin]
@@ -37,14 +37,22 @@ package struct ParticleKernels {
 /// few (a graph's edits come back to sources it had). Until it is ready the system runs the fixed emitters' code
 /// (`kernels` gives nil); benchmarks and tests wait for it.
 package final class VFXCompiler {
-    static let shared = VFXCompiler()
-    static let kept = 6
+    package static let shared = VFXCompiler()
+    package static let kept = 6
 
     package struct Setup: Hashable {
-        let entry: URL
-        let lightTypes: UInt32
-        let stats: Bool
-        let metal4: Bool
+        package let entry: URL
+        package let lightTypes: UInt32
+        package let stats: Bool
+        package let metal4: Bool
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(entry: URL, lightTypes: UInt32, stats: Bool, metal4: Bool) {
+            self.entry = entry
+            self.lightTypes = lightTypes
+            self.stats = stats
+            self.metal4 = metal4
+        }
     }
     private struct Key: Hashable {
         package let setup: Setup
@@ -59,13 +67,13 @@ package final class VFXCompiler {
     private var entries: [Key: Entry] = [:]
     private var recent: [Key] = []
     /// The last compile's time (ms: the library and its four pipelines) and the last failure (the editor shows them).
-    private(set) var lastMilliseconds: Double?
+    package private(set) var lastMilliseconds: Double?
     private(set) var lastFailure: String?
     private static let queue = DispatchQueue(label: "MetalRenderer.vfx", qos: .utility)
 
     /// The kernels for `generated` (VFXCodegen.source), or nil while they compile (`wait`: compile now) or if they
     /// don't (the failure: `failure(for:)`). Called every frame by a system with programs: a lookup under a lock.
-    func kernels(for generated: String, setup: Setup, device: MTLDevice, compiler: AnyObject?, wait: Bool) -> ParticleKernels? {
+    package func kernels(for generated: String, setup: Setup, device: MTLDevice, compiler: AnyObject?, wait: Bool) -> ParticleKernels? {
         let key = Key(setup: setup, source: generated)
         lock.lock()
         switch entries[key] {
@@ -108,7 +116,7 @@ package final class VFXCompiler {
     }
 
     /// Why `generated` didn't compile, if it didn't.
-    func failure(for generated: String, setup: Setup) -> String? {
+    package func failure(for generated: String, setup: Setup) -> String? {
         lock.lock(); defer { lock.unlock() }
         if case .failed(let f)? = entries[Key(setup: setup, source: generated)] { return f }
         return nil

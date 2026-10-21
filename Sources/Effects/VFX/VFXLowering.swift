@@ -8,9 +8,16 @@ import simd
 /// An effect a scene placed (Scene.addEffect): where, and what its names bind to in the scene (a Mesh block's mesh
 /// and material).
 package struct VFXInstance {
-    var effect: VFXEffect
-    var place: VFXPlacement
-    var meshes: [String: (mesh: Int, material: Int)] = [:]
+    package var effect: VFXEffect
+    package var place: VFXPlacement
+    package var meshes: [String: (mesh: Int, material: Int)] = [:]
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(effect: VFXEffect, place: VFXPlacement, meshes: [String: (mesh: Int, material: Int)] = [:]) {
+        self.effect = effect
+        self.place = place
+        self.meshes = meshes
+    }
 }
 
 /// Placed effects into one particle system: each emitter into the fixed emitter (ParticleEmitter: what its blocks'
@@ -25,7 +32,7 @@ package enum VFXLowering {
         package let emitters: [[Int]]
     }
 
-    static func system(_ instances: [VFXInstance], colliders sceneColliders: [(name: String, collider: ParticleCollider)] = [])
+    package static func system(_ instances: [VFXInstance], colliders sceneColliders: [(name: String, collider: ParticleCollider)] = [])
         -> Result {
         var notes: [String] = []
         var colliders = sceneColliders.map(\.collider)
@@ -100,20 +107,20 @@ package enum VFXLowering {
 
     /// The seed of an emitter that has none of its own: a hash of its effect's name and its own (FNV-1a), so it is
     /// the same wherever the effect is.
-    static func seed(_ effect: String, _ emitter: String) -> UInt32 {
+    package static func seed(_ effect: String, _ emitter: String) -> UInt32 {
         var h: UInt32 = 2_166_136_261
         for b in "\(effect)/\(emitter)".utf8 { h = (h ^ UInt32(b)) &* 16_777_619 }
         return h
     }
 
     /// A size curve the fixed emitter's lerp is: two keys, at 0 and 1, straight.
-    static func linearSize(_ c: VFXCurve) -> (Float, Float)? {
+    package static func linearSize(_ c: VFXCurve) -> (Float, Float)? {
         guard c.keys.count == 2, c.keys[0].x == 0, c.keys[1].x == 1, !c.smooth else { return nil }
         return (c.keys[0].y, c.keys[1].y)
     }
 
     /// The fixed emitter `em`'s blocks' values make (what generated code adds, VFXProgram does).
-    static func lower(_ em: VFXEmitter, _ fx: VFXEffect, _ instance: VFXInstance, colliderIndex: [String: Int],
+    package static func lower(_ em: VFXEmitter, _ fx: VFXEffect, _ instance: VFXInstance, colliderIndex: [String: Int],
                       fieldIndex: [String: Int], parents: [String: Int], notes: inout [String]) -> ParticleEmitter {
         let place = instance.place
         let shapeBlock = em.first(.shape)

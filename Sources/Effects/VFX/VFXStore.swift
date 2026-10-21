@@ -21,7 +21,7 @@ package enum VFXStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_EFFECTS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Effects")
+        default: return Assets.directory.appendingPathComponent("Effects")
         }
     }
 

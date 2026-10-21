@@ -280,9 +280,14 @@ package struct VFXCollider: Codable, Equatable {
 /// Where a scene puts an effect: a translation (an effect isn't turned or scaled). Identity adds nothing, so an effect
 /// written in the scene's space (the built-in ones) keeps its numbers bit for bit.
 package struct VFXPlacement: Codable, Equatable {
-    var offset = SIMD3<Float>.zero
-    static let identity = VFXPlacement()
-    func point(_ p: SIMD3<Float>) -> SIMD3<Float> { offset == .zero ? p : offset + p }
+    package var offset = SIMD3<Float>.zero
+    package static let identity = VFXPlacement()
+    package func point(_ p: SIMD3<Float>) -> SIMD3<Float> { offset == .zero ? p : offset + p }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(offset: SIMD3<Float> = SIMD3<Float>.zero) {
+        self.offset = offset
+    }
 }
 
 // MARK: - Values

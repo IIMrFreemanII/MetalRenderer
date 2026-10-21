@@ -10,8 +10,8 @@ import simd
 /// for an emitter with a program (VFXProgram), its graph's: the plans the program's Metal was written from, run on
 /// the CPU. The same pool, dead lists and alive lists; the alive lists' order is the CPU's (the GPU's is whatever its
 /// atomics give), so the two are compared as sets, by emitter and spawn id.
-final class VFXInterpreter {
-    let system: ParticleSystem
+package final class VFXInterpreter {
+    package let system: ParticleSystem
     private let emitters: [GPUParticleEmitter]
     private let colliders: [GPUParticleCollider]
     private let fields: [GPUParticleField]
@@ -38,7 +38,7 @@ final class VFXInterpreter {
         reset()
     }
 
-    func reset() {
+    package func reset() {
         particles = Array(repeating: GPUParticle(), count: system.capacity)
         attributes = Array(repeating: .zero, count: system.capacity * system.attributeStride)
         deadList = (0..<system.capacity).map(UInt32.init)
@@ -50,9 +50,9 @@ final class VFXInterpreter {
     }
 
     /// The particles alive after the last step (the list the next one reads).
-    var current: [GPUParticle] { alive[stepIndex & 1].map { particles[Int($0)] } }
+    package var current: [GPUParticle] { alive[stepIndex & 1].map { particles[Int($0)] } }
 
-    func step(wind: SIMD4<Float> = .zero) {
+    package func step(wind: SIMD4<Float> = .zero) {
         let s = system.stepParams(stepIndex, wind: wind)
         let p = Int(s.parity & 1)
         // begin
@@ -127,11 +127,11 @@ final class VFXInterpreter {
         stepIndex += 1
     }
 
-    func advance(steps: Int, wind: SIMD4<Float> = .zero) { for _ in 0..<steps { step(wind: wind) } }
+    package func advance(steps: Int, wind: SIMD4<Float> = .zero) { for _ in 0..<steps { step(wind: wind) } }
 
     /// A particle's size (before the pose's widening) and colour (before emission) as the pose has them (MSL
     /// particlePoseKernel, and its program's look).
-    func look(_ q: GPUParticle, slot: Int) -> (size: Float, color: SIMD4<Float>) {
+    package func look(_ q: GPUParticle, slot: Int) -> (size: Float, color: SIMD4<Float>) {
         let ei = Int(q.info.z), e = emitters[ei]
         let x = min(max(q.position.w / max(q.velocity.w, 1e-6), 0), 1)
         var size = (e.size.x + (e.size.y - e.size.x) * x) * (1 - e.size.z * ParticleMath.random(q.info.y, 1))

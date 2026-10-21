@@ -1,4 +1,5 @@
 import Characters
+import Effects
 import EngineCore
 import Foundation
 import MetalRenderer

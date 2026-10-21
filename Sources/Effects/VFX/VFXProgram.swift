@@ -590,7 +590,7 @@ extension VFXProgram {
 
 extension ParticleMath {
     /// MSL particleRandom: a number of particle `seed`'s that stays the same over its life (`k`: which).
-    static func random(_ seed: UInt32, _ k: UInt32) -> Float {
+    package static func random(_ seed: UInt32, _ k: UInt32) -> Float {
         Float(hash(seed ^ (k &* 0x9E3779B9 &+ 0x85EBCA6B))) * (1.0 / 4294967296.0)
     }
 }

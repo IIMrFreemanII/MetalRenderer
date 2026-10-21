@@ -11,19 +11,19 @@ import simd
 /// than Metal 4's inline constants hold).
 package final class ParticlesGPU {
     /// The system it runs; the VFX editor's edits put another of the same layout in its place (`adopt`).
-    private(set) var system: ParticleSystem
+    package private(set) var system: ParticleSystem
     private(set) var emitters: MTLBuffer
     private(set) var colliders: MTLBuffer
-    let particles: MTLBuffer
+    package let particles: MTLBuffer
     /// The heat haze's discs, two float4s a distorter, and the part of the view they cover (particleDistortDiscsKernel).
-    let distortDiscs: MTLBuffer
-    let deadList: MTLBuffer
-    let alive: [MTLBuffer]
-    let events: [MTLBuffer]
+    package let distortDiscs: MTLBuffer
+    package let deadList: MTLBuffer
+    package let alive: [MTLBuffer]
+    package let events: [MTLBuffer]
     /// ParticleCounts (Shaders/ParticleSim.metal).
-    let counts: MTLBuffer
+    package let counts: MTLBuffer
     /// The indirect arguments `begin` writes: emit's threadgroups at 0, simulate's at 16.
-    let args: MTLBuffer
+    package let args: MTLBuffer
     /// Per frame slot, its steps' parameters (GPUParticleStep each), and after them the reset's and the pose's, each
     /// in a place of its own: written as the frame is encoded, read when it runs (one's in another's place would be
     /// read by both).
@@ -33,9 +33,9 @@ package final class ParticlesGPU {
     /// Per frame slot, what its rays meet: a record a pool slot (GPUParticleRender), their boxes
     /// (MTLAxisAlignedBoundingBox), and the structures over them, built every frame (`build`): the shadow casters'
     /// (the pool's first ParticleSystem.casterCapacity slots), which shadow rays look through, and the others'.
-    let render: [MTLBuffer]
-    let boxes: [MTLBuffer]
-    let parts: [(casters: Part?, others: Part?)]
+    package let render: [MTLBuffer]
+    package let boxes: [MTLBuffer]
+    package let parts: [(casters: Part?, others: Part?)]
     /// Per frame slot, the boxes its structures were last built over (the casters', the others'): the CPU's bound on
     /// the alive particles then (ParticleSystem.partBounds), which the pose packs them into.
     private(set) var posed: [SIMD2<Int>]
@@ -43,27 +43,27 @@ package final class ParticlesGPU {
     private let scratch: MTLBuffer
 
     /// A structure over the boxes of slots first..<first + count (none for an empty range).
-    struct Part {
-        let structure: MTLAccelerationStructure
-        let descriptor: MTLPrimitiveAccelerationStructureDescriptor
-        let first: Int
-        let count: Int
-        let scratchOffset: Int
+    package struct Part {
+        package let structure: MTLAccelerationStructure
+        package let descriptor: MTLPrimitiveAccelerationStructureDescriptor
+        package let first: Int
+        package let count: Int
+        package let scratchOffset: Int
     }
     /// The trails (ParticleEmitter.trail): their places, a ring each (the steps write them), and per frame slot their
     /// control points (xyz, the trail's radius), the structure's radii (widened for the camera), their records
     /// (MSL ParticleTrail) and the structure over their ribbons (flat curves); the segments' first points (fixed).
-    let trailHistory: MTLBuffer
-    let trailPoints: [MTLBuffer]
-    let trailRadii: [MTLBuffer]
-    let trailRecords: [MTLBuffer]
-    let trails: [Trails?]
+    package let trailHistory: MTLBuffer
+    package let trailPoints: [MTLBuffer]
+    package let trailRadii: [MTLBuffer]
+    package let trailRecords: [MTLBuffer]
+    package let trails: [Trails?]
     private let trailIndices: MTLBuffer
-    static let trailRecordSize = 32
+    package static let trailRecordSize = 32
 
     /// A frame slot's trails' structure.
-    struct Trails {
-        let structure: MTLAccelerationStructure
+    package struct Trails {
+        package let structure: MTLAccelerationStructure
         let descriptor: MTLPrimitiveAccelerationStructureDescriptor
         let scratchOffset: Int
     }
@@ -71,25 +71,25 @@ package final class ParticlesGPU {
     /// the colliders that are their instances (bound with the scene; a placeholder until the renderer sets it).
     private(set) var fields: MTLBuffer
     private(set) var fieldSamples: MTLBuffer
-    var sdfScene: MTLBuffer?
+    package var sdfScene: MTLBuffer?
     /// The flipbooks (ParticleTextures).
-    let atlas: MTLTexture
+    package let atlas: MTLTexture
     /// The programs' (VFXProgram): their table (GPUVFXEmitter an emitter), parameters, and the attributes each slot
     /// keeps; and the VFX library's kernels that run them once compiled (VFXCompiler: until then, the fixed emitters').
     private(set) var programTable: MTLBuffer
     private(set) var programParams: MTLBuffer
     private(set) var attributes: MTLBuffer
-    var programKernels: ParticleKernels?
+    package var programKernels: ParticleKernels?
     /// Whether it has programs (and so wants the VFX library's kernels).
-    var hasPrograms: Bool { system.programSource != nil }
+    package var hasPrograms: Bool { system.programSource != nil }
 
     /// Destruction's dust (Physics+Fracture.swift): the physics' ring of breaks (PhysicsGPU.breakRing), and per
     /// FractureMaterial the proxy emitter its breaks are events of (Scene.destructionDust). Before each step's begin.
-    var breakRing: MTLBuffer?
-    var breakProxies: [UInt32] = []
+    package var breakRing: MTLBuffer?
+    package var breakProxies: [UInt32] = []
 
     /// MSL ParticleInject.
-    struct Inject {
+    package struct Inject {
         var step: UInt32
         var parity: UInt32
         var slots = UInt32(PhysicsWorld.ringSlots)
@@ -98,20 +98,20 @@ package final class ParticlesGPU {
         var proxies1 = SIMD4<UInt32>(repeating: ParticleSystem.none)
     }
     /// Per pool slot the light its particle scatters, averaged over the frames, and whose it is (particleLightKernel).
-    let lighting: MTLBuffer
+    package let lighting: MTLBuffer
 
-    static let countsSize = 1056
+    package static let countsSize = 1056
     /// MSL PARTICLE_WIDEN.
-    static let widen: Float = 0.5
+    package static let widen: Float = 0.5
     /// Steps one frame encodes at most (a replay to a still's time catches up over the next frames): 10 s.
-    static let maxStepsPerFrame = 600
+    package static let maxStepsPerFrame = 600
     /// Offsets in `counts`, in uints (ParticleCounts).
-    enum Counter {
-        static let alive = 0, emits = 2, emitBase = 3, dead = 4, events = 36, emitted = 100, posed = 260
+    package enum Counter {
+        package static let alive = 0, emits = 2, emitBase = 3, dead = 4, events = 36, emitted = 100, posed = 260
     }
 
     /// The steps encoded since the start (the GPU's clock, as the CPU counts it).
-    private(set) var stepIndex = 0
+    package private(set) var stepIndex = 0
 
     /// A shared buffer of `length` bytes (256 at least), zeroed.
     private static func buffer(_ device: MTLDevice, _ length: Int, _ label: String) throws -> MTLBuffer {
@@ -242,7 +242,7 @@ package final class ParticlesGPU {
     /// Runs `new` in its system's place (an edit of the same layout: ParticleSystem.edit), with `kernels` for its
     /// programs (nil: it has none). Its values go into new buffers: the frames in flight keep reading the old ones.
     /// The particles go on as they are; new code wants them replayed (the caller's).
-    func adopt(_ new: ParticleSystem, kernels: ParticleKernels?, device: MTLDevice) throws {
+    package func adopt(_ new: ParticleSystem, kernels: ParticleKernels?, device: MTLDevice) throws {
         let v = try ParticlesGPU.values(device, new)
         (emitters, colliders, fields, fieldSamples, programTable, programParams) = (v.emitters, v.colliders, v.fields, v.samples, v.table, v.params)
         if new.attributeStride != system.attributeStride {
@@ -280,10 +280,10 @@ package final class ParticlesGPU {
     }
 
     /// The step's and pose's kernels: the VFX library's once it is compiled for its programs, else the main one's.
-    func kernels(_ pipelines: Pipelines) -> ParticleKernels { programKernels ?? ParticleKernels(pipelines) }
+    package func kernels(_ pipelines: Pipelines) -> ParticleKernels { programKernels ?? ParticleKernels(pipelines) }
 
     /// Back to the start: every slot free, the clock at 0.
-    func encodeReset(_ enc: ComputePass, pipelines: Pipelines, slot: Int) {
+    package func encodeReset(_ enc: ComputePass, pipelines: Pipelines, slot: Int) {
         let params = stepParams[slot]
         params.contents().storeBytes(of: system.stepParams(0), toByteOffset: ParticlesGPU.resetParams, as: GPUParticleStep.self)
         bind(enc)
@@ -299,7 +299,7 @@ package final class ParticlesGPU {
     /// `steps` steps (at most maxStepsPerFrame), from where the last left off, in `wind` (WindFrame.wind). In a serial
     /// pass: each dispatch reads what the one before it wrote. `scene` binds the scene (Renderer.bindScene) for the
     /// emitters that collide with it; without it they don't.
-    func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int, slot: Int, wind: SIMD4<Float> = .zero,
+    package func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int, slot: Int, wind: SIMD4<Float> = .zero,
                      scene: ((ComputePass) -> Void)? = nil) {
         guard steps > 0 else { return }
         precondition(steps <= ParticlesGPU.maxStepsPerFrame, "more particle steps than a frame takes")
@@ -338,7 +338,7 @@ package final class ParticlesGPU {
     /// uniforms first), leaving the main pass's buffers bound (1: the distorters and the clock, 17: the discs); the
     /// caller then binds particleDistortKernel, the uniforms and the textures, and dispatches over the output. In a
     /// serial pass. Only with distorters.
-    func encodeDistortDiscs(_ enc: ComputePass) {
+    package func encodeDistortDiscs(_ enc: ComputePass) {
         struct Params { var first, count, emitters: UInt32; var time: Float }
         let range = system.distortRange
         var p = Params(first: UInt32(range.lowerBound), count: UInt32(range.count), emitters: UInt32(system.emitters.count),
@@ -359,7 +359,7 @@ package final class ParticlesGPU {
     /// same serial pass).
     /// `camera`: where the camera is, and its layer's texel a unit away (radians): the boxes hold the billboards as
     /// its rays widen them (PARTICLE_WIDEN in Shaders/ParticleSim.metal).
-    func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, camera: SIMD4<Float> = .zero) {
+    package func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, camera: SIMD4<Float> = .zero) {
         // The pose's parameters have a place of their own (the steps' and the reset's are this frame's too).
         let bounds = system.partBounds(after: stepIndex)
         posed[slot] = bounds
@@ -402,7 +402,7 @@ package final class ParticlesGPU {
     /// The mesh particles' instance records (and descriptors, `descriptorStride` > 0) in a frame slot's buffers, every
     /// frame (the CPU writes them too, as it does every moving instance): ahead of the top-level structure's update.
     /// From the pool as the last frame's steps left it.
-    func encodeMeshPose(_ enc: ComputePass, pipelines: Pipelines, instances: MTLBuffer, descriptors: MTLBuffer?, descriptorStride: Int) {
+    package func encodeMeshPose(_ enc: ComputePass, pipelines: Pipelines, instances: MTLBuffer, descriptors: MTLBuffer?, descriptorStride: Int) {
         guard system.meshCapacity > 0 else { return }
         struct Params { var range: SIMD4<UInt32>; var lag: SIMD4<Float> }
         let lag = Float(max(stepIndex - meshPosedAt, 0)) * ParticleSystem.stepLength
@@ -422,16 +422,16 @@ package final class ParticlesGPU {
 
     /// The builds of `slot`'s structures over the boxes `encodePose` wrote: after it, ahead of everything that traces.
     /// Each over its posed boxes only (`counts`), from `firsts` (the others' start at the casters' bound).
-    struct Build: PrimitiveWork4 {
-        let parts: [Part]
-        let firsts: [Int]
-        let counts: [Int]
-        let boxes: MTLBuffer
-        let scratch: MTLBuffer
+    package struct Build: PrimitiveWork4 {
+        package let parts: [Part]
+        package let firsts: [Int]
+        package let counts: [Int]
+        package let boxes: MTLBuffer
+        package let scratch: MTLBuffer
         /// The trails' structure, over its control points and radii, and the segments' first points.
-        var trails: (Trails, points: MTLBuffer, radii: MTLBuffer, indices: MTLBuffer)?
+        package var trails: (Trails, points: MTLBuffer, radii: MTLBuffer, indices: MTLBuffer)?
 
-        func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
+        package func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
             let stride = MemoryLayout<MTLAxisAlignedBoundingBox>.stride
             for (i, p) in parts.enumerated() {
                 // The descriptor is copied as the build is encoded: this frame's range, then the next frame's.
@@ -446,7 +446,7 @@ package final class ParticlesGPU {
         }
 
         @available(macOS 26.0, *)
-        func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
+        package func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
             keep(boxes)
             keep(scratch)
             let stride = MemoryLayout<MTLAxisAlignedBoundingBox>.stride
@@ -497,7 +497,7 @@ package final class ParticlesGPU {
         }
     }
     /// Nil if nothing can be alive (nothing to build; the rays skip empty structures: TraceScene's counts).
-    func build(slot: Int) -> Build? {
+    package func build(slot: Int) -> Build? {
         let b = posed[slot]
         var ps: [Part] = [], firsts: [Int] = [], counts: [Int] = []
         if let c = parts[slot].casters, b.x > 0 { ps.append(c); firsts.append(0); counts.append(b.x) }
@@ -509,52 +509,52 @@ package final class ParticlesGPU {
 
     /// What the rays read of `slot`'s structures (TraceScene.particleCounts): the casters' boxes, the others' (0: not
     /// built, don't look); the others' records start at the first.
-    func traceCounts(slot: Int) -> SIMD2<UInt32> { SIMD2(UInt32(posed[slot].x), UInt32(posed[slot].y)) }
+    package func traceCounts(slot: Int) -> SIMD2<UInt32> { SIMD2(UInt32(posed[slot].x), UInt32(posed[slot].y)) }
 
     /// What `slot`'s ray queries read through TraceScene.
-    func resources(slot: Int) -> [MTLResource] {
+    package func resources(slot: Int) -> [MTLResource] {
         [parts[slot].casters?.structure, parts[slot].others?.structure, trails[slot]?.structure].compactMap { $0 }
             + [render[slot], atlas, trailPoints[slot], trailRecords[slot]]
     }
 
     /// TraceScene's trail shape: (trails, control points each), or none.
-    var trailShape: SIMD2<UInt32> {
+    package var trailShape: SIMD2<UInt32> {
         trails.allSatisfy { $0 == nil } ? .zero : SIMD2(UInt32(system.trailCount), UInt32(system.trailControlPoints))
     }
 
-    func readRender(slot: Int) -> [GPUParticleRender] {
+    package func readRender(slot: Int) -> [GPUParticleRender] {
         Array(UnsafeBufferPointer(start: render[slot].contents().bindMemory(to: GPUParticleRender.self, capacity: system.capacity),
                                   count: system.capacity))
     }
 
     /// Each emitter's particles alive as of the last step the GPU finished (its capacity less its free slots; read while
     /// frames run, so a step late at most: the VFX editor's stats).
-    func aliveCounts() -> [Int] {
+    package func aliveCounts() -> [Int] {
         let c = counts.contents().bindMemory(to: UInt32.self, capacity: ParticlesGPU.countsSize / 4)
         return system.emitters.indices.map { e in max(system.emitters[e].capacity - Int(c[Counter.dead + e]), 0) }
     }
 
     // MARK: - Reading back (tests; the GPU idle)
 
-    func readCounts() -> [UInt32] {
+    package func readCounts() -> [UInt32] {
         let c = counts.contents().bindMemory(to: UInt32.self, capacity: ParticlesGPU.countsSize / 4)
         return (0..<ParticlesGPU.countsSize / 4).map { c[$0] }
     }
 
     /// The alive list the next step reads.
-    func readAliveSlots() -> [UInt32] {
+    package func readAliveSlots() -> [UInt32] {
         let n = Int(readCounts()[Counter.alive + (stepIndex & 1)])
         let a = alive[stepIndex & 1].contents().bindMemory(to: UInt32.self, capacity: system.capacity)
         return (0..<n).map { a[$0] }
     }
 
-    func readParticles() -> [GPUParticle] {
+    package func readParticles() -> [GPUParticle] {
         Array(UnsafeBufferPointer(start: particles.contents().bindMemory(to: GPUParticle.self, capacity: system.capacity),
                                   count: system.capacity))
     }
 
     /// Emitter `e`'s dead list.
-    func readDead(_ e: Int) -> [UInt32] {
+    package func readDead(_ e: Int) -> [UInt32] {
         let n = Int(readCounts()[Counter.dead + e]), base = system.bases[e]
         let d = deadList.contents().bindMemory(to: UInt32.self, capacity: system.capacity)
         return (0..<n).map { d[base + $0] }

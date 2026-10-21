@@ -7,32 +7,37 @@ import simd
 
 /// The particles' maths (Shaders/ParticleSim.metal's twin, line for line; VFXInterpreter runs them): the hash, the random stream, gradient noise
 /// and its curl, a particle's birth and step, the colliders.
-enum ParticleMath {
-    @inline(__always) static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
+package enum ParticleMath {
+    @inline(__always) package static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
 
     /// MSL pcgHash.
-    @inline(__always) static func hash(_ v: UInt32) -> UInt32 {
+    @inline(__always) package static func hash(_ v: UInt32) -> UInt32 {
         let state = v &* 747796405 &+ 2891336453
         let word = ((state >> ((state >> 28) &+ 4)) ^ state) &* 277803737
         return (word >> 22) ^ word
     }
 
     /// MSL Rng.
-    struct Rng {
-        var state: UInt32
-        mutating func next() -> Float {
+    package struct Rng {
+        package var state: UInt32
+        package mutating func next() -> Float {
             state = ParticleMath.hash(state)
             return Float(state) * (1.0 / 4294967296.0)
+        }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(state: UInt32) {
+            self.state = state
         }
     }
 
     /// A root particle's seed: its emitter's salt (ParticleEmitter.seed) and its spawn id's (MSL particleSeed).
-    static func seed(emitter: UInt32, spawn: UInt32) -> UInt32 { hash(spawn &+ hash(emitter &* 0x9E3779B9 &+ 0x7F4A7C15)) }
+    package static func seed(emitter: UInt32, spawn: UInt32) -> UInt32 { hash(spawn &+ hash(emitter &* 0x9E3779B9 &+ 0x7F4A7C15)) }
     /// A child's: its parent's and which child it is (MSL particleChildSeed).
-    static func childSeed(parent: UInt32, k: UInt32) -> UInt32 { hash(parent ^ hash(k &+ 0x632BE5AB)) }
+    package static func childSeed(parent: UInt32, k: UInt32) -> UInt32 { hash(parent ^ hash(k &+ 0x632BE5AB)) }
 
     /// An orthonormal basis about unit `n` (Duff et al. 2017; MSL particleBasis).
-    static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
+    package static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
         let sign: Float = n.z >= 0 ? 1 : -1
         let a = -1 / (sign + n.z), b = n.x * n.y * a
         return (SIMD3(1 + sign * n.x * n.x * a, sign * b, -sign * n.x), SIMD3(b, sign + n.y * n.y * a, -n.y))
@@ -41,14 +46,14 @@ enum ParticleMath {
     // MARK: Curl noise
 
     /// The gradient at lattice point `i` of noise channel `salt` (MSL particleGradient).
-    @inline(__always) static func gradient(_ i: SIMD3<Int32>, _ salt: UInt32) -> SIMD3<Float> {
+    @inline(__always) package static func gradient(_ i: SIMD3<Int32>, _ salt: UInt32) -> SIMD3<Float> {
         let h = hash(UInt32(bitPattern: i.x) &+ hash(UInt32(bitPattern: i.y) &+ hash(UInt32(bitPattern: i.z) &+ salt)))
         return SIMD3(Float(h & 1023), Float((h >> 10) & 1023), Float((h >> 20) & 1023)) * (1.0 / 511.5) - 1
     }
 
     /// Gradient noise with its analytic derivatives (quintic; Quilez's "noised"): x = value, yzw = gradient
     /// (MSL particleNoise). `period` > 0: its lattice repeats every that many cells (the baked tile's, CPU only).
-    static func noise(_ x: SIMD3<Float>, _ salt: UInt32, period: Int32 = 0) -> SIMD4<Float> {
+    package static func noise(_ x: SIMD3<Float>, _ salt: UInt32, period: Int32 = 0) -> SIMD4<Float> {
         let i = floor(x), f = x - i
         let u = f * f * f * (f * (f * 6 - 15) + 10)
         let du = 30 * f * f * (f * (f - 2) + 1)
@@ -77,7 +82,7 @@ enum ParticleMath {
 
     /// The curl of three noise channels taken as a vector potential at `p` (frequency `frequency`, scrolled by
     /// `time` along y): a divergence-free velocity field, of about unit size (MSL particleCurl).
-    static func curl(_ p: SIMD3<Float>, frequency: Float, time: Float) -> SIMD3<Float> {
+    package static func curl(_ p: SIMD3<Float>, frequency: Float, time: Float) -> SIMD3<Float> {
         let q = p * frequency + SIMD3(0, time, 0)
         let x = noise(q, 0x1B873593), y = noise(q + SIMD3(31.416, 47.853, 12.679), 0xCC9E2D51)
         let z = noise(q + SIMD3(-23.137, 11.719, 59.311), 0xE6546B64)
@@ -87,14 +92,14 @@ enum ParticleMath {
 
     /// The curl as `curl` has it at frequency 1, time 0, from noise whose lattice repeats every `period` cells: a
     /// field that tiles (ParticleField.curl bakes it).
-    static func periodicCurl(_ q: SIMD3<Float>, period: Int32) -> SIMD3<Float> {
+    package static func periodicCurl(_ q: SIMD3<Float>, period: Int32) -> SIMD3<Float> {
         let x = noise(q, 0x1B873593, period: period), y = noise(q + SIMD3(31.416, 47.853, 12.679), 0xCC9E2D51, period: period)
         let z = noise(q + SIMD3(-23.137, 11.719, 59.311), 0xE6546B64, period: period)
         return SIMD3(z.z - y.w, x.w - z.y, y.y - x.z)
     }
 
     /// Field `f` at `p`, its nodes `samples[f.dims.w...]` (MSL particleField).
-    static func field(_ f: GPUParticleField, _ samples: [SIMD4<Float>], _ p: SIMD3<Float>) -> SIMD3<Float> {
+    package static func field(_ f: GPUParticleField, _ samples: [SIMD4<Float>], _ p: SIMD3<Float>) -> SIMD3<Float> {
         let n = SIMD3<Int32>(Int32(f.dims.x), Int32(f.dims.y), Int32(f.dims.z)), periodic = f.lo.w > 0
         let nf = SIMD3<Float>(n), steps = periodic ? nf : nf - 1
         var g = (p - xyz(f.lo)) / xyz(f.size) * steps
@@ -119,7 +124,7 @@ enum ParticleMath {
     /// A newborn of emitter `e` (number `emitter`): `spawn` its id, `at` where (a child: its parent's event, else the
     /// emitter's origin), `parentVelocity` a child's parent's. Born somewhere in the step: moved and aged by a random
     /// share of it (MSL particleSpawn).
-    static func spawn(_ e: GPUParticleEmitter, emitter: UInt32, seed: UInt32, spawn: UInt32, at: SIMD3<Float>,
+    package static func spawn(_ e: GPUParticleEmitter, emitter: UInt32, seed: UInt32, spawn: UInt32, at: SIMD3<Float>,
                       parentVelocity: SIMD3<Float>, dt: Float) -> GPUParticle {
         let b = birth(e, seed: seed, spawn: spawn, parentVelocity: parentVelocity, dt: dt)
         return GPUParticle(position: SIMD4(at + b.offset + b.v * b.pre, b.pre), velocity: SIMD4(b.v, b.life),
@@ -128,7 +133,7 @@ enum ParticleMath {
 
     /// A newborn in parts (MSL particleBirth): where from its origin, its velocity, its life, the share of the step
     /// it is born into.
-    static func birth(_ e: GPUParticleEmitter, seed: UInt32, spawn: UInt32, parentVelocity: SIMD3<Float>, dt: Float)
+    package static func birth(_ e: GPUParticleEmitter, seed: UInt32, spawn: UInt32, parentVelocity: SIMD3<Float>, dt: Float)
         -> (offset: SIMD3<Float>, v: SIMD3<Float>, life: Float, pre: Float) {
         var r = Rng(state: seed)
         let u0 = r.next(), u1 = r.next(), u2 = r.next(), u3 = r.next(), u4 = r.next(), u5 = r.next(), u6 = r.next(), u7 = r.next()
@@ -167,7 +172,7 @@ enum ParticleMath {
 
     /// Pushes a ball of `radius` at `x` out of collider `c` and bounces `v` off it: the speed it hit at (0: it didn't)
     /// (MSL particleCollide).
-    static func collide(_ c: GPUParticleCollider, _ x: inout SIMD3<Float>, _ v: inout SIMD3<Float>, restitution: Float,
+    package static func collide(_ c: GPUParticleCollider, _ x: inout SIMD3<Float>, _ v: inout SIMD3<Float>, restitution: Float,
                         friction: Float, radius: Float = 0) -> Float {
         var n = SIMD3<Float>.zero
         var inside = false
@@ -199,7 +204,7 @@ enum ParticleMath {
 
     /// A particle's step: ages it, then (if it lives) the forces, the drag toward the air, semi-implicit Euler and the
     /// colliders. `keep`: it lives on; `event`: it leaves its children an event (MSL particleStep).
-    static func step(_ p: inout GPUParticle, _ e: GPUParticleEmitter, _ colliders: [GPUParticleCollider], _ s: GPUParticleStep,
+    package static func step(_ p: inout GPUParticle, _ e: GPUParticleEmitter, _ colliders: [GPUParticleCollider], _ s: GPUParticleStep,
                      fields: [GPUParticleField] = [], samples: [SIMD4<Float>] = []) -> (keep: Bool, event: Bool) {
         let flags = ParticleEmitter.Flags(rawValue: e.ids.w)
         let age = p.position.w + s.dt
@@ -264,7 +269,7 @@ struct ParticleEvent {
 
 extension ParticleMath {
     /// MSL particleAcross.
-    static func across(_ n: SIMD3<Float>, spin: Float) -> (SIMD3<Float>, SIMD3<Float>) {
+    package static func across(_ n: SIMD3<Float>, spin: Float) -> (SIMD3<Float>, SIMD3<Float>) {
         let helper: SIMD3<Float> = abs(n.y) < 0.999 ? [0, 1, 0] : [1, 0, 0]
         let u0 = normalize(cross(helper, n)), v0 = cross(n, u0)
         let c = cos(spin), s = sin(spin)
@@ -273,7 +278,7 @@ extension ParticleMath {
 
     /// MSL particleBillboard: where the ray o + d t meets the billboard of `r`, and the uv there (-1...1 across it);
     /// `widen` its least half-size a unit away, `cover` what's left of its opacity.
-    static func billboard(_ r: GPUParticleRender, _ o: SIMD3<Float>, _ d: SIMD3<Float>, widen: Float = 0)
+    package static func billboard(_ r: GPUParticleRender, _ o: SIMD3<Float>, _ d: SIMD3<Float>, widen: Float = 0)
         -> (t: Float, uv: SIMD2<Float>, cover: Float)? {
         let c = xyz(r.centerRadius), radius = r.centerRadius.w
         let orient = (r.info.x >> 27) & 3
@@ -299,19 +304,19 @@ extension ParticleMath {
     }
 
     /// MSL ParticleFragment.
-    struct Fragment: Equatable {
+    package struct Fragment: Equatable {
         var t: Float
         var alpha: Float
         var rgb: SIMD3<Float>
     }
 
     /// MSL particleOver.
-    static func over(_ front: Fragment, _ back: Fragment) -> Fragment {
+    package static func over(_ front: Fragment, _ back: Fragment) -> Fragment {
         Fragment(t: front.t, alpha: front.alpha + (1 - front.alpha) * back.alpha, rgb: front.rgb + (1 - front.alpha) * back.rgb)
     }
 
     /// MSL particleInsert: the k nearest sorted, the two farthest merged past that.
-    static func insert(_ k: inout [Fragment], capacity: Int, _ f: Fragment) {
+    package static func insert(_ k: inout [Fragment], capacity: Int, _ f: Fragment) {
         if k.count == capacity && f.t >= k[capacity - 1].t {
             k[capacity - 1] = over(k[capacity - 1], f)
             return
@@ -324,7 +329,7 @@ extension ParticleMath {
     }
 
     /// The fragments front to back: rgb, and how much of what is behind they hide.
-    static func composite(_ k: [Fragment]) -> SIMD4<Float> {
+    package static func composite(_ k: [Fragment]) -> SIMD4<Float> {
         var c = SIMD3<Float>.zero, transmit: Float = 1
         for f in k {
             c += transmit * f.rgb
