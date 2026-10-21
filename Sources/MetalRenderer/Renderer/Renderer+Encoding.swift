@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -7,7 +8,7 @@ extension Renderer {
     // MARK: - Frame encoding
 
     /// The frame's encoder (ComputePass.swift) for the API in use.
-    func makeFrame(_ plan: FramePlan, profile: GPUProfiler.Frame?) -> FrameEncoder? {
+    package func makeFrame(_ plan: FramePlan, profile: GPUProfiler.Frame?) -> FrameEncoder? {
         if builtAPI == .metal4, #available(macOS 26.0, *) {
             let frame = metal4?.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
             frame?.mipKernels = (pipelines[.mipDown2D], pipelines[.mipDown2DArray])
@@ -17,7 +18,7 @@ extension Renderer {
     }
 
     /// The frame's compute stages by group, each group in the order it runs.
-    struct FrameStages {
+    package struct FrameStages {
         var lightGrid: [ComputeStage] = []           // 1a. the light grid, before everything that samples lights
         var head: [ComputeStage] = []                // 1b, 2. light maps, the trace
         var gi: [ComputeStage] = []                  // 2b. radiance cascades or ReSTIR GI (they write t.indirect)
@@ -29,7 +30,7 @@ extension Renderer {
     }
 
     /// What the composite reads. The stage builders fill it in as they decide where each signal ends up.
-    struct CompositeInputs {
+    package struct CompositeInputs {
         var uniforms: Uniforms            // the frame's, plus the flags that tell the composite how to read the rest
         var illumination: [MTLTexture]    // denoised light: one signal, or direct then indirect (the indirect is last)
         var specular: MTLTexture
@@ -38,7 +39,7 @@ extension Renderer {
     }
 
     /// The scene's structures for this frame, ahead of everything that traces rays.
-    func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
+    package func encodeSceneUpdate(slot: Int, lod: VGView, passes: FrameEncoder) {
         // Rigid bodies: the steps since last frame (or a replay from the start), then every body's instance record,
         // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
         // Cloths too: their vertices, from where the physics (or the CPU's) left them.
@@ -194,7 +195,7 @@ extension Renderer {
     }
 
     /// Encodes the stages: one after another, or with `plan.overlap` the cascades next to the denoisers.
-    func encode(_ s: FrameStages, plan: FramePlan, passes: FrameEncoder) {
+    package func encode(_ s: FrameStages, plan: FramePlan, passes: FrameEncoder) {
         guard plan.overlap, let enc = passes.compute("trace") else {
             passes.run(s.lightGrid)
             passes.run(s.head)
@@ -230,7 +231,7 @@ extension Renderer {
     /// 3c-5. The geometry debug view, the composite and the upscale into the drawable (or the offscreen texture standing
     /// in for it). Returns it (nil if the surface had none of the right size), the drawable with the in-between picture
     /// to present before it (frame interpolation) and how long the surface took to hand them out.
-    func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
+    package func encodeOutput(_ plan: FramePlan, composite c: CompositeInputs, targets t: RenderTargets, surface: RenderSurface,
                               passes: FrameEncoder) -> (output: FrameOutput?, between: FrameOutput?, wait: CFTimeInterval) {
         let size = plan.size, cur = plan.cur, overlap = plan.overlap
         // Solid shading: the whole picture, straight into the drawable; then the gizmos and a pick, as below.
@@ -477,7 +478,7 @@ extension Renderer {
 
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
     /// `encodeStart`: when the CPU started on this frame, not counting its waits.
-    func commit(_ plan: FramePlan, passes: FrameEncoder, profile: GPUProfiler.Frame?, output: FrameOutput?,
+    package func commit(_ plan: FramePlan, passes: FrameEncoder, profile: GPUProfiler.Frame?, output: FrameOutput?,
                         between: FrameOutput?, encodeStart: CFTimeInterval) {
         let slot = plan.slot
         var writeCapture: (() -> Void)?

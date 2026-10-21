@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -6,7 +7,7 @@ import simd
 extension Renderer {
     // MARK: - Per-frame CPU work
 
-    func writeFrameData(slot: Int, lod: VGView) {
+    package func writeFrameData(slot: Int, lod: VGView) {
         // Instances: a slot's first frame of a scene writes every record, straight into its buffers; after that only
         // the ones that move, the rest being as they were (a crowd is tens of thousands of records).
         // (A still scene's were written with its buffers.)
@@ -110,7 +111,7 @@ extension Renderer {
         writeSkyArguments(slot: slot)
     }
 
-    func updateCamera(dt: Float) {
+    package func updateCamera(dt: Float) {
         turnByArrows(dt)
         if flight != nil { fly(); return }
         if scene.behaviour?.update(self, dt: dt) == true { return }

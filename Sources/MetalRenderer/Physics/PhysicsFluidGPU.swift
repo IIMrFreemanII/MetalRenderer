@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import simd
 
@@ -162,12 +163,12 @@ final class FluidGPU {
     /// A liquid's steps from its bindings: `add` appends a kernel's dispatch over `count` threads (or `count`
     /// threadgroups of `group` threads), with what `set` binds over the bindings.
     private struct Steps {
-        let pipelines: Pipelines
-        let bind: Step
-        let dispatch: (ComputePass, MTLComputePipelineState, Int) -> Void
-        var list: [Step] = []
+        package let pipelines: Pipelines
+        package let bind: Step
+        package let dispatch: (ComputePass, MTLComputePipelineState, Int) -> Void
+        package var list: [Step] = []
 
-        mutating func add(_ kernel: Kernel, _ count: Int, group: Int = 0, _ set: Step? = nil) {
+        package mutating func add(_ kernel: Kernel, _ count: Int, group: Int = 0, _ set: Step? = nil) {
             let state = pipelines[kernel], bind = bind, dispatch = dispatch
             list.append { enc in
                 bind(enc)
@@ -183,7 +184,7 @@ final class FluidGPU {
 
         /// An exclusive prefix sum of the `count` uints bound at 8 into 9 (the total after them), with the block
         /// totals at 15 and the size at 16.
-        mutating func scan(_ count: Int, _ set: Step? = nil) {
+        package mutating func scan(_ count: Int, _ set: Step? = nil) {
             add(.fluidScanBlocks, (count + 1023) / 1024, group: 256, set)
             add(.fluidScanTop, 1, group: 256, set)
             add(.fluidScanAdd, count, set)

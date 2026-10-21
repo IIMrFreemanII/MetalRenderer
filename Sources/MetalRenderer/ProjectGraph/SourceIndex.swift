@@ -1,26 +1,27 @@
+import EngineCore
 import Foundation
 
 /// Which source files make each scene and system, from graphify's graph of the code (graphify-out/graph.json in the
 /// repository): a scene's builder (`Scene.buildCornell()`) and the files of what it calls; a system's type. Read in the
 /// background when the Project Graph first wants it; nil when there is no graph.
-struct SourceIndex: Equatable {
-    struct File: Hashable, Comparable {
-        var path: String            // repository-relative
-        var line: Int?
+package struct SourceIndex: Equatable {
+    package struct File: Hashable, Comparable {
+        package var path: String            // repository-relative
+        package var line: Int?
         package static func < (a: File, b: File) -> Bool { (a.path, a.line ?? 0) < (b.path, b.line ?? 0) }
     }
     /// By SceneKind.envName.
-    var scenes: [String: [File]] = [:]
+    package var scenes: [String: [File]] = [:]
     /// By the outline's system names (Physics, Plants, ...).
-    var systems: [String: [File]] = [:]
+    package var systems: [String: [File]] = [:]
 
     /// Each scene's builder, as its definition calls it.
-    static var builders: [SceneKind: String] {
+    package static var builders: [SceneKind: String] {
         Dictionary(uniqueKeysWithValues: SceneRegistry.kinds.map { ($0, $0.definition.builder) })
     }
 
     /// The types each system is.
-    static let systemTypes: [String: [String]] = [
+    package static let systemTypes: [String: [String]] = [
         "Physics": ["PhysicsWorld"], "Particles": ["ParticleSystem"], "Plants": ["Foliage", "PlantTracing"],
         "Characters": ["Crowd"], "SDF shapes": ["SDFShape"], "Buildings": ["Building", "BuildingGenerator"],
         "Fluids": ["FluidSurface"], "Soft bodies and cloth": ["PhysicsWorld"], "Effects": ["VFXLowering", "VFXEffect"],
@@ -28,12 +29,12 @@ struct SourceIndex: Equatable {
     ]
 
     /// At most this many files a scene: its builder's, then those it calls into most.
-    static let filesPerScene = 10
+    package static let filesPerScene = 10
 
-    static var graphURL: URL { Scene.assetsDirectory.deletingLastPathComponent().appendingPathComponent("graphify-out/graph.json") }
+    package static var graphURL: URL { Scene.assetsDirectory.deletingLastPathComponent().appendingPathComponent("graphify-out/graph.json") }
 
     /// graphify's graph read: nil if there is none (or it doesn't read).
-    static func load(from url: URL = graphURL) -> SourceIndex? {
+    package static func load(from url: URL = graphURL) -> SourceIndex? {
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let nodes = root["nodes"] as? [[String: Any]], let links = root["links"] as? [[String: Any]] else { return nil }

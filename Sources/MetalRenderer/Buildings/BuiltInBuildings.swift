@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,10 +7,10 @@ import simd
 package enum BuiltInBuildings {
     package typealias D = BuildingStyleDef
 
-    static let all: [BuildingStyleDef] = [oldtown, residential, warehouse, office, modern]
+    package static let all: [BuildingStyleDef] = [oldtown, residential, warehouse, office, modern]
 
     /// Narrow plastered houses with pitched roofs and shutters, a shop under some.
-    static let oldtown: D = {
+    package static let oldtown: D = {
         var d = D(id: "oldtown", name: "Old town", districts: ["oldtown": 1])
         d.programme = Programme(use: .house, outerWall: 0.36, stairWidth: 0.95, liftFrom: 0, living: 3.4, bedroom: 2.6)
         d.proportions = D.Proportions(groundHeight: Span(3.2, 3.8), floorHeight: Span(2.8, 3.2), bay: Span(2.2, 2.8), pier: Choice([0.45]))
@@ -57,7 +58,7 @@ package enum BuiltInBuildings {
     }()
 
     /// Low, wide brick halls with big windows and loading doors.
-    static let warehouse: D = {
+    package static let warehouse: D = {
         var d = D(id: "warehouse", name: "Warehouses", districts: ["warehouse": 1])
         d.programme = Programme(use: .warehouse, outerWall: 0.38, partition: 0.15, slab: 0.3, stairWidth: 1.2, liftFrom: 0)
         d.proportions = D.Proportions(groundHeight: Span(4.8, 6.0), floorHeight: Span(4.0, 4.6), bay: Span(4.5, 5.5), pier: Choice([0.8]))
@@ -118,7 +119,7 @@ package enum BuiltInBuildings {
     }()
 
     /// Concrete and panel mid-rise blocks with ribbon windows and glass balconies.
-    static let modern: D = {
+    package static let modern: D = {
         var d = D(id: "modern", name: "Modern mid-rise", districts: ["modern": 1])
         d.programme = Programme(use: .apartments, liftFrom: 5, unitWidth: Span(7, 10))
         d.proportions = D.Proportions(groundHeight: Span(3.8, 4.4), floorHeight: Span(3.0, 3.3), bay: Span(3.2, 4.4), pier: Choice([0.3, 0.8]))
@@ -153,7 +154,7 @@ package enum BuiltInBuildings {
     }
 
     /// The built-in style of a district (a mixed city's lots have their own districts: never .mixed).
-    static func style(_ district: CityStyle) -> BuildingStyleDef {
+    package static func style(_ district: CityStyle) -> BuildingStyleDef {
         switch district {
         case .oldtown: return oldtown
         case .residential: return residential

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,18 +7,18 @@ import simd
 package enum PaintChannel: String, Codable, CaseIterable, Identifiable {
     case color, roughness, metallic, height, emissive, opacity
     package var id: String { rawValue }
-    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     /// Its paint texture holds rgb + coverage (else value + coverage).
-    var isColor: Bool { self == .color || self == .emissive }
+    package var isColor: Bool { self == .color || self == .emissive }
     /// Its index in the GPU's layer records (PaintGPULayer) and the stroke's channel mask.
-    var bit: UInt32 { UInt32(1) << UInt32(PaintChannel.allCases.firstIndex(of: self)!) }
+    package var bit: UInt32 { UInt32(1) << UInt32(PaintChannel.allCases.firstIndex(of: self)!) }
 }
 
 /// How a layer's colour goes over what is under it (Material Designer's blend modes, as MatBlendMode numbers them).
 package enum PaintBlend: Int, Codable, CaseIterable, Identifiable {
     case normal, multiply, screen, overlay, add, subtract, darken, lighten, softLight
     package var id: Int { rawValue }
-    var title: String {
+    package var title: String {
         switch self {
         case .softLight: return "Soft light"
         default: return "\(self)".prefix(1).uppercased() + "\(self)".dropFirst()
@@ -29,19 +30,19 @@ package enum PaintBlend: Int, Codable, CaseIterable, Identifiable {
 package enum PaintHeightBlend: Int, Codable, CaseIterable, Identifiable {
     case normal, add, subtract
     package var id: Int { rawValue }
-    var title: String { "\(self)".prefix(1).uppercased() + "\(self)".dropFirst() }
+    package var title: String { "\(self)".prefix(1).uppercased() + "\(self)".dropFirst() }
 }
 
 /// A layer's values where it has no texture (a fill's), and a brush's.
 package struct PaintValues: Codable, Equatable {
     package var color = SIMD3<Float>(0.5, 0.5, 0.5)     // linear
     package var roughness: Float = 0.5
-    var metallic: Float = 0
+    package var metallic: Float = 0
     package var height: Float = 0.5                     // 0.5 = the surface; 0...1 is -depth...+depth (PaintDocument.heightDepth)
-    var emissive = SIMD3<Float>(0, 0, 0)        // linear, x PaintDocument.emissiveIntensity
-    var opacity: Float = 1
+    package var emissive = SIMD3<Float>(0, 0, 0)        // linear, x PaintDocument.emissiveIntensity
+    package var opacity: Float = 1
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(color: SIMD3<Float> = SIMD3<Float>(0.5, 0.5, 0.5), roughness: Float = 0.5, metallic: Float = 0, height: Float = 0.5, emissive: SIMD3<Float> = SIMD3<Float>(0, 0, 0), opacity: Float = 1) {
         self.color = color
         self.roughness = roughness
@@ -58,7 +59,7 @@ package struct PaintGenerator: Codable, Equatable {
     package enum Kind: String, Codable, CaseIterable, Identifiable {
         case edgeWear, cavityDirt, dust, rustLeaks, curvature, occlusion, thickness, height, graph
         package var id: String { rawValue }
-        var title: String {
+        package var title: String {
             switch self {
             case .edgeWear: return "Edge wear"
             case .cavityDirt: return "Dirt in cavities"
@@ -72,23 +73,34 @@ package struct PaintGenerator: Codable, Equatable {
             }
         }
     }
-    var kind = Kind.edgeWear
-    var amount: Float = 0.5        // how much of the surface it takes
-    var contrast: Float = 0.5      // how hard its edge is
-    var scale: Float = 4           // its noise's features per metre
-    var seed = 1
-    var invert = false
-    var graph = ""                 // .graph: the Material Designer graph's name (its output "mask" or base colour's luminance)
+    package var kind = Kind.edgeWear
+    package var amount: Float = 0.5        // how much of the surface it takes
+    package var contrast: Float = 0.5      // how hard its edge is
+    package var scale: Float = 4           // its noise's features per metre
+    package var seed = 1
+    package var invert = false
+    package var graph = ""                 // .graph: the Material Designer graph's name (its output "mask" or base colour's luminance)
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(kind: Kind = Kind.edgeWear, amount: Float = 0.5, contrast: Float = 0.5, scale: Float = 4, seed: Int = 1, invert: Bool = false, graph: String = "") {
+        self.kind = kind
+        self.amount = amount
+        self.contrast = contrast
+        self.scale = scale
+        self.seed = seed
+        self.invert = invert
+        self.graph = graph
+    }
 }
 
 /// A layer's mask: `base` (white or black) where nothing is generated, or the generator; then what is painted on it
 /// (a paint channel of its own: the mask's value and coverage, over the base).
 package struct PaintMask: Codable, Equatable {
-    var base: Float = 1
-    var generator: PaintGenerator? = nil
-    var painted = false             // has a painted part (its texture: PaintLayerData.mask)
+    package var base: Float = 1
+    package var generator: PaintGenerator? = nil
+    package var painted = false             // has a painted part (its texture: PaintLayerData.mask)
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(base: Float = 1, generator: PaintGenerator? = nil, painted: Bool = false) {
         self.base = base
         self.generator = generator
@@ -103,17 +115,17 @@ package struct PaintLayer: Codable, Equatable, Identifiable {
     package enum Projection: String, Codable, CaseIterable, Identifiable {
         case triplanar, uv
         package var id: String { rawValue }
-        var title: String { self == .uv ? "UV" : "Triplanar" }
+        package var title: String { self == .uv ? "UV" : "Triplanar" }
     }
     package var id = UUID()
-    var name = "Layer"
-    var kind = Kind.paint
-    var visible = true
-    var opacity: Float = 1
-    var blend = PaintBlend.normal
-    var heightBlend = PaintHeightBlend.normal
+    package var name = "Layer"
+    package var kind = Kind.paint
+    package var visible = true
+    package var opacity: Float = 1
+    package var blend = PaintBlend.normal
+    package var heightBlend = PaintHeightBlend.normal
     package var channels: Set<PaintChannel> = [.color, .roughness, .metallic, .height]
-    var values = PaintValues()
+    package var values = PaintValues()
     /// A fill's graph (by name: MaterialCatalog's), its projection and its tiles per metre.
     package var graph: String? = nil
     package var projection = Projection.triplanar
@@ -121,13 +133,13 @@ package struct PaintLayer: Codable, Equatable, Identifiable {
     package var mask: PaintMask? = nil
     /// "original": a paint layer filled, when it is first made, from the object as it was (its materials' textures at
     /// its own UVs); nil: empty.
-    var source: String? = nil
+    package var source: String? = nil
 
     package static func fill(_ name: String, _ values: PaintValues, channels: Set<PaintChannel> = [.color, .roughness, .metallic]) -> PaintLayer {
         PaintLayer(name: name, kind: .fill, channels: channels, values: values)
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(id: UUID = UUID(), name: String = "Layer", kind: Kind = Kind.paint, visible: Bool = true, opacity: Float = 1, blend: PaintBlend = PaintBlend.normal, heightBlend: PaintHeightBlend = PaintHeightBlend.normal, channels: Set<PaintChannel> = [.color, .roughness, .metallic, .height], values: PaintValues = PaintValues(), graph: String? = nil, projection: Projection = Projection.triplanar, tiling: Float = 1, mask: PaintMask? = nil, source: String? = nil) {
         self.id = id
         self.name = name
@@ -151,17 +163,17 @@ package struct PaintLayer: Codable, Equatable, Identifiable {
 /// (PainterSession) and PNGs in its package when saved (PainterStore).
 package struct PaintDocument: Codable, Equatable {
     package var name: String
-    var resolution = 2048
+    package var resolution = 2048
     package var layers: [PaintLayer] = [PaintDocument.baseLayer]
     /// How far height 0 and 1 are from the surface (metres): the normal the height gives, and parallax if any.
-    var heightDepth: Float = 0.004
-    var parallax = false
-    var emissiveIntensity: Float = 4
-    var normalStrength: Float = 1
-    var aoStrength: Float = 1
-    var alphaCutoff: Float = 0.5
+    package var heightDepth: Float = 0.004
+    package var parallax = false
+    package var emissiveIntensity: Float = 4
+    package var normalStrength: Float = 1
+    package var aoStrength: Float = 1
+    package var alphaCutoff: Float = 0.5
 
-    static let resolutions = [1024, 2048, 4096]
+    package static let resolutions = [1024, 2048, 4096]
     package static let baseLayer = PaintLayer(name: "Base", kind: .fill, channels: [.color, .roughness, .metallic],
                                       values: PaintValues(color: [0.5, 0.5, 0.5], roughness: 0.55))
 
@@ -172,12 +184,12 @@ package struct PaintDocument: Codable, Equatable {
 
     /// What its layers write, together: opacity and emission decide how the scene is made (the painted material's
     /// holes; its emission's strength).
-    var channels: Set<PaintChannel> { layers.filter(\.visible).reduce(into: []) { $0.formUnion($1.channels) } }
-    var opacity: Bool { channels.contains(.opacity) }
-    var emissive: Bool { channels.contains(.emissive) }
+    package var channels: Set<PaintChannel> { layers.filter(\.visible).reduce(into: []) { $0.formUnion($1.channels) } }
+    package var opacity: Bool { channels.contains(.opacity) }
+    package var emissive: Bool { channels.contains(.emissive) }
 
     /// A short file name for it.
-    static func slug(_ name: String) -> String {
+    package static func slug(_ name: String) -> String {
         let s = name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }
         return String(s).split(separator: "-").joined(separator: "-")
     }
@@ -205,7 +217,7 @@ package final class PaintDocuments {
     private var open: [String: PaintDocument] = [:]
     private var versions: [String: Int] = [:]
 
-    func document(_ name: String) -> PaintDocument {
+    package func document(_ name: String) -> PaintDocument {
         lock.lock()
         if let d = open[name] { lock.unlock(); return d }
         lock.unlock()
@@ -224,12 +236,12 @@ package final class PaintDocuments {
     }
 
     /// How many edits a document has had.
-    func version(_ name: String) -> Int {
+    package func version(_ name: String) -> Int {
         lock.lock(); defer { lock.unlock() }
         return versions[name] ?? 0
     }
 
-    func forget(_ name: String) {
+    package func forget(_ name: String) {
         lock.lock(); defer { lock.unlock() }
         open[name] = nil
         versions[name] = nil

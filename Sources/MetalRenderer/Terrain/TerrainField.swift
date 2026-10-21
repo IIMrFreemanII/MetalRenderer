@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -56,34 +57,34 @@ package struct TerrainTile: Equatable {
 /// plus the tile's delta. A value: a snapshot of a field (TerrainField) that the scenes are made from, that the
 /// walker and the brushes' cursor read, that is saved.
 package struct TerrainSnapshot {
-    let base: TerrainBase
-    var tiles: [SIMD2<Int>: TerrainTile] = [:]
+    package let base: TerrainBase
+    package var tiles: [SIMD2<Int>: TerrainTile] = [:]
     /// The base's heights of the tiles that were asked for (TerrainBaseCache), shared by every snapshot of the field.
-    let baseCache: TerrainBaseCache
+    package let baseCache: TerrainBaseCache
 
-    var grid: TerrainGrid { base.grid }
+    package var grid: TerrainGrid { base.grid }
 
     /// The height added at sample (i, j).
-    @inline(__always) func delta(_ i: Int, _ j: Int) -> Float {
+    @inline(__always) package func delta(_ i: Int, _ j: Int) -> Float {
         let n = grid.tileCells, t = grid.tile(i, j)
         guard let tile = tiles[t] else { return 0 }
         return tile.delta[(j - t.y * n) * n + (i - t.x * n)]
     }
 
     /// The base's height at sample (i, j) (from the cache when its tile has been asked for whole).
-    @inline(__always) func baseHeight(_ i: Int, _ j: Int) -> Float {
+    @inline(__always) package func baseHeight(_ i: Int, _ j: Int) -> Float {
         baseCache.height(i, j, base: base)
     }
 
     /// The ground's height at sample (i, j), clamped into the terrain.
-    @inline(__always) func height(_ i: Int, _ j: Int) -> Float {
+    @inline(__always) package func height(_ i: Int, _ j: Int) -> Float {
         let s = grid.clamp(i, j)
         return baseHeight(s.x, s.y) + delta(s.x, s.y)
     }
 
     /// The heights of `count` samples along each axis, `step` apart, from sample `first` (clamped into the terrain),
     /// rows along j: each tile's arrays fetched once (a sector's mesh reads thousands).
-    func heights(from first: SIMD2<Int>, count: SIMD2<Int>, step: Int) -> [Float] {
+    package func heights(from first: SIMD2<Int>, count: SIMD2<Int>, step: Int) -> [Float] {
         let n = grid.tileCells
         var out = [Float](repeating: 0, count: count.x * count.y)
         var bases: [SIMD2<Int>: [Float]?] = [:], stored: [SIMD2<Int>: Stored<Float>?] = [:], deltas: [SIMD2<Int>: [Float]?] = [:]
@@ -125,7 +126,7 @@ package struct TerrainSnapshot {
 
     /// The ground's height under (x, z) (the world's): on the mesh's triangle there, as `Terrain.height` (a cell's
     /// diagonal runs from its low corner to its high one).
-    func height(x: Double, z: Double) -> Float {
+    package func height(x: Double, z: Double) -> Float {
         let g = grid.coordinates(x, z)
         let fi = g.x.rounded(.down), fj = g.y.rounded(.down)
         var i = Int(fi), j = Int(fj)
@@ -139,7 +140,7 @@ package struct TerrainSnapshot {
     }
 
     /// How much the edits raised (or lowered) the ground under (x, z): their delta, between its samples.
-    func delta(x: Double, z: Double) -> Float {
+    package func delta(x: Double, z: Double) -> Float {
         let g = grid.coordinates(x, z)
         let fi = g.x.rounded(.down), fj = g.y.rounded(.down), i = Int(fi), j = Int(fj)
         let u = Float(g.x - fi), v = Float(g.y - fj)
@@ -148,7 +149,7 @@ package struct TerrainSnapshot {
     }
 
     /// The normal of that triangle.
-    func normal(x: Double, z: Double) -> SIMD3<Float> {
+    package func normal(x: Double, z: Double) -> SIMD3<Float> {
         let g = grid.coordinates(x, z)
         let fi = g.x.rounded(.down), fj = g.y.rounded(.down)
         var i = Int(fi), j = Int(fj)
@@ -164,7 +165,7 @@ package struct TerrainSnapshot {
 
     /// Where a ray (the world's coordinates) first meets the ground, within `maxDistance`: marched in steps of half a
     /// cell near the ground (longer above it), then halved down to the crossing.
-    func raycast(origin o: SIMD3<Double>, direction d: SIMD3<Float>, maxDistance: Float = 4000) -> (point: SIMD3<Double>, distance: Float)? {
+    package func raycast(origin o: SIMD3<Double>, direction d: SIMD3<Float>, maxDistance: Float = 4000) -> (point: SIMD3<Double>, distance: Float)? {
         let dir = SIMD3<Double>(normalize(d))
         func above(_ t: Double) -> Double {
             let p = o + dir * t
@@ -191,7 +192,7 @@ package struct TerrainSnapshot {
     }
 
     /// The layer weights painted at sample (i, j), and how much they show (0...1); nil where nothing is painted.
-    func paint(_ i: Int, _ j: Int) -> (weights: SIMD16<UInt8>, mask: Float)? {
+    package func paint(_ i: Int, _ j: Int) -> (weights: SIMD16<UInt8>, mask: Float)? {
         let n = grid.tileCells, t = grid.tile(i, j)
         guard let tile = tiles[t], let paint = tile.paint, let mask = tile.mask else { return nil }
         let k = (j - t.y * n) * n + (i - t.x * n)
@@ -203,7 +204,7 @@ package struct TerrainSnapshot {
 
     /// How much sample (i, j) is kept as it is (0...1): as painted, or where its tile has no protection painted, the
     /// base's (the city's streets).
-    func protection(_ i: Int, _ j: Int) -> Float {
+    package func protection(_ i: Int, _ j: Int) -> Float {
         let n = grid.tileCells, t = grid.tile(i, j)
         guard let protect = tiles[t]?.protect else { return base.protection(i, j) }
         return Float(protect[(j - t.y * n) * n + (i - t.x * n)]) / 255
@@ -225,7 +226,7 @@ package struct TerrainSnapshot {
 
     /// The highest revision of the tiles a sector reads (its own and the ring of samples around it): its mesh is
     /// made again when this changes.
-    func revision(around sector: TerrainSector) -> Int {
+    package func revision(around sector: TerrainSector) -> Int {
         let lo = sector.first &- sector.step, hi = sector.last &+ sector.step, n = grid.tileCells
         return grid.tiles(from: lo, to: hi).reduce(0) { r, t in
             guard let tile = tiles[t] else { return r }
@@ -234,7 +235,7 @@ package struct TerrainSnapshot {
         }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(base: TerrainBase, tiles: [SIMD2<Int>: TerrainTile] = [:], baseCache: TerrainBaseCache) {
         self.base = base
         self.tiles = tiles
@@ -309,8 +310,8 @@ package final class TerrainField {
         revision = tiles.values.map(\.revision).max() ?? 0
     }
 
-    var base: TerrainBase { current.base }
-    var grid: TerrainGrid { current.base.grid }
+    package var base: TerrainBase { current.base }
+    package var grid: TerrainGrid { current.base.grid }
 
     /// The terrain as it is now (a copy: its arrays are shared until either side changes them).
     package func snapshot() -> TerrainSnapshot {
@@ -320,7 +321,7 @@ package final class TerrainField {
 
     /// Changes the terrain: `body` gets it to edit, and says which tiles it changed (their revisions go up).
     @discardableResult
-    func edit(_ body: (inout TerrainSnapshot) -> Set<SIMD2<Int>>) -> Set<SIMD2<Int>> {
+    package func edit(_ body: (inout TerrainSnapshot) -> Set<SIMD2<Int>>) -> Set<SIMD2<Int>> {
         lock.lock(); defer { lock.unlock() }
         let touched = body(&current)
         guard !touched.isEmpty else { return touched }
@@ -342,7 +343,7 @@ package final class TerrainField {
 
     /// Puts tiles back as they were (an undo): `tiles[t]` nil makes tile t unedited (kept, empty: its revision says
     /// it changed).
-    func restore(_ tiles: [SIMD2<Int>: TerrainTile?]) {
+    package func restore(_ tiles: [SIMD2<Int>: TerrainTile?]) {
         lock.lock(); defer { lock.unlock() }
         revision += 1
         for (t, tile) in tiles {
@@ -354,7 +355,7 @@ package final class TerrainField {
     }
 
     /// Replaces every tile (a document loaded, or reverted to what is saved).
-    func replaceAll(_ tiles: [SIMD2<Int>: TerrainTile]) {
+    package func replaceAll(_ tiles: [SIMD2<Int>: TerrainTile]) {
         lock.lock(); defer { lock.unlock() }
         revision += 1
         var out = tiles

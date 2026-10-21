@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// The characters scenes are made with: the built-in ones (BuiltInCharacters), any of them replaced by a saved file
@@ -6,12 +7,12 @@ import Foundation
 package struct CharacterCatalog: Equatable, Codable {
     package var characters: [CharacterDNA]
 
-    static let builtIn = CharacterCatalog(characters: BuiltInCharacters.all)
+    package static let builtIn = CharacterCatalog(characters: BuiltInCharacters.all)
 
-    func character(id: String) -> CharacterDNA? { characters.first { $0.id == id } }
+    package func character(id: String) -> CharacterDNA? { characters.first { $0.id == id } }
 
     /// The built-in characters (in their order, any replaced by a definition of its id), then the others by id.
-    func merging(_ defs: [CharacterDNA]) -> CharacterCatalog {
+    package func merging(_ defs: [CharacterDNA]) -> CharacterCatalog {
         var out = self
         var custom: [CharacterDNA] = []
         for def in defs {
@@ -28,7 +29,7 @@ package struct CharacterCatalog: Equatable, Codable {
     }
 
     /// Every character in range, ids unique and not empty.
-    func sanitized() -> CharacterCatalog {
+    package func sanitized() -> CharacterCatalog {
         var out = self
         var ids = Set<String>()
         for i in out.characters.indices {
@@ -41,14 +42,14 @@ package struct CharacterCatalog: Equatable, Codable {
         return out
     }
 
-    var fingerprint: String { String(CharacterDNA.fingerprint(characters).prefix(12)) }
+    package var fingerprint: String { String(CharacterDNA.fingerprint(characters).prefix(12)) }
 
     private static let lock = NSLock()
     private static let registry = CatalogRegistry<CharacterCatalog>()
     private static var launchCatalog: CharacterCatalog?
 
     /// What scenes are made with unless the editor says otherwise: the built-in characters with the saved files.
-    static var launch: CharacterCatalog {
+    package static var launch: CharacterCatalog {
         lock.lock()
         defer { lock.unlock() }
         if let made = launchCatalog { return made }
@@ -57,7 +58,7 @@ package struct CharacterCatalog: Equatable, Codable {
         return made
     }
 
-    static func setLaunch(_ catalog: CharacterCatalog) {
+    package static func setLaunch(_ catalog: CharacterCatalog) {
         lock.lock()
         launchCatalog = catalog
         lock.unlock()
@@ -70,7 +71,7 @@ package struct CharacterCatalog: Equatable, Codable {
         return key
     }
 
-    static func registered(_ key: String) -> CharacterCatalog? { registry.registered(key) }
+    package static func registered(_ key: String) -> CharacterCatalog? { registry.registered(key) }
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in characters, otherwise a
     /// registered one (the launch one if it is no longer kept).
@@ -85,7 +86,7 @@ package struct CharacterCatalog: Equatable, Codable {
         }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(characters: [CharacterDNA]) {
         self.characters = characters
     }
@@ -94,15 +95,15 @@ package struct CharacterCatalog: Equatable, Codable {
 /// The characters saved as JSON: `Assets/CharacterDefs/<id>.json`, `{"format": 1, "character": {...}}`. The folder is
 /// `METALRENDERER_CHARACTERS` if set (`builtin`: none), or `CharacterDefs` in the assets folder. The character editor's
 /// unsaved edits are a draft in UserDefaults.
-enum CharacterStore {
-    static let format = 1
+package enum CharacterStore {
+    package static let format = 1
 
-    struct File: Codable {
-        var format = CharacterStore.format
-        var character: CharacterDNA
+    package struct File: Codable {
+        package var format = CharacterStore.format
+        package var character: CharacterDNA
     }
 
-    static var folder: URL? {
+    package static var folder: URL? {
         switch ProcessInfo.processInfo.environment["METALRENDERER_CHARACTERS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
@@ -110,15 +111,15 @@ enum CharacterStore {
         }
     }
 
-    static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).json") }
+    package static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).json") }
 
-    static func encode(_ def: CharacterDNA) throws -> Data {
+    package static func encode(_ def: CharacterDNA) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(File(character: def))
     }
 
-    static func load(from folder: URL? = CharacterStore.folder) -> CharacterCatalog {
+    package static func load(from folder: URL? = CharacterStore.folder) -> CharacterCatalog {
         guard let folder, let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return .builtIn }
         var defs: [CharacterDNA] = []
         for name in names.sorted() where name.hasSuffix(".json") {
@@ -134,12 +135,12 @@ enum CharacterStore {
         return CharacterCatalog.builtIn.merging(defs)
     }
 
-    static func save(_ def: CharacterDNA, in folder: URL) throws {
+    package static func save(_ def: CharacterDNA, in folder: URL) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try encode(def).write(to: url(def.id, in: folder), options: .atomic)
     }
 
-    static func remove(_ id: String, in folder: URL) throws {
+    package static func remove(_ id: String, in folder: URL) throws {
         let file = url(id, in: folder)
         if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
     }
@@ -148,13 +149,13 @@ enum CharacterStore {
 
     private static let draftKey = "characterDraft"
 
-    static func loadDraft() -> CharacterCatalog? {
+    package static func loadDraft() -> CharacterCatalog? {
         guard let data = UserDefaults.standard.data(forKey: draftKey),
               let defs = try? JSONDecoder().decode([CharacterDNA].self, from: data) else { return nil }
         return CharacterCatalog(characters: defs).sanitized()
     }
 
-    static func saveDraft(_ catalog: CharacterCatalog?) {
+    package static func saveDraft(_ catalog: CharacterCatalog?) {
         guard let catalog, let data = try? JSONEncoder().encode(catalog.characters) else {
             UserDefaults.standard.removeObject(forKey: draftKey)
             return
@@ -177,7 +178,7 @@ package enum BuiltInCharacters {
              hairColour: 0.97) { $0.hair.brows = 0.5 },
     ]
 
-    static func make(_ id: String, _ name: String, sex: Float, age: Float, weight: Float = 0, muscle: Float = 0, height: Float = 0,
+    package static func make(_ id: String, _ name: String, sex: Float, age: Float, weight: Float = 0, muscle: Float = 0, height: Float = 0,
                      proportions: Float = 0, melanin: Float = 0.3, hair: String = "short", hairColour: Float = 0.6,
                      _ change: (inout CharacterDNA) -> Void = { _ in }) -> CharacterDNA {
         var d = CharacterDNA()

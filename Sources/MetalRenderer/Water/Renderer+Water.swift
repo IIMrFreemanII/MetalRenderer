@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -6,7 +7,7 @@ import simd
 /// water map around the camera (WaterMap: drawn on the CPU from the scene's WaterField, in the
 /// background as the camera goes, uploaded into the back one of two copies and swapped in), the FFT ocean's
 /// textures, and per frame slot the record the shading reads (GPUWaterScene, its address in SceneShading.water).
-final class WaterSystem {
+package final class WaterSystem {
     let device: MTLDevice
     private(set) var records: [MTLBuffer] = []
     private var looks: MTLBuffer
@@ -446,7 +447,7 @@ struct WaterFFTParams {
 
 extension Renderer {
     /// The FFT ocean's waves, when the scene has water with waves, and the near patch they move.
-    func encodeWaterWaves(slot: Int, passes: FrameEncoder) {
+    package func encodeWaterWaves(slot: Int, passes: FrameEncoder) {
         guard scene.hasWater, let w = scene.water, w.looks.contains(where: { $0.waves >= 0.05 }), let water else { return }
         water.encodeWaves(passes, pipelines: pipelines, time: animTime, dt: animTime - previousAnimTime, windDirection: settings.foliage.windDirection)
         // (The sun as this frame's lights have it: the sky set its direction.)
@@ -461,7 +462,7 @@ extension Renderer {
 
     /// This frame's water: the system made or brought up to the scene, the map following the camera, the slot's record
     /// written and its address put in the shading arguments. False: no water this frame.
-    func prepareWater(slot: Int) -> Bool {
+    package func prepareWater(slot: Int) -> Bool {
         guard let w = scene.water, scene.hasWater else {
             if slot < shadingArgs.count { shadingArgs[slot].contents().storeBytes(of: UInt64(0), toByteOffset: Renderer.shadingWaterOffset, as: UInt64.self) }
             return false

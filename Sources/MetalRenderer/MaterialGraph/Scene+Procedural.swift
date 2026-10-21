@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -12,7 +13,7 @@ enum ProcSlot: Int, CaseIterable {
 /// scene's material catalog, SceneSettings.materials), its material, the scene's texture slots its bake fills (each a
 /// 1 × 1 placeholder until the renderer puts the bake's texture in its place: Renderer.applyProcedural), and what the
 /// graph's structure says it has (its output channels: opacity decides how the scene is traced).
-struct ProceduralMaterial {
+package struct ProceduralMaterial {
     var graph: String
     var material: Int
     var slots: [UInt32]          // per ProcSlot
@@ -40,7 +41,7 @@ extension Scene {
 
     /// Material `index` as `graph`'s (an assignment: MaterialAssignments): its slots, its extras; a neutral grey until
     /// its bake comes.
-    func makeProcedural(_ index: Int, graph name: String, catalog: MaterialCatalog) {
+    package func makeProcedural(_ index: Int, graph name: String, catalog: MaterialCatalog) {
         let g = catalog.graph(name)
         let channels = Set(g?.channels.keys.map { $0 } ?? [])
         let fingerprint = procedural.first { $0.material == index }?.fingerprint ?? MaterialAssignments.fingerprint(materials[index])
@@ -64,7 +65,7 @@ extension Scene {
     /// The procedural materials whose graphs ask to run as code (MatSurface.shaderMode) and can: their programs,
     /// numbered in order, spliced into `proceduralCode`, their parameters one after the other in `proceduralParams`.
     /// One whose graph can't stays baked (why: MatShaderCode.reasons).
-    func buildProceduralPrograms() {
+    package func buildProceduralPrograms() {
         let catalog = MaterialCatalog.resolve(settings.materials)
         var programs: [(number: Int, program: MatShaderCode.Program)] = []
         var params: [SIMD4<Float>] = []
@@ -95,11 +96,11 @@ extension Scene {
 
     /// Some procedural material cuts holes (its graph has an opacity output) in a scene whose instances are its own
     /// (not an open world's blocks): the queries alpha-test those instances (OPACITY).
-    var hasOpacity: Bool { !hasGroups && (procedural.contains { $0.channels.contains(.opacity) } || painted.contains(where: \.opacity)) }
+    package var hasOpacity: Bool { !hasGroups && (procedural.contains { $0.channels.contains(.opacity) } || painted.contains(where: \.opacity)) }
 
     /// The instances whose material cuts holes: for each, its opacity texture, mesh, cutoff and UV scale (MSL
     /// TraceScene.opacity, per instance: the texture ~0 for every other).
-    func opacityRecords() -> [SIMD4<UInt32>] {
+    package func opacityRecords() -> [SIMD4<UInt32>] {
         guard hasOpacity else { return [] }
         var records = [SIMD4<UInt32>](repeating: SIMD4(.max, 0, 0, 0), count: instances.count)
         for (i, inst) in instances.enumerated() {
@@ -115,14 +116,14 @@ extension Scene {
     }
 
     /// Whether instance `i` is alpha-tested (its structure's descriptor isn't opaque).
-    func cutsHoles(_ i: Int) -> Bool {
+    package func cutsHoles(_ i: Int) -> Bool {
         guard hasOpacity, let e = materialExtras[instances[i].material] else { return false }
         return e.textures.y != .max
     }
 
 
     /// Every material's extras as the GPU reads them (MSL MaterialExtra: the defaults for a material without).
-    func extrasArray() -> [GPUMaterialExtra] {
+    package func extrasArray() -> [GPUMaterialExtra] {
         guard !materialExtras.isEmpty else { return [] }
         var all = [GPUMaterialExtra](repeating: GPUMaterialExtra(), count: materials.count)
         for (i, e) in materialExtras where i < all.count { all[i] = e }

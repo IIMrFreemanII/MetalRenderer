@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import simd
 
@@ -9,13 +10,13 @@ import simd
 /// Buffers are written once (the parameters too: a step sets no bytes, so a replay of hundreds of steps fits a
 /// frame's constants on Metal 4). A step's substeps run in groups of `PhysicsWorld.contactRefresh`, the narrow phase
 /// before each.
-final class PhysicsGPU {
+package final class PhysicsGPU {
     /// MSL PhysicsGroup: a run of a step's substeps.
     struct Group {
-        var first: UInt32
-        var count: UInt32
-        var last: UInt32
-        var wide: UInt32 = 0   // (1: coloured across the GPU, encodeColours)
+        package var first: UInt32
+        package var count: UInt32
+        package var last: UInt32
+        package var wide: UInt32 = 0   // (1: coloured across the GPU, encodeColours)
     }
 
     /// MSL PhysicsPoseParams.

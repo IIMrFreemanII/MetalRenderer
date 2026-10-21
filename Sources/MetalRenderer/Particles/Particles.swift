@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -17,7 +18,7 @@ package struct ParticleEmitter {
         /// A circle of `radius` across the axis, the particles spread round it evenly (by spawn id).
         case ring(radius: Float)
 
-        var code: Float {
+        package var code: Float {
             switch self {
             case .point: return 0
             case .sphere(_, let surface): return surface ? 2 : 1
@@ -26,7 +27,7 @@ package struct ParticleEmitter {
             case .ring: return 5
             }
         }
-        var radius: Float {
+        package var radius: Float {
             switch self {
             case .point, .box: return 0
             case .sphere(let r, _), .disc(let r), .ring(let r): return r
@@ -312,49 +313,49 @@ package struct ParticleField {
 /// moves every alive particle, pushes the dead back on their emitter's dead list and appends the rest to the other
 /// alive list, which the next step reads. The CPU never reads a count back.
 package final class ParticleSystem {
-    static let stepLength: Float = 1.0 / 60.0
-    static let maxEmitters = 32         // PARTICLE_EMITTERS: `begin` is one SIMD group, a thread an emitter
+    package static let stepLength: Float = 1.0 / 60.0
+    package static let maxEmitters = 32         // PARTICLE_EMITTERS: `begin` is one SIMD group, a thread an emitter
     package static let none = UInt32.max
-    static let alive: UInt32 = 1        // GPUParticle.info.w
-    static let maxPerEvent = 8          // a child's spawn id is its parent's x 8 + which
+    package static let alive: UInt32 = 1        // GPUParticle.info.w
+    package static let maxPerEvent = 8          // a child's spawn id is its parent's x 8 + which
 
-    let emitters: [ParticleEmitter]
+    package let emitters: [ParticleEmitter]
     /// Per emitter, the generated code that does what its effect's graph asks past the fixed emitter (VFXLowering);
     /// nil: none (every built-in effect's).
-    let programs: [VFXProgram?]
+    package let programs: [VFXProgram?]
     /// The programs' Metal and dispatchers (VFXCodegen.source; the VFX library's), nil without programs.
-    let programSource: String?
+    package let programSource: String?
     /// The attributes (float4s) each slot keeps for the programs that set and read them.
-    let attributeStride: Int
-    let colliders: [ParticleCollider]
+    package let attributeStride: Int
+    package let colliders: [ParticleCollider]
     /// The vector fields (ParticleEmitter.field), and last the baked curl tile if an emitter asks for it.
-    let fields: [ParticleField]
-    let bakedCurlField: Int?
+    package let fields: [ParticleField]
+    package let bakedCurlField: Int?
     /// Each emitter's first slot; the pool's size. The emitters that cast shadows have the pool's first
     /// `casterCapacity` slots: shadow rays look only through their structure (ParticleTrace.metal). Then the
     /// distortion emitters' (`distortRange`: never boxes, the haze pass reads them), and last the mesh emitters', the
     /// last `meshCapacity`: they're instances in the scene's structure, not boxes.
-    let bases: [Int]
-    let capacity: Int
-    let casterCapacity: Int
-    let distortCapacity: Int
-    let meshCapacity: Int
+    package let bases: [Int]
+    package let capacity: Int
+    package let casterCapacity: Int
+    package let distortCapacity: Int
+    package let meshCapacity: Int
     /// The billboards' slots (the casters' and the others'), ahead of the distorters' and the meshes'.
-    var billboardCapacity: Int { capacity - meshCapacity - distortCapacity }
-    var distortRange: Range<Int> { billboardCapacity..<(billboardCapacity + distortCapacity) }
+    package var billboardCapacity: Int { capacity - meshCapacity - distortCapacity }
+    package var distortRange: Range<Int> { billboardCapacity..<(billboardCapacity + distortCapacity) }
     /// Per emitter, the first of its instances in the scene (a mesh emitter's: Scene.addParticles reserves them).
-    var meshInstances: [Int?]
+    package var meshInstances: [Int?]
     /// The trails (ParticleEmitter.trail): per emitter its first (a trail a slot of a trail emitter), how many in all,
     /// and the places each keeps (0: no trails); its curve has those and the head.
-    let trailBases: [Int?]
-    let trailCount: Int
-    let trailPoints: Int
+    package let trailBases: [Int?]
+    package let trailCount: Int
+    package let trailPoints: Int
     /// A trail's control points (its places and its head) and its curve's segments (four points each, a point apart).
-    var trailControlPoints: Int { trailPoints + 1 }
-    var trailSegments: Int { trailPoints > 0 ? trailControlPoints - 3 : 0 }
-    var gravity: Float = 9.81
+    package var trailControlPoints: Int { trailPoints + 1 }
+    package var trailSegments: Int { trailPoints > 0 ? trailControlPoints - 3 : 0 }
+    package var gravity: Float = 9.81
     /// The air's speed at wind strength 1 (WindFrame.wind.z), m/s.
-    static let windSpeed: Float = 4
+    package static let windSpeed: Float = 4
     /// Steps run (or claimed by the GPU).
     private(set) var stepIndex = 0
 
@@ -408,13 +409,13 @@ package final class ParticleSystem {
     }
 
     /// The steps that reach `time` (from the start: `restart`).
-    func stepsTo(_ time: Float) -> (steps: Int, restart: Bool) {
+    package func stepsTo(_ time: Float) -> (steps: Int, restart: Bool) {
         let target = max(Int((time / ParticleSystem.stepLength).rounded(.down)), 0)
         return target < stepIndex ? (target, true) : (target - stepIndex, false)
     }
 
     /// For the GPU: the steps that reach `time` (from the start, `restart`), counted as run.
-    func claim(to time: Float) -> (steps: Int, restart: Bool) {
+    package func claim(to time: Float) -> (steps: Int, restart: Bool) {
         let (steps, restart) = stepsTo(time)
         if restart { stepIndex = 0 }
         stepIndex += steps
@@ -422,11 +423,11 @@ package final class ParticleSystem {
     }
 
     /// The CPU's reference counts its own steps.
-    func setStepIndex(_ i: Int) { stepIndex = i }
+    package func setStepIndex(_ i: Int) { stepIndex = i }
 
     // MARK: - What the kernels read
 
-    var gpuEmitters: [GPUParticleEmitter] {
+    package var gpuEmitters: [GPUParticleEmitter] {
         emitters.enumerated().map { i, e in
             var flags = e.flags
             for c in emitters where c.parent == i {
@@ -475,10 +476,10 @@ package final class ParticleSystem {
         }
     }
 
-    var gpuColliders: [GPUParticleCollider] { colliders.map(\.gpu) }
+    package var gpuColliders: [GPUParticleCollider] { colliders.map(\.gpu) }
 
     /// The programs' table (an entry an emitter) and their parameters, one after another.
-    var gpuPrograms: (table: [GPUVFXEmitter], params: [SIMD4<Float>]) {
+    package var gpuPrograms: (table: [GPUVFXEmitter], params: [SIMD4<Float>]) {
         var table: [GPUVFXEmitter] = [], params: [SIMD4<Float>] = []
         for p in programs {
             var g = GPUVFXEmitter()
@@ -493,10 +494,10 @@ package final class ParticleSystem {
     }
 
     /// The baked curl tile (made once: 32^3 nodes of three noise channels' curl).
-    static let curlTile = ParticleField.curl()
+    package static let curlTile = ParticleField.curl()
 
     /// The fields' table and their nodes, one after another (GPUParticleField.dims.w: where a field's start).
-    var gpuFields: (table: [GPUParticleField], samples: [SIMD4<Float>]) {
+    package var gpuFields: (table: [GPUParticleField], samples: [SIMD4<Float>]) {
         var table: [GPUParticleField] = [], samples: [SIMD4<Float>] = []
         for f in fields {
             var g = f.gpu
@@ -509,7 +510,7 @@ package final class ParticleSystem {
 
     /// Step `step`'s parameters; `wind`: the scene's (WindFrame.wind: xy where to, z strength); `scene`: the scene is
     /// bound, for the emitters that collide with it.
-    func stepParams(_ step: Int, wind: SIMD4<Float> = .zero, scene: Bool = false) -> GPUParticleStep {
+    package func stepParams(_ step: Int, wind: SIMD4<Float> = .zero, scene: Bool = false) -> GPUParticleStep {
         let dt = ParticleSystem.stepLength
         let air = SIMD3<Float>(wind.x, 0, wind.y) * wind.z * ParticleSystem.windSpeed
         return GPUParticleStep(wind: SIMD4(air, Float(step) * dt), time: Float(step) * dt, dt: dt, step: UInt32(step),
@@ -518,11 +519,11 @@ package final class ParticleSystem {
     }
 
     /// MSL particleFloor.
-    static func floorCount(_ x: Float) -> Float { (x + 1e-3 + x * 2e-7).rounded(.down) }
+    package static func floorCount(_ x: Float) -> Float { (x + 1e-3 + x * 2e-7).rounded(.down) }
 
     /// MSL particleRequests: what a root emitter asks for over step `s` (its rate's births by the step's end less
     /// those by its start, so a fraction carries; its bursts in the step). In steps, not seconds.
-    static func requests(_ e: GPUParticleEmitter, _ s: GPUParticleStep) -> UInt32 {
+    package static func requests(_ e: GPUParticleEmitter, _ s: GPUParticleStep) -> UInt32 {
         let k = Float(s.step)
         var n: Float = 0
         if e.life.z > 0 {
@@ -545,7 +546,7 @@ package final class ParticleSystem {
 
     /// What a root emitter whose rate a curve scales asks for over step `s` (MSL vfxRequests): its rate's births by
     /// the step's end less those by its start, the curve's integral times the rate, and its bursts.
-    static func requests(_ e: GPUParticleEmitter, _ s: GPUParticleStep, curve: [SIMD4<Float>]) -> UInt32 {
+    package static func requests(_ e: GPUParticleEmitter, _ s: GPUParticleStep, curve: [SIMD4<Float>]) -> UInt32 {
         var bursts = e
         bursts.life.z = 0
         var n = Float(requests(bursts, s))
@@ -558,7 +559,7 @@ package final class ParticleSystem {
     }
 
     /// `requests(_:_:curve:)` over steps a..<b (it telescopes, as `requests(_:from:to:)` does).
-    static func requests(_ e: GPUParticleEmitter, curve: [SIMD4<Float>], from a: Int, to b: Int) -> Int {
+    package static func requests(_ e: GPUParticleEmitter, curve: [SIMD4<Float>], from a: Int, to b: Int) -> Int {
         guard b > a else { return 0 }
         var bursts = e
         bursts.life.z = 0
@@ -578,7 +579,7 @@ package final class ParticleSystem {
     /// What a root emitter asks for over steps a..<b: `requests` summed. Each step's count is a difference of a
     /// monotone count (births by its end less those by its start; bursts by its end less those by its start), so the
     /// sum telescopes: two evaluations, whatever the span.
-    static func requests(_ e: GPUParticleEmitter, from a: Int, to b: Int) -> Int {
+    package static func requests(_ e: GPUParticleEmitter, from a: Int, to b: Int) -> Int {
         guard b > a else { return 0 }
         var n: Float = 0
         if e.life.z > 0 {
@@ -629,7 +630,7 @@ package final class ParticleSystem {
     /// Per emitter, at most how many of its particles are alive once `steps` steps have run: those born within its
     /// longest life, within its pool. The pose packs the alive ones at the front of their structure's range, and
     /// the builds take only this many boxes (ParticlesGPU.encodePose).
-    func aliveBounds(after steps: Int) -> [Int] {
+    package func aliveBounds(after steps: Int) -> [Int] {
         let gpu = gpuEmitters
         return emitters.indices.map { e in
             births(e, from: steps - lifeSteps(e) - 1, to: steps, cap: emitters[e].capacity, gpu: gpu)
@@ -637,7 +638,7 @@ package final class ParticleSystem {
     }
 
     /// The shadow casters' and the others' bounds (aliveBounds summed by structure).
-    func partBounds(after steps: Int) -> SIMD2<Int> {
+    package func partBounds(after steps: Int) -> SIMD2<Int> {
         let b = aliveBounds(after: steps)
         var s = SIMD2<Int>.zero
         for (i, e) in emitters.enumerated() where e.mesh == nil && e.distortion == 0 { s[e.castsShadows ? 0 : 1] += b[i] }

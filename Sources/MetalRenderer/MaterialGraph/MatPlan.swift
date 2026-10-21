@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,41 +7,41 @@ import simd
 /// types, its size and precision, its parameters packed for its kernel (a float4 a parameter, in its spec's order;
 /// curves and gradients as 256-entry tables), and a hash of all that and its inputs' hashes (a node whose hash didn't
 /// change needn't be baked again: undo finds its image too).
-struct MatPlan {
+package struct MatPlan {
     /// Where an input comes from: a step's output, of a type.
-    struct Source: Equatable {
+    package struct Source: Equatable {
         var step: Int
         var output: Int
         var type: MatType
     }
 
-    struct Step {
+    package struct Step {
         /// The node's id in the flattened graph (a subgraph's nodes: "<subgraph node>/<its id>").
-        let id: String
-        let node: MatNode
+        package let id: String
+        package let node: MatNode
         /// Per spec input (nil: unwired).
-        let inputs: [Source?]
+        package let inputs: [Source?]
         /// Per spec output.
-        let outputs: [MatType]
+        package let outputs: [MatType]
         /// log2 of its width and height.
-        let size: Int
-        let bits: MatBits
-        let params: [SIMD4<Float>]
-        let luts: [[SIMD4<Float>]]
-        let seed: UInt32
-        let hash: UInt64
+        package let size: Int
+        package let bits: MatBits
+        package let params: [SIMD4<Float>]
+        package let luts: [[SIMD4<Float>]]
+        package let seed: UInt32
+        package let hash: UInt64
 
-        var kind: MatOpKind { node.kind }
-        var pixels: Int { 1 << size }
+        package var kind: MatOpKind { node.kind }
+        package var pixels: Int { 1 << size }
     }
 
-    let steps: [Step]
-    let index: [String: Int]
+    package let steps: [Step]
+    package let index: [String: Int]
     /// The output nodes the renderer's channels come from.
-    let channels: [MatChannel: Int]
-    let size: Int
-    let surface: MatSurface
-    let name: String
+    package let channels: [MatChannel: Int]
+    package let size: Int
+    package let surface: MatSurface
+    package let name: String
 
     /// The plan of `graph`, its subgraphs found by name in `library`.
     package init(_ graph: MaterialGraph, library: (String) -> MaterialGraph? = { MaterialCatalog.launch.graph($0) }) throws {
@@ -102,7 +103,7 @@ struct MatPlan {
 
     /// What output type `pin` is: its spec's, or for `any`: the node's own choice (an input's type, an output's
     /// channel, a pixel processor's mode), else colour if any `any` input gets colour, else the spec's default.
-    static func type(of pin: MatPinType, _ n: MatNode, _ sources: [Source?]) -> MatType {
+    package static func type(of pin: MatPinType, _ n: MatNode, _ sources: [Source?]) -> MatType {
         switch pin {
         case .grey: return .grey
         case .color: return .color
@@ -130,7 +131,7 @@ struct MatPlan {
     /// `graph` with its subgraph nodes replaced by their graphs' nodes (ids prefixed with the node's), wired to what
     /// was wired to the subgraph node, and every exposed parameter set from its input. A subgraph's input node takes
     /// what is wired into its pin (then it is a pass-through), its output nodes are pass-throughs.
-    static func flatten(_ graph: MaterialGraph, library: (String) -> MaterialGraph?) throws -> MaterialGraph {
+    package static func flatten(_ graph: MaterialGraph, library: (String) -> MaterialGraph?) throws -> MaterialGraph {
         var out = MaterialGraph(graph.name, size: graph.size)
         out.surface = graph.surface
         out.seed = graph.seed
@@ -140,7 +141,7 @@ struct MatPlan {
     }
 
     /// The pins a subgraph node has: its graph's input nodes (by name) and output nodes.
-    static func pins(of graph: MaterialGraph) -> (inputs: [MatInputSpec], outputs: [(name: String, type: MatPinType)]) {
+    package static func pins(of graph: MaterialGraph) -> (inputs: [MatInputSpec], outputs: [(name: String, type: MatPinType)]) {
         let inputs = graph.nodes.filter { $0.kind == .input }.map {
             MatInputSpec($0.text("name"), $0.text("name"), $0.choice("type") == "color" ? .color : .grey, optional: true)
         }
@@ -198,7 +199,7 @@ struct MatPlan {
     }
 
     /// The nodes in an order that has every node after those wired into it; a loop is an error.
-    static func order(_ g: MaterialGraph) throws -> [MatNode] {
+    package static func order(_ g: MaterialGraph) throws -> [MatNode] {
         var into: [String: [String]] = [:]
         for l in g.links { into[l.to, default: []].append(l.from) }
         var state: [String: Int] = [:]   // 1 visiting, 2 done
@@ -219,11 +220,11 @@ struct MatPlan {
 
     // MARK: - Parameters
 
-    static let lutSize = 256
+    package static let lutSize = 256
 
     /// A node's parameters for its kernel: a float4 each, in its spec's order (a choice: its index; a curve or a
     /// gradient: its table's index in `luts`; text: 0).
-    static func pack(_ n: MatNode, luts: inout [[SIMD4<Float>]]) -> [SIMD4<Float>] {
+    package static func pack(_ n: MatNode, luts: inout [[SIMD4<Float>]]) -> [SIMD4<Float>] {
         n.kind.spec.params.map { p in
             let v = n.param(p.name)
             switch v {
@@ -245,7 +246,7 @@ struct MatPlan {
     }
 
     /// A node's seed: the graph's and its own, mixed.
-    static func seed(_ graph: Int, _ node: Int) -> UInt32 {
+    package static func seed(_ graph: Int, _ node: Int) -> UInt32 {
         var h = UInt32(truncatingIfNeeded: graph) &* 0x9e37_79b9 ^ UInt32(truncatingIfNeeded: node) &* 0x85eb_ca6b
         h ^= h >> 16; h = h &* 0x7feb_352d; h ^= h >> 15
         return h
@@ -253,7 +254,7 @@ struct MatPlan {
 }
 
 extension MatParam {
-    var isText: Bool { if case .text = self { return true }; return false }
+    package var isText: Bool { if case .text = self { return true }; return false }
 }
 
 /// FNV-1a over what is added: a plan step's hash, and a seed that is the same on every launch (Swift's `Hasher` is
@@ -274,7 +275,7 @@ struct Hasher64 {
 
 extension MaterialGraph {
     /// The pins node `id` has: its kind's, or for a subgraph node its graph's.
-    func pins(_ n: MatNode, library: (String) -> MaterialGraph?) -> (inputs: [MatInputSpec], outputs: [(name: String, type: MatPinType)]) {
+    package func pins(_ n: MatNode, library: (String) -> MaterialGraph?) -> (inputs: [MatInputSpec], outputs: [(name: String, type: MatPinType)]) {
         if n.kind == .subgraph {
             guard let g = library(n.text("graph")) else { return ([], []) }
             return MatPlan.pins(of: g)
@@ -283,7 +284,7 @@ extension MaterialGraph {
     }
 
     /// Whether `from`'s output can be wired into `to`'s input: both are pins, and `to` isn't upstream of `from`.
-    func canLink(_ from: String, _ output: String, to: String, _ input: String, library: (String) -> MaterialGraph?) -> Bool {
+    package func canLink(_ from: String, _ output: String, to: String, _ input: String, library: (String) -> MaterialGraph?) -> Bool {
         guard from != to, let a = node(from), let b = node(to) else { return false }
         guard pins(a, library: library).outputs.contains(where: { $0.name == output }),
               pins(b, library: library).inputs.contains(where: { $0.name == input }) else { return false }

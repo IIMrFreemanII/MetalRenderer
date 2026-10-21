@@ -1,4 +1,6 @@
 import XCTest
+@testable import Editors
+@testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
 

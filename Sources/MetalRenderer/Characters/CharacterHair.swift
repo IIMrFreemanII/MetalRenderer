@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -13,28 +14,28 @@ import simd
 /// and frizzed by its own hash. Crowds draw none of it: their hair is a cap (CharacterHairCap).
 package enum CharacterHair {
     /// How a style's hair lies at its root: away from a parting at x, combed back, forward, or out from the crown.
-    enum Flow: Equatable { case part(Float), back, forward, crown }
+    package enum Flow: Equatable { case part(Float), back, forward, crown }
 
-    struct Style {
-        var id: String
-        var title: String
+    package struct Style {
+        package var id: String
+        package var title: String
         /// Lengths (m) at the top, the sides, the back and over the forehead.
-        var top: Float, sides: Float, back: Float, fringe: Float
-        var flow: Flow
+        package var top: Float, sides: Float, back: Float, fringe: Float
+        package var flow: Flow
         /// How far it falls under its weight (0 stands as combed ... 1 hangs), and how far it stands off the scalp (m).
-        var fall: Float, volume: Float
+        package var fall: Float, volume: Float
         /// The hairline drawn back (0 ... 1), and a bald crown's radius (m).
-        var recede: Float = 0, crown: Float = 0
+        package var recede: Float = 0, crown: Float = 0
         /// Drawn strands per square centimetre, and how many control points each.
-        var density: Float = 42
-        var points: Int = 10
+        package var density: Float = 42
+        package var points: Int = 10
         /// Toward their guide at the tip (0 ... 1), curls (0 ... 1), and stray.
-        var clump: Float = 0.45, curl: Float = 0, frizz: Float = 0.12
+        package var clump: Float = 0.45, curl: Float = 0, frizz: Float = 0.12
         /// Where its tips are cut (FaceSculpt's height; nil: wherever they reach).
-        var cut: Float? = nil
+        package var cut: Float? = nil
     }
 
-    static let styles: [Style] = [
+    package static let styles: [Style] = [
         Style(id: "bald", title: "Bald", top: 0, sides: 0, back: 0, fringe: 0, flow: .crown, fall: 0, volume: 0, density: 0),
         Style(id: "buzz", title: "Buzz cut", top: 0.005, sides: 0.004, back: 0.004, fringe: 0.004, flow: .crown, fall: 0, volume: 0.0004,
               density: 60, points: 4, clump: 0, frizz: 0.05),
@@ -54,16 +55,16 @@ package enum CharacterHair {
               points: 22, clump: 0.5, curl: 0.15, frizz: 0.3, cut: 1.36),
     ]
 
-    struct Beard {
-        var id: String
-        var title: String
-        var length: Float
-        var density: Float
+    package struct Beard {
+        package var id: String
+        package var title: String
+        package var length: Float
+        package var density: Float
         /// Where on the beard's ground (SkinTextures.beardMask) it grows.
-        var region: (SIMD3<Float>) -> Float
+        package var region: (SIMD3<Float>) -> Float
     }
 
-    static let beards: [Beard] = [
+    package static let beards: [Beard] = [
         Beard(id: "none", title: "None", length: 0, density: 0) { _ in 0 },
         Beard(id: "stubble", title: "Stubble", length: 0.0018, density: 70) { _ in 1 },
         Beard(id: "short", title: "Short beard", length: 0.007, density: 70) { _ in 1 },
@@ -77,13 +78,13 @@ package enum CharacterHair {
         },
     ]
 
-    static func style(_ id: String) -> Style { styles.first { $0.id == id } ?? styles[3] }
-    static func beard(_ id: String) -> Beard { beards.first { $0.id == id } ?? beards[0] }
+    package static func style(_ id: String) -> Style { styles.first { $0.id == id } ?? styles[3] }
+    package static func beard(_ id: String) -> Beard { beards.first { $0.id == id } ?? beards[0] }
 
     /// Strands drawn alike: per strand the base's triangle its root is on and where (barycentric, the second and third
     /// corners'), and `perStrand` control points as offsets from the root, in the base's bind space (`followsHead`: they
     /// turn with the head's bone) or in its triangle's frame (x along its first edge, z its normal).
-    struct Groom {
+    package struct Groom {
         enum Kind: Int { case scalp, brows, lashes, beard }
         var kind: Kind
         var perStrand: Int
@@ -119,7 +120,7 @@ package enum CharacterHair {
     /// The grooms `dna` asks for (scalp, beard, brows, lashes; those with strands), on `kit`'s base. `density`: a share
     /// of each style's strands (fewer for a lineup). Kept for the last few asked for (a slider's drag asks again at
     /// every step).
-    static func grooms(_ dna: CharacterDNA, kit: CharacterKit, density: Float = 1) -> [Groom] {
+    package static func grooms(_ dna: CharacterDNA, kit: CharacterKit, density: Float = 1) -> [Groom] {
         let h = dna.hair
         let length = (h.length * 10).rounded() / 10, curl = (h.curl * 10).rounded() / 10, brows = (h.brows * 10).rounded() / 10
         let key = "\(CharacterKit.version) \(h.style) \(length) \(curl) \(h.beard) \(brows) \(density)"
@@ -153,7 +154,7 @@ package enum CharacterHair {
     /// `perStrand` + 2 control points (a phantom before and after: Catmull-Rom curves pass through the rest), the head's
     /// bone turned by `head` (its skinning matrix's rotation), the strands' shape scaled by `scale` (its head against the
     /// base's). What crowdHairKernel writes.
-    static func place(_ g: Groom, indices: [UInt32], positions: [SIMD3<Float>], head: simd_float3x3, scale: Float) -> [SIMD3<Float>] {
+    package static func place(_ g: Groom, indices: [UInt32], positions: [SIMD3<Float>], head: simd_float3x3, scale: Float) -> [SIMD3<Float>] {
         let n = g.perStrand
         var out = [SIMD3<Float>](repeating: .zero, count: g.strandCount * (n + 2))
         out.withUnsafeMutableBufferPointer { o in
@@ -175,7 +176,7 @@ package enum CharacterHair {
     }
 
     /// A triangle's frame: x along its first edge, z its normal (crowdHairKernel's).
-    @inline(__always) static func triangleFrame(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>) -> simd_float3x3 {
+    @inline(__always) package static func triangleFrame(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>) -> simd_float3x3 {
         let x = simd_normalize(p1 - p0), z = simd_normalize(simd_cross(p1 - p0, p2 - p0))
         return simd_float3x3(columns: (x, simd_cross(z, x), z))
     }
@@ -183,10 +184,10 @@ package enum CharacterHair {
     /// How far into the scalp a point is (FaceSculpt's space, m; negative outside it): the hairline round the forehead,
     /// the temples, in front of and above the ears, down to the nape; back from the forehead and thinned at the crown
     /// by `recede` and `crown` (a style's).
-    static func scalpDistance(_ q: SIMD3<Float>, recede: Float, crown: Float) -> Float { Groomer.scalp(q, recede: recede, crown: crown) }
+    package static func scalpDistance(_ q: SIMD3<Float>, recede: Float, crown: Float) -> Float { Groomer.scalp(q, recede: recede, crown: crown) }
 
     /// The radii of a groom's strands' control points, the phantoms' included: root to tip.
-    static func radii(_ g: Groom) -> [Float] {
+    package static func radii(_ g: Groom) -> [Float] {
         let n = g.perStrand
         let taper = (0..<n).map { g.rootRadius + (g.tipRadius - g.rootRadius) * pow(Float($0) / Float(n - 1), 1.5) }
         return [taper[0]] + taper + [taper[n - 1]]

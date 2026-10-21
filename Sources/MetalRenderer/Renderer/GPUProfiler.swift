@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 
 /// Live GPU time per pass for the settings panel ("GPU pass timings"): every timed encoder samples the GPU's timestamp
@@ -10,7 +11,7 @@ import Metal
 ///
 /// Untimed: MetalFX (it encodes itself), its copy into the drawable, and texture streaming; the panel shows them as
 /// "other", the frame's GPU time minus the timed passes.
-final class GPUProfiler {
+package final class GPUProfiler {
     static let maxEncoders = 96   // per frame
 
     static func isSupported(on device: MTLDevice) -> Bool {
@@ -46,7 +47,7 @@ final class GPUProfiler {
     }
 
     /// One frame's timed encoders, in encoding order. Make them through `compute`, `blit` and `accelerationStructure`.
-    final class Frame {
+    package final class Frame {
         fileprivate let profiler: GPUProfiler
         fileprivate let base: Int
         fileprivate(set) var names: [String] = []
@@ -64,7 +65,7 @@ final class GPUProfiler {
             return (i, i + 1)
         }
 
-        func compute(_ cb: MTLCommandBuffer, _ name: String, concurrent: Bool = false) -> MTLComputeCommandEncoder? {
+        package func compute(_ cb: MTLCommandBuffer, _ name: String, concurrent: Bool = false) -> MTLComputeCommandEncoder? {
             let desc = MTLComputePassDescriptor()
             desc.dispatchType = concurrent ? .concurrent : .serial
             if let i = next(name), let a = desc.sampleBufferAttachments[0] {
@@ -77,7 +78,7 @@ final class GPUProfiler {
             return enc
         }
 
-        func blit(_ cb: MTLCommandBuffer, _ name: String) -> MTLBlitCommandEncoder? {
+        package func blit(_ cb: MTLCommandBuffer, _ name: String) -> MTLBlitCommandEncoder? {
             let desc = MTLBlitPassDescriptor()
             if let i = next(name), let a = desc.sampleBufferAttachments[0] {
                 a.sampleBuffer = profiler.samples
@@ -89,7 +90,7 @@ final class GPUProfiler {
             return enc
         }
 
-        func accelerationStructure(_ cb: MTLCommandBuffer, _ name: String) -> MTLAccelerationStructureCommandEncoder? {
+        package func accelerationStructure(_ cb: MTLCommandBuffer, _ name: String) -> MTLAccelerationStructureCommandEncoder? {
             let desc = MTLAccelerationStructurePassDescriptor()
             if let i = next(name), let a = desc.sampleBufferAttachments[0] {
                 a.sampleBuffer = profiler.samples
@@ -102,7 +103,7 @@ final class GPUProfiler {
         }
 
         /// Ends an encoder made by `compute`, `blit` or `accelerationStructure`, letting the next one start after it.
-        func end(_ enc: MTLCommandEncoder) {
+        package func end(_ enc: MTLCommandEncoder) {
             switch enc {
             case let e as MTLComputeCommandEncoder: e.updateFence(profiler.fence)
             case let e as MTLBlitCommandEncoder: e.updateFence(profiler.fence)
@@ -114,7 +115,7 @@ final class GPUProfiler {
 
         /// Milliseconds per pass name (encoders of one name summed), in order of first use. Call once the frame's
         /// command buffer has completed.
-        func resolve() -> [(name: String, ms: Double)] {
+        package func resolve() -> [(name: String, ms: Double)] {
             guard !names.isEmpty,
                   let data = try? profiler.samples.resolveCounterRange(base..<(base + 2 * names.count)) else { return [] }
             let ticks = data.withUnsafeBytes { Array($0.bindMemory(to: MTLCounterResultTimestamp.self)) }
@@ -146,7 +147,7 @@ final class GPUProfiler {
 
 extension Optional where Wrapped == GPUProfiler.Frame {
     /// Ends `enc`: through the frame's profile when there is one (see `GPUProfiler.Frame.end`).
-    func end(_ enc: MTLCommandEncoder) {
+    package func end(_ enc: MTLCommandEncoder) {
         if let frame = self { frame.end(enc) } else { enc.endEncoding() }
     }
 }

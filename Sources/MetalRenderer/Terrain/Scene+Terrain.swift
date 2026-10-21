@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -131,7 +132,7 @@ extension Scene {
 
     /// A pond for a scene's own ground at `center`: its water a little under the lowest of `base` round its rim, so it
     /// stays in its bowl.
-    static func pond(on base: TerrainBase, center: SIMD2<Float>, radii: SIMD2<Float>, depth: Float, look: WaterLook = .preset(.lake))
+    package static func pond(on base: TerrainBase, center: SIMD2<Float>, radii: SIMD2<Float>, depth: Float, look: WaterLook = .preset(.lake))
         -> (body: WaterBody, bowl: TerrainShapes.Bowl) {
         var rim = Float.infinity
         for k in 0..<24 {
@@ -216,7 +217,7 @@ extension Scene {
     /// material of the scene's own (`builtIn`: the open world's grounds), or its plain colour over a generated detail
     /// texture; with the realistic look, its scan first (TextureSet, by its `scanSet`). The first one's index, the
     /// detail texture, and each scanned layer's repeat in metres.
-    func addTerrainLayerMaterials(_ layers: [TerrainLayer], builtIn: (Int) -> GPUMaterial?) -> (first: Int, detail: UInt32, scans: [Int: Float]) {
+    package func addTerrainLayerMaterials(_ layers: [TerrainLayer], builtIn: (Int) -> GPUMaterial?) -> (first: Int, detail: UInt32, scans: [Int: Float]) {
         let catalog = MaterialCatalog.resolve(settings.materials)
         let detail = terrainDetailTexture()
         var first = -1
@@ -245,7 +246,7 @@ extension Scene {
     /// a lake's over its basin, a river's ribbon; each a water surface (Scene+Water.swift) of its look, with its
     /// Material Designer graph floating on it if it has one (a sheet a few millimetres up, cut out by its opacity).
     /// Where it all is goes to the water map (TerrainWaterField).
-    func addTerrainWater(_ bodies: [WaterBody], snapshot s: TerrainSnapshot, offset: SIMD2<Double>, sectors: [TerrainSector]) {
+    package func addTerrainWater(_ bodies: [WaterBody], snapshot s: TerrainSnapshot, offset: SIMD2<Double>, sectors: [TerrainSector]) {
         guard !WaterSystem.off else { return }
         // (Inside whatever section the builder has open, which goes on after it: the Forest adds its water before its plants.)
         beginObject("Water")
@@ -292,7 +293,7 @@ extension Scene {
 
     /// The terrain's layer table, after the procedural programs' parameters (which `buildProceduralPrograms` sets),
     /// and its sectors told where it is.
-    func finishTerrainLayers() {
+    package func finishTerrainLayers() {
         guard let t = terrain, t.firstLayer >= 0 else { return }
         if let r = t.pendingRefine {
             t.pendingRefine = nil
@@ -306,7 +307,7 @@ extension Scene {
 
     /// With physics in the scene: the terrain's full-detail sectors as heightfield colliders (bodies, particles and
     /// liquids land on the ground; a brush moving it moves them: Renderer.prepareTerrainFrame).
-    func addTerrainColliders() {
+    package func addTerrainColliders() {
         guard let t = terrain, physics != nil else { return }
         let s = t.field.snapshot(), world = physicsWorld()
         for (k, p) in t.parts.enumerated() where p.sector.level == 0 {
@@ -316,7 +317,7 @@ extension Scene {
     }
 
     /// The meshes that are a terrain's sectors (built to be built again: SceneBuffers).
-    var terrainMeshSet: Set<Int> { Set(terrain?.parts.map(\.mesh) ?? []) }
+    package var terrainMeshSet: Set<Int> { Set(terrain?.parts.map(\.mesh) ?? []) }
 
     /// The last scene's sectors' meshes, by its terrain and its base, with the revision they were made at.
     fileprivate static var keptTerrainMeshes: [String: [TerrainSector: (revision: Int, mesh: TerrainSectorMesh)]] = [:]

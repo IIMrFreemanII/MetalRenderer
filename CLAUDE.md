@@ -4,11 +4,16 @@ Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`
 
 ## Source layout
 
-`Sources/MetalRenderer` (the engine) and `Sources/Game` (the demo scenes, their looks and benchmark modes) are in a
-folder per feature (README, "Source layout"): a new `Type+Feature.swift` goes in its feature's folder, an editor inside
-its feature, a demo scene's builder in the game (registered in `GameScenes.scenes()`), a test in the matching folder of
-`Tests/MetalRendererTests`. The engine never names a game scene: it asks the scene's `SceneDefinition`. Find the
-package's files with `SourceTree`, never by counting folders up from `#filePath`.
+The code is in modules (README, "Source layout"): `Sources/EngineCore` (what every module shares, knowing no scene or
+renderer), `Sources/MetalRenderer` (the engine: the scene, the renderer and every system they hold), `Sources/Editors`
+(the window, the panels, every editor's UI) and `Sources/Game` (the demo scenes, their looks and benchmark modes), each
+in a folder per feature: a new `Type+Feature.swift` goes in its feature's folder, an editor's UI in the editors', a demo
+scene's builder in the game (registered in `GameScenes.scenes()`), a test in the matching folder of
+`Tests/MetalRendererTests`. The engine never names a game scene (it asks the scene's `SceneDefinition`) and never calls
+an editor. A per-element helper a frame's loop calls from another module is `@inlinable package`
+(`Tools/perf/hotcalls.py` finds the ones that aren't); build release with `Tools/release.sh`, which rebuilds the modules
+above an `@inlinable` body that changed. Find the package's files with `SourceTree`, never by counting folders up from
+`#filePath`.
 
 ## New features
 

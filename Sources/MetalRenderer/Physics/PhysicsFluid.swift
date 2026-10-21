@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -42,10 +43,10 @@ package enum LiquidKind: Int, CaseIterable {
     }
 
     /// How it looks (Shaders/Liquid.metal): a dielectric that absorbs (Beer-Lambert) on the way through.
-    struct Look {
-        var absorption: SIMD3<Float>         // 1/m, per channel
-        var ior: Float
-        var roughness: Float
+    package struct Look {
+        package var absorption: SIMD3<Float>         // 1/m, per channel
+        package var ior: Float
+        package var roughness: Float
     }
 
     package var physics: Physics {

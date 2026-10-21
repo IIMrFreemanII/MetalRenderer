@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -13,12 +14,12 @@ import simd
 package struct SkeletonAtlas {
     /// A shape: its distance at a point (negative inside; near the true one near its surface) and the box it is in.
     struct Solid {
-        var lo: SIMD3<Float>
-        var hi: SIMD3<Float>
-        var distance: (SIMD3<Float>) -> Float
+        package var lo: SIMD3<Float>
+        package var hi: SIMD3<Float>
+        package var distance: (SIMD3<Float>) -> Float
 
         /// How far `p` is outside its box (0 within it): never more than its distance.
-        func outside(_ p: SIMD3<Float>) -> Float { simd_length(simd_max(simd_max(lo - p, p - hi), .zero)) }
+        package func outside(_ p: SIMD3<Float>) -> Float { simd_length(simd_max(simd_max(lo - p, p - hi), .zero)) }
     }
 
     package struct Piece {

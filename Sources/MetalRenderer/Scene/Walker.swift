@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -32,10 +33,10 @@ package struct Walker {
 
     /// What it is told each step: where to go (x, z: a unit or zero, in the world), how, and whether to jump.
     struct Input {
-        var move = SIMD2<Float>.zero
-        var run = false
-        var crouch = false
-        var jump = false
+        package var move = SIMD2<Float>.zero
+        package var run = false
+        package var crouch = false
+        package var jump = false
     }
 
     /// Something that moves that it can't walk through, or stands on: a door's leaf (a box of `size` turned by
@@ -204,7 +205,7 @@ package struct Walker {
 }
 
 /// The scene's colliders by where they are: a grid of 2 m cells over x and z, each cell listing the boxes over it.
-struct ColliderGrid {
+package struct ColliderGrid {
     let boxes: [Interior.Collider]
     private var cells: [SIMD2<Int32>: [Int32]] = [:]
     /// Boxes too big for the grid (the ground): tested always.

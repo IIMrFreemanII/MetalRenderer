@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -113,7 +114,7 @@ extension Renderer {
 
     /// This frame's sky: the sun (from the atmosphere, or the image's), which also sets the scene's sun light (its
     /// colour, and with an image its direction), and the clouds. False for a constant sky (or an image that failed).
-    func updateSky(lights: UnsafeMutableBufferPointer<GPULight>) -> Bool {
+    package func updateSky(lights: UnsafeMutableBufferPointer<GPULight>) -> Bool {
         let sky = settings.sky
         guard sky.mode != .constant, ensureSkyTextures() else { return false }
         var image: SkyImage?
@@ -192,7 +193,7 @@ extension Renderer {
     }
 
     /// The sky's part of the shading arguments (MSL SceneShading): its textures (stand-ins without a sky) and SkyParams.
-    func writeSkyArguments(slot: Int) {
+    package func writeSkyArguments(slot: Int) {
         guard slot < shadingArgs.count else { return }
         let p = shadingArgs[slot].contents()
         let sky = skyActive ? skyMap ?? dummyArray! : dummyArray!, shadow = skyActive ? cloudShadowMap ?? dummy2D! : dummy2D!
@@ -203,7 +204,7 @@ extension Renderer {
 
     /// The sky's passes, ahead of the frame's main encoder: the cloud noise and the atmosphere's tables (once), then
     /// this frame's sky texels, the cloud-shadow map and the sky texture's mips (encodeSkyTexels).
-    func encodeSky(_ passes: FrameEncoder) {
+    package func encodeSky(_ passes: FrameEncoder) {
         guard let sky = skyMap, let shape = cloudShape, let detail = cloudDetail, let shadow = cloudShadowMap,
               let tLUT = transmittanceLUT, let msLUT = multiScatterLUT, let mean = skyMean,
               var enc = passes.compute("sky", serial: true) else { return }
@@ -248,7 +249,7 @@ extension Renderer {
     }
 
     /// Per slot: the lights, then the light table.
-    func createLightBuffers() throws {
+    package func createLightBuffers() throws {
         _ = scene.takeLightTrianglesDirty()   // written here as they are now
         lightTree = nil                       // the scene's lights: made again from them when the path tracer needs it
         lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)

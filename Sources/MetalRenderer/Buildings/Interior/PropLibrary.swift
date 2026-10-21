@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,19 +10,19 @@ import simd
 /// none are named) and how often. A model is fitted into the piece's box (scaled evenly, standing on its floor, its
 /// front, +z, into the room) wherever the furnishing put that piece; the piece's colliders stay. The folder is
 /// `METALRENDERER_PROPS` if set (`none`: no models).
-final class PropLibrary {
-    struct Entry: Codable, Equatable {
-        var file: String
-        var replaces: FurnitureItem.Kind
-        var rooms: [RoomType]? = nil
-        var chance: Float? = nil
+package final class PropLibrary {
+    package struct Entry: Codable, Equatable {
+        package var file: String
+        package var replaces: FurnitureItem.Kind
+        package var rooms: [RoomType]? = nil
+        package var chance: Float? = nil
     }
-    struct File: Codable {
-        var props: [Entry]
+    package struct File: Codable {
+        package var props: [Entry]
     }
 
-    let entries: [Entry]
-    let folder: URL
+    package let entries: [Entry]
+    package let folder: URL
     /// The models, loaded the first time they are asked for: each with its bounds.
     private var models: [Int: (model: GLTFModel, url: URL, lo: SIMD3<Float>, hi: SIMD3<Float>)?] = [:]
     private let lock = NSLock()
@@ -32,7 +33,7 @@ final class PropLibrary {
     }
 
     /// The assets folder's list, read once (a test sets its own).
-    static var shared: PropLibrary = {
+    package static var shared: PropLibrary = {
         let env = ProcessInfo.processInfo.environment["METALRENDERER_PROPS"]
         let assets = Scene.assetsDirectory
         guard env != "none" else { return PropLibrary(entries: [], folder: assets) }
@@ -50,7 +51,7 @@ final class PropLibrary {
 
     /// What the list holds, said in a few characters (the interiors' storeys are made of it, and seeded by it): the
     /// same on every launch.
-    lazy var fingerprint: Int = {
+    package lazy var fingerprint: Int = {
         var h = Hasher64()
         for e in entries {
             h.add(e.file)
@@ -63,7 +64,7 @@ final class PropLibrary {
     }()
 
     /// The entry for a piece of `kind` in a room of `room`, if one takes its place (by `u`, 0...1).
-    func entry(for kind: FurnitureItem.Kind, in room: RoomType, u: Float) -> Int? {
+    package func entry(for kind: FurnitureItem.Kind, in room: RoomType, u: Float) -> Int? {
         entries.indices.first { i in
             let e = entries[i]
             return e.replaces == kind && (e.rooms?.contains(room) ?? true) && u < (e.chance ?? 1)
@@ -71,7 +72,7 @@ final class PropLibrary {
     }
 
     /// Entry `i`'s model and its bounds, loaded the first time (nil if it doesn't load).
-    func model(_ i: Int) -> (model: GLTFModel, url: URL, lo: SIMD3<Float>, hi: SIMD3<Float>)? {
+    package func model(_ i: Int) -> (model: GLTFModel, url: URL, lo: SIMD3<Float>, hi: SIMD3<Float>)? {
         lock.lock()
         defer { lock.unlock() }
         if let made = models[i] { return made }
@@ -91,7 +92,7 @@ final class PropLibrary {
 
     /// Where model `i` goes to fill a piece's box of `size` (its own frame: x along the wall, z into the room, y up):
     /// scaled evenly to fit, standing on the floor in the box's middle.
-    func fit(_ i: Int, into size: SIMD3<Float>) -> float4x4? {
+    package func fit(_ i: Int, into size: SIMD3<Float>) -> float4x4? {
         guard let m = model(i) else { return nil }
         let extent = simd_max(m.hi - m.lo, SIMD3(repeating: 1e-4))
         let s = min(size.x / extent.x, size.z / extent.z, size.y > 0.05 ? size.y / extent.y : .infinity)

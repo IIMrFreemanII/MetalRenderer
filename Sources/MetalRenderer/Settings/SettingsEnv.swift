@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// The settings as `METALRENDERER_*` environment variables, both ways, driven by `SettingsTable`: `export` writes the
@@ -11,7 +12,7 @@ package enum SettingsEnv {
     /// The variables that reproduce `s` in a fresh launch (or in every setting of a benchmark run), listing only what
     /// differs from the defaults. Fog and sky are compared with the scene's presets. Not covered: the camera pose,
     /// Freeze LOD, and where added models were placed (`model=` puts them in front of the default camera).
-    static func export(_ s: RenderSettings, defaults: RenderSettings) -> String {
+    package static func export(_ s: RenderSettings, defaults: RenderSettings) -> String {
         // What a fresh launch would have: the code's defaults (not this process's env-derived ones) and the scene's presets.
         var d = defaults
         d.directLight = .auto
@@ -113,7 +114,7 @@ package enum SettingsEnv {
 
     /// The app outside benchmarks: every variable, over the saved or default settings. The starting scene comes
     /// first, with the defaults that suit it (the GI method, fog and sky presets), so the other variables refine it.
-    static func applyAll(to s: inout RenderSettings, defaults: RenderSettings,
+    package static func applyAll(to s: inout RenderSettings, defaults: RenderSettings,
                          from env: [String: String] = ProcessInfo.processInfo.environment) {
         if env[EnvVariable.scene.rawValue] != nil {
             apply(.scene, to: &s, interactive: true, from: env)

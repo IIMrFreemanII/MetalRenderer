@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -117,16 +118,16 @@ enum TerrainStore {
 /// edits (in memory, its edits shown at once) and what is saved (TerrainStore). A terrain is opened the first time a
 /// scene asks for it, from its file if it has one. Any thread.
 package final class TerrainDocuments {
-    static let shared = TerrainDocuments()
+    package static let shared = TerrainDocuments()
 
     package final class Entry {
         package var document: TerrainDocument
         package let field: TerrainField
         /// Counts the document's edits (its layers', rules', water's...): the renderer takes them in place.
-        var version = 0
+        package var version = 0
         /// The field's revision and the document's version when it was last saved (or opened).
-        var savedRevision = 0
-        var savedVersion = 0
+        package var savedRevision = 0
+        package var savedVersion = 0
 
         package init(document: TerrainDocument, field: TerrainField) {
             self.document = document
@@ -140,7 +141,7 @@ package final class TerrainDocuments {
 
     /// The terrain of that name over `base`: the open one, or opened now (from its file, else new with `document`'s
     /// layers). One whose base changed (another seed under the same name) is opened again over the new one.
-    func open(_ name: String, base: @autoclosure () -> TerrainBase, document: @autoclosure () -> TerrainDocument) -> Entry {
+    package func open(_ name: String, base: @autoclosure () -> TerrainBase, document: @autoclosure () -> TerrainDocument) -> Entry {
         lock.lock()
         if let e = entries[name] { lock.unlock(); return e }
         lock.unlock()
@@ -156,38 +157,38 @@ package final class TerrainDocuments {
     }
 
     /// The open terrain of that name, if it is open.
-    func entry(_ name: String) -> Entry? {
+    package func entry(_ name: String) -> Entry? {
         lock.lock(); defer { lock.unlock() }
         return entries[name]
     }
 
     /// An edit of a document (its layers, rules, generator, scatter or water).
-    func update(_ document: TerrainDocument) {
+    package func update(_ document: TerrainDocument) {
         lock.lock(); defer { lock.unlock() }
         guard let e = entries[document.name] else { return }
         e.document = document
         e.version += 1
     }
 
-    func document(_ name: String) -> TerrainDocument? {
+    package func document(_ name: String) -> TerrainDocument? {
         lock.lock(); defer { lock.unlock() }
         return entries[name]?.document
     }
 
-    func version(_ name: String) -> Int {
+    package func version(_ name: String) -> Int {
         lock.lock(); defer { lock.unlock() }
         return entries[name]?.version ?? 0
     }
 
     /// Whether it has edits that aren't saved.
-    func isDirty(_ name: String) -> Bool {
+    package func isDirty(_ name: String) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard let e = entries[name] else { return false }
         return e.field.revision != e.savedRevision || e.version != e.savedVersion
     }
 
     /// Saves it (TerrainStore).
-    func save(_ name: String) throws {
+    package func save(_ name: String) throws {
         guard let e = entry(name) else { return }
         lock.lock()
         let document = e.document, version = e.version
@@ -200,13 +201,13 @@ package final class TerrainDocuments {
     }
 
     /// The names of the open terrains.
-    var openNames: [String] {
+    package var openNames: [String] {
         lock.lock(); defer { lock.unlock() }
         return entries.keys.sorted()
     }
 
     /// Forgets an open terrain (tests; a terrain whose base changed).
-    func close(_ name: String) {
+    package func close(_ name: String) {
         lock.lock(); defer { lock.unlock() }
         entries[name] = nil
     }

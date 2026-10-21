@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// Which of a scene's materials a Material Designer graph replaces (click-to-pick, then Assign): per scene — its kind
@@ -9,11 +10,11 @@ import Foundation
 /// Not the open world's tiles (their materials stream in with them).
 package struct MaterialAssignments: Codable, Equatable {
     package struct Entry: Codable, Equatable {
-        var material: Int
-        var fingerprint: String
-        var graph: String
+        package var material: Int
+        package var fingerprint: String
+        package var graph: String
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(material: Int, fingerprint: String, graph: String) {
             self.material = material
             self.fingerprint = fingerprint
@@ -22,16 +23,16 @@ package struct MaterialAssignments: Codable, Equatable {
     }
     package var scenes: [String: [Entry]] = [:]
 
-    static let file = "assignments.json"
+    package static let file = "assignments.json"
 
-    static var url: URL? { MaterialStore.folder?.appendingPathComponent(file) }
+    package static var url: URL? { MaterialStore.folder?.appendingPathComponent(file) }
 
-    static let launch: MaterialAssignments = {
+    package static let launch: MaterialAssignments = {
         guard let url, let data = try? Data(contentsOf: url) else { return MaterialAssignments() }
         return (try? JSONDecoder().decode(MaterialAssignments.self, from: data)) ?? MaterialAssignments()
     }()
 
-    func save(to url: URL) throws {
+    package func save(to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -60,11 +61,11 @@ package struct MaterialAssignments: Codable, Equatable {
         return key
     }
 
-    static func resolve(_ key: String) -> MaterialAssignments {
+    package static func resolve(_ key: String) -> MaterialAssignments {
         key.isEmpty ? launch : registry.registered(key) ?? launch
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(scenes: [String: [Entry]] = [:]) {
         self.scenes = scenes
     }
@@ -73,7 +74,7 @@ package struct MaterialAssignments: Codable, Equatable {
 extension Scene {
     /// The scene's assignments (SceneSettings.materialAssignments): each material whose fingerprint still matches
     /// becomes the procedural material of its graph. Warnings for the stale ones.
-    func applyMaterialAssignments() {
+    package func applyMaterialAssignments() {
         guard !settings.kind.isWorld else { return }
         let entries = MaterialAssignments.resolve(settings.materialAssignments).scenes[MaterialAssignments.scope(settings)] ?? []
         guard !entries.isEmpty else { return }

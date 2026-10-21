@@ -1,18 +1,19 @@
+import EngineCore
 import Foundation
 import simd
 
 /// What a pin takes: a grey image, a colour one, or either (the node's outputs then follow what is wired: colour if
 /// any of its `any` inputs gets colour). A colour wired into a grey pin is its luminance; a grey into a colour pin, its
 /// grey in R, G and B.
-enum MatPinType: String {
+package enum MatPinType: String {
     case grey, color, any
 }
 
 /// An image input: its name (the links'), its title, what it takes, and whether the node works without it.
-struct MatInputSpec {
-    let name: String
-    let title: String
-    let type: MatPinType
+package struct MatInputSpec {
+    package let name: String
+    package let title: String
+    package let type: MatPinType
     var optional = false
 
     package init(_ name: String, _ title: String? = nil, _ type: MatPinType = .any, optional: Bool = false) {
@@ -25,12 +26,12 @@ struct MatInputSpec {
 
 /// A parameter: its name (the key of `params`), its title, its default, a slider's span and a choice's choices.
 /// Packed for the kernels in the spec's order, one float4 a parameter (MatPlan.pack).
-struct MatParamSpec {
-    let name: String
-    let title: String
-    let value: MatParam
-    var span: ClosedRange<Float>?
-    var choices: [String] = []
+package struct MatParamSpec {
+    package let name: String
+    package let title: String
+    package let value: MatParam
+    package var span: ClosedRange<Float>?
+    package var choices: [String] = []
 
     package init(_ name: String, _ title: String, _ value: MatParam, span: ClosedRange<Float>? = nil, choices: [String] = []) {
         self.name = name
@@ -63,24 +64,24 @@ enum MatShape: Equatable {
 }
 
 /// The node families (the library's sections; the editor colours the headers by them).
-enum MatFamily: String, CaseIterable {
+package enum MatFamily: String, CaseIterable {
     case graph = "Graph", noise = "Noises", pattern = "Patterns", adjust = "Adjustments", blend = "Blending",
          filter = "Filters", height = "Height & Normal", advanced = "Advanced"
 }
 
-struct MatOpSpec {
-    let title: String
-    let family: MatFamily
+package struct MatOpSpec {
+    package let title: String
+    package let family: MatFamily
     let inputs: [MatInputSpec]
     /// Its outputs: a fixed type, or `.any`: its `any` inputs' (grey without them, unless `anyDefault`).
     let outputs: [(name: String, type: MatPinType)]
-    let params: [MatParamSpec]
+    package let params: [MatParamSpec]
     let shape: MatShape
     /// What an `any` output is when nothing decides it.
     var anyDefault = MatType.grey
-    let summary: String
+    package let summary: String
 
-    func param(_ name: String) -> MatParamSpec? { params.first { $0.name == name } }
+    package func param(_ name: String) -> MatParamSpec? { params.first { $0.name == name } }
     func input(_ name: String) -> MatInputSpec? { inputs.first { $0.name == name } }
 }
 
@@ -109,7 +110,7 @@ package enum MatOpKind: String, Codable, CaseIterable {
     // Advanced
     case distance, bevel, floodFill, autoLevels, pixelProcessor, code
 
-    var spec: MatOpSpec {
+    package var spec: MatOpSpec {
         typealias P = MatParamSpec
         typealias I = MatInputSpec
         let seed = P("seed", "Seed", .int(0), span: 0...100)
@@ -341,5 +342,5 @@ package enum MatOpKind: String, Codable, CaseIterable {
     }
 
     /// The kernel that bakes it (MaterialShaders/*.metal).
-    var kernel: String { "mat_" + rawValue }
+    package var kernel: String { "mat_" + rawValue }
 }

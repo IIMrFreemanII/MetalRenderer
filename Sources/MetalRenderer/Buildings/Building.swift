@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -18,7 +19,7 @@ package struct SurfaceMaterial: Hashable {
     /// Texture repeats per metre for a mesh of this material.
     package var uvScale: Float { 1 / (surface?.tile ?? 2) }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(color: SIMD3<Float>, surface: SurfaceKind? = nil, roughness: Float = 1, metallic: Float = 0, specular: Bool = false, emission: SIMD3<Float> = SIMD3<Float>.zero, glass: Bool = false) {
         self.color = color
         self.surface = surface
@@ -126,7 +127,7 @@ package struct Building {
     package var plan = BuildingPlan()
     package var tiers: [BuildingTier] = []
     /// The style it was drawn in.
-    var style = BuildingStyle()
+    package var style = BuildingStyle()
     /// Its interior, if the spec asked for it.
     package var interior: Interior?
 
@@ -160,27 +161,27 @@ package struct Building {
             return (slot, m, meshes[slot.rawValue])
         }
     }
-    var triangleCount: Int { meshes.reduce(0) { $0 + $1.triangleCount } }
+    package var triangleCount: Int { meshes.reduce(0) { $0 + $1.triangleCount } }
 
-    mutating func setMaterial(_ slot: Slot, _ material: SurfaceMaterial) {
+    package mutating func setMaterial(_ slot: Slot, _ material: SurfaceMaterial) {
         materials[slot.rawValue] = material
         meshes[slot.rawValue].uvScale = material.uvScale
     }
 
     /// Slot `slot`'s mesh, to add to. Its frame is whatever the last user left: `setFrame` first.
-    subscript(_ slot: Slot) -> MeshBuilder {
+    package subscript(_ slot: Slot) -> MeshBuilder {
         get { meshes[slot.rawValue] }
         _modify { yield &meshes[slot.rawValue] }
     }
 
     /// Sets every part's frame (a facade's; the identity for what is given in the lot's frame).
-    mutating func setFrame(_ frame: float4x4) {
+    package mutating func setFrame(_ frame: float4x4) {
         for i in meshes.indices { meshes[i].frame = frame }
     }
 
     /// From here to `endModule`, what is added is a module's, at `anchor` in the current frame (a facade's). Returns
     /// the building's own meshes, for `endModule`.
-    mutating func beginModule(at anchor: SIMD3<Float>) -> [MeshBuilder] {
+    package mutating func beginModule(at anchor: SIMD3<Float>) -> [MeshBuilder] {
         let kept = meshes
         for i in meshes.indices {
             var m = MeshBuilder(uvScale: meshes[i].uvScale)
@@ -192,7 +193,7 @@ package struct Building {
     }
 
     /// What was made since `beginModule`, the building's own meshes back.
-    mutating func endModule(_ kept: [MeshBuilder]) -> [MeshBuilder] {
+    package mutating func endModule(_ kept: [MeshBuilder]) -> [MeshBuilder] {
         let made = meshes
         meshes = kept
         return made
@@ -200,7 +201,7 @@ package struct Building {
 
     /// Module `made` (a mesh per slot, in its own frame): the same one as an earlier module if it has the same
     /// triangles, placed at its anchor (`placement`: the anchor's frame, into the lot's).
-    mutating func addModule(_ made: [MeshBuilder], placement: float4x4) {
+    package mutating func addModule(_ made: [MeshBuilder], placement: float4x4) {
         var made = made
         for i in made.indices { made[i].snap(1e-4) }
         guard made.contains(where: { !$0.isEmpty }) else { return }

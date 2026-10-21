@@ -1,47 +1,54 @@
+import EngineCore
 import Foundation
 import simd
 
 /// What the VFX editor draws over the frame for the effect it shows (Shaders/Gizmo.metal): each of its emitters'
 /// spawn shape and the axis its velocity spreads about, the fields they move in, the colliders they meet; and on the
 /// selected emitter, a handle of three arrows to drag its shape along (Renderer.mouseDown).
-enum VFXGizmos {
+package enum VFXGizmos {
     /// MSL GizmoSegment.
-    struct Segment: Equatable {
+    package struct Segment: Equatable {
         var a: SIMD4<Float>
         var b: SIMD4<Float>
         var color: SIMD4<Float>
     }
 
     /// MSL GizmoView.
-    struct View {
-        var position: SIMD4<Float>
-        var right: SIMD4<Float>
-        var up: SIMD4<Float>
-        var forward: SIMD4<Float>
-        var size: SIMD2<Float>
-        var tanY: Float
-        var aspect: Float
-        var count: UInt32
-        var samples: UInt32
-        var pad = SIMD2<UInt32>.zero
+    package struct View {
+        package var position: SIMD4<Float>
+        package var right: SIMD4<Float>
+        package var up: SIMD4<Float>
+        package var forward: SIMD4<Float>
+        package var size: SIMD2<Float>
+        package var tanY: Float
+        package var aspect: Float
+        package var count: UInt32
+        package var samples: UInt32
+        package var pad = SIMD2<UInt32>.zero
     }
 
     /// What is shown: the effect (by name), and the selected emitter (by name), which gets the handle.
-    struct Target: Equatable {
-        var effect: String
-        var emitter: String?
+    package struct Target: Equatable {
+        package var effect: String
+        package var emitter: String?
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(effect: String, emitter: String? = nil) {
+            self.effect = effect
+            self.emitter = emitter
+        }
     }
 
-    static let samples: UInt32 = 2048
-    static let handleLength: Float = 0.6
-    static let shape = SIMD4<Float>(0.35, 0.85, 1, 1)
-    static let selectedShape = SIMD4<Float>(1, 0.75, 0.25, 1)
-    static let field = SIMD4<Float>(0.45, 0.9, 0.45, 1)
-    static let collider = SIMD4<Float>(0.9, 0.45, 0.9, 1)
-    static let axes: [SIMD4<Float>] = [[1, 0.25, 0.25, 1], [0.35, 1, 0.35, 1], [0.35, 0.55, 1, 1]]
+    package static let samples: UInt32 = 2048
+    package static let handleLength: Float = 0.6
+    package static let shape = SIMD4<Float>(0.35, 0.85, 1, 1)
+    package static let selectedShape = SIMD4<Float>(1, 0.75, 0.25, 1)
+    package static let field = SIMD4<Float>(0.45, 0.9, 0.45, 1)
+    package static let collider = SIMD4<Float>(0.9, 0.45, 0.9, 1)
+    package static let axes: [SIMD4<Float>] = [[1, 0.25, 0.25, 1], [0.35, 1, 0.35, 1], [0.35, 0.55, 1, 1]]
 
     /// The segments for `target`'s emitters in `system` (`owners`: each emitter's effect), and the handle's origin.
-    static func segments(_ system: ParticleSystem, owners: [String], target: Target) -> (segments: [Segment], handle: SIMD3<Float>?) {
+    package static func segments(_ system: ParticleSystem, owners: [String], target: Target) -> (segments: [Segment], handle: SIMD3<Float>?) {
         var out: [Segment] = [], handle: SIMD3<Float>?
         var fields = Set<Int>(), colliders: UInt32 = 0
         for (i, e) in system.emitters.enumerated() where owners[safe: i] == target.effect {
@@ -76,7 +83,7 @@ enum VFXGizmos {
         return (out, handle)
     }
 
-    static func shapeSegments(_ e: ParticleEmitter, color: SIMD4<Float>, width: Float) -> [Segment] {
+    package static func shapeSegments(_ e: ParticleEmitter, color: SIMD4<Float>, width: Float) -> [Segment] {
         let p = e.position, axis = simd_length(e.direction) > 0 ? normalize(e.direction) : SIMD3<Float>(0, 1, 0)
         var out: [Segment] = []
         switch e.shape {
@@ -94,27 +101,27 @@ enum VFXGizmos {
 
     // MARK: - Pieces
 
-    static func line(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> Segment {
+    package static func line(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> Segment {
         Segment(a: SIMD4(a, width), b: SIMD4(b, width), color: color)
     }
 
     /// Unit vectors square to `n` and each other.
-    static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
+    package static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
         let t = Scene.perpendicular(n)
         return (t, cross(n, t))
     }
 
-    static func circle(_ c: SIMD3<Float>, _ n: SIMD3<Float>, _ r: Float, _ color: SIMD4<Float>, _ width: Float, sides: Int = 40) -> [Segment] {
+    package static func circle(_ c: SIMD3<Float>, _ n: SIMD3<Float>, _ r: Float, _ color: SIMD4<Float>, _ width: Float, sides: Int = 40) -> [Segment] {
         let (t, b) = basis(n)
         func at(_ k: Int) -> SIMD3<Float> { let a = Float(k) / Float(sides) * 2 * .pi; return c + (t * cos(a) + b * sin(a)) * r }
         return (0..<sides).map { line(at($0), at($0 + 1), color, width) }
     }
 
-    static func sphere(_ c: SIMD3<Float>, _ r: Float, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
+    package static func sphere(_ c: SIMD3<Float>, _ r: Float, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
         circle(c, [1, 0, 0], r, color, width) + circle(c, [0, 1, 0], r, color, width) + circle(c, [0, 0, 1], r, color, width)
     }
 
-    static func box(_ c: SIMD3<Float>, _ h: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
+    package static func box(_ c: SIMD3<Float>, _ h: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
         var out: [Segment] = []
         for axis in 0..<3 {
             let (u, v) = ((axis + 1) % 3, (axis + 2) % 3)
@@ -131,7 +138,7 @@ enum VFXGizmos {
         return out
     }
 
-    static func arrow(_ from: SIMD3<Float>, _ d: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
+    package static func arrow(_ from: SIMD3<Float>, _ d: SIMD3<Float>, _ color: SIMD4<Float>, _ width: Float) -> [Segment] {
         let tip = from + d, len = simd_length(d)
         guard len > 0 else { return [] }
         let (t, _) = basis(d / len), back = tip - d / len * len * 0.2
@@ -142,7 +149,7 @@ enum VFXGizmos {
 
     /// The handle's axis (0 x, 1 y, 2 z) under `cursor` (0...1 across and down), within `pixels` of its arrow on a view
     /// `size` pixels big, if one is.
-    static func pick(handle: SIMD3<Float>, cursor: SIMD2<Float>, camera: Camera, aspect: Float, size: SIMD2<Float>,
+    package static func pick(handle: SIMD3<Float>, cursor: SIMD2<Float>, camera: Camera, aspect: Float, size: SIMD2<Float>,
                      pixels: Float = 10) -> Int? {
         func screen(_ p: SIMD3<Float>) -> SIMD2<Float>? {
             let v = p - camera.position, z = dot(v, camera.forward)
@@ -163,7 +170,7 @@ enum VFXGizmos {
     }
 
     /// Where along the line `origin + s axis` the ray `from + t dir` passes nearest.
-    static func along(origin: SIMD3<Float>, axis: SIMD3<Float>, from: SIMD3<Float>, dir: SIMD3<Float>) -> Float {
+    package static func along(origin: SIMD3<Float>, axis: SIMD3<Float>, from: SIMD3<Float>, dir: SIMD3<Float>) -> Float {
         let w = origin - from, b = dot(axis, dir), d = dot(axis, w), e = dot(dir, w)
         let denom = 1 - b * b
         guard abs(denom) > 1e-5 else { return 0 }

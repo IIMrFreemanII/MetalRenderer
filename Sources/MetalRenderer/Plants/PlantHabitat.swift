@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,27 +10,27 @@ extension Foliage {
     package struct Habitat: Codable, Equatable {
         /// Where its weight is reckoned among the others' (the built-in trees: 0...3), and where it is scattered among
         /// the covers: a place's pick runs through them in this order.
-        var order = 100
+        package var order = 100
         /// Of its weight wherever it is (a cover: of its density).
         package var frequency: Float = 1
 
         // A tree's weight: base + elevation + slope + stand + light, at least `floor`, times `frequency`.
-        var base: Float = 0.5
+        package var base: Float = 0.5
         /// `gain` x smoothstep(from, to, height): the height is 0 on the low ground, 1 up the hills.
-        var elevation = Ramp()
-        var slope: Float = 0                // x the ground's slope (0 flat, 1 a wall)
-        var stand: Float = 0                // x the stand noise (-1...1: patches where one species or another grows)
-        var light: Float = 0                // x where the light comes in: clearings, the woods' edges, the trail
-        var floor: Float = 0.05
+        package var elevation = Ramp()
+        package var slope: Float = 0                // x the ground's slope (0 flat, 1 a wall)
+        package var stand: Float = 0                // x the stand noise (-1...1: patches where one species or another grows)
+        package var light: Float = 0                // x where the light comes in: clearings, the woods' edges, the trail
+        package var floor: Float = 0.05
         /// A share of all the trees whatever the place (the dead trees: 3.5%), in place of a weight.
-        var share: Float? = nil
+        package var share: Float? = nil
         /// A tree is a sapling below `x` of a random 0...1, young below `y`, mature above.
-        var ages = SIMD2<Float>(0.12, 0.4)
+        package var ages = SIMD2<Float>(0.12, 0.4)
 
         /// A bush's or ground cover's spread (nil for a tree).
         package var cover: Cover? = nil
 
-        struct Ramp: Codable, Equatable {
+        package struct Ramp: Codable, Equatable {
             var gain: Float = 0
             var from: Float = 0
             var to: Float = 0.7
@@ -39,10 +40,10 @@ extension Foliage {
             /// The forest's candidates at undergrowth 100%.
             package var count: Float = 2000
             /// The open world's: one candidate to a cell of this many metres.
-            var cell: Double = 5
+            package var cell: Double = 5
             package var patch: Float = 20               // the patches' size, metres
             package var salt: UInt32 = 0                // the patches' noise
-            var what: UInt64 = 0                // the open world's candidates' random numbers
+            package var what: UInt64 = 0                // the open world's candidates' random numbers
             package var size: ClosedRange<Float> = 0.8...1.3
             package var sink: Float = 0.03              // into the ground
             /// In the open (the clearing, meadows) rather than in patches under the trees.
@@ -51,11 +52,25 @@ extension Foliage {
             /// of `count` scattered.
             package var grid: Int? = nil
             package var gridScale: Float = 1.12
+
+            /// (As the memberwise initializer, for the modules above this one.)
+            package init(count: Float = 2000, cell: Double = 5, patch: Float = 20, salt: UInt32 = 0, what: UInt64 = 0, size: ClosedRange<Float> = 0.8...1.3, sink: Float = 0.03, open: Bool = false, grid: Int? = nil, gridScale: Float = 1.12) {
+                self.count = count
+                self.cell = cell
+                self.patch = patch
+                self.salt = salt
+                self.what = what
+                self.size = size
+                self.sink = sink
+                self.open = open
+                self.grid = grid
+                self.gridScale = gridScale
+            }
         }
 
         /// The weight at a place. `light`: the scene's terms for where light comes in, each a coefficient and a value
         /// (summed in order, each times `self.light`).
-        func weight(high: Float, slope: Float, stand: Float, light terms: [SIMD2<Float>]) -> Float {
+        package func weight(high: Float, slope: Float, stand: Float, light terms: [SIMD2<Float>]) -> Float {
             var w = base + elevation.gain * Habitat.smoothstep(elevation.from, elevation.to, high)
             w = w + self.slope * slope
             w = w + self.stand * stand
@@ -63,7 +78,7 @@ extension Foliage {
             return max(floor, w) * frequency
         }
 
-        @inline(__always) static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+        @inline(__always) package static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
             let t = min(max((x - a) / (b - a), 0), 1)
             return t * t * (3 - 2 * t)
         }

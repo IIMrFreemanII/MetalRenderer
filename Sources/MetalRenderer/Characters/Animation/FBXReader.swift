@@ -1,4 +1,5 @@
 import Compression
+import EngineCore
 import Foundation
 
 enum FBXError: Error, CustomStringConvertible {
@@ -55,12 +56,12 @@ extension Int64: FBXArrayElement { static let fbxCode = UInt8(ascii: "l") }
 final class FBXFile {
     /// One node: its name and properties by file offset, its first child and next sibling by index into `nodes`.
     struct Node {
-        var nameStart: UInt32
-        var nameLength: UInt32
-        var propertyStart: UInt32
-        var propertyCount: UInt32
-        var firstChild: Int32 = -1
-        var nextSibling: Int32 = -1
+        package var nameStart: UInt32
+        package var nameLength: UInt32
+        package var propertyStart: UInt32
+        package var propertyCount: UInt32
+        package var firstChild: Int32 = -1
+        package var nextSibling: Int32 = -1
     }
 
     /// The kinds of object to read besides the models (the scene's nodes: bones and meshes), which always are.

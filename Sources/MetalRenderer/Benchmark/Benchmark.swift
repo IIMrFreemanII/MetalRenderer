@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -147,7 +148,7 @@ package final class Benchmark {
             return s
         }
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(name: String, settings: RenderSettings, directLight: DirectLightMode? = nil, startTime: Float = 0, dt: Float = 1.0 / 60.0, frames: Int? = nil, accumulate: Bool = false, accumulateTechnique: Bool = false, supersample: Bool = false, capturePrevious: Bool = false, record: Bool = false, cameraPath: Bool = false, camera: Camera? = nil, flight: SIMD3<Float>? = nil, track: CameraTrack? = nil, body: Bool = false, ride: Int? = nil, events: [(time: Float, event: Event)] = []) {
             self.name = name
             self.settings = settings
@@ -215,7 +216,7 @@ package final class Benchmark {
     /// What any other value of METALRENDERER_BENCH runs (the documented one is `1`).
     package static var standardMode: () -> [Config] = { [] }
 
-    static func configs(for mode: String) -> [Config] {
+    package static func configs(for mode: String) -> [Config] {
         _ = SceneRegistry.kinds   // (the modes are registered with the scenes)
         if let build = modes[mode] { return build() }
         if mode != "1" && !mode.isEmpty {
@@ -225,29 +226,29 @@ package final class Benchmark {
     }
 
     /// Where the current setting's track is: seconds since its first measured frame (0 while it warms up).
-    var trackTime: Float { Float(max(frameInConfig - warmupFrames, 0)) * fixedDt }
+    package var trackTime: Float { Float(max(frameInConfig - warmupFrames, 0)) * fixedDt }
 
     /// Progress through the current setting, 0 at its first frame and 1 at its last.
-    var progressInConfig: Float {
+    package var progressInConfig: Float {
         let total = warmupFrames + (current.frames ?? measuredFrames)
         return Float(frameInConfig) / Float(max(total - 1, 1))
     }
 
-    struct FrameRecord {
+    package struct FrameRecord {
         var config: Int
         var passMs: [String: Double]
         var spanMs: Double          // first pass start -> last pass end
         var cpuMs: Double           // the CPU's work in draw (simulation, uploads, encoding), without the waits
     }
 
-    static let isEnabled = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] != nil
+    package static let isEnabled = ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] != nil
     /// Each pass in its own command buffer, for per-pass timings (default). `METALRENDERER_BENCH_SPLIT=0` encodes frames
     /// exactly like normal mode (one command buffer) and reports only the whole-frame GPU time.
-    static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
-    static let passOrder = ["skin", "blas", "tlas", "lightmap", "trace", "glass", "temporal", "atrous", "composite", "upscale"]
+    package static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_SPLIT"] != "0"
+    package static let passOrder = ["skin", "blas", "tlas", "lightmap", "trace", "glass", "temporal", "atrous", "composite", "upscale"]
 
     /// The settings of `list` this GPU can run; the others are named with what they need (Capabilities).
-    static func supported(_ list: [Config], on caps: Capabilities) -> (run: [Config], skipped: [String]) {
+    package static func supported(_ list: [Config], on caps: Capabilities) -> (run: [Config], skipped: [String]) {
         var run: [Config] = [], skipped: [String] = []
         for c in list {
             if let missing = c.resolvedSettings().missing(in: caps) { skipped.append("\(c.name) (needs \(missing))") }
@@ -258,7 +259,7 @@ package final class Benchmark {
 
     /// This run's settings: the mode's list (Benchmark+Modes.swift), without the settings this GPU can't run.
     /// `METALRENDERER_BENCH_ONLY="32 lights, 400|camera"` keeps only the settings whose names contain one of these substrings.
-    let configs: [Config] = {
+    package let configs: [Config] = {
         let (all, skipped) = Benchmark.supported(Benchmark.configs(for: ProcessInfo.processInfo.environment["METALRENDERER_BENCH"] ?? ""),
                                                  on: Capabilities.current)
         skipped.forEach { print("skipped: \($0)") }
@@ -280,11 +281,11 @@ package final class Benchmark {
         return kept
     }()
 
-    let warmupFrames = 60
-    let measuredFrames = 240
+    package let warmupFrames = 60
+    package let measuredFrames = 240
     /// The current setting's clock step.
-    var fixedDt: Float { current.dt }
-    let captureDir = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_DIR"].map { URL(fileURLWithPath: $0) }
+    package var fixedDt: Float { current.dt }
+    package let captureDir = ProcessInfo.processInfo.environment["METALRENDERER_BENCH_DIR"].map { URL(fileURLWithPath: $0) }
 
     private(set) var configIndex = 0
     private(set) var frameInConfig = 0
@@ -296,33 +297,33 @@ package final class Benchmark {
         resolutions = Array(repeating: "", count: configs.count)
     }
 
-    var current: Config { configs[configIndex] }
-    var isFinished: Bool { configIndex >= configs.count }
-    var isMeasuring: Bool { frameInConfig >= warmupFrames }
+    package var current: Config { configs[configIndex] }
+    package var isFinished: Bool { configIndex >= configs.count }
+    package var isMeasuring: Bool { frameInConfig >= warmupFrames }
     private var framesInConfig: Int { cut ?? (warmupFrames + (current.frames ?? measuredFrames)) }
     private var framesLeftInConfig: Int { framesInConfig - frameInConfig }
     /// `METALRENDERER_SHOT_SWAP=<k>`: a setting ends, and its picture is taken, `k` frames after the open world's
     /// scene is first made around another tile (0: the first frame of the new scene), to see what a crossing shows.
-    static let swapShot = ProcessInfo.processInfo.environment["METALRENDERER_SHOT_SWAP"].flatMap { Int($0) }
+    package static let swapShot = ProcessInfo.processInfo.environment["METALRENDERER_SHOT_SWAP"].flatMap { Int($0) }
     private var cut: Int?
-    func noteSwap() {
+    package func noteSwap() {
         if let k = Benchmark.swapShot, cut == nil { cut = min(frameInConfig + max(k, 0) + 1, framesInConfig) }
     }
-    var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
+    package var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
     /// A recording setting's frame to save: every other measured one.
-    var shouldRecord: Bool { current.record && isMeasuring && (frameInConfig - warmupFrames) % 2 == 0 }
+    package var shouldRecord: Bool { current.record && isMeasuring && (frameInConfig - warmupFrames) % 2 == 0 }
 
-    func noteDraw(resolution: String) {
+    package func noteDraw(resolution: String) {
         resolutions[configIndex] = resolution
     }
 
     /// Most frames the last warm-up frame is held while streaming settles (`hold(settled:)`).
-    static let maxHold = 600
+    package static let maxHold = 600
     private var held = 0
     /// Whether to draw the last warm-up frame again instead of advancing: virtual geometry's streaming hasn't
     /// loaded what the view asks for yet (`settled` false), so measuring would start on a coarser cut that a
     /// later run, or a faster disk, wouldn't show. At most `maxHold` frames; the time stands still meanwhile.
-    func hold(settled: Bool) -> Bool {
+    package func hold(settled: Bool) -> Bool {
         guard frameInConfig == warmupFrames - 1, cut == nil else { return false }
         if !settled && held < Benchmark.maxHold {
             held += 1
@@ -337,7 +338,7 @@ package final class Benchmark {
     }
 
     /// Returns true when the config changed (the caller should reset its animation clock).
-    func advance() -> Bool {
+    package func advance() -> Bool {
         frameInConfig += 1
         guard frameInConfig >= framesInConfig else { return false }
         cut = nil
@@ -346,11 +347,11 @@ package final class Benchmark {
         return true
     }
 
-    func record(_ r: FrameRecord) {
+    package func record(_ r: FrameRecord) {
         lock.lock(); records.append(r); lock.unlock()
     }
 
-    func report(gpuName: String) -> String {
+    package func report(gpuName: String) -> String {
         lock.lock(); let all = records; lock.unlock()
         var out = "\nMetalRenderer benchmark — \(gpuName) — \(warmupFrames) warm-up + \(measuredFrames) measured frames per setting\n"
         out += "GPU times are medians in ms (p95 for the total). Frames are serialized so passes never overlap.\n\"span\" = first pass start to last pass end, including gaps between command buffers. \"cpu\" = the CPU's work per frame.\n\n"
@@ -398,7 +399,7 @@ package final class Benchmark {
     /// copy, FrameEncoder.capture) and a closure that writes it as PNG, or (`sequence`: a recording's frame) as a JPEG
     /// numbered in the setting's own folder.
     /// `suffix` goes after the setting's name ("-interp": frame interpolation's in-between picture).
-    func capture(of texture: MTLTexture, device: MTLDevice, sequence: Bool = false, suffix: String = "") -> (buffer: MTLBuffer, write: () -> Void)? {
+    package func capture(of texture: MTLTexture, device: MTLDevice, sequence: Bool = false, suffix: String = "") -> (buffer: MTLBuffer, write: () -> Void)? {
         guard var dir = captureDir else { return nil }
         let w = texture.width, h = texture.height, rowBytes = w * 4
         guard let buffer = device.makeBuffer(length: rowBytes * h, options: .storageModeShared) else { return nil }
@@ -436,7 +437,7 @@ package struct CameraTrack {
         package var position: SIMD3<Float>
         package var target: SIMD3<Float>
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(time: Float, position: SIMD3<Float>, target: SIMD3<Float>) {
             self.time = time
             self.position = position

@@ -1,12 +1,13 @@
+import EngineCore
 import Foundation
 import simd
 
 /// The ground's 16 layers at a place: each layer's own rule (TerrainRule: height, slope, noise) where nothing is
 /// painted, the painted weights where something is (TerrainTile.paint), mixed by how much of the paint shows
 /// (TerrainTile.mask). Layer 0 is under all the others: it has what they leave.
-enum TerrainPaint {
+package enum TerrainPaint {
     /// The layers' weights by their rules, summing to 1.
-    static func ruleWeights(_ layers: [TerrainLayer], height: Float, slope: Float, x: Double, z: Double) -> SIMD16<Float> {
+    package static func ruleWeights(_ layers: [TerrainLayer], height: Float, slope: Float, x: Double, z: Double) -> SIMD16<Float> {
         var w = SIMD16<Float>(repeating: 0), rest: Float = 1
         // From the top layer down: each takes its share of what the ones above left.
         for l in stride(from: min(layers.count, TerrainTile.layers) - 1, through: 1, by: -1) {
@@ -23,7 +24,7 @@ enum TerrainPaint {
     }
 
     /// What shows at sample (i, j): the rules' weights, and the paint over them as much as its mask says.
-    static func weights(_ s: TerrainSnapshot, layers: [TerrainLayer], _ i: Int, _ j: Int, height: Float, slope: Float) -> SIMD16<Float> {
+    package static func weights(_ s: TerrainSnapshot, layers: [TerrainLayer], _ i: Int, _ j: Int, height: Float, slope: Float) -> SIMD16<Float> {
         let p = s.grid.place(i, j)
         let rule = ruleWeights(layers, height: height, slope: slope, x: p.x, z: p.y)
         guard let (painted, mask) = s.paint(i, j) else { return rule }
@@ -33,7 +34,7 @@ enum TerrainPaint {
 
     /// A dab of the paint brush (the brush's layer more, the others less), or of the eraser (the paint shows less:
     /// the rules come back). Where nothing was painted, the paint starts as what shows.
-    static func dab(_ s: inout TerrainSnapshot, brush b: TerrainBrush, dab: TerrainDab, layers: [TerrainLayer]?,
+    package static func dab(_ s: inout TerrainSnapshot, brush b: TerrainBrush, dab: TerrainDab, layers: [TerrainLayer]?,
                     record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let layers = layers ?? TerrainDocument.defaultLayers
         guard let (lo, hi) = TerrainSculpt.range(s.grid, center: dab.center, radius: b.radius) else { return [] }

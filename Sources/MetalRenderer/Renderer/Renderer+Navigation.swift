@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -8,7 +9,7 @@ extension Renderer {
 
     /// Walk mode on or off. On: the walker stands under the camera (in the building workshop, outside, at the
     /// building's door, if the camera isn't in the building).
-    func toggleWalk() {
+    package func toggleWalk() {
         if walker != nil {
             walker = nil
             scene.interiorControls?.flashlight.on = false
@@ -44,7 +45,7 @@ extension Renderer {
     }
 
     /// A walking frame: the walker told what is held, the doors and lifts moved on, the camera at its eyes.
-    func walk(_ dt: Float) {
+    package func walk(_ dt: Float) {
         guard var w = walker, let grid = walkGrid else { walker = nil; return }
         let controls = scene.interiorControls
         let fw = camera.forward
@@ -79,14 +80,14 @@ extension Renderer {
     }
 
     /// Uses what is along `ray` from the eyes: a door, a switch, a lift's button.
-    func use(_ ray: SIMD3<Float>) {
+    package func use(_ ray: SIMD3<Float>) {
         guard let c = scene.interiorControls else { return }
         let blocked = walkGrid?.raycast(camera.position, ray, limit: 3)
         if let what = c.use(from: camera.position, along: ray, blocked: blocked) { walkMessage = what }
     }
 
     /// The storey the walker is on, of the building it is in (its plan's), if it is in one.
-    var walkerStatus: WalkerStatus? {
+    package var walkerStatus: WalkerStatus? {
         guard let w = walker else { return nil }
         var status = WalkerStatus(position: w.feet, yaw: camera.yaw, building: nil, storey: nil, local: nil, message: walkMessage,
                                   flashlight: scene.interiorControls?.flashlight.on ?? false, crouched: w.crouched)
@@ -102,16 +103,16 @@ extension Renderer {
 
     // MARK: - The selection, and where the camera flies
 
-    static let flightSeconds = 0.6, turnSeconds = 0.25
+    package static let flightSeconds = 0.6, turnSeconds = 0.25
 
     /// The pivot: the workshops' orbit, or the one navigation set, or 8 m in front.
-    var pivot: ViewPivot {
+    package var pivot: ViewPivot {
         get { orbit.map { ViewPivot(target: $0.target, distance: $0.distance) } ?? camera.pivot() }
         set { orbit = (newValue.target, newValue.distance) }
     }
 
     /// `target` is of the scene that is in.
-    func inScene(_ target: FrameTarget) -> Bool {
+    package func inScene(_ target: FrameTarget) -> Bool {
         MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind
     }
 
@@ -126,7 +127,7 @@ extension Renderer {
     }
 
     /// Selects `target` in the view (nil: nothing); another scene's is ignored. It ends Shift-F's lock.
-    func select(_ target: FrameTarget?) {
+    package func select(_ target: FrameTarget?) {
         pivotLock = nil
         guard let target, inScene(target) else { selection = nil; return }
         let box = bounds(of: target)
@@ -134,7 +135,7 @@ extension Renderer {
     }
 
     /// The camera at `target`: now if its scene is in, otherwise once it is. It is selected.
-    func frame(_ target: FrameTarget) {
+    package func frame(_ target: FrameTarget) {
         guard MaterialAssignments.scope(scene.settings) == target.scope || scene.settings.kind == target.kind && loading == nil else {
             pendingFrame = target
             return
@@ -150,7 +151,7 @@ extension Renderer {
 
     /// F: the camera at the selection (nothing selected: the workshop's at what it shows). Shift-F: and it follows the
     /// selection as it moves, until Shift-F again (or a pan, a flight, another selection).
-    func frameSelection(lock: Bool) {
+    package func frameSelection(lock: Bool) {
         if lock, pivotLock != nil { pivotLock = nil; return }
         guard let s = selection else { frameWorkshop(); return }
         frame(s.target)
@@ -158,7 +159,7 @@ extension Renderer {
     }
 
     /// Shift-F's lock: the camera and its pivot moved as the selection's centre moved since the last frame.
-    func followLocked() {
+    package func followLocked() {
         guard let last = pivotLock, let s = selection else { return }
         let box = bounds(of: s.target, limit: 64)
         guard !box.isEmpty else { return }
@@ -171,8 +172,8 @@ extension Renderer {
 
     /// The scene gizmo: the view from `axis`'s side (its cone clicked), or 45° steps on (dragged), turning about the
     /// pivot.
-    func snapView(_ axis: ViewAxis) { turnView(to: Camera.angles(viewing: axis, yaw: camera.yaw)) }
-    func stepView(yawSteps: Int, pitchSteps: Int) {
+    package func snapView(_ axis: ViewAxis) { turnView(to: Camera.angles(viewing: axis, yaw: camera.yaw)) }
+    package func stepView(yawSteps: Int, pitchSteps: Int) {
         turnView(to: Camera.stepped(yaw: camera.yaw, pitch: camera.pitch, yawSteps: yawSteps, pitchSteps: pitchSteps))
     }
     private func turnView(to angles: (yaw: Float, pitch: Float)) {
@@ -186,7 +187,7 @@ extension Renderer {
     }
 
     /// The flight's next step (the frame's camera), and where it ends: the pivot.
-    func fly() {
+    package func fly() {
         guard let f = flight else { return }
         let t = Float(min((CACurrentMediaTime() - f.start) / f.seconds, 1))
         let e = t * t * (3 - 2 * t)
@@ -206,7 +207,7 @@ extension Renderer {
 
     /// The box round the selection, as gizmo lines (a few hundred instances' boxes are measured again each frame, so it
     /// follows them as they move).
-    func selectionSegments() -> [VFXGizmos.Segment] {
+    package func selectionSegments() -> [VFXGizmos.Segment] {
         guard var s = selection else { return [] }
         if s.target.instances.count <= 256 {
             let box = bounds(of: s.target)
@@ -216,7 +217,7 @@ extension Renderer {
     }
 
     /// The workshop's camera at what it shows, all of it in view, from in front and a little above.
-    func frameWorkshop() {
+    package func frameWorkshop() {
         guard scene.settings.kind.orbits, let focus = scene.focus else { return }
         let framed = Camera.framing(focus, fovY: settings.fovDegrees * .pi / 180, aspect: viewAspect)
         camera = framed.camera
@@ -224,7 +225,7 @@ extension Renderer {
         orbit = (framed.target, framed.distance)
     }
 
-    func placeOrbitingCamera() {
+    package func placeOrbitingCamera() {
         guard let orbit else { return }
         camera.position = orbit.target - camera.forward * orbit.distance
     }
@@ -232,7 +233,7 @@ extension Renderer {
     /// Auto exposure's scale for this frame (AutoExposure).
     private func meterExposure() -> Float { exposureMeter.next(dt: frameDt) }
 
-    func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
+    package func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
         func pack(_ c: Camera) -> (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) {
             let tanY = tan(c.fovY / 2)

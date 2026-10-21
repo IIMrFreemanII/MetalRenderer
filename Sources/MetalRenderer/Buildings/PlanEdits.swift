@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -16,17 +17,17 @@ package struct PlanEdit: Codable, Equatable {
         case moveDoor       // the door nearest `at`, along its wall to `to`
         case flipDoor       // the door nearest `at` turns the other way (its hinge, then the room it opens into)
     }
-    var op: Op
-    var storeys: StoreySel
-    var at: SIMD2<Float>
-    var to: SIMD2<Float>? = nil
-    var alongX: Bool? = nil
-    var type: RoomType? = nil
-    var width: Float? = nil
+    package var op: Op
+    package var storeys: StoreySel
+    package var at: SIMD2<Float>
+    package var to: SIMD2<Float>? = nil
+    package var alongX: Bool? = nil
+    package var type: RoomType? = nil
+    package var width: Float? = nil
 
-    var changesRooms: Bool { [.split, .merge, .setType, .moveWall].contains(op) }
+    package var changesRooms: Bool { [.split, .merge, .setType, .moveWall].contains(op) }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(op: Op, storeys: StoreySel, at: SIMD2<Float>, to: SIMD2<Float>? = nil, alongX: Bool? = nil, type: RoomType? = nil, width: Float? = nil) {
         self.op = op
         self.storeys = storeys
@@ -44,7 +45,7 @@ package enum StoreySel: Codable, Equatable {
     case range(Int, Int)
     case all
 
-    func contains(_ s: Int) -> Bool {
+    package func contains(_ s: Int) -> Bool {
         switch self {
         case .one(let k): return s == k
         case .range(let a, let b): return s >= a && s <= b
@@ -56,21 +57,21 @@ package enum StoreySel: Codable, Equatable {
 /// Which building of which scene a single building's plan is for: its city (seed and settings) or the world's
 /// block, and its lot (index, seed, size). The workshop's own building is `workshop`'s.
 package struct LotRef: Codable, Equatable, Hashable {
-    var context: String
-    var lot: Int
-    var seed: UInt64
-    var size: SIMD2<Float>
+    package var context: String
+    package var lot: Int
+    package var seed: UInt64
+    package var size: SIMD2<Float>
 
     package static func city(_ city: CitySettings, seed: Int, lot: Int, _ l: CityPlan.Lot) -> LotRef {
         LotRef(context: "city \(seed) \(city.blocks) \(city.style.name)", lot: lot, seed: l.seed, size: l.size)
     }
-    static func workshop(style: String, size: SIMD2<Float>, seed: UInt64) -> LotRef {
+    package static func workshop(style: String, size: SIMD2<Float>, seed: UInt64) -> LotRef {
         LotRef(context: "workshop \(style)", lot: 0, seed: seed, size: size)
     }
-    var isWorkshop: Bool { context.hasPrefix("workshop") }
+    package var isWorkshop: Bool { context.hasPrefix("workshop") }
     /// Said in one string (SceneSettings.interior).
     package var key: String { "\(context)#\(lot)" }
-    var title: String {
+    package var title: String {
         isWorkshop ? "the workshop's \(context.dropFirst(9)) building" : "lot \(lot) of \(context)"
     }
 }
@@ -78,20 +79,20 @@ package struct LotRef: Codable, Equatable, Hashable {
 /// A single building's own plan: its style, floors, shape, use instead of its lot's and its style's, and its hand
 /// edits (Assets/Buildings/overrides.json).
 package struct LotOverride: Codable, Equatable {
-    var ref: LotRef
-    var style: String? = nil
-    var floors: Int? = nil
-    var shape: PlanShape? = nil
-    var use: BuildingUse? = nil
-    var edits: [PlanEdit] = []
+    package var ref: LotRef
+    package var style: String? = nil
+    package var floors: Int? = nil
+    package var shape: PlanShape? = nil
+    package var use: BuildingUse? = nil
+    package var edits: [PlanEdit] = []
 
     /// It holds for `ref` (the same lot, the same size: a lot that changed size is another building).
-    func matches(_ ref: LotRef) -> Bool {
+    package func matches(_ ref: LotRef) -> Bool {
         self.ref.context == ref.context && self.ref.lot == ref.lot && self.ref.seed == ref.seed
             && simd_length(self.ref.size - ref.size) < 0.01
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(ref: LotRef, style: String? = nil, floors: Int? = nil, shape: PlanShape? = nil, use: BuildingUse? = nil, edits: [PlanEdit] = []) {
         self.ref = ref
         self.style = style

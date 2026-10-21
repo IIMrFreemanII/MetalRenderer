@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -24,7 +25,7 @@ package struct CharacterBase {
         case leftEye, rightEye, upperTeeth, lowerTeeth, tongue
     }
 
-    struct Options {
+    package struct Options {
         /// Surface nets' cell (m), and how many triangles the full-detail mesh is simplified to (the head's among them).
         var cell: Float = 0.0025
         var triangles = 96_000

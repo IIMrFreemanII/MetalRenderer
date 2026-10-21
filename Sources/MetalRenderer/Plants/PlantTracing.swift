@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -24,24 +25,24 @@ struct RTPart {
 /// The wind's math on the CPU, as Shaders/Foliage.metal has it: what a plant's instance and a patch of ground cover's
 /// carry in their transforms (the shading does the same to the hit point).
 enum Wind {
-    static let phases = 8           // PLANT_PHASES
+    package static let phases = 8           // PLANT_PHASES
 
     /// windWave: a sine's shape (period 2 pi) from a parabola.
-    static func wave(_ x: Float) -> Float {
+    package static func wave(_ x: Float) -> Float {
         let y = x * 0.15915494
         let t = (y - y.rounded(.down)) * 2 - 1
         return 4 * t * (1 - abs(t))
     }
 
     /// windGust: how hard it blows at `p`, 0...1.
-    static func gust(_ wind: SIMD4<Float>, _ p: SIMD3<Float>, _ time: Float) -> Float {
+    package static func gust(_ wind: SIMD4<Float>, _ p: SIMD3<Float>, _ time: Float) -> Float {
         let along = wind.x * p.x + wind.y * p.z, across = -wind.y * p.x + wind.x * p.z
         let w = 0.6 * wave(along * 0.07 - time * 1.1 + 0.6 * wave(across * 0.05)) + 0.4 * wave(along * 0.19 - time * 2.3 + across * 0.11)
         return 1 + (0.5 + 0.5 * w - 1) * wind.w
     }
 
     /// windTurn's matrix: a turn by `angle` about the unit `axis` (Rodrigues, the sine and cosine by their series).
-    static func turn(_ axis: SIMD3<Float>, _ angle: Float) -> float3x3 {
+    package static func turn(_ axis: SIMD3<Float>, _ angle: Float) -> float3x3 {
         let a2 = angle * angle
         let s = angle * (1 - a2 / 6), oneMinusC = a2 * (0.5 - a2 / 24)
         func apply(_ v: SIMD3<Float>) -> SIMD3<Float> { v + cross(axis, v) * s + (axis * dot(axis, v) - v) * oneMinusC }
@@ -49,11 +50,11 @@ enum Wind {
     }
 
     /// A plant's phase (plantWind's) and its bucket (plantBucket), from its id.
-    static func phaseBits(_ id: UInt32) -> UInt32 { VoxelLOD.pcgHash(id &+ 0x5EED) & 0xFFFF }
-    static func bucket(_ id: UInt32) -> Int { Int((phaseBits(id) * UInt32(phases)) >> 16) }
+    package static func phaseBits(_ id: UInt32) -> UInt32 { VoxelLOD.pcgHash(id &+ 0x5EED) & 0xFFFF }
+    package static func bucket(_ id: UInt32) -> Int { Int((phaseBits(id) * UInt32(phases)) >> 16) }
 
     /// A plant's instance transform in the wind: `transform` turned about the plant's foot as plantWind turns it.
-    static func plant(_ transform: float4x4, wind: SIMD4<Float>, time: Float, id: UInt32) -> float4x4 {
+    package static func plant(_ transform: float4x4, wind: SIMD4<Float>, time: Float, id: UInt32) -> float4x4 {
         guard wind.z > 0 else { return transform }
         let linear = float3x3(SIMD3(transform.columns.0.x, transform.columns.0.y, transform.columns.0.z),
                               SIMD3(transform.columns.1.x, transform.columns.1.y, transform.columns.1.z),
@@ -70,7 +71,7 @@ enum Wind {
     }
 
     /// A patch of ground cover's instance transform in the wind: `transform` sheared downwind by height (coverLean).
-    static func cover(_ transform: float4x4, wind: SIMD4<Float>, time: Float) -> float4x4 {
+    package static func cover(_ transform: float4x4, wind: SIMD4<Float>, time: Float) -> float4x4 {
         guard wind.z > 0 else { return transform }
         let inverse = transform.inverse
         let origin = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
@@ -85,7 +86,7 @@ enum Wind {
     }
 
     /// plantKeep: the share of its leaves a deciduous plant still has when `fall` of all leaves are down.
-    static func keep(fall: Float, id: UInt32) -> Float {
+    package static func keep(fall: Float, id: UInt32) -> Float {
         1 - min(max(fall * 1.6 - 0.6 * Float(VoxelLOD.pcgHash(id &+ 0xFA11) & 0xFF) / 255, 0), 1)
     }
 }

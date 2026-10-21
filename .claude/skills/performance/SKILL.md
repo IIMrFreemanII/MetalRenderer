@@ -16,7 +16,7 @@ acceleration structures and intersector: in software on M1/M2, in hardware from 
 
 ## The loop
 
-1. **Baseline.** `swift build -c release`, then run a narrowed benchmark from the repo root (see
+1. **Baseline.** `Tools/release.sh`, then run a narrowed benchmark from the repo root (see
    [references/measuring.md](references/measuring.md)):
    ```bash
    METALRENDERER_BENCH=stress METALRENDERER_BENCH_ONLY="32 lights" .build/release/MetalRenderer

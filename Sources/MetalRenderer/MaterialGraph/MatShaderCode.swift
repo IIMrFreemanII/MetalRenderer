@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,19 +12,19 @@ import simd
 ///
 /// Every scene's programs are one splice (`splice`): their node functions and `proceduralMaterial(program, uv, P)`,
 /// which Shaders/Procedural.metal stands in for until there is one (ShaderSource.procedural).
-enum MatShaderCode {
+package enum MatShaderCode {
     /// Node evaluations a shading point may cost (each node counted as often as it is called).
-    static let budget = 160
+    package static let budget = 160
 
     /// The kinds that can run as code.
-    static let supported: Set<MatOpKind> = [.input, .output, .uniform, .uniformColor, .whiteNoise, .valueNoise, .perlinNoise, .fractalSum,
+    package static let supported: Set<MatOpKind> = [.input, .output, .uniform, .uniformColor, .whiteNoise, .valueNoise, .perlinNoise, .fractalSum,
                                             .cells, .anisotropicNoise, .scratches, .grunge, .fibers, .shape, .gradient, .checker, .bricks, .waves,
                                             .levels, .curve, .gradientMap, .hsl, .invert, .grayscale, .histogramScan, .posterize,
                                             .rgbaSplit, .rgbaMerge, .blend, .heightBlend, .transform, .mirror, .warp, .directionalWarp,
                                             .normal, .normalCombine, .curvature, .pixelProcessor, .code]
 
     /// Why `plan` can't run as code, by node (empty: it can).
-    static func reasons(_ plan: MatPlan) -> [String: String] {
+    package static func reasons(_ plan: MatPlan) -> [String: String] {
         var out: [String: String] = [:]
         let reached = reachedSteps(plan)
         for k in reached where !supported.contains(plan.steps[k].kind) {
@@ -37,7 +38,7 @@ enum MatShaderCode {
     }
 
     /// The steps the outputs reach.
-    static func reachedSteps(_ plan: MatPlan) -> Set<Int> {
+    package static func reachedSteps(_ plan: MatPlan) -> Set<Int> {
         var seen = Set<Int>(), stack = Array(plan.channels.values)
         while let k = stack.popLast() {
             guard seen.insert(k).inserted else { continue }
@@ -48,7 +49,7 @@ enum MatShaderCode {
 
     /// How many times a shading point evaluates a node: each output once, each node's inputs as many times as it
     /// reads them (a normal four, a warp five...).
-    static func evaluations(_ plan: MatPlan) -> Int {
+    package static func evaluations(_ plan: MatPlan) -> Int {
         var calls = [Int](repeating: 0, count: plan.steps.count)
         for k in plan.channels.values { calls[k] += 1 }
         for k in plan.steps.indices.reversed() where calls[k] > 0 {
@@ -74,14 +75,14 @@ enum MatShaderCode {
 
     /// A program: its Metal (its nodes' functions, and the body of its case in proceduralMaterial), its parameters
     /// (each node's, packed, then its curves' and gradients' tables) at `base` in the buffer.
-    struct Program {
+    package struct Program {
         var functions: String
         var body: String
         var params: [SIMD4<Float>]
     }
 
     /// Program `number` of `plan`, its parameters at float4 `base` of the buffer.
-    static func program(_ plan: MatPlan, number: Int, base: Int) throws -> Program {
+    package static func program(_ plan: MatPlan, number: Int, base: Int) throws -> Program {
         let reached = reachedSteps(plan)
         if let bad = reasons(plan).first { throw MatError(bad.key.isEmpty ? bad.value : "\(bad.key): \(bad.value)") }
         var params: [SIMD4<Float>] = []
@@ -206,7 +207,7 @@ enum MatShaderCode {
     }
 
     /// The splice of `programs` (by number): MaterialShaders' functions, the programs' nodes, the dispatcher.
-    static func splice(_ programs: [(number: Int, program: Program)]) throws -> String {
+    package static func splice(_ programs: [(number: Int, program: Program)]) throws -> String {
         guard !programs.isEmpty else { return "" }
         var text = "#define MAT_EVAL_ONLY 1\n#define MAT_PROCEDURAL 1\n"
         for piece in ["MatCommon", "MatNoise", "MatPatterns", "MatAdjust", "MatFilters", "MatHeight"] {

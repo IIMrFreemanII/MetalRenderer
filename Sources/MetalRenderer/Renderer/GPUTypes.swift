@@ -1,68 +1,10 @@
+import EngineCore
 import Metal
 import simd
 
 // Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).
 // Their memory layout MUST match the MSL structs of the same name exactly,
 // so every struct is built from 16-byte vectors/matrices plus groups of four 32-bit scalars.
-
-struct Uniforms {
-    var camPos = SIMD4<Float>()          // xyz = camera position
-    var camRight = SIMD4<Float>()        // xyz = right vector,   w = tan(fovX / 2)
-    var camUp = SIMD4<Float>()           // xyz = up vector,      w = tan(fovY / 2)
-    var camForward = SIMD4<Float>()      // xyz = forward vector, w unused
-    var prevCamPos = SIMD4<Float>()      // previous frame's camera (for motion vectors)
-    var prevCamRight = SIMD4<Float>()
-    var prevCamUp = SIMD4<Float>()
-    var prevCamForward = SIMD4<Float>()
-    var skyColor = SIMD4<Float>()
-    var width: UInt32 = 0
-    var height: UInt32 = 0
-    var frameIndex: UInt32 = 0
-    var lightCount: UInt32 = 0
-    var bounces: UInt32 = 0
-    var flags: UInt32 = 0
-    var viewMode: UInt32 = 0
-    var instanceCount: UInt32 = 0
-    var jitter = SIMD4<Float>()          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
-    var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
-    var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
-    var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
-                                         // (gradeOn, meterOn)
-    var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
-    var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Scene.interiorBox), empty: lo > hi;
-    var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // GI's hits in it see the sun through a shadow ray
-    static let gradeOn: Float = 1, meterOn: Float = 2
-
-    /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
-    static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
-    static let traceManyLights: UInt32 = 2   // more analytic lights than shadow-denoiser groups
-    var tracePassFlags: UInt32 { (bounces > 0 ? Uniforms.traceBounces : 0) | (lightGroupEnd.w > 4 ? Uniforms.traceManyLights : 0) }
-}
-
-enum UniformFlags {
-    static let historyValid: UInt32 = 1
-    static let denoise: UInt32 = 2
-    static let upscale: UInt32 = 4   // MetalFX on: write depth + motion for it, composite outputs linear color
-    static let blueNoise: UInt32 = 8 // sample with the blue-noise texture instead of the hash RNG
-    static let separateSignals: UInt32 = 16  // direct and indirect light were denoised separately
-    static let noClamp: UInt32 = 32          // no firefly clamp (reference images)
-    static let lightMaps: UInt32 = 64        // path tracer: bounce lighting from light-visibility maps
-    static let shadowDenoiser: UInt32 = 128  // direct light = exact unshadowed light x denoised per-group visibility
-    static let allLights: UInt32 = 256       // one shadow ray per light even with more than 4 (references, baseline)
-    static let specular: UInt32 = 512        // specular materials: material G-buffer, reflection pass, specular composite
-    static let reference: UInt32 = 1024      // accumulated reference: reflections follow full paths
-    static let meshLights: UInt32 = 2048     // with the shadow denoiser: composite adds the denoised mesh-light direct light
-    static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
-    static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
-    static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
-    static let restir: UInt32 = 32768        // direct light from a pass of its own: ReSTIR DI
-    static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
-    static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
-    static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
-    static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
-    static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
-}
 
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
 struct GPUPathTraceParams {
@@ -85,19 +27,8 @@ struct GPUPostParams {
     var frame = SIMD4<UInt32>()    // x = frame index, y = bloom level being made
 }
 
-/// ReSTIR DI pass parameters (MSL RestirParams).
-struct GPURestirParams {
-    var config = SIMD4<UInt32>()   // x = candidates, y = max M, z = GPURestirParams flags, w = spatial samples
-    var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = spatial pass index, z = firefly clamp (0 = off)
-
-    static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
-    static let visibilityReuse: UInt32 = 2  // test the initial pick's visibility
-    static let shade: UInt32 = 4            // this spatial pass is the last: shade and write the outputs
-    static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
-}
-
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
-struct GPURegirParams {
+package struct GPURegirParams {
     var origin0 = SIMD4<Float>(), origin1 = SIMD4<Float>(), origin2 = SIMD4<Float>(), origin3 = SIMD4<Float>()
     var config = SIMD4<UInt32>()   // x = cells per axis, y = levels, z = slots per cell, w = candidates per slot
     var consume = SIMD4<UInt32>()  // x = grid candidates per pixel (0 = off), y = frame seed
@@ -109,32 +40,8 @@ struct GPURegirReservoir {
     var W: Float = 0, target: Float = 0
 }
 
-/// ReSTIR GI pass parameters (MSL RestirGIParams).
-struct GPURestirGIParams {
-    var config = SIMD4<UInt32>()   // x = GPURestirGIParams flags, y = max M, z = spatial samples, w = spatial pass index
-    var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = minimum distance in the target (m), z = firefly clamp (0 = off)
-    var extra = SIMD4<UInt32>()    // x = 1: quarter budget, y = bounces, z = max sample age (frames)
-
-    static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
-    static let shade: UInt32 = 2            // this spatial pass is the last: trace the visibility ray, write `indirect`
-    static let lightMaps: UInt32 = 4        // light the paths' hits from the light maps (no shadow rays)
-    static let feedback: UInt32 = 8         // multi-bounce: the paths' last hits add last frame's indirect light
-    static let unbiased: UInt32 = 16        // spatial reuse traces a ray per neighbour (visibility in its MIS weight)
-    static let keepFeedback: UInt32 = 32    // the last spatial pass also keeps its result for next frame's feedback
-    static let fallback: UInt32 = 64        // feedback: off-screen path ends add last frame's mean indirect light
-    static let feedbackSet: UInt32 = 128    // multi-bounce is on (`feedback` is still off on a history's first frame)
-    // Not in config.x: restirGIInitialKernel derives them from `extra`, and so does initialPassFlags, to compile them in.
-    static let quarter: UInt32 = 256        // extra.x: quarter budget
-    static let oneBounce: UInt32 = 512      // extra.y: the paths end at their first hit
-
-    /// restirGIInitialKernel's own flags (MSL `own` there).
-    var initialPassFlags: UInt32 {
-        config.x | (extra.x != 0 ? GPURestirGIParams.quarter : 0) | (extra.y <= 1 ? GPURestirGIParams.oneBounce : 0)
-    }
-}
-
 /// The sky (MSL SkyParams): the per-slot copy lives in the shading arguments (SceneShading), the sky kernels get it directly.
-struct GPUSkyParams {
+package struct GPUSkyParams {
     var sun = SIMD4<Float>()          // xyz = toward the sun (unit), w = its angular radius. (The open world's night: the moon.)
     var sunTop = SIMD4<Float>()       // rgb = sun irradiance above the atmosphere (atmosphere mode)
     var sunGround = SIMD4<Float>()    // rgb = sun irradiance at the ground (the sun light's colour)
@@ -153,29 +60,6 @@ struct GPUSkyParams {
 
     static let atmosphere: UInt32 = 1, image: UInt32 = 2
     static let clouds: UInt32 = 1, shadows: UInt32 = 2, updateAll: UInt32 = 4, cloudsOverImage: UInt32 = 8
-}
-
-struct GPUMesh {
-    var firstIndex: UInt32
-    var indexCount: UInt32
-    /// A pose slot of a skinned character (Crowd): its vertices sit this far after the ones its indices name, and its
-    /// previous frame's positions `prevOffset` after those. Both 0 for every other mesh.
-    var vertexOffset: UInt32 = 0
-    var prevOffset: UInt32 = 0
-    var sways: UInt32 = 0              // 1 = ground cover that leans in the wind (Scene.coverLean)
-    var cutout: UInt32 = 0             // leaf cards: its triangles from (the low 24 bits) on are cut out by the alpha
-                                       // layer (the top byte) - 1 of Scene.cutouts; 0 = none
-    /// A mesh in a buffer of its own (MeshBlock): the buffer's GPU address, written where the scene's buffers are made
-    /// (0 in the scene, and for a mesh in the scene's buffers), and how many vertices it has there.
-    var block: UInt64 = 0
-    var vertexCount: UInt32 = 0
-    /// The level of detail it was made at, + 1 (0 = it has no levels): an open-world tile's ring, a crowd character's
-    /// detail, a baked plant (its finest). Only the LOD debug view reads it (Scene.setDetailLevel).
-    var lod: UInt32 = 0
-    /// A terrain's sector (TERRAIN, Shaders/Terrain.metal): 1 + where its terrain's layer table starts in the procedural
-    /// parameters; its block has its vertices' layer weights after its triangles' materials. 0: not a terrain's.
-    var terrain: UInt32 = 0
-    var pad: UInt32 = 0
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
@@ -223,7 +107,7 @@ struct GPUPoseSlot: Equatable {
     var pad: Float = 0
 }
 
-struct GPUInstanceData {
+package struct GPUInstanceData {
     var transform: simd_float4x4       // object -> world, this frame
     var prevTransform: simd_float4x4   // object -> world, previous frame (motion vectors)
     var normalMatrix: simd_float4x4    // inverse-transpose of transform
@@ -233,37 +117,8 @@ struct GPUInstanceData {
     var pad1: UInt32 = 0
 }
 
-package struct GPUMaterial {
-    var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
-    var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
-    var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
-                                            // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
-                                            // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
-                                            // where it is thin (Hair.metal skinUnshadowed)
-    package var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
-                                                    // index, or ~0 = none
-
-    /// (As the memberwise initializer, for the game: Sources/Game.)
-    package init(albedo: SIMD4<Float>, emission: SIMD4<Float>, params: SIMD4<Float> = SIMD4<Float>(0, 1, 0, 0), textures: SIMD4<UInt32> = SIMD4<UInt32>(repeating: .max)) {
-        self.albedo = albedo
-        self.emission = emission
-        self.params = params
-        self.textures = textures
-    }
-}
-
-/// What a procedural material (a Material Designer graph's: MaterialBake) has past GPUMaterial, one per material of
-/// a scene that has any (MSL MaterialExtra, read with MATERIAL_EXTRAS): its height for parallax and its opacity, its
-/// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
-struct GPUMaterialExtra: Equatable {
-    var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
-                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift)
-    var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
-                                                     // w = AO strength (0: the R channel isn't occlusion)
-}
-
 /// One light; see the MSL struct for what each field holds per type (Scene.LightKind).
-struct GPULight {
+package struct GPULight {
     var positionRadius: SIMD4<Float>  // xyz = centre, w = radius (sphere, spot, tube, mesh bounds), angular radius (sun)
     var color: SIMD4<Float>           // rgb = intensity / irradiance (sun) / radiance (rect) / sum of L x area (mesh),
                                       // w = shadow-denoiser group (0...3) + 4 x type (GPULight.sphere...)
@@ -274,86 +129,6 @@ struct GPULight {
                                       // instance (bit cast)
 
     static let sphere: Float = 0, spot: Float = 1, sun: Float = 2, rect: Float = 3, tube: Float = 4, mesh: Float = 5
-}
-
-/// One triangle of an emissive-mesh light, object space (MSL EmissiveTriangle).
-package struct GPUEmissiveTriangle {
-    var v0: SIMD4<Float>     // w = cumulative selection probability within its light
-    var e1: SIMD4<Float>     // w = uv0.x
-    var e2: SIMD4<Float>     // w = uv0.y
-    var uv12: SIMD4<Float>   // uv1, uv2
-}
-
-/// One node of an SDF shape (MSL SDFNode, Shaders/SDF.metal; SDFShape.gpuNodes).
-struct GPUSDFNode {
-    var row0: SIMD4<Float>               // shape space -> the primitive's, as rows
-    var row1: SIMD4<Float>
-    var row2: SIMD4<Float>
-    var params = SIMD4<Float>()          // per kind (SDFShape.sphereKind ...): its sizes
-    var kind: UInt32 = 0
-    var op: UInt32 = 0                   // SDFShape.Op, joining it to the nodes before it
-    var k: Float = 0                     // the blend's radius
-    var scale: Float = 1                 // the node's uniform scale (its distances are the primitive's x this)
-    var material: UInt32 = 0             // offset from the instance's material
-    var volume: UInt32 = 0               // a volume's: Scene.sdfVolumes index
-    var pad0: UInt32 = 0
-    var pad1: UInt32 = 0
-}
-
-/// An SDF shape (MSL SDFShape): its box and its nodes.
-struct GPUSDFShape {
-    var lo: SIMD4<Float>                 // xyz = box min (shape space), w = the march's step scale (1 = exact distances)
-    var hi: SIMD4<Float>                 // xyz = box max, w = 0
-    var range: SIMD4<UInt32>             // x = first node, y = node count
-}
-
-/// A baked distance grid (MSL SDFVolume; SDFVolume.gpu).
-struct GPUSDFVolume {
-    var lo: SIMD4<Float>                 // xyz = the first sample's place, w = the samples' spacing
-    var hi: SIMD4<Float>                 // xyz = the last's, w = the least sample on the grid's faces
-    var dims: SIMD4<UInt32>              // xyz = samples per axis, w = where its samples start among all of them
-}
-
-/// A local fog volume (MSL FogVolume): a soft-edged box or sphere of denser fog.
-struct GPUFogVolume {
-    var centerShape = SIMD4<Float>()     // xyz = centre, w = shape (0 = box, 1 = sphere)
-    var extentDensity = SIMD4<Float>()   // xyz = half extents (sphere: x = radius), w = extinction at the bottom (1/m)
-    var albedoEdge = SIMD4<Float>()      // rgb = single-scattering albedo, w = edge softness (m)
-    var params = SIMD4<Float>()          // x = noise amount, y = height falloff inside (1/m, from the bottom)
-}
-
-/// Volumetric fog parameters (MSL FogParams), passed with setBytes to the fog kernels, the composite and reflections.
-struct GPUFogParams {
-    static let maxVolumes = 8
-    var medium = SIMD4<Float>()          // x = height-fog extinction at the base (1/m), y = height falloff (1/m),
-                                         // z = base height (constant below), w = anisotropy g (Henyey-Greenstein)
-    var albedo = SIMD4<Float>()          // rgb = height fog's albedo, w = ambient: sky colour x w lights the fog evenly
-    var noise = SIMD4<Float>()           // x = height fog's noise amount, y = noise tile size (m), z = time (s), w = this frame's weight in the froxel history
-    var wind = SIMD4<Float>()            // xyz = wind (m/s): the noise drifts with it; w = haze (FogSettings.haze)
-    var grid = SIMD4<Float>()            // x = near, y = far (view depth), z = log(far / near), w = depth slices
-    var counts = SIMD4<UInt32>()         // x, y = froxel columns and rows, z = volume count, w = FogParams flags
-    var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Uniforms.interiorLo / Hi): the sky's
-    var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // ambient light in the fog is occluded in it
-    var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
-                   GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume())
-
-    static let historyValid: UInt32 = 1  // last frame's froxel grid matches: reproject it
-    static let reflections: UInt32 = 2   // reflection rays are fogged too
-    static let enabled: UInt32 = 4       // fog is on (reflections test it)
-    static let skyLight: UInt32 = 8      // only the suns' light scatters in it (and the sky's): FogSettings.lights off
-
-    /// reflectionKernel's own flag (MSL REFLECT_FOG), for the variant with it compiled in.
-    static let reflectionsFogged: UInt32 = 1
-    var reflectionPassFlags: UInt32 {
-        counts.w & (GPUFogParams.enabled | GPUFogParams.reflections) == GPUFogParams.enabled | GPUFogParams.reflections
-            ? GPUFogParams.reflectionsFogged : 0
-    }
-
-    mutating func setVolume(_ i: Int, _ v: GPUFogVolume) {
-        withUnsafeMutableBytes(of: &volumes) { raw in
-            raw.storeBytes(of: v, toByteOffset: i * MemoryLayout<GPUFogVolume>.stride, as: GPUFogVolume.self)
-        }
-    }
 }
 
 // MARK: - Physics (Physics.swift, Shaders/Physics.metal)
@@ -398,7 +173,7 @@ struct GPUPhysicsContact {
 }
 
 /// A body held by the mouse (PhysicsWorld.grab): its point `anchor` pulled towards `target`. MSL PhysicsGrab.
-struct GPUPhysicsGrab {
+package struct GPUPhysicsGrab {
     var target = SIMD4<Float>()              // world; w = 1 while held, 0 when nothing is
     var anchor = SIMD4<Float>()              // the body's space (its centre of mass's); w = 0
     var body: UInt32 = 0
@@ -450,7 +225,7 @@ struct GPUFractureWeld {
 
 /// A fractured body's step: what hit it, and what the step's end makes of it. MSL PhysicsFractureState.
 /// Solid shading's look (RenderSettings.solidLook): MSL SolidParams (Shaders/Output.metal).
-struct GPUSolidParams {
+package struct GPUSolidParams {
     var sun: SIMD4<Float>     // xyz: toward the sun when the scene has none; w: shadows (1 / 0)
     var look: SIMD4<Float>    // x: each object's tint, y: broken faces (1 / 0), z: AO's reach (m), w: AO rays (0: none)
     var edges: SIMD4<Float>   // x: outlines (1 / 0), y: their width (pixels), z: material colours (1 / 0)
@@ -475,7 +250,7 @@ package struct GPUFractureCommand {
     var origin = SIMD4<Float>()              // world; w = a blast's radius
     var direction = SIMD4<Float>()           // a shot's way (unit); w = its speed (m/s), or a blast's speed at its middle
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(info: SIMD4<UInt32> = SIMD4<UInt32>(), origin: SIMD4<Float> = SIMD4<Float>(), direction: SIMD4<Float> = SIMD4<Float>()) {
         self.info = info
         self.origin = origin
@@ -484,7 +259,7 @@ package struct GPUFractureCommand {
 }
 
 /// Where a piece broke, for the dust (PhysicsGPU.breakRing): MSL PhysicsBreakEvent.
-struct GPUBreakEvent {
+package struct GPUBreakEvent {
     var position = SIMD4<Float>()            // its centre of mass; w = its radius
     var velocity = SIMD4<Float>()            // w = its material (FractureMaterial)
 }
@@ -726,7 +501,7 @@ struct GPUParticleRender {
 }
 
 /// An emitter as the kernels read it (Particles.swift): MSL ParticleEmitter. Written once.
-struct GPUParticleEmitter {
+package struct GPUParticleEmitter {
     var origin = SIMD4<Float>()              // w = the shape's radius
     var axis = SIMD4<Float>()                // the shape's and the velocity's axis (unit); w = the velocity's spread
                                              // about it (half angle, rad)
@@ -763,28 +538,28 @@ struct GPUParticleEmitter {
 }
 
 /// An emitter's program as the VFX library's kernels read it (VFXProgram; MSL VFXEmitterInfo).
-struct GPUVFXEmitter {
+package struct GPUVFXEmitter {
     var ids = SIMD4<UInt32>()                // x = program (0: none), y = its parameters' first float4, z = hooks
                                              // (VFXProgram.Hooks), w = its rate curve's first float4
     var attributes = SIMD4<UInt32>()         // x = the attributes a slot keeps (the system's)
 }
 
 /// A vector field as the kernels read it (ParticleField): MSL ParticleFieldInfo.
-struct GPUParticleField {
+package struct GPUParticleField {
     var lo = SIMD4<Float>()                  // the box's corner; w = 1: periodic
     var size = SIMD4<Float>()                // its size (a periodic one's period)
     var dims = SIMD4<UInt32>()               // nodes along x, y, z; w = where its nodes start
 }
 
 /// An analytic shape particles bounce off (Particles.swift): MSL ParticleCollider.
-struct GPUParticleCollider {
+package struct GPUParticleCollider {
     var a = SIMD4<Float>()                   // plane: normal, w = offset (n.x = w on it); sphere: centre, w = radius;
                                              // box: centre
     var b = SIMD4<Float>()                   // box: half extents; w = kind (ParticleCollider.code)
 }
 
 /// One step of the particles (ParticlesGPU.encodeSteps): MSL ParticleStep, set as bytes.
-struct GPUParticleStep {
+package struct GPUParticleStep {
     var wind = SIMD4<Float>()                // the air's velocity (m/s); w = the curl noise's clock (s)
     var time: Float = 0                      // the step's start (s)
     var dt: Float = 0
@@ -804,7 +579,7 @@ struct GPUParticleStep {
 /// Catches accidental layout drift between Swift and MSL at startup.
 /// One body of water's look (MSL WaterLook, WaterLook.gpu): a table of them, which the water map and the water's
 /// surfaces' triangles name.
-struct GPUWaterLook {
+package struct GPUWaterLook {
     var absorption: SIMD4<Float>   // rgb = per metre, w = index of refraction
     var scattering: SIMD4<Float>   // rgb = per metre, w = phase g
     var waves: SIMD4<Float>        // x = share of the wind's sea, y = chop, z = ripples, w = roughness

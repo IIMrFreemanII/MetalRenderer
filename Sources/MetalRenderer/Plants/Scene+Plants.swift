@@ -1,24 +1,25 @@
+import EngineCore
 import Foundation
 import QuartzCore
 import simd
 
 /// What one plant costs, for the plant editor: its triangles as stored (its own meshes and its species' boughs) and as
 /// traced (baked flat), its leaves', parts and boughs, and how long the workshop took to grow and place it.
-struct PlantStats: Equatable {
-    var species = ""
-    var triangles = 0
-    var traced = 0
-    var leafTriangles = 0
-    var parts = 0
-    var boughs = 0
-    var height: Float = 0
-    var buildMs = 0.0
+package struct PlantStats: Equatable {
+    package var species = ""
+    package var triangles = 0
+    package var traced = 0
+    package var leafTriangles = 0
+    package var parts = 0
+    package var boughs = 0
+    package var height: Float = 0
+    package var buildMs = 0.0
 }
 
 extension Camera {
     /// Looking at `box` from `yaw`, `pitch`, far enough for all of it to be in view (`aspect`: the frame's width over
     /// its height). Also the point it looks at and how far it is.
-    static func framing(_ box: AABB, fovY: Float, aspect: Float = 1.6, yaw: Float = 0, pitch: Float = -0.15)
+    package static func framing(_ box: AABB, fovY: Float, aspect: Float = 1.6, yaw: Float = 0, pitch: Float = -0.15)
         -> (camera: Camera, target: SIMD3<Float>, distance: Float) {
         let target = box.centroid, half = simd_max((box.hi - box.lo) / 2, SIMD3(repeating: 0.2))
         let tanY = tan(fovY / 2), across = max(half.x, half.z)
@@ -37,7 +38,7 @@ extension Scene {
     /// The plant workshop: one species' plants on a lawn under a still sun, as `settings.plants` says. The plant
     /// editor rebuilds it at every edit (its species from `settings.plantCatalog`), so it is small: one species'
     /// library, a ground and a sun.
-    func buildPlantWorkshop() {
+    package func buildPlantWorkshop() {
         let start = CACurrentMediaTime()
         remadeOften = true
         let p = settings.plants
@@ -178,11 +179,11 @@ extension Scene {
     }
 
     /// The skeleton view's colours, by level (level 0 white, then warm to cool), and the boughs' last.
-    static let skeletonColors: [SIMD3<Float>] = [[0.9, 0.9, 0.85], [1, 0.45, 0.1], [1, 0.85, 0.15], [0.35, 0.9, 0.3], [0.2, 0.75, 1],
+    package static let skeletonColors: [SIMD3<Float>] = [[0.9, 0.9, 0.85], [1, 0.45, 0.1], [1, 0.85, 0.15], [0.35, 0.9, 0.3], [0.2, 0.75, 1],
                                                  [0.7, 0.4, 1], [0.15, 0.95, 0.85]]
 
     /// The skeleton with thinner stems, so that the branching shows: under half their radius, never under 4 mm.
-    static func thinned(_ s: Foliage.Skeleton) -> Foliage.Skeleton {
+    package static func thinned(_ s: Foliage.Skeleton) -> Foliage.Skeleton {
         var out = s
         for i in out.nodes.indices { out.nodes[i].w = max(out.nodes[i].w * 0.4, 0.004) }
         return out

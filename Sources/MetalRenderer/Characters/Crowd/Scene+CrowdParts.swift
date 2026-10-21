@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -30,7 +31,7 @@ extension Scene {
     /// Mesh `m` is a terrain's sector, its terrain's layer table at `table` in the procedural parameters (TERRAIN).
     /// A borrowed mesh made again before the renderer has it (a terrain sector refined: Scene.refineTerrain), with
     /// its new name and bounds; its size may change.
-    func replaceBorrowed(_ m: Int, with mesh: BorrowedMesh, bounds: AABB, name: String) {
+    package func replaceBorrowed(_ m: Int, with mesh: BorrowedMesh, bounds: AABB, name: String) {
         guard let k = borrowed.firstIndex(where: { $0.mesh == m }) else { return }
         var mesh = mesh
         mesh.mesh = m
@@ -41,18 +42,18 @@ extension Scene {
         meshBounds[m] = (bounds.lo, bounds.hi)
     }
 
-    func setTerrainTable(_ m: Int, _ table: Int) {
+    package func setTerrainTable(_ m: Int, _ table: Int) {
         guard m >= 0 else { return }
         meshes[m].terrain = UInt32(table + 1)
     }
 
-    func setDetailLevel(_ m: Int, _ level: Int) {
+    package func setDetailLevel(_ m: Int, _ level: Int) {
         guard m >= 0 else { return }
         meshes[m].lod = UInt32(level + 1)
     }
 
     /// Mesh `m`'s bounds in its own space: for a pose slot, of every pose it may take.
-    func localBounds(mesh m: Int) -> AABB { AABB(lo: meshBounds[m].0, hi: meshBounds[m].1) }
+    package func localBounds(mesh m: Int) -> AABB { AABB(lo: meshBounds[m].0, hi: meshBounds[m].1) }
 
     /// Marks instance `i` as a member of the crowd (its mesh is a pose slot's).
     package func setSkinned(_ i: Int, travels: Bool) {
@@ -64,7 +65,7 @@ extension Scene {
     /// A mesh whose vertices the GPU rewrites every frame (a cloth's: PhysicsGPU), within `bounds` whatever it does.
     /// Its vertices are its own (`vertexOffset` 0), and `finishDeforming` puts last frame's after everything else.
     /// `materials`: per triangle, its material's offset from the instance's (as `addMesh`'s).
-    func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB,
+    package func addDeformingMesh(_ mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil, materials: [UInt8]? = nil, bounds: AABB,
                           label: String? = nil) -> Int {
         let m = addMesh(mesh, uvs: uvs, materials: materials, label: label)
         meshBounds[m] = (bounds.lo, bounds.hi)
@@ -73,17 +74,17 @@ extension Scene {
     }
 
     /// Instance `i` on `mesh`, its mesh's displaced copy (Scene+Displacement.swift).
-    func setDisplacedMesh(_ i: Int, _ mesh: Int) {
+    package func setDisplacedMesh(_ i: Int, _ mesh: Int) {
         instances[i].mesh = mesh
     }
 
     /// Instance `i` given its painted materials (Scene+Painted.swift).
-    func setPaintedMaterial(_ i: Int, _ material: Int) {
+    package func setPaintedMaterial(_ i: Int, _ material: Int) {
         instances[i].material = material
     }
 
     /// Mesh `m`'s bounds grown by `d` every way (where its displaced vertices may go).
-    func growBounds(mesh m: Int, by d: Float) {
+    package func growBounds(mesh m: Int, by d: Float) {
         meshBounds[m] = (meshBounds[m].0 - SIMD3(repeating: d), meshBounds[m].1 + SIMD3(repeating: d))
     }
 
@@ -96,12 +97,12 @@ extension Scene {
     }
 
     /// A curve mesh's segments and its control points' radii (`curveRadii`).
-    struct CurveMesh {
+    package struct CurveMesh {
         var segments: Int
         var radii: Range<Int>
     }
-    var hasCurves: Bool { !curveMeshes.isEmpty }
-    func hasCurveMesh(_ m: Int) -> Bool { curveMeshes[m] != nil }
+    package var hasCurves: Bool { !curveMeshes.isEmpty }
+    package func hasCurveMesh(_ m: Int) -> Bool { curveMeshes[m] != nil }
 
     /// Strands as curves: `points` control points, `perStrand` of them a strand (a Catmull-Rom curve passes through
     /// all but its first and last), each with its radius (`radii`). The GPU rewrites them every frame (hair:
@@ -128,7 +129,7 @@ extension Scene {
     }
 
     /// The hair's groups: where their meshes' control points are, and last frame's.
-    func finishHair() {
+    package func finishHair() {
         guard let physics else { return }
         for (g, m) in hairMeshes {
             physics.hairGroups[g].mesh.x = meshes[m].vertexOffset
@@ -138,7 +139,7 @@ extension Scene {
 
     /// Once every mesh is in (after the crowd's): the deforming meshes' last-frame vertices, after everything, as the
     /// first frame's (the same as the current ones).
-    func finishDeforming() {
+    package func finishDeforming() {
         for d in deforming {
             let previous = positions.count
             positions += positions[d.first..<(d.first + d.count)]
@@ -147,12 +148,12 @@ extension Scene {
     }
 
     /// Some mesh deforms (DEFORMING_MESHES): the crowd's pose slots, cloths.
-    var hasDeformingMeshes: Bool { crowd?.slots.isEmpty == false || !deforming.isEmpty }
+    package var hasDeformingMeshes: Bool { crowd?.slots.isEmpty == false || !deforming.isEmpty }
 
     /// Once every mesh is in: the pose slots' vertices go after them (each slot's current positions and normals,
     /// then every slot's previous positions), skinned on the CPU to the pose at time 0. The GPU rewrites them every
     /// frame from then on; these are what the acceleration structures are first built from.
-    func finishCrowd() {
+    package func finishCrowd() {
         guard let crowd, !crowd.slots.isEmpty else { return }
         var next = positions.count
         for p in crowd.parts.indices {
@@ -188,7 +189,7 @@ extension Scene {
     }
 
     /// How far ground cover leans at full wind, per unit of its height (WIND_COVER_LEAN in Shaders/Foliage.metal).
-    static let coverLean: Float = 0.2
+    package static let coverLean: Float = 0.2
 
     /// A generated mesh (Foliage, Terrain): its arrays appended whole, its bounds as it counted them. `sways`: ground
     /// cover standing along +y, which leans in the wind (every instance of it: its transform, PlantTracing).
@@ -210,7 +211,7 @@ extension Scene {
         return meshes.count - 1
     }
 
-    func addCutout(alpha: [UInt8], coverage: Float) -> Int {
+    package func addCutout(alpha: [UInt8], coverage: Float) -> Int {
         precondition(alpha.count == FoliageTextures.cardSheetSize * FoliageTextures.cardSheetSize && cutouts.count < 15,
                      "Scene.addCutout: a layer is a card sheet's alpha, and a triangle names one of 15")
         cutouts.append((alpha, coverage))
@@ -222,13 +223,13 @@ extension Scene {
         return assemblies.count - 1
     }
 
-    func addVoxelPlant(_ plant: FoliageVoxels.Plant) -> Int {
+    package func addVoxelPlant(_ plant: FoliageVoxels.Plant) -> Int {
         voxelPlants.append(plant)
         return voxelPlants.count - 1
     }
 
     /// Mesh `mesh` is voxel plant `plant`'s wood, or its leaves (VoxelLOD).
-    func setMeshVoxels(_ mesh: Int, plant: Int, leaves: Bool) {
+    package func setMeshVoxels(_ mesh: Int, plant: Int, leaves: Bool) {
         guard mesh >= 0 else { return }
         meshVoxels[mesh] = UInt32(plant) | (leaves ? Scene.meshVoxelsLeaves : 0)
     }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import simd
 
@@ -11,7 +12,7 @@ package enum CityStyle: Int, CaseIterable, Codable {
     case office             // glass towers on podiums, with setbacks
     case modern             // concrete and panel mid-rise blocks with ribbon windows
 
-    var title: String {
+    package var title: String {
         switch self {
         case .mixed: return "Mixed districts"
         case .oldtown: return "Old town"
@@ -50,7 +51,7 @@ package struct CitySettings: Equatable, Codable {
     static let litRange: ClosedRange<Float> = 0...1
     static let roomRange: ClosedRange<Float> = 0...0.5
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(blocks: Int = 4, style: CityStyle = CityStyle.mixed, lit: Float = 0.35, rooms: Float = 0.15, textures: Bool = true, modules: Bool = false, interiors: Bool = true, interiorReach: Float = 30, canal: Bool = true) {
         self.blocks = blocks
         self.style = style
@@ -102,7 +103,7 @@ package struct FracturePreview: Equatable, Codable {
     package var level = 1
     package var explode: Float = 0.4
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(object: String, level: Int = 1, explode: Float = 0.4) {
         self.object = object
         self.level = level
@@ -280,10 +281,10 @@ package struct SceneSettings: Equatable, Codable {
     package var city = CitySettings()
     /// The showcase: which model of `Scene.galleryFiles()`, as a part of its file name (any case); "" = the first.
     package var showcase = ""
-    var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
+    package var extraModels: [ExtraModel] = []   // added with File > Open or drag and drop (cleared when the scene changes)
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
-    var emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0"
+    package var emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0"
     /// Benchmarks only (METALRENDERER_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
     package var lightCheck: String? = nil
 
@@ -300,7 +301,7 @@ package struct SceneSettings: Equatable, Codable {
     package var worldAnchor: SIMD2<Int>? = nil
     /// ...and whether its cities' lights are the scene's lights: the renderer's to set too, with the time of day
     /// (`World.lightsReady`). By day nothing samples them, and they are off.
-    var worldLit = false
+    package var worldLit = false
     /// Plants baked into meshes of their own instead of assemblies: no wind or leaf fall, and eight times the
     /// triangles (METALRENDERER_BENCH=forestcheck compares the two).
     package var bakedPlants = false
@@ -347,14 +348,14 @@ package struct SceneSettings: Equatable, Codable {
     package var terrainWorkshop = TerrainWorkshopSettings()
     /// Changed by the Terrain Editor when an edit of a terrain's document needs the scene made again (a layer's Material
     /// Designer graph, its water): any new value does. Session state.
-    var terrainKey = ""
+    package var terrainKey = ""
     /// Which scene objects the Material Painter paints (PaintAssignments): "" the saved ones
     /// (Assets/Painter/assignments.json), otherwise a key of the registry the painter fills. A change makes the scene
     /// again. Session state.
-    var paintAssignments = ""
+    package var paintAssignments = ""
     /// What the Project Graph hid and duplicated (SceneOverrides): "" the saved ones (Assets/Scenes/Overrides), otherwise
     /// a key of the registry the graph fills. A change makes the scene again. Session state.
-    var sceneOverrides = ""
+    package var sceneOverrides = ""
     /// The building workshop: what it shows.
     package var buildings = BuildingSceneSettings()
     /// The building styles and single buildings scenes are built with: a key of BuildingCatalog's registry, which the
@@ -370,22 +371,22 @@ package struct SceneSettings: Equatable, Codable {
     package var interior: String? = nil
 
     package static let objectRange = 0...2000
-    static let treeRange = 0...20000
-    static let undergrowthRange = 0...200
-    static let seedRange = 0...999
-    static let lightRange = 1...16384
+    package static let treeRange = 0...20000
+    package static let undergrowthRange = 0...200
+    package static let seedRange = 0...999
+    package static let lightRange = 1...16384
     package static let characterRange = 1...131_072
     package static let poseRange = 1...512
     package static let detailRange = 0...CharacterLibrary.coarserLevels
 
     /// A scene with a light count of its own (the night market's 4096 bulbs) starts with it, unless the count was
     /// changed from the default.
-    mutating func startLights() {
+    package mutating func startLights() {
         if let n = kind.definition.lights, lights == SceneSettings().lights { lights = n }
     }
 
     /// The settings whose values differ from `other`'s, by name ("effects", "city.style"): why a scene is made again.
-    func changes(from other: SceneSettings) -> [String] {
+    package func changes(from other: SceneSettings) -> [String] {
         func object(_ s: SceneSettings) -> [String: Any] {
             let encoder = JSONEncoder()
             encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
@@ -404,7 +405,7 @@ package struct SceneSettings: Equatable, Codable {
 
     /// The plant workshop both, showing the same species the same way (only the species' definitions and which of its
     /// plants differ): what an edit changes.
-    func isSameWorkshop(as other: SceneSettings) -> Bool {
+    package func isSameWorkshop(as other: SceneSettings) -> Bool {
         if kind == .characters && other.kind == .characters {
             let a = characterWorkshop, b = other.characterWorkshop
             return a.layout == b.layout && a.pose == b.pose && a.clip == b.clip && a.view == b.view
@@ -420,14 +421,14 @@ package struct SceneSettings: Equatable, Codable {
 
     /// The same city, with another building's interior in it (or none): the same streets and buildings, where they
     /// were (Renderer: what the frames have gathered holds).
-    func isSameCity(as other: SceneSettings) -> Bool {
+    package func isSameCity(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.interior, b.interior) = (nil, nil)
         return (kind.isCity || kind.isWorld) && a == b && interior != other.interior
     }
 
     /// The same open world, whatever tile the scene is made around, wherever its origin is and whatever the time of day.
-    func isSameWorld(as other: SceneSettings) -> Bool {
+    package func isSameWorld(as other: SceneSettings) -> Bool {
         var a = self, b = other
         (a.worldTile, b.worldTile, a.worldAnchor, b.worldAnchor) = (nil, nil, nil, nil)
         (a.worldLit, b.worldLit) = (false, false)
@@ -435,7 +436,7 @@ package struct SceneSettings: Equatable, Codable {
         return kind.isWorld && a == b
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(kind: SceneKind = SceneKind.cornell, objects: Int = 400, lights: Int = 32, characters: Int = 2048, poses: Int = 64, detail: Int = 3, crowdBodies: CrowdBodies = CrowdBodies.library, city: CitySettings = CitySettings(), showcase: String = "", extraModels: [ExtraModel] = [], emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0", lightCheck: String? = nil, trees: Int = 2500, undergrowth: Int = 100, seed: Int = 1, worldTile: SIMD2<Int>? = nil, worldAnchor: SIMD2<Int>? = nil, worldLit: Bool = false, bakedPlants: Bool = false, leafCards: Bool = false, realism: Realism = Realism.on, voxelBoxes: Bool = false, physics: PhysicsSettings = PhysicsSettings(), destruction: DestructionSettings = DestructionSettings(), demolition: DemolitionSettings = DemolitionSettings(), particles: ParticleSettings = ParticleSettings(), plants: PlantSceneSettings = PlantSceneSettings(), plantCatalog: String = "", effects: String = "", stage: VFXStageSettings = VFXStageSettings(), materialWorkshop: MaterialWorkshopSettings = MaterialWorkshopSettings(), materials: String = "", materialAssignments: String = "", painterWorkshop: PainterWorkshopSettings = PainterWorkshopSettings(), terrainWorkshop: TerrainWorkshopSettings = TerrainWorkshopSettings(), terrainKey: String = "", paintAssignments: String = "", sceneOverrides: String = "", buildings: BuildingSceneSettings = BuildingSceneSettings(), buildingCatalog: String = "", characterWorkshop: CharacterSceneSettings = CharacterSceneSettings(), characterCatalog: String = "", interior: String? = nil) {
         self.kind = kind
         self.objects = objects
@@ -499,11 +500,11 @@ package struct MaterialWorkshopSettings: Equatable, Codable {
     package enum Layout: String, Codable, CaseIterable {
         /// (`card`: a standing card and a tile on the ground, for a cut-out material: a plant, a decal.)
         case lineup, sphere, cube, cylinder, plane, card
-        var title: String { self == .lineup ? "Line-up" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { self == .lineup ? "Line-up" : rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
     package enum Backdrop: String, Codable, CaseIterable {
         case studio, outdoor, dark
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 }
 
@@ -514,11 +515,11 @@ package struct PainterWorkshopSettings: Equatable, Codable {
     /// `.model`: the glTF file (a path, or a name under Assets).
     package var model = ""
     package var document = "Workshop"
-    var backdrop = MaterialWorkshopSettings.Backdrop.studio
+    package var backdrop = MaterialWorkshopSettings.Backdrop.studio
 
     package enum Subject: String, Codable, CaseIterable {
         case sphere, cube, cylinder, plane, character, model
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 }
 
@@ -527,7 +528,7 @@ package enum VFXBackdrop: String, Codable, CaseIterable {
     /// A dark room, a key light and a cool one over it; a grey cyclorama (a floor curving up into a wall), softly lit;
     /// nothing at all, black; a plain under the sun and a blue sky; the plain at night, under the moon.
     case dark, grey, black, outdoor, night
-    var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+    package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
 /// The building workshop (Scene+Buildings.swift): which building it shows, and how.
@@ -545,18 +546,18 @@ package struct BuildingSceneSettings: Equatable, Codable {
     package var cut = 1
     package var night = false
     /// A single building of a city to show instead (the editor's Pin), nil: the workshop's own.
-    var pinned: LotRef? = nil
+    package var pinned: LotRef? = nil
     /// Registry keys (BuildingCatalog.register), session state: the editor's variations of the style to show beside it
     /// (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
     package var mutants = ""
-    var compare = ""
+    package var compare = ""
 
     package enum Sides: Int, CaseIterable, Codable {
         case row            // between neighbours, a yard behind
         case backToBack     // between neighbours, a neighbour behind too
         case corner         // a street in front and on its right
         case free           // streets and open ground all round
-        var edges: [CityPlan.Edge] {
+        package var edges: [CityPlan.Edge] {
             switch self {
             case .row: return [.street, .party, .open, .party]
             case .backToBack: return [.street, .party, .party, .party]
@@ -564,26 +565,26 @@ package struct BuildingSceneSettings: Equatable, Codable {
             case .free: return [.street, .open, .open, .street]
             }
         }
-        var title: String { ["In a row", "Back to back", "On a corner", "Free-standing"][rawValue] }
+        package var title: String { ["In a row", "Back to back", "On a corner", "Free-standing"][rawValue] }
     }
     package enum Layout: Int, CaseIterable, Codable {
         case single         // the building on its lot
         case street         // between two neighbours of its style
         case mutate         // it and the editor's variations of it, along a street
-        var title: String { ["One building", "In its street", "Variations"][rawValue] }
+        package var title: String { ["One building", "In its street", "Variations"][rawValue] }
     }
     package enum View: Int, CaseIterable, Codable {
         case full
         case cutaway        // no roof and nothing above storey `cut`
         case dollhouse      // ...and no front wall up to it either
-        var title: String { ["Whole", "Cutaway", "Dollhouse"][rawValue] }
+        package var title: String { ["Whole", "Cutaway", "Dollhouse"][rawValue] }
     }
 
-    static let floorRange = 1...40
-    static let widthRange: ClosedRange<Float> = 6...48
-    static let depthRange: ClosedRange<Float> = 8...48
+    package static let floorRange = 1...40
+    package static let widthRange: ClosedRange<Float> = 6...48
+    package static let depthRange: ClosedRange<Float> = 8...48
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(style: String = "residential", lot: SIMD2<Float> = SIMD2<Float>(20, 14), sides: Sides = Sides.row, floors: Int = 5, seed: Int = 1, layout: Layout = Layout.single, view: View = View.full, cut: Int = 1, night: Bool = false, pinned: LotRef? = nil, mutants: String = "", compare: String = "") {
         self.style = style
         self.lot = lot
@@ -618,34 +619,34 @@ package struct CharacterSceneSettings: Equatable, Codable {
     package var view = View.body
     /// What the faces do (blinks always), and whether their eyes follow the camera.
     package var expression = FaceExpression.neutral
-    var lookAt = true
+    package var lookAt = true
     /// How hair is drawn (CharacterHair): strands, the caps crowds have, or none.
     package var hair = HairMode.strands
     /// Registry keys (CharacterCatalog.register), session state: the editor's variations of the character to show
     /// beside it (layout `mutate`), and the definitions to show in its place (comparing with the saved ones). "" = none.
-    var mutants = ""
-    var compare = ""
+    package var mutants = ""
+    package var compare = ""
 
     package enum Layout: Int, CaseIterable, Codable {
         case single         // the character
         case lineup         // every character of the catalog, side by side
         case mutate         // the character and the editor's variations of it, in a row
-        var title: String { ["One character", "Everyone", "Variations"][rawValue] }
+        package var title: String { ["One character", "Everyone", "Variations"][rawValue] }
     }
     package enum Pose: Int, CaseIterable, Codable {
         case tPose, aPose, idle, walk, clip
-        var title: String { ["T pose", "A pose", "Idle", "Walking", "Clip"][rawValue] }
+        package var title: String { ["T pose", "A pose", "Idle", "Walking", "Clip"][rawValue] }
         /// The clip it plays (CharacterKit's names), for every pose but `clip`.
-        var clipName: String? { [Optional("T-Pose"), "A-Pose", "Idle", "Walking", nil][rawValue] }
+        package var clipName: String? { [Optional("T-Pose"), "A-Pose", "Idle", "Walking", nil][rawValue] }
     }
     package enum View: Int, CaseIterable, Codable {
         case body           // the whole character
         case face           // its head, close
-        var title: String { ["Body", "Face"][rawValue] }
+        package var title: String { ["Body", "Face"][rawValue] }
     }
     package enum HairMode: Int, CaseIterable, Codable {
         case strands, caps, none
-        var title: String { ["Strands", "Caps", "None"][rawValue] }
+        package var title: String { ["Strands", "Caps", "None"][rawValue] }
     }
 }
 
@@ -653,36 +654,36 @@ package struct CharacterSceneSettings: Equatable, Codable {
 package struct PlantSceneSettings: Equatable, Codable {
     /// The species' id (PlantCatalog), and the age and seeded variant of the one plant shown.
     package var species = "oak"
-    var age = Foliage.Age.mature
-    var variant = 0
+    package var age = Foliage.Age.mature
+    package var variant = 0
     /// What the variants are grown from: the library's seed (SceneSettings.seed), so the workshop's oak 2 at seed 1 is
     /// the forest's.
-    var seed = 1
+    package var seed = 1
     package var layout = Layout.single
     package var view = View.plant
     /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
     /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
-    var mutants = ""
-    var compare = ""
+    package var mutants = ""
+    package var compare = ""
 
     package enum Layout: Int, CaseIterable, Codable {
         case single         // the one plant
         case lineup         // every age (rows) and variant (columns)
         case mutate         // the plant and the editor's variations of it, in a row
 
-        var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
+        package var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
     }
     package enum View: Int, CaseIterable, Codable {
         case plant
         case skeleton       // the stems as thin lines, a colour to a level; no leaves
 
-        var title: String { ["Plant", "Skeleton"][rawValue] }
+        package var title: String { ["Plant", "Skeleton"][rawValue] }
     }
 
-    static let variantRange = 0...7
+    package static let variantRange = 0...7
 }
 
 extension SceneKind {
     /// The camera turns about what the scene shows (the plant workshop's plants, the VFX stage's effects; F frames them).
-    var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials || self == .painter }
+    package var orbits: Bool { isWorkshop || self == .vfxStage || self == .materials || self == .painter }
 }

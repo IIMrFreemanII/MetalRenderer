@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,7 +7,7 @@ import simd
 /// workshop's document whatever the assignments say (Scene.paintSubject), against the material workshop's backdrops.
 /// The camera turns about it (`focus`, SceneKind.orbits).
 extension Scene {
-    func buildPainterWorkshop() {
+    package func buildPainterWorkshop() {
         let kit = Kit(self)
         let w = settings.painterWorkshop
         object("Backdrop") { materialBackdrop(w.backdrop, kit) }
@@ -57,7 +58,7 @@ extension Scene {
     }
 
     /// A model's file: a path, or a name (or part of one) among the assets' models.
-    static func painterModel(_ name: String) -> URL? {
+    package static func painterModel(_ name: String) -> URL? {
         if name.isEmpty { return galleryFiles().first }
         if FileManager.default.fileExists(atPath: name) { return URL(fileURLWithPath: name) }
         return galleryFiles().first { $0.lastPathComponent.lowercased().contains(name.lowercased()) }

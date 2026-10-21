@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -14,95 +15,95 @@ import simd
 ///     ])
 extension VFXBlock {
     // Spawn
-    static func rate(_ rate: Float, start: Float = 0, stop: Float = .greatestFiniteMagnitude, overTime: VFXCurve? = nil,
+    package static func rate(_ rate: Float, start: Float = 0, stop: Float = .greatestFiniteMagnitude, overTime: VFXCurve? = nil,
                      span: Float = 1, id: String = "") -> VFXBlock {
         var p: [String: VFXParam] = ["rate": .float(rate), "start": .float(start), "stop": .float(stop), "span": .float(span)]
         if let overTime { p["overTime"] = .curve(overTime) }
         return VFXBlock(.rate, p, id: id)
     }
-    static func burst(at time: Float, count: Int, every period: Float = 0, repeats: Int = 0, id: String = "") -> VFXBlock {
+    package static func burst(at time: Float, count: Int, every period: Float = 0, repeats: Int = 0, id: String = "") -> VFXBlock {
         VFXBlock(.burst, ["time": .float(time), "count": .int(count), "period": .float(period), "repeats": .int(repeats)], id: id)
     }
     /// A child: born where `parent`'s particles die ("death"), collide ("collision") or meet a Trigger ("condition").
-    static func event(_ parent: String, on: String = "death", count: Int = 1, id: String = "") -> VFXBlock {
+    package static func event(_ parent: String, on: String = "death", count: Int = 1, id: String = "") -> VFXBlock {
         VFXBlock(.event, ["parent": .choice(parent), "on": .choice(on), "count": .int(count)], id: id)
     }
 
     // Initialize
-    static func shape(_ shape: String = "point", at position: SIMD3<Float> = .zero, axis: SIMD3<Float> = [0, 1, 0],
+    package static func shape(_ shape: String = "point", at position: SIMD3<Float> = .zero, axis: SIMD3<Float> = [0, 1, 0],
                       radius: Float = 0.1, halfExtents: SIMD3<Float> = [0.5, 0.5, 0.5], id: String = "") -> VFXBlock {
         VFXBlock(.shape, ["shape": .choice(shape), "position": .vec3(position), "direction": .vec3(axis), "radius": .float(radius),
                           "halfExtents": .vec3(halfExtents)], id: id)
     }
-    static func velocity(speed: ClosedRange<Float> = 0...0, spread: Float = 0, radial: Bool = false, add: SIMD3<Float> = .zero,
+    package static func velocity(speed: ClosedRange<Float> = 0...0, spread: Float = 0, radial: Bool = false, add: SIMD3<Float> = .zero,
                          inherit: Float = 0, id: String = "") -> VFXBlock {
         VFXBlock(.velocity, ["speed": .range(speed.lowerBound, speed.upperBound), "spread": .float(spread), "radial": .bool(radial),
                              "add": .vec3(add), "inherit": .float(inherit)], id: id)
     }
     /// `max`: the longest a wired lifetime may be.
-    static func lifetime(_ lifetime: ClosedRange<Float>, max: Float = 1, id: String = "") -> VFXBlock {
+    package static func lifetime(_ lifetime: ClosedRange<Float>, max: Float = 1, id: String = "") -> VFXBlock {
         VFXBlock(.lifetime, ["lifetime": .range(lifetime.lowerBound, lifetime.upperBound), "max": .float(max)], id: id)
     }
-    static func setPosition(_ value: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.setPosition, ["value": .vec3(value)], id: id) }
-    static func setVelocity(_ value: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.setVelocity, ["value": .vec3(value)], id: id) }
-    static func setAttribute(_ attribute: String, _ value: SIMD4<Float> = .zero, id: String = "") -> VFXBlock {
+    package static func setPosition(_ value: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.setPosition, ["value": .vec3(value)], id: id) }
+    package static func setVelocity(_ value: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.setVelocity, ["value": .vec3(value)], id: id) }
+    package static func setAttribute(_ attribute: String, _ value: SIMD4<Float> = .zero, id: String = "") -> VFXBlock {
         VFXBlock(.setAttribute, ["attribute": .choice(attribute), "value": .color(value)], id: id)
     }
 
     // Update
-    static func gravity(_ share: Float = 1, id: String = "") -> VFXBlock { VFXBlock(.gravity, ["share": .float(share)], id: id) }
-    static func drag(_ drag: Float, wind: Float = 0, id: String = "") -> VFXBlock {
+    package static func gravity(_ share: Float = 1, id: String = "") -> VFXBlock { VFXBlock(.gravity, ["share": .float(share)], id: id) }
+    package static func drag(_ drag: Float, wind: Float = 0, id: String = "") -> VFXBlock {
         VFXBlock(.drag, ["drag": .float(drag), "wind": .float(wind)], id: id)
     }
-    static func curl(_ strength: Float, frequency: Float = 1, speed: Float = 0, baked: Bool = false, id: String = "") -> VFXBlock {
+    package static func curl(_ strength: Float, frequency: Float = 1, speed: Float = 0, baked: Bool = false, id: String = "") -> VFXBlock {
         VFXBlock(.curl, ["strength": .float(strength), "frequency": .float(frequency), "speed": .float(speed), "baked": .bool(baked)], id: id)
     }
-    static func field(_ name: String, strength: Float = 1, follow: Bool = false, id: String = "") -> VFXBlock {
+    package static func field(_ name: String, strength: Float = 1, follow: Bool = false, id: String = "") -> VFXBlock {
         VFXBlock(.field, ["field": .choice(name), "strength": .float(strength), "follow": .bool(follow)], id: id)
     }
     /// `center`: nil, the emitter's position.
-    static func vortex(swirl: Float = 0, attraction: Float = 0, center: SIMD3<Float>? = nil, id: String = "") -> VFXBlock {
+    package static func vortex(swirl: Float = 0, attraction: Float = 0, center: SIMD3<Float>? = nil, id: String = "") -> VFXBlock {
         VFXBlock(.vortex, ["swirl": .float(swirl), "attraction": .float(attraction), "atEmitter": .bool(center == nil),
                            "center": .vec3(center ?? .zero)], id: id)
     }
-    static func force(_ force: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.force, ["force": .vec3(force)], id: id) }
-    static func collide(_ colliders: [String] = [], scene: Bool = false, restitution: Float = 0.3, friction: Float = 0.2,
+    package static func force(_ force: SIMD3<Float> = .zero, id: String = "") -> VFXBlock { VFXBlock(.force, ["force": .vec3(force)], id: id) }
+    package static func collide(_ colliders: [String] = [], scene: Bool = false, restitution: Float = 0.3, friction: Float = 0.2,
                         radius: Float = 0, kill: Bool = false, id: String = "") -> VFXBlock {
         VFXBlock(.collide, ["colliders": .names(colliders), "scene": .bool(scene), "restitution": .float(restitution),
                             "friction": .float(friction), "radius": .float(radius), "kill": .bool(kill)], id: id)
     }
-    static func kill(_ when: Bool = false, id: String = "") -> VFXBlock { VFXBlock(.kill, ["when": .bool(when)], id: id) }
-    static func trigger(_ when: Bool = false, id: String = "") -> VFXBlock { VFXBlock(.trigger, ["when": .bool(when)], id: id) }
+    package static func kill(_ when: Bool = false, id: String = "") -> VFXBlock { VFXBlock(.kill, ["when": .bool(when)], id: id) }
+    package static func trigger(_ when: Bool = false, id: String = "") -> VFXBlock { VFXBlock(.trigger, ["when": .bool(when)], id: id) }
 
     // Output
-    static func billboard(id: String = "") -> VFXBlock { VFXBlock(.billboard, id: id) }
-    static func mesh(_ mesh: String, material: String, id: String = "") -> VFXBlock {
+    package static func billboard(id: String = "") -> VFXBlock { VFXBlock(.billboard, id: id) }
+    package static func mesh(_ mesh: String, material: String, id: String = "") -> VFXBlock {
         VFXBlock(.mesh, ["mesh": .choice(mesh), "material": .choice(material)], id: id)
     }
-    static func trail(points: Int = 16, every: Int = 2, width: Float = 1, id: String = "") -> VFXBlock {
+    package static func trail(points: Int = 16, every: Int = 2, width: Float = 1, id: String = "") -> VFXBlock {
         VFXBlock(.trail, ["points": .int(points), "every": .int(every), "width": .float(width)], id: id)
     }
-    static func distortion(_ amount: Float, id: String = "") -> VFXBlock { VFXBlock(.distortion, ["amount": .float(amount)], id: id) }
+    package static func distortion(_ amount: Float, id: String = "") -> VFXBlock { VFXBlock(.distortion, ["amount": .float(amount)], id: id) }
     /// From `start` at birth to `end` at death.
-    static func size(_ start: Float, _ end: Float, jitter: Float = 0, id: String = "") -> VFXBlock {
+    package static func size(_ start: Float, _ end: Float, jitter: Float = 0, id: String = "") -> VFXBlock {
         size(curve: VFXCurve(from: start, to: end), jitter: jitter, id: id)
     }
-    static func size(curve: VFXCurve, jitter: Float = 0, id: String = "") -> VFXBlock {
+    package static func size(curve: VFXCurve, jitter: Float = 0, id: String = "") -> VFXBlock {
         VFXBlock(.size, ["size": .curve(curve), "jitter": .float(jitter)], id: id)
     }
-    static func color(_ gradient: VFXGradient, emission: Float = 0, id: String = "") -> VFXBlock {
+    package static func color(_ gradient: VFXGradient, emission: Float = 0, id: String = "") -> VFXBlock {
         VFXBlock(.color, ["color": .gradient(gradient), "emission": .float(emission)], id: id)
     }
-    static func flipbook(_ atlas: ParticleTextures.Kind, frames: Int = 1, fps: Float = 0, random: Bool = false, blend: Bool = true,
+    package static func flipbook(_ atlas: ParticleTextures.Kind, frames: Int = 1, fps: Float = 0, random: Bool = false, blend: Bool = true,
                          id: String = "") -> VFXBlock {
         VFXBlock(.flipbook, ["atlas": .choice(atlas.name), "frames": .int(frames), "fps": .float(fps), "random": .bool(random),
                              "blend": .bool(blend)], id: id)
     }
     /// `mode`: "ray facing", "velocity" (stretched by `stretch`), "axis" or "world" (about or square to `axis`).
-    static func orient(_ mode: String, stretch: Float = 0, axis: SIMD3<Float> = [0, 1, 0], spin: Float = 0, id: String = "") -> VFXBlock {
+    package static func orient(_ mode: String, stretch: Float = 0, axis: SIMD3<Float> = [0, 1, 0], spin: Float = 0, id: String = "") -> VFXBlock {
         VFXBlock(.orient, ["mode": .choice(mode), "stretch": .float(stretch), "axis": .vec3(axis), "spin": .float(spin)], id: id)
     }
-    static func lighting(soft: Float = 0.1, shadows: Bool = true, shadowDensity: Float = 1, id: String = "") -> VFXBlock {
+    package static func lighting(soft: Float = 0.1, shadows: Bool = true, shadowDensity: Float = 1, id: String = "") -> VFXBlock {
         VFXBlock(.lighting, ["soft": .float(soft), "shadows": .bool(shadows), "shadowDensity": .float(shadowDensity)], id: id)
     }
 }
@@ -112,7 +113,7 @@ extension VFXBlock {
 extension VFXEffect {
     /// The effect as Swift: the calls above, a block's arguments only where they aren't its kind's defaults, its id
     /// where a wire names it; the nodes and the wires after the emitters.
-    var swiftSource: String {
+    package var swiftSource: String {
         var s = "VFXEffect(\(Swift.quote(name)), emitters: [\n"
         let wiredIDs = Set(links.map(\.to))
         for e in emitters {
@@ -166,27 +167,27 @@ extension VFXEffect {
 
     /// How the Swift is written.
     private enum Swift {
-        static func quote(_ s: String) -> String {
+        package static func quote(_ s: String) -> String {
             "\"" + s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"") + "\""
         }
         /// The shortest decimal that is the same float.
-        static func number(_ f: Float) -> String {
+        package static func number(_ f: Float) -> String {
             if f == .greatestFiniteMagnitude { return ".greatestFiniteMagnitude" }
             if f == f.rounded() && abs(f) < 1e7 { return String(Int(f)) }
             return "\(f)"
         }
-        static func vector(_ v: SIMD3<Float>) -> String { "[\(number(v.x)), \(number(v.y)), \(number(v.z))]" }
-        static func color(_ c: SIMD4<Float>) -> String { "[\(number(c.x)), \(number(c.y)), \(number(c.z)), \(number(c.w))]" }
-        static func curve(_ c: VFXCurve) -> String {
+        package static func vector(_ v: SIMD3<Float>) -> String { "[\(number(v.x)), \(number(v.y)), \(number(v.z))]" }
+        package static func color(_ c: SIMD4<Float>) -> String { "[\(number(c.x)), \(number(c.y)), \(number(c.z)), \(number(c.w))]" }
+        package static func curve(_ c: VFXCurve) -> String {
             "VFXCurve([" + c.keys.map { "[\(number($0.x)), \(number($0.y))]" }.joined(separator: ", ") + "]" + (c.smooth ? ", smooth: true" : "") + ")"
         }
-        static func gradient(_ g: VFXGradient) -> String {
+        package static func gradient(_ g: VFXGradient) -> String {
             if let (c0, c1, c2, m) = g.threeKeys {
                 return "VFXGradient(\(color(c0)), \(color(c1)), \(color(c2))" + (m == 0.5 ? "" : ", midpoint: \(number(m))") + ")"
             }
             return "VFXGradient([" + g.keys.map { ".init(\(number($0.t)), \(color($0.color)))" }.joined(separator: ", ") + "])"
         }
-        static func literal(_ p: VFXParam) -> String {
+        package static func literal(_ p: VFXParam) -> String {
             switch p {
             case .float(let f): return ".float(\(number(f)))"
             case .vec3(let v): return ".vec3(\(vector(v)))"
@@ -202,7 +203,7 @@ extension VFXEffect {
         }
 
         /// A block as its builder's call, with only the arguments that differ from the defaults.
-        static func call(_ b: VFXBlock) -> String {
+        package static func call(_ b: VFXBlock) -> String {
             var args: [String] = []
             func differs(_ name: String) -> Bool { b.param(name) != b.kind.spec.pin(name)!.value }
             func f(_ name: String, _ label: String?) {

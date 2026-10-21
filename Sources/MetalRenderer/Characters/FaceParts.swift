@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -13,10 +14,10 @@ enum FaceParts {
 
     /// A part's mesh in the character's bind space: one material per triangle.
     struct Mesh {
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var indices: [UInt32] = []
-        var materials: [Material] = []
+        package var positions: [SIMD3<Float>] = []
+        package var normals: [SIMD3<Float>] = []
+        package var indices: [UInt32] = []
+        package var materials: [Material] = []
     }
 
     // MARK: Eyes

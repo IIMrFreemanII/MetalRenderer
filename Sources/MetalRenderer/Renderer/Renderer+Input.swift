@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -7,7 +8,7 @@ extension Renderer {
     // MARK: - Input (from RendererController)
 
     /// A key went down: `key` is its character without modifiers, lowercased.
-    func keyDown(_ key: String, isRepeat: Bool) {
+    package func keyDown(_ key: String, isRepeat: Bool) {
         if scene.behaviour?.keyDown(self, key, isRepeat: isRepeat) == true { return }
         if key == "v" && !isRepeat { toggleWalk(); return }
         if let w = walker {
@@ -75,27 +76,27 @@ extension Renderer {
         }
     }
 
-    func keyUp(_ key: String) {
+    package func keyUp(_ key: String) {
         heldKeys.remove(key)
         if key == "c" { crouchHeld = false }
     }
 
     /// Control: crouching, while walking.
-    func setControl(_ held: Bool) { controlHeld = held }
+    package func setControl(_ held: Bool) { controlHeld = held }
 
     /// Shift: faster movement.
-    func setShift(_ held: Bool) { shiftHeld = held }
+    package func setShift(_ held: Bool) { shiftHeld = held }
     /// Option: a drag orbits the pivot (Option-right: dollies); in paint mode it turns the camera instead of painting.
-    func setOption(_ held: Bool) { optionHeld = held }
+    package func setOption(_ held: Bool) { optionHeld = held }
     /// Command: Option-Command-drag pans (a trackpad's middle drag, as in Unity).
-    func setCommand(_ held: Bool) { commandHeld = held }
+    package func setCommand(_ held: Bool) { commandHeld = held }
 
     // The scene view's mouse, as Unity's: a click selects, Option-drag orbits the pivot, Option-Command-drag and a
     // middle drag pan, a drag or a right drag looks around (W A S D Q E fly while it is held), Option-right-drag and the
     // scroll wheel dolly; the arrows look around (Option: orbit). A press on a body grabs it (Physics.swift's `grab`).
     // Walking: a drag looks, a click uses.
 
-    func mouseDown(at cursor: SIMD2<Float>) {
+    package func mouseDown(at cursor: SIMD2<Float>) {
         if scene.behaviour?.mouseDown(self) == true { return }
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
@@ -134,7 +135,7 @@ extension Renderer {
         leftLook = false
     }
 
-    func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+    package func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
         if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
         if placementMouseDragged(at: cursor) { return }
@@ -160,7 +161,7 @@ extension Renderer {
     }
 
     /// Lets go: the body keeps its speed (a flick throws it).
-    func mouseUp() {
+    package func mouseUp() {
         scene.behaviour?.mouseUp(self)
         if paintMouseUp() { return }
         if terrainMouseUp() { return }
@@ -193,7 +194,7 @@ extension Renderer {
 
     /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
     /// paint mode the camera turns about the object.
-    func rightMouseDown(at cursor: SIMD2<Float>) {
+    package func rightMouseDown(at cursor: SIMD2<Float>) {
         if scene.behaviour?.rightMouseDown(self) == true { return }
         if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
         rightHeld = true
@@ -201,29 +202,29 @@ extension Renderer {
         navCursor = cursor
         flight = nil
     }
-    func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+    package func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: 1) { return }
         if walker != nil { walkLook(dx: dx, dy: dy); return }
         navigate(rightDrag ?? .look, dx: dx, dy: dy, at: cursor)
     }
-    func rightMouseUp() {
+    package func rightMouseUp() {
         rightHeld = false
         rightDrag = nil
         _ = paintMouseUp()
     }
 
     /// The middle button: pans.
-    func otherMouseDown(at cursor: SIMD2<Float>) {
+    package func otherMouseDown(at cursor: SIMD2<Float>) {
         navCursor = cursor
         flight = nil
     }
-    func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+    package func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         guard walker == nil, painter.active == nil else { return }
         navigate(.pan, dx: dx, dy: dy, at: cursor)
     }
 
     /// A drag's step (`dx`, `dy`: in points; `cursor`: where it is now, 0...1 across and down).
-    func navigate(_ nav: NavDrag, dx: Float, dy: Float, at cursor: SIMD2<Float>) {
+    package func navigate(_ nav: NavDrag, dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         flight = nil
         switch nav {
         case .orbit:
@@ -242,14 +243,14 @@ extension Renderer {
     }
 
     /// Walking: a drag turns the head.
-    func walkLook(dx: Float, dy: Float) {
+    package func walkLook(dx: Float, dy: Float) {
         camera.yaw += dx * Camera.turnRate
         camera.pitch = min(max(camera.pitch - dy * Camera.turnRate, -1.5), 1.5)
     }
 
     /// The scroll wheel: the held body nearer (down) or farther (up); a button that looks held: the fly speed; otherwise
     /// the camera nearer the pivot or farther.
-    func scrolled(dy: Float) {
+    package func scrolled(dy: Float) {
         if let depth = holding?.depth {
             holding?.depth = max(depth * exp(dy * 0.05), 0.3)
             return
@@ -264,5 +265,5 @@ extension Renderer {
     }
 
     /// What the terrain's colliders write to (Renderer+Terrain.swift).
-    var physicsGPUForTerrain: PhysicsGPU? { physicsGPU }
+    package var physicsGPUForTerrain: PhysicsGPU? { physicsGPU }
 }

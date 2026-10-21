@@ -1,15 +1,16 @@
+import EngineCore
 import Foundation
 import simd
 
 /// What the Project Graph's layouts place: a tree (the shown part of the project graph, ProjectGraph.Visible), each
 /// node's radius, and the links across it (references) that the force layout pulls together too.
-struct LayoutTree {
-    var parent: [Int]
-    var children: [[Int]]
-    var radius: [Float]
-    var links: [(a: Int, b: Int)] = []
+package struct LayoutTree {
+    package var parent: [Int]
+    package var children: [[Int]]
+    package var radius: [Float]
+    package var links: [(a: Int, b: Int)] = []
 
-    var count: Int { parent.count }
+    package var count: Int { parent.count }
 
     package init(parent: [Int], radius: [Float], links: [(a: Int, b: Int)] = []) {
         self.parent = parent
@@ -20,7 +21,7 @@ struct LayoutTree {
     }
 
     /// A node's size from the things under it: 7 points alone, growing with the log of its count.
-    static func radius(count: Int) -> Float { 7 + 3.2 * log2(Float(max(count, 1))) }
+    package static func radius(count: Int) -> Float { 7 + 3.2 * log2(Float(max(count, 1))) }
 
     package init(_ v: ProjectGraph.Visible, graph: ProjectGraph) {
         self.init(parent: v.nodes.map(\.parent),
@@ -29,21 +30,21 @@ struct LayoutTree {
     }
 
     /// The nodes from the root down, each after its parent.
-    var topDown: [Int] {
+    package var topDown: [Int] {
         var out = (0..<count).filter { parent[$0] < 0 }, i = 0
         while i < out.count { out += children[out[i]]; i += 1 }
         return out
     }
 
     /// Each node's depth.
-    var depths: [Int] {
+    package var depths: [Int] {
         var d = [Int](repeating: 0, count: count)
         for n in topDown where parent[n] >= 0 { d[n] = d[parent[n]] + 1 }
         return d
     }
 
     /// Each node's leaves (itself, for a leaf).
-    var leafCounts: [Int] {
+    package var leafCounts: [Int] {
         var leaves = [Int](repeating: 0, count: count)
         for n in topDown.reversed() {
             if children[n].isEmpty { leaves[n] = 1 }
@@ -53,11 +54,11 @@ struct LayoutTree {
     }
 }
 
-enum GraphLayout: String, CaseIterable, Identifiable {
+package enum GraphLayout: String, CaseIterable, Identifiable {
     case force, radial, tree, cone
 
-    var id: String { rawValue }
-    var title: String {
+    package var id: String { rawValue }
+    package var title: String {
         switch self {
         case .force: return "Force"
         case .radial: return "Radial"
@@ -70,8 +71,8 @@ enum GraphLayout: String, CaseIterable, Identifiable {
 // MARK: - Radial
 
 /// The root in the middle, each depth a ring further out; a node's share of its parent's angle is its share of the leaves.
-enum RadialLayout {
-    static func place(_ t: LayoutTree, ring: Float = 140) -> [SIMD2<Float>] {
+package enum RadialLayout {
+    package static func place(_ t: LayoutTree, ring: Float = 140) -> [SIMD2<Float>] {
         var pos = [SIMD2<Float>](repeating: .zero, count: t.count)
         guard t.count > 0 else { return pos }
         let leaves = t.leafCounts, depths = t.depths
@@ -105,8 +106,8 @@ enum RadialLayout {
 
 /// Top-down: each depth a row, a parent centred over its children, subtrees as close as their outlines allow
 /// (Reingold–Tilford: each subtree's left and right edges per depth, the next pushed clear of the ones before it).
-enum TidyTreeLayout {
-    static func place(_ t: LayoutTree, row: Float = 110, gap: Float = 14) -> [SIMD2<Float>] {
+package enum TidyTreeLayout {
+    package static func place(_ t: LayoutTree, row: Float = 110, gap: Float = 14) -> [SIMD2<Float>] {
         var relative = [Float](repeating: 0, count: t.count)    // x from the parent's
         var contour = [(left: [Float], right: [Float])](repeating: ([], []), count: t.count)
         for n in t.topDown.reversed() {
@@ -147,8 +148,8 @@ enum TidyTreeLayout {
 
 /// A parent above a ring of its children (Robertson's cone tree): a ring's radius is what its children's own cones
 /// need side by side, so no two cones meet; each depth a level lower.
-enum ConeTreeLayout {
-    static func place(_ t: LayoutTree, level: Float = 120, gap: Float = 12) -> [SIMD3<Float>] {
+package enum ConeTreeLayout {
+    package static func place(_ t: LayoutTree, level: Float = 120, gap: Float = 12) -> [SIMD3<Float>] {
         var footprint = t.radius        // the radius a node's cone takes, seen from above
         var ring = [Float](repeating: 0, count: t.count)
         for n in t.topDown.reversed() where !t.children[n].isEmpty {
@@ -184,19 +185,19 @@ enum ConeTreeLayout {
 /// Nodes push each other apart (Barnes–Hut: far groups as one), links pull their ends together (a child to its parent
 /// harder than a reference), everything drifts to the middle; it cools as it settles (d3-force's scheme). Starts from
 /// where it is given (the radial layout's places), so it is the same every time; pinned nodes stay put.
-struct ForceLayout {
-    var positions: [SIMD2<Float>]
+package struct ForceLayout {
+    package var positions: [SIMD2<Float>]
     private var velocity: [SIMD2<Float>]
-    let tree: LayoutTree
-    var pinned: [Int: SIMD2<Float>] = [:]
+    package let tree: LayoutTree
+    package var pinned: [Int: SIMD2<Float>] = [:]
     /// How warm it is: 1 to start, stops below `alphaMin`.
     private(set) var alpha: Float = 1
-    let alphaMin: Float = 0.001
-    let alphaDecay: Float = 1 - pow(0.001, 1 / 300)
-    var velocityDecay: Float = 0.4
-    var charge: Float = -140
-    var childDistance: Float = 70
-    var linkDistance: Float = 140
+    package let alphaMin: Float = 0.001
+    package let alphaDecay: Float = 1 - pow(0.001, 1 / 300)
+    package var velocityDecay: Float = 0.4
+    package var charge: Float = -140
+    package var childDistance: Float = 70
+    package var linkDistance: Float = 140
     private var links: [(a: Int, b: Int, strength: Float, distance: Float)] = []
 
     package init(_ tree: LayoutTree, start: [SIMD2<Float>]) {
@@ -214,14 +215,14 @@ struct ForceLayout {
         }
     }
 
-    var isSettled: Bool { alpha < alphaMin }
+    package var isSettled: Bool { alpha < alphaMin }
 
     /// Warms it again (after a drag, or a node opened).
-    mutating func reheat(_ to: Float = 0.6) { alpha = max(alpha, to) }
+    package mutating func reheat(_ to: Float = 0.6) { alpha = max(alpha, to) }
 
     /// One tick; false once it has settled.
     @discardableResult
-    mutating func step() -> Bool {
+    package mutating func step() -> Bool {
         guard !isSettled, tree.count > 0 else { return false }
         alpha += (0 - alpha) * alphaDecay
         // Links.
@@ -250,7 +251,7 @@ struct ForceLayout {
     }
 
     /// The sum of the links' stretch, squared: what settling lowers (tests).
-    var linkEnergy: Float {
+    package var linkEnergy: Float {
         links.reduce(0) { e, l in let s = length(positions[l.b] - positions[l.a]) - l.distance; return e + s * s * l.strength }
     }
 }

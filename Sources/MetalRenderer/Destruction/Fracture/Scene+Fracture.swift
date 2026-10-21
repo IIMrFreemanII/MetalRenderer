@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -17,7 +18,7 @@ extension Scene {
 
     /// How deep the ground holds an object standing on it (m): the pieces reaching this low are anchored (a wall's
     /// foundation; with only the pieces touching it, the wall above a hole near its foot slid off as one slab).
-    static let foundation: Float = 0.25
+    package static let foundation: Float = 0.25
 
     /// What one fractured object became: its root's body and instance, its tree.
     package struct Fractured {
@@ -88,7 +89,7 @@ extension Scene {
     }
 
     /// Which of `tree`'s nodes the ground (or the frame) holds, the object (`cell`, its box) placed by `transform`.
-    static func anchored(_ tree: FractureTree, cell: ConvexCell, transform: float4x4, _ anchor: FractureAnchor) -> [Bool] {
+    package static func anchored(_ tree: FractureTree, cell: ConvexCell, transform: float4x4, _ anchor: FractureAnchor) -> [Bool] {
         tree.nodes.map { node -> Bool in
             switch anchor {
             case .none: return false

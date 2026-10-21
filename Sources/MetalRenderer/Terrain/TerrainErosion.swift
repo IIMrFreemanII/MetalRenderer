@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,12 +10,12 @@ package enum TerrainErosion {
     package enum Kind: String, CaseIterable, Identifiable {
         case hydraulic, thermal, both
         package var id: String { rawValue }
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 
     /// `iterations` of hydraulic erosion over `b` (`w` x `h` cells of `cell` metres). `rain`: where it rains (0...1 a
     /// cell; nil: everywhere). `progress` is told the share done between passes and stops the run if it says false.
-    static func hydraulic(_ b: inout [Float], w: Int, h: Int, cell: Float, settings e: ErosionSettings, iterations: Int,
+    package static func hydraulic(_ b: inout [Float], w: Int, h: Int, cell: Float, settings e: ErosionSettings, iterations: Int,
                           rain: [Float]? = nil, progress: ((Float) -> Bool)? = nil) {
         let count = w * h
         guard w > 2, h > 2, iterations > 0 else { return }
@@ -126,7 +127,7 @@ package enum TerrainErosion {
 
     /// `iterations` of thermal erosion: wherever the ground is steeper than `talus` degrees toward a neighbour (of the
     /// eight), `rate` of the excess slides down to it. `mask` scales it a cell (nil: everywhere).
-    static func thermal(_ b: inout [Float], w: Int, h: Int, cell: Float, settings e: ErosionSettings, iterations: Int,
+    package static func thermal(_ b: inout [Float], w: Int, h: Int, cell: Float, settings e: ErosionSettings, iterations: Int,
                         mask: [Float]? = nil, progress: ((Float) -> Bool)? = nil) {
         guard w > 2, h > 2, iterations > 0 else { return }
         let talus = tan(min(max(e.talus, 1), 89) * .pi / 180) * cell
@@ -182,7 +183,7 @@ package enum TerrainErosion {
     /// Erosion over a region (sample indices `lo`...`hi`), its edge faded into the ground over `border` metres; kept for
     /// undo in `record`, protected ground left as it was. The heights are read once (`heights`, from a snapshot) so the
     /// long part runs off the render thread; this writes the result.
-    static func erode(heights: [Float], size: SIMD2<Int>, cell: Float, kind: Kind, settings e: ErosionSettings,
+    package static func erode(heights: [Float], size: SIMD2<Int>, cell: Float, kind: Kind, settings e: ErosionSettings,
                       progress: ((Float) -> Bool)? = nil) -> [Float] {
         var b = heights
         let hydraulic = kind != .thermal ? e.hydraulicIterations : 0, thermal = kind != .hydraulic ? e.thermalIterations : 0
@@ -202,7 +203,7 @@ package enum TerrainErosion {
 
     /// New heights (`made`, of the region `lo`...`hi`) into the snapshot, faded over `border` metres inside the region's
     /// edge (none for a whole finite terrain), protected ground kept.
-    static func write(_ s: inout TerrainSnapshot, made: [Float], lo: SIMD2<Int>, hi: SIMD2<Int>, border: Float,
+    package static func write(_ s: inout TerrainSnapshot, made: [Float], lo: SIMD2<Int>, hi: SIMD2<Int>, border: Float,
                       record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let grid = s.grid, size = hi &- lo &+ 1
         let whole = grid.lo == lo && grid.hi == hi
@@ -225,7 +226,7 @@ package enum TerrainErosion {
     /// One dab of an erosion or generator brush: around the dab (a window of the brush's size and a margin), a few
     /// passes of water (`erode`) or of crumbling (`crumble`), or the generator blended in (`stamp`), weighted by the
     /// brush's falloff.
-    static func brush(_ s: inout TerrainSnapshot, brush b: TerrainBrush, dab: TerrainDab, document: TerrainDocument?,
+    package static func brush(_ s: inout TerrainSnapshot, brush b: TerrainBrush, dab: TerrainDab, document: TerrainDocument?,
                       record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let margin = b.tool == .stamp ? 0 : 6
         guard let (lo0, hi0) = TerrainSculpt.range(s.grid, center: dab.center, radius: b.radius) else { return [] }

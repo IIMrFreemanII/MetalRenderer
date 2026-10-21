@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,10 +12,10 @@ enum UVPack {
     /// Where each chart goes, in texels: `origins[i] + turn(uv, turns[i]) x scale`, `turn` a quarter turn
     /// `(x, y) -> (-y, x)` (the winding kept) `turns[i]` times.
     struct Result {
-        var scale: Float              // texels per metre
-        var origins: [SIMD2<Float>]
-        var padding: Int
-        var turns: [Int] = []
+        package var scale: Float              // texels per metre
+        package var origins: [SIMD2<Float>]
+        package var padding: Int
+        package var turns: [Int] = []
     }
 
     static func turn(_ p: SIMD2<Float>, _ times: Int) -> SIMD2<Float> {
@@ -83,11 +84,11 @@ enum UVPack {
 
     /// A chart's triangles (metres) in each of its four quarter turns, from 0.
     private struct Shape {
-        var turned: [[SIMD2<Float>]]      // per turn: its corners, from (0, 0)
-        var lows: [SIMD2<Float>]          // per turn: what was taken off to bring it to 0
-        var area: Float
+        package var turned: [[SIMD2<Float>]]      // per turn: its corners, from (0, 0)
+        package var lows: [SIMD2<Float>]          // per turn: what was taken off to bring it to 0
+        package var area: Float
         package var box: Float
-        var extent: Float
+        package var extent: Float
 
         package init(_ corners: [SIMD2<Float>]) {
             turned = []
@@ -111,7 +112,7 @@ enum UVPack {
         /// Its outline at `scale` in turn `k`, as columns of `cell` texels: per column its underside and top (texels,
         /// the gutter included: the chart's points lie from `reach` columns across and from 0 up), widened `reach`
         /// columns each side.
-        func profile(_ k: Int, scale: Float, cell: Float, reach: Int, pad: Float) -> (bottom: [Float], top: [Float]) {
+        package func profile(_ k: Int, scale: Float, cell: Float, reach: Int, pad: Float) -> (bottom: [Float], top: [Float]) {
             let p = turned[k]
             var width: Float = 0
             for q in p { width = max(width, q.x * scale) }

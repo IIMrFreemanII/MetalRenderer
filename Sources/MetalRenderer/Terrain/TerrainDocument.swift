@@ -1,23 +1,24 @@
+import EngineCore
 import Foundation
 import simd
 
 /// What a terrain's ground is made of where it isn't painted: a layer's own weight from the ground's height and slope
 /// (and some noise, so its edge isn't a contour line). Off, the layer is only where it is painted.
-struct TerrainRule: Codable, Equatable {
-    var enabled = false
+package struct TerrainRule: Codable, Equatable {
+    package var enabled = false
     /// Metres (the world's y): the layer is there from `heightMin` to `heightMax`, fading over `heightFade` either side.
-    var heightMin: Float = -10_000
-    var heightMax: Float = 10_000
-    var heightFade: Float = 2
+    package var heightMin: Float = -10_000
+    package var heightMax: Float = 10_000
+    package var heightFade: Float = 2
     /// Degrees from level: from `slopeMin` to `slopeMax`, fading over `slopeFade`.
-    var slopeMin: Float = 0
-    var slopeMax: Float = 90
-    var slopeFade: Float = 5
+    package var slopeMin: Float = 0
+    package var slopeMax: Float = 90
+    package var slopeFade: Float = 5
     /// Noise over the edges: features per 100 m, and how much of the weight it moves (0...1).
-    var noiseScale: Float = 4
-    var noiseAmount: Float = 0
+    package var noiseScale: Float = 4
+    package var noiseAmount: Float = 0
     /// Its weight where every condition holds (0...1).
-    var strength: Float = 1
+    package var strength: Float = 1
 
     /// The rule's weight at a place of height `y` and slope `degrees`, with the noise there `noise` (-1...1).
     func weight(height y: Float, slope degrees: Float, noise: Float) -> Float {
@@ -35,23 +36,23 @@ struct TerrainRule: Codable, Equatable {
 /// One of a terrain's 16 ground layers: a material (a Material Designer graph by name, or plain values), how large
 /// its texture is on the ground, and where it is without paint (`rule`).
 package struct TerrainLayer: Codable, Equatable {
-    var name: String
+    package var name: String
     /// A Material Designer graph's name (MaterialCatalog); empty: the plain values below.
-    var material = ""
-    var color = SIMD3<Float>(0.3, 0.3, 0.3)
-    var roughness: Float = 0.9
+    package var material = ""
+    package var color = SIMD3<Float>(0.3, 0.3, 0.3)
+    package var roughness: Float = 0.9
     /// The size of one repeat of its texture on the ground, metres.
-    var tileMetres: Float = 4
-    var rule = TerrainRule()
+    package var tileMetres: Float = 4
+    package var rule = TerrainRule()
     /// Where the open world's ground already has a material of its own (World.groundMaterials), its index: what the
     /// layer is before anyone gives it another.
-    var builtIn: Int? = nil
+    package var builtIn: Int? = nil
     /// The scanned material it wears in the realistic look (TextureSet's name): nil, the one its name says
     /// (`scanSet`), "" none.
-    var textureSet: String? = nil
+    package var textureSet: String? = nil
 
     /// The scan it wears in the realistic look: its own, or by its name.
-    var scanSet: String? {
+    package var scanSet: String? {
         if let textureSet { return textureSet.isEmpty ? nil : textureSet }
         switch name.lowercased() {
         case "grass", "meadow", "crop": return "grass"
@@ -76,7 +77,7 @@ package struct GeneratorNode: Codable, Equatable {
     package enum Kind: String, Codable, CaseIterable, Identifiable {
         case fbm, ridged, billow, cellular, warp, terrace, plateau, curve, smooth, constant
         package var id: String { rawValue }
-        var title: String {
+        package var title: String {
             switch self {
             case .fbm: return "Rolling hills (fBm)"
             case .ridged: return "Ridged mountains"
@@ -91,32 +92,32 @@ package struct GeneratorNode: Codable, Equatable {
             }
         }
         /// It makes heights of its own (combined with what was before by `blend`), rather than changing them.
-        var isSource: Bool { [.fbm, .ridged, .billow, .cellular, .constant].contains(self) }
+        package var isSource: Bool { [.fbm, .ridged, .billow, .cellular, .constant].contains(self) }
     }
     package enum Blend: String, Codable, CaseIterable, Identifiable {
         case add, subtract, multiply, max, min, replace, lerp
         package var id: String { rawValue }
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
-    var kind = Kind.fbm
-    var blend = Blend.add
-    var enabled = true
+    package var kind = Kind.fbm
+    package var blend = Blend.add
+    package var enabled = true
     /// Sources: metres of height, metres per feature, octaves, each octave's scale and weight, a seed.
-    var amplitude: Float = 40
-    var scale: Float = 400
-    var octaves = 5
-    var lacunarity: Float = 2
-    var gain: Float = 0.5
-    var seed = 1
+    package var amplitude: Float = 40
+    package var scale: Float = 400
+    package var octaves = 5
+    package var lacunarity: Float = 2
+    package var gain: Float = 0.5
+    package var seed = 1
     /// Warp: how far (metres) places are pushed by a noise of `scale`. Terraces: `steps` steps of `amplitude` metres
     /// with `sharpness` (0 smooth...1 hard). Plateau: heights above `level` pulled to it by `amount`. Curve:
     /// height = level + (h - level) x amount. Smooth: `amount` passes. Lerp: `amount` of the new.
-    var amount: Float = 0.5
-    var level: Float = 0
-    var steps = 8
-    var sharpness: Float = 0.7
+    package var amount: Float = 0.5
+    package var level: Float = 0
+    package var steps = 8
+    package var sharpness: Float = 0.7
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(kind: Kind = Kind.fbm, blend: Blend = Blend.add, enabled: Bool = true, amplitude: Float = 40, scale: Float = 400, octaves: Int = 5, lacunarity: Float = 2, gain: Float = 0.5, seed: Int = 1, amount: Float = 0.5, level: Float = 0, steps: Int = 8, sharpness: Float = 0.7) {
         self.kind = kind
         self.blend = blend
@@ -141,9 +142,9 @@ package struct GeneratorStack: Codable, Equatable {
         GeneratorNode(kind: .ridged, blend: .add, amplitude: 35, scale: 500, octaves: 5, seed: 2),
     ]
     /// The generated heights replace the ground (`true`), or are added to it.
-    var replaces = true
+    package var replaces = true
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(nodes: [GeneratorNode]? = nil, replaces: Bool = true) {
         if let nodes { self.nodes = nodes }
         self.replaces = replaces
@@ -154,16 +155,16 @@ package struct GeneratorStack: Codable, Equatable {
 /// model), and slopes steeper than they can stand crumbling down (thermal).
 package struct ErosionSettings: Codable, Equatable {
     package var hydraulicIterations = 400
-    var rain: Float = 0.01               // metres a step
-    var evaporation: Float = 0.02        // share a step
-    var capacity: Float = 0.8            // earth water carries, per speed and slope
-    var dissolve: Float = 0.3            // share of the shortfall taken a step
-    var deposit: Float = 0.3             // share of the excess left a step
+    package var rain: Float = 0.01               // metres a step
+    package var evaporation: Float = 0.02        // share a step
+    package var capacity: Float = 0.8            // earth water carries, per speed and slope
+    package var dissolve: Float = 0.3            // share of the shortfall taken a step
+    package var deposit: Float = 0.3             // share of the excess left a step
     package var thermalIterations = 50
-    var talus: Float = 38                // degrees: steeper crumbles
-    var thermalRate: Float = 0.25        // share of the excess moved a step
+    package var talus: Float = 38                // degrees: steeper crumbles
+    package var thermalRate: Float = 0.25        // share of the excess moved a step
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(hydraulicIterations: Int = 400, rain: Float = 0.01, evaporation: Float = 0.02, capacity: Float = 0.8, dissolve: Float = 0.3, deposit: Float = 0.3, thermalIterations: Int = 50, talus: Float = 38, thermalRate: Float = 0.25) {
         self.hydraulicIterations = hydraulicIterations
         self.rain = rain
@@ -186,7 +187,7 @@ package struct ScatterRule: Codable, Equatable {
         case mesh(name: String)
         case building(style: String)
 
-        var title: String {
+        package var title: String {
             switch self {
             case .plant(let s): return "Plant: \(s)"
             case .rock: return "Rocks"
@@ -195,32 +196,32 @@ package struct ScatterRule: Codable, Equatable {
             }
         }
     }
-    var name = "Scatter"
-    var enabled = true
-    var source = Source.rock(roughness: 0.5)
+    package var name = "Scatter"
+    package var enabled = true
+    package var source = Source.rock(roughness: 0.5)
     /// Things per 100 m square, and the least distance between two (metres).
-    var density: Float = 20
-    var spacing: Float = 2
+    package var density: Float = 20
+    package var spacing: Float = 2
     /// Where: height (metres) and slope (degrees) ranges, a layer's weight at least `layerThreshold` (`layer` nil:
     /// anywhere), and patches of noise (`patchScale` metres, `patchCover` share of the ground).
-    var heightMin: Float = -10_000
-    var heightMax: Float = 10_000
-    var slopeMin: Float = 0
-    var slopeMax: Float = 35
-    var layer: Int? = nil
-    var layerThreshold: Float = 0.5
-    var patchScale: Float = 60
-    var patchCover: Float = 1
+    package var heightMin: Float = -10_000
+    package var heightMax: Float = 10_000
+    package var slopeMin: Float = 0
+    package var slopeMax: Float = 35
+    package var layer: Int? = nil
+    package var layerThreshold: Float = 0.5
+    package var patchScale: Float = 60
+    package var patchCover: Float = 1
     /// How: standing up or along the ground's normal, turned at random, sized between `sizeMin` and `sizeMax`, sunk.
-    var alignToGround: Float = 0
-    var sizeMin: Float = 0.8
-    var sizeMax: Float = 1.2
-    var sink: Float = 0.1
-    var seed = 1
+    package var alignToGround: Float = 0
+    package var sizeMin: Float = 0.8
+    package var sizeMax: Float = 1.2
+    package var sink: Float = 0.1
+    package var seed = 1
     /// Kept out of water and off the roads.
-    var avoidWater = true
+    package var avoidWater = true
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(name: String = "Scatter", enabled: Bool = true, source: Source = Source.rock(roughness: 0.5), density: Float = 20, spacing: Float = 2, heightMin: Float = -10_000, heightMax: Float = 10_000, slopeMin: Float = 0, slopeMax: Float = 35, layer: Int? = nil, layerThreshold: Float = 0.5, patchScale: Float = 60, patchCover: Float = 1, alignToGround: Float = 0, sizeMin: Float = 0.8, sizeMax: Float = 1.2, sink: Float = 0.1, seed: Int = 1, avoidWater: Bool = true) {
         self.name = name
         self.enabled = enabled
@@ -250,30 +251,30 @@ package struct WaterBody: Codable, Equatable {
     package enum Kind: String, Codable, CaseIterable, Identifiable {
         case sea, lake, river
         package var id: String { rawValue }
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
-    var name = "Water"
-    var kind = Kind.lake
-    var level: Float = 0
+    package var name = "Water"
+    package var kind = Kind.lake
+    package var level: Float = 0
     /// A lake's: where its basin is (the world's x, z).
-    var seed = SIMD2<Double>.zero
+    package var seed = SIMD2<Double>.zero
     /// A river's: its line (the world's x, z), from its source down, how wide and deep its bed is (metres).
-    var points: [SIMD2<Double>] = []
-    var width: Float = 8
-    var depth: Float = 1.5
+    package var points: [SIMD2<Double>] = []
+    package var width: Float = 8
+    package var depth: Float = 1.5
     /// A Material Designer graph's name floating on it (duckweed, a scum), cut out by its opacity; empty for none.
-    var material = ""
+    package var material = ""
     /// The colour rays that meet it from elsewhere see (GI, reflections off other things).
-    var color = SIMD3<Float>(0.05, 0.12, 0.1)
+    package var color = SIMD3<Float>(0.05, 0.12, 0.1)
     /// How the water looks (WaterLook); nil: its kind's (an ocean, a lake, a river).
     package var look: WaterLook? = nil
     /// A river's bed at its points as it was carved (TerrainWater.bed of the ground before), and the points it was
     /// carved along: its surface keeps to it after the carving lowered the ground (nil, or other points: worked out
     /// from the ground as it is).
-    var bed: [Float]? = nil
-    var bedPoints: [SIMD2<Double>]? = nil
+    package var bed: [Float]? = nil
+    package var bedPoints: [SIMD2<Double>]? = nil
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(name: String = "Water", kind: Kind = Kind.lake, level: Float = 0, seed: SIMD2<Double> = SIMD2<Double>.zero, points: [SIMD2<Double>] = [], width: Float = 8, depth: Float = 1.5, material: String = "", color: SIMD3<Float> = SIMD3<Float>(0.05, 0.12, 0.1), look: WaterLook? = nil, bed: [Float]? = nil, bedPoints: [SIMD2<Double>]? = nil) {
         self.name = name
         self.kind = kind
@@ -294,10 +295,10 @@ package struct WaterBody: Codable, Equatable {
 /// its layers, its generator and erosion, its scatter rules and its water.
 package struct TerrainDocument: Codable, Equatable {
     package var name: String
-    var format = 1
-    var layers: [TerrainLayer]
+    package var format = 1
+    package var layers: [TerrainLayer]
     package var generator = GeneratorStack()
-    var erosion = ErosionSettings()
+    package var erosion = ErosionSettings()
     package var scatter: [ScatterRule] = []
     package var water: [WaterBody] = []
 
@@ -308,7 +309,7 @@ package struct TerrainDocument: Codable, Equatable {
 
     /// Sixteen layers: layer 0 is the ground's own material (the scene's: what it is wherever nothing else shows),
     /// then grass, rock on steep ground and snow up high by their rules, then layers for the brushes.
-    static let defaultLayers: [TerrainLayer] = {
+    package static let defaultLayers: [TerrainLayer] = {
         var out: [TerrainLayer] = [
             TerrainLayer(name: "Ground", color: [0.16, 0.12, 0.08], roughness: 0.95, tileMetres: 4),
             TerrainLayer(name: "Grass", color: [0.11, 0.2, 0.06], roughness: 0.9, tileMetres: 3,
@@ -323,7 +324,7 @@ package struct TerrainDocument: Codable, Equatable {
     }()
 
     /// Layers for the brushes alone (no rules): sand, mud, gravel, moss, earth, dry grass, pebbles.
-    static let brushLayers: [TerrainLayer] = [
+    package static let brushLayers: [TerrainLayer] = [
         TerrainLayer(name: "Sand", color: [0.52, 0.45, 0.3], roughness: 0.95, tileMetres: 3),
         TerrainLayer(name: "Mud", color: [0.12, 0.09, 0.06], roughness: 0.6, tileMetres: 3),
         TerrainLayer(name: "Gravel", color: [0.35, 0.33, 0.3], roughness: 0.9, tileMetres: 2),
@@ -346,7 +347,7 @@ package struct TerrainDocument: Codable, Equatable {
 
     /// The open world's: its own ground (each place's, by the world: layer 0), then its seven grounds to paint
     /// (World.groundMaterials), then the brushes' layers.
-    static func worldLayers() -> [TerrainLayer] {
+    package static func worldLayers() -> [TerrainLayer] {
         let names = ["Litter", "Moss", "Meadow", "Rock", "Wheat", "Crop", "Ploughed", "Sand"]
         var out = [TerrainLayer(name: "World's ground", tileMetres: World.groundTile)]
         out += names.enumerated().map { k, name in
@@ -359,7 +360,7 @@ package struct TerrainDocument: Codable, Equatable {
         return Array(out.prefix(TerrainTile.layers))
     }
 
-    enum CodingKeys: String, CodingKey { case name, format, layers, generator, erosion, scatter, water }
+    package enum CodingKeys: String, CodingKey { case name, format, layers, generator, erosion, scatter, water }
 
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -375,7 +376,7 @@ package struct TerrainDocument: Codable, Equatable {
     }
 
     /// A file name for it.
-    static func slug(_ name: String) -> String {
+    package static func slug(_ name: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
         let s = String(name.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
         return s.isEmpty ? "terrain" : s

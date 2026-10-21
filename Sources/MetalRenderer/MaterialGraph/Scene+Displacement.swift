@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,7 +7,7 @@ import simd
 /// groups' normals each time the material's bake comes (Renderer.encodeDisplacement: MaterialShaders/MatDisplace.metal),
 /// its structure then built again. Its normals stay the surface's: the material's normal map already has the height's
 /// slopes in it.
-struct DisplacedMesh {
+package struct DisplacedMesh {
     var mesh: Int
     var material: Int
     var first: Int          // its vertices in the scene's arrays
@@ -21,14 +22,14 @@ struct DisplacedMesh {
 
 extension Scene {
     /// The most triangles a displaced mesh, and all of a scene's, are subdivided to.
-    static let displacedTrianglesPerMesh = 1_000_000
-    static let displacedTrianglesPerScene = 4_000_000
+    package static let displacedTrianglesPerMesh = 1_000_000
+    package static let displacedTrianglesPerScene = 4_000_000
 
     /// The procedural materials that displace (MatSurface.displacement, with a height): every instance of theirs that
     /// can be is put on a subdivided copy of its mesh, one copy per mesh and scale (the displacement is in metres). An
     /// instance that can't (a plant's, an SDF shape's, a deforming or borrowed mesh's, a mesh of several materials, the
     /// open world's) keeps its mesh, and its material keeps its parallax.
-    func displaceProcedural() {
+    package func displaceProcedural() {
         guard worldPlace == nil else { return }
         var total = 0
         for pm in procedural {
@@ -115,18 +116,18 @@ extension Scene {
     }
 
     /// The largest of a transform's axes' lengths (an instance's scale).
-    static func uniformScale(_ t: float4x4) -> Float {
+    package static func uniformScale(_ t: float4x4) -> Float {
         max(simd_length(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z)), simd_length(SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z)),
             simd_length(SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z)), 1e-6)
     }
 
-    static func area(_ p: [SIMD3<Float>], _ idx: [UInt32]) -> Float {
+    package static func area(_ p: [SIMD3<Float>], _ idx: [UInt32]) -> Float {
         stride(from: 0, to: idx.count, by: 3).reduce(0) {
             $0 + simd_length(simd_cross(p[Int(idx[$1 + 1])] - p[Int(idx[$1])], p[Int(idx[$1 + 2])] - p[Int(idx[$1])])) / 2
         }
     }
 
-    static func uvArea(_ uv: [SIMD2<Float>], _ idx: [UInt32]) -> Float {
+    package static func uvArea(_ uv: [SIMD2<Float>], _ idx: [UInt32]) -> Float {
         stride(from: 0, to: idx.count, by: 3).reduce(0) {
             let a = uv[Int(idx[$1 + 1])] - uv[Int(idx[$1])], b = uv[Int(idx[$1 + 2])] - uv[Int(idx[$1])]
             return $0 + abs(a.x * b.y - a.y * b.x) / 2
@@ -134,7 +135,7 @@ extension Scene {
     }
 
     /// What the displacement made (the Material Designer's inspector): nil if nothing is displaced.
-    var displacementSummary: String? {
+    package var displacementSummary: String? {
         guard !displaced.isEmpty || !displacementNotes.isEmpty else { return nil }
         let triangles = displaced.reduce(0) { $0 + $1.triangles }
         return ([String(format: "Displaced: %d mesh%@, %.2fM triangles", displaced.count, displaced.count == 1 ? "" : "es", Double(triangles) / 1e6)]
@@ -142,7 +143,7 @@ extension Scene {
     }
 
     /// The displaced meshes' meshes.
-    var displacedMeshSet: Set<Int> { Set(displaced.map(\.mesh)) }
+    package var displacedMeshSet: Set<Int> { Set(displaced.map(\.mesh)) }
 }
 
 /// A displaced mesh's dispatch (MSL MatDisplaceArgs, MaterialShaders/MatDisplace.metal).

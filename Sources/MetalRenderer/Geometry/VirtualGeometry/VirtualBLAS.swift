@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -15,12 +16,12 @@ final class VirtualBLAS {
     /// IDs in p1.w and p2.w; the BLAS is built over them), then per triangle 6 words of attributes: 3 octahedral
     /// normals, 3 half2 UVs. A hit's primitive is a triangle's place there.
     struct Entry {
-        var tris: UInt64 = 0
-        var attrs: UInt64 = 0
-        var triangles: UInt32 = 0
-        var pad0: UInt32 = 0
-        var pad1: UInt32 = 0
-        var pad2: UInt32 = 0
+        package var tris: UInt64 = 0
+        package var attrs: UInt64 = 0
+        package var triangles: UInt32 = 0
+        package var pad0: UInt32 = 0
+        package var pad1: UInt32 = 0
+        package var pad2: UInt32 = 0
     }
 
     static let sync = VirtualGeometry.sync
@@ -36,10 +37,10 @@ final class VirtualBLAS {
 
     /// An instance's cut as built: its triangles' buffer, Metal's structure over them, and what the GPU reads.
     private struct Built {
-        var buffer: MTLBuffer?
-        var structure: MTLAccelerationStructure?
-        var entry = Entry()
-        var selection: [UInt32] = []
+        package var buffer: MTLBuffer?
+        package var structure: MTLAccelerationStructure?
+        package var entry = Entry()
+        package var selection: [UInt32] = []
     }
 
     private let device: MTLDevice

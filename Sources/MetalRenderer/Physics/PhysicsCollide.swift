@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -184,7 +185,7 @@ struct PhysicsManifold {
 struct PhysicsSDFNode {
     enum Kind: UInt32 { case sphere, box, torus, capsule, cylinder, cone, volume, cell }
     var kind: Kind
-    var op: SDFShape.Op
+    var op: UInt32            // SDFShape.Op's raw value (sdfJoin's): a plain number, read per sample
     /// sphere: (r); box: (half extents, rounding); torus: (major, minor); capsule: (half length, r); cylinder:
     /// (half height, r, rounding); cone: (half height, bottom, top); volume: (its index); cell: (first plane, planes).
     var params: SIMD4<Float>
@@ -200,7 +201,7 @@ struct PhysicsSDFNode {
     var plain: Bool
 
     package init(_ node: SDFShape.Node, planes: inout [SIMD4<Float>]) {
-        op = node.op
+        op = node.op.rawValue
         position = node.position
         inverse = node.rotation.inverse
         scale = node.scale
@@ -290,7 +291,7 @@ struct PhysicsShapes {
             let node = nodes[Int(range.x) + i]
             let b = node.scale * primitive(node, node.plain ? p : node.inverse.act(p - node.position) / node.scale)
             if i == 0 { d = b; continue }
-            d = SDFShape.join(d, b, node.op, node.smooth).0
+            d = sdfJoin(d, b, node.op, node.smooth).0
         }
         return d
     }
@@ -502,10 +503,10 @@ struct PhysicsShapes {
 extension PhysicsWorld {
     /// A body's pose: its centre of mass and rotation (`b` is a body, or a static collider's record).
     package struct Pose {
-        var position: SIMD3<Float>
+        package var position: SIMD3<Float>
         package var rotation: SIMD4<Float>
         package init(_ b: GPUPhysicsBody) { position = PhysicsMath.xyz(b.position); rotation = b.rotation }
-        func toBody(_ p: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(rotation), p - position) }
+        package func toBody(_ p: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(rotation), p - position) }
         package func toWorld(_ p: SIMD3<Float>) -> SIMD3<Float> { position + PhysicsMath.qrot(rotation, p) }
         package func direction(_ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(rotation, v) }
     }

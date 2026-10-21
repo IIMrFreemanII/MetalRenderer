@@ -2177,17 +2177,51 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 
 ## Source layout
 
-Two modules, each in a folder per feature:
+The code is in modules, each a target of `Package.swift` in a folder per feature:
 
-* **`Sources/MetalRenderer`, the engine:** the renderer and its systems (physics, plants, buildings, terrain, water,
-  the open world, particles...), the editors and their workshops, the benchmark harness, and the Cornell room.
+| Module | Folder | Holds |
+|---|---|---|
+| `EngineCore` | `Sources/EngineCore` | What every module shares and that knows no scene or renderer: maths, `SourceTree` and the assets' folder, the load activity; offline geometry (BVH, mesh builders, simplification, SDF shapes and volumes, the virtual geometry builder); file formats (glTF, EXR, cache and section files); textures (sets, streaming, generated ones); the GPU structs every module reads (`GPU/GPUTypes.swift`), compute passes, the kernels and their pipelines |
+| `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
+| `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
+| `Game` | `Sources/Game` | The demo scenes (below) |
+| `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
+
+The modules reach each other through `package` declarations (nothing is `public`). Above the core the engine, then the
+editors and the game, which know nothing of each other; the tests (`Tests/MetalRendererTests`) import them all.
+
+* **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
+  editor's or the game's edit leaves the engine as it was; an engine edit that keeps its interface leaves the editors
+  and the game.
+* **Where a file goes:** code that touches `Scene`, `Renderer` or `SceneBuffers` internals, or takes a `Scene` or a
+  `FrameEncoder`, is the engine's. What needs neither, and that more than one module uses, can be the core's. An
+  editor's UI is the editors', an editor's model of the data (what it edits, how) the engine's
+  (`VFX/VFXEffect+Editing.swift`). The engine never calls the editors: they read its reports (`RendererStatus`,
+  through `RendererController`) and send it work.
+* **Calls across modules.** No function body crosses a module unless it is `@inlinable` (`Package.swift`: no
+  cross-module optimisation, `-disable-cmo`, and in the testable release build its pass too,
+  `-sil-disable-pass=cmo`, which would still carry every small function's body into the modules above). So a function,
+  computed property or initializer of another module is a call. A helper a loop of the frame's calls per element is
+  an `@inlinable package` free function on plain types in its module (`translate`, `sdfJoin`): an `@inlinable` body
+  can't name a `package` type, and a `package` type's `@inlinable` members don't reach the modules above.
+  `Tools/perf/hotcalls.py` fails on a hot loop's call into another module, and `--against` a build of main on
+  anything a hot or a per-frame loop (`Tools/perf/boundary-functions.txt`) calls that it didn't before.
+* **An `@inlinable` body** is part of the modules that inlined it, but its edit doesn't change the module's interface,
+  so the build wouldn't rebuild them. `Tools/build.sh` and `Tools/release.sh` (the release build: use it rather than
+  `swift build -c release`) run `Tools/modules/inlinable.py` first, which compiles the modules above again when one
+  of their `@inlinable` bodies changed.
+* **Moving code between modules:** `Tools/modules/` has what did it (`moveblocks.py` moves declarations between files,
+  `addimport.py` adds the imports, `loop.sh` builds and runs `pkgfix.py`, which marks `package` what the build above
+  can't see and writes the initializers it calls, `markmembers.py` marks a type's members for SwiftUI views, whose
+  errors don't name what they can't see).
+
+The game:
+
 * **`Sources/Game`, the game:** the demo scenes. It holds their builders, what suits each scene (fog, sky, lens,
   camera, day: `GameScenes.swift`), their settings rows (`Settings/GameScenes+Rows.swift`) and the benchmark modes
   that show them (`Benchmark/`).
-  * It reaches the engine through `package` declarations: the engine's API, marked where the game uses it. Nothing
-    is `public`.
-  * A change in it recompiles only the game target. A change in the engine recompiles the engine, and the game as
-    well when the engine's interface changed.
+  * It reaches the engine through its `package` declarations, marked where the game uses them.
+  * A change in it recompiles only the game target.
 
 **How a scene is found.** A scene is a `SceneKind`, which is a name (`Scene/SceneDefinition.swift`). Its
 `SceneDefinition`, registered in `SceneRegistry`, holds its builder, its traits (`simulates`, `isCity`, `hasPlants`…)
@@ -2256,36 +2290,45 @@ git config diff.scenedump.textconv "python3 Tools/scene/scenedump.py"
 **Placing a new file:**
 
 * A new demo scene is a builder in the game's feature folder plus an entry in `GameScenes.scenes()`.
-* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder.
-* An editor sits inside its feature (`Buildings/Editor`).
+* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder of the engine.
+* An editor's UI sits in the editors' folder of its feature (`Sources/Editors/Buildings`).
 
 **Shaders, assets and tests:**
 
 * The shaders stay at the engine's top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`, `ShadersMaterial*.metal` and
   `MaterialShaders/`.
-* Code finds the shaders, the assets and the fixtures through `SourceTree` (`Util/SourceTree.swift`), not from its own
-  path.
-* The tests in `Tests/MetalRendererTests` import both modules and use the same folders.
+* Code finds the shaders, the assets and the fixtures through `SourceTree` (`EngineCore/Util/SourceTree.swift`), not
+  from its own path.
+* The tests in `Tests/MetalRendererTests` import every module and use the engine's folders.
+
+The core's folders: `Util/` (maths, catalogs, `SourceTree`, `Assets`, the load activity), `Geometry/` (BVH, mesh
+builders and shapes, simplification, clusters; `SDF/` shapes and volumes; `VirtualGeometry/`'s builder), `IO/` (glTF,
+EXR, cache and section files), `Textures/` (texture sets, streaming, generated textures) and `GPU/` (the shared GPU
+structs, compute passes, kernels and pipelines, the shader source's splicing).
 
 The engine's folders:
 
 | Folder | What is in it |
 |---|---|
-| `App/` | The window, the view, the controller, panels and overlays, the day bar, the graph editors' canvas |
-| `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store, the panel |
-| `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), pipelines, the backends; `Lighting/` and `Post/` |
+| `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store |
+| `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), the frame encoders, the backends, the surfaces, what it reports (`RendererStatus`, `DebugInfo`); `Lighting/` and `Post/` |
 | `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation, the walker |
-| `Geometry/` | BVH, meshes, simplification; `VirtualGeometry/` (Nanite-like), `SDF/` |
+| `Geometry/` | `VirtualGeometry/` (Nanite-like: streaming, the cut, tracing), `SDF/` (the scene's SDF buffers), the scene's mesh shapes |
 | `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids |
-| `Destruction/` | The tools' rigs and the players; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` (its physics and player) |
-| `Buildings/` | The generator, plans, styles; `Interior/`, `City/`, `Editor/` |
-| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/`; each with its `Editor/` |
-| `Terrain/`, `Water/`, `World/` | The terrain system and its editor, water, the open world |
-| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer and its editor, the Material Painter, texture sets and streaming |
-| `Particles/`, `VFX/` | GPU particles; effects as graphs and their editor |
-| `ProjectGraph/` | Outlines, overrides, the Project Graph and its window |
+| `Destruction/` | The tools' rigs; `Fracture/` (trees, patterns, cutting), `Demolition/` (its physics) |
+| `Buildings/` | The generator, plans, styles; `Interior/`, `City/` |
+| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/` |
+| `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
+| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer's graphs, compiler and bakes, the Material Painter's documents and GPU side, scanned materials |
+| `Particles/`, `VFX/` | GPU particles; effects as graphs |
+| `ProjectGraph/` | Outlines, overrides, the Project Graph's model |
 | `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
-| `IO/`, `Util/` | glTF, EXR, cache and section files, glTF models in scenes; maths, catalogs, `SourceTree` |
+| `IO/` | Scene files and placing their objects, glTF models in scenes |
+
+The editors' folders: `App/` (the window, the view, the controller, panels and overlays, the day bar, the graph
+editors' canvas), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,
+`Buildings/` (with the floor plan), `Characters/`, `Terrain/`, `MaterialGraph/`, `Painter/`, `VFX/`,
+`ProjectGraph/`, `Destruction/Fracture/`.
 
 The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland),
 `Physics/Scenes/`, `Buildings/City/`, `Destruction/` (the courtyard, `Demolition/`: the office and its blueprint),

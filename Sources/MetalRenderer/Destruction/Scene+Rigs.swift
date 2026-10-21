@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -28,7 +29,7 @@ extension Scene {
         package static let scripted = 4
         package static let shotSpeed: Float = 16
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(shots: [Int] = [], nextShot: Int = 0, objects: [Fractured] = [], dustProxies: [UInt32] = [], recipes: [String: FractureRecipe] = [:]) {
             self.shots = shots
             self.nextShot = nextShot
@@ -60,7 +61,7 @@ extension Scene {
             package var world: SIMD3<Float>
             package var worldNormal: SIMD3<Float>
 
-            /// (As the memberwise initializer, for the game: Sources/Game.)
+            /// (As the memberwise initializer, for the modules above this one.)
             package init(body: Int, local: SIMD3<Float>, normal: SIMD3<Float>, world: SIMD3<Float>, worldNormal: SIMD3<Float>) {
                 self.body = body
                 self.local = local
@@ -77,7 +78,7 @@ extension Scene {
         package static let rocketPool = 8, chargePool = 16, fireballPool = 8
         package static let rocketRadius: Float = 0.12
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(rockets: [Int] = [], nextRocket: Int = 0, walker: Int = -1, spawn: SIMD3<Float> = SIMD3<Float>(), centre: SIMD3<Float> = SIMD3<Float>(), charges: [Int] = [], fireballs: [Int] = [], objects: [Fractured] = [], dustProxies: [UInt32] = [], placed: [Charge] = [], counts: [Int] = [], floors: [Float] = []) {
             self.rockets = rockets
             self.nextRocket = nextRocket
@@ -103,16 +104,16 @@ extension Scene {
 }
 
 /// The destruction scene's objects for the Fracture Editor.
-struct DestructionStatus: Equatable {
-    var objects: [FractureObjectInfo] = []
+package struct DestructionStatus: Equatable {
+    package var objects: [FractureObjectInfo] = []
 }
 
 /// One of the destruction scene's fractured objects as the Fracture Editor shows it.
-struct FractureObjectInfo: Equatable {
-    var name: String
-    var recipe: FractureRecipe
-    var nodes: Int
-    var leaves: Int
-    var welds: Int
-    var levels: Int
+package struct FractureObjectInfo: Equatable {
+    package var name: String
+    package var recipe: FractureRecipe
+    package var nodes: Int
+    package var leaves: Int
+    package var welds: Int
+    package var levels: Int
 }

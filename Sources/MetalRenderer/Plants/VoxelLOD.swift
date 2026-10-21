@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import QuartzCore
@@ -14,14 +15,14 @@ import simd
 final class VoxelLOD {
     /// A baked plant's instance that has a grid: its wood's, or its leaves'.
     struct Entry {
-        var position: SIMD3<Float>
-        var size: Float                 // its grid's level 0 voxel, placed (the grid's size x the instance's scale)
-        var jitter: Float               // its own offset of the level boundaries
-        var descriptor: Int             // its instance descriptor
-        var mesh: Int
-        var grid: Int
-        var leaves: Bool
-        var mask: UInt32
+        package var position: SIMD3<Float>
+        package var size: Float                 // its grid's level 0 voxel, placed (the grid's size x the instance's scale)
+        package var jitter: Float               // its own offset of the level boundaries
+        package var descriptor: Int             // its instance descriptor
+        package var mesh: Int
+        package var grid: Int
+        package var leaves: Bool
+        package var mask: UInt32
     }
 
     let grids: VoxelGrids

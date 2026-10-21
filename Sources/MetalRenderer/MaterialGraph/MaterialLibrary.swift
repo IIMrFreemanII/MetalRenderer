@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -7,12 +8,12 @@ import simd
 ///     var b = MatBuilder("Red Bricks")
 ///     let bricks = b.node(.bricks, ["rows": .int(10)])
 ///     b.output(.normal, b.node(.normal, ["intensity": .float(6)], ["in": bricks]))
-struct MatBuilder {
+package struct MatBuilder {
     /// A node's output, to wire: `ref` is its "out", `ref["random"]` another.
-    struct Ref {
-        let id: String
-        var output = "out"
-        subscript(_ output: String) -> Ref { Ref(id: id, output: output) }
+    package struct Ref {
+        package let id: String
+        package var output = "out"
+        package subscript(_ output: String) -> Ref { Ref(id: id, output: output) }
     }
 
     private var g: MaterialGraph
@@ -20,7 +21,7 @@ struct MatBuilder {
     package init(_ name: String, size: Int = 10) { g = MaterialGraph(name, size: size) }
 
     @discardableResult
-    mutating func node(_ kind: MatOpKind, _ params: [String: MatParam] = [:], _ inputs: [String: Ref] = [:], id: String? = nil) -> Ref {
+    package mutating func node(_ kind: MatOpKind, _ params: [String: MatParam] = [:], _ inputs: [String: Ref] = [:], id: String? = nil) -> Ref {
         let id = VFXEffect.unique(id ?? kind.rawValue, g.allIDs)
         g.nodes.append(MatNode(kind, params, id: id))
         for (pin, r) in inputs.sorted(by: { $0.key < $1.key }) { g.links.append(MatLink(r.id, r.output, to: id, pin)) }
@@ -28,13 +29,13 @@ struct MatBuilder {
     }
 
     /// An output node of channel `c`, fed by `from`.
-    mutating func output(_ c: MatChannel, _ from: Ref) {
+    package mutating func output(_ c: MatChannel, _ from: Ref) {
         node(.output, ["usage": .choice(c.rawValue), "name": .text(c.rawValue)], ["in": from], id: c.rawValue)
     }
 
-    mutating func set(_ change: (inout MaterialGraph) -> Void) { change(&g) }
+    package mutating func set(_ change: (inout MaterialGraph) -> Void) { change(&g) }
 
-    var graph: MaterialGraph { MatLayout.arranged(g) }
+    package var graph: MaterialGraph { MatLayout.arranged(g) }
 }
 
 /// The built-in graphs: the Material Designer's starters, and what a scene can name before anything is saved.
@@ -45,13 +46,13 @@ package enum MaterialLibrary {
     package static func named(_ name: String) -> MaterialGraph? { all.first { $0.name == name } }
 
     /// Colours as sRGB values (what the graph works in), alpha 1.
-    static func rgb(_ r: Float, _ g: Float, _ b: Float) -> MatParam { .color([r, g, b, 1]) }
-    static func gradient(_ keys: (Float, SIMD3<Float>)...) -> MatParam {
+    package static func rgb(_ r: Float, _ g: Float, _ b: Float) -> MatParam { .color([r, g, b, 1]) }
+    package static func gradient(_ keys: (Float, SIMD3<Float>)...) -> MatParam {
         .gradient(VFXGradient(keys.map { VFXGradient.Key($0.0, SIMD4($0.1, 1)) }))
     }
 
     /// Red bricks in pale mortar, each brick its own shade and height, dirt in the joints.
-    static func redBricks() -> MaterialGraph {
+    package static func redBricks() -> MaterialGraph {
         var b = MatBuilder("Red Bricks")
         let bricks = b.node(.bricks, ["columns": .int(4), "rows": .int(10), "gap": .float(0.008), "bevel": .float(0.3),
                                       "heightRandom": .float(0.25)])
@@ -78,7 +79,7 @@ package enum MaterialLibrary {
 
 extension MaterialLibrary {
     /// A steel sheet punched with round holes in rows (its opacity cuts them), brushed, a little dirty at the edges.
-    static func perforatedMetal() -> MaterialGraph {
+    package static func perforatedMetal() -> MaterialGraph {
         var b = MatBuilder("Perforated Metal")
         let holes = b.node(.tileSampler, ["columns": .int(10), "rows": .int(10), "kind": .choice("disc"), "size": .float(0.62),
                                           "sizeRandom": .float(0), "positionRandom": .float(0), "lumRandom": .float(0), "rowOffset": .float(0.5)])
@@ -146,7 +147,7 @@ extension MaterialLibrary {
     }
 
     /// Teal paint over steel, rusting through in patches: blistered at their edges, bare metal where it flaked.
-    static func rustedPaint() -> MaterialGraph {
+    package static func rustedPaint() -> MaterialGraph {
         var b = MatBuilder("Rusted Paint")
         let grime = b.node(.grunge, ["scale": .int(3), "contrast": .float(0.7), "spots": .float(0.6)])
         let clouds = b.node(.fractalSum, ["scale": .int(5), "octaves": .int(7), "roughness": .float(0.6)])
@@ -170,7 +171,7 @@ extension MaterialLibrary {
     }
 
     /// Steel brushed one way, a few scratches across.
-    static func brushedSteel() -> MaterialGraph {
+    package static func brushedSteel() -> MaterialGraph {
         var b = MatBuilder("Brushed Steel")
         let brushed = b.node(.anisotropicNoise, ["scaleX": .int(2), "scaleY": .int(400), "smoothness": .float(1)])
         let fine = b.node(.anisotropicNoise, ["scaleX": .int(8), "scaleY": .int(900), "smoothness": .float(1), "seed": .int(3)])
@@ -189,7 +190,7 @@ extension MaterialLibrary {
     }
 
     /// Copper, scratched bright, gone green (verdigris) in its hollows.
-    static func scratchedCopper() -> MaterialGraph {
+    package static func scratchedCopper() -> MaterialGraph {
         var b = MatBuilder("Scratched Copper")
         let clouds = b.node(.fractalSum, ["scale": .int(4), "octaves": .int(7), "roughness": .float(0.55)])
         let grime = b.node(.grunge, ["scale": .int(4), "contrast": .float(0.8), "spots": .float(0.3)])
@@ -210,7 +211,7 @@ extension MaterialLibrary {
     }
 
     /// Oak boards: each its own shade, the grain running along them, their joints dark.
-    static func oakPlanks() -> MaterialGraph {
+    package static func oakPlanks() -> MaterialGraph {
         var b = MatBuilder("Oak Planks")
         let boards = b.node(.bricks, ["columns": .int(2), "rows": .int(6), "offset": .float(0.35), "gap": .float(0.003), "bevel": .float(0.06),
                                       "heightRandom": .float(0.05)])
@@ -235,7 +236,7 @@ extension MaterialLibrary {
     }
 
     /// Furrowed bark, moss on its ridges.
-    static func barkAndMoss() -> MaterialGraph {
+    package static func barkAndMoss() -> MaterialGraph {
         var b = MatBuilder("Bark and Moss")
         let furrows = b.node(.anisotropicNoise, ["scaleX": .int(12), "scaleY": .int(3), "smoothness": .float(0.8)])
         let ridges = b.node(.fractalSum, ["scale": .int(4), "octaves": .int(6), "roughness": .float(0.5), "mode": .choice("ridged")])
@@ -258,7 +259,7 @@ extension MaterialLibrary {
     }
 
     /// Dark metal panels, inset, with glowing cyan strips between them.
-    static func scifiPanels() -> MaterialGraph {
+    package static func scifiPanels() -> MaterialGraph {
         var b = MatBuilder("Sci-fi Panels")
         let panels = b.node(.bricks, ["columns": .int(3), "rows": .int(4), "offset": .float(0), "gap": .float(0.012), "bevel": .float(0.08),
                                       "heightRandom": .float(0.15)])
@@ -284,18 +285,18 @@ extension MaterialLibrary {
 /// Where the editor draws a graph's nodes, in the graph's units: a node a box of its header, its thumbnail, its
 /// inputs (left) and outputs (right). A graph never laid out (every node at the origin: the built-in ones) is
 /// arranged in columns by how far each node is from the graph's sources.
-enum MatLayout {
-    static let nodeWidth: CGFloat = 150
-    static let header: CGFloat = 22
-    static let thumb: CGFloat = 112
-    static let row: CGFloat = 16
-    static let gap: CGFloat = 6
-    static let columnSpacing: Float = 210
+package enum MatLayout {
+    package static let nodeWidth: CGFloat = 150
+    package static let header: CGFloat = 22
+    package static let thumb: CGFloat = 112
+    package static let row: CGFloat = 16
+    package static let gap: CGFloat = 6
+    package static let columnSpacing: Float = 210
 
-    static func height(inputs: Int, outputs: Int) -> CGFloat { header + thumb + CGFloat(max(inputs, outputs, 1)) * row + gap }
+    package static func height(inputs: Int, outputs: Int) -> CGFloat { header + thumb + CGFloat(max(inputs, outputs, 1)) * row + gap }
 
     /// `g` with its nodes placed, if it was never laid out.
-    static func arranged(_ g: MaterialGraph) -> MaterialGraph {
+    package static func arranged(_ g: MaterialGraph) -> MaterialGraph {
         guard g.nodes.count > 1, g.nodes.allSatisfy({ $0.at == .zero }) else { return g }
         var out = g
         var depth: [String: Int] = [:]

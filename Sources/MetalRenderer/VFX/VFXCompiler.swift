@@ -1,10 +1,11 @@
+import EngineCore
 import Foundation
 import Metal
 import QuartzCore
 
 /// The step's and the pose's kernels a particle system runs (ParticlesGPU): the main library's, or the VFX library's
 /// for a system with programs (they call them, and read their buffers at 27 to 29).
-struct ParticleKernels {
+package struct ParticleKernels {
     let begin: MTLComputePipelineState
     let emit: MTLComputePipelineState
     let simulate: MTLComputePipelineState
@@ -32,19 +33,19 @@ struct ParticleKernels {
 /// after them), compiled in the background the first time a system's programs are asked for, and kept for the last
 /// few (a graph's edits come back to sources it had). Until it is ready the system runs the fixed emitters' code
 /// (`kernels` gives nil); benchmarks and tests wait for it.
-final class VFXCompiler {
+package final class VFXCompiler {
     static let shared = VFXCompiler()
     static let kept = 6
 
-    struct Setup: Hashable {
+    package struct Setup: Hashable {
         let entry: URL
         let lightTypes: UInt32
         let stats: Bool
         let metal4: Bool
     }
     private struct Key: Hashable {
-        let setup: Setup
-        let source: String
+        package let setup: Setup
+        package let source: String
     }
     private enum Entry {
         case building

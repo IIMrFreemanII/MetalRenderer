@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -67,7 +68,7 @@ extension Scene {
     /// Benchmark scene (METALRENDERER_BENCH=lightcheck): a floor, a box, and one light — "rect", "tube" or "sphere" — or,
     /// with a "-mesh" suffix, an emissive mesh of the same shape and radiance, sampled as a mesh light. The mesh
     /// estimator is unbiased, so converged images of the two check the analytic light's closed form.
-    func buildLightCheck(_ check: String) {
+    package func buildLightCheck(_ check: String) {
         let kit = Kit(self)
         skyColor = .zero
         let white = addMaterial(albedo: [0.8, 0.8, 0.8])

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -10,14 +11,14 @@ import simd
 /// A tile owns its samples i in tx * T ..< (tx + 1) * T (and the same along j): a sample on a tile's side is the
 /// next tile's, so no sample is kept twice.
 package struct TerrainGrid: Codable, Equatable {
-    var cell: Float
+    package var cell: Float
     package var origin: SIMD2<Double>
-    var tileCells = 256
-    var sectorCells = 64
-    var lo: SIMD2<Int>? = nil
-    var hi: SIMD2<Int>? = nil
+    package var tileCells = 256
+    package var sectorCells = 64
+    package var lo: SIMD2<Int>? = nil
+    package var hi: SIMD2<Int>? = nil
 
-    var isFinite: Bool { lo != nil && hi != nil }
+    package var isFinite: Bool { lo != nil && hi != nil }
 
     /// A square of `size` metres centred on `center`, `cells` to a side.
     package static func square(size: Float, cells: Int, center: SIMD2<Double> = .zero) -> TerrainGrid {
@@ -25,28 +26,28 @@ package struct TerrainGrid: Codable, Equatable {
     }
 
     /// The world's place of sample (i, j).
-    @inline(__always) func place(_ i: Int, _ j: Int) -> SIMD2<Double> {
+    @inline(__always) package func place(_ i: Int, _ j: Int) -> SIMD2<Double> {
         origin + SIMD2(Double(i), Double(j)) * Double(cell)
     }
 
     /// A place as the grid's continuous coordinates (sample (i, j) is at (i, j)).
-    @inline(__always) func coordinates(_ x: Double, _ z: Double) -> SIMD2<Double> {
+    @inline(__always) package func coordinates(_ x: Double, _ z: Double) -> SIMD2<Double> {
         SIMD2((x - origin.x) / Double(cell), (z - origin.y) / Double(cell))
     }
 
     /// The tile that owns sample (i, j).
-    @inline(__always) func tile(_ i: Int, _ j: Int) -> SIMD2<Int> {
+    @inline(__always) package func tile(_ i: Int, _ j: Int) -> SIMD2<Int> {
         SIMD2(TerrainGrid.floorDiv(i, tileCells), TerrainGrid.floorDiv(j, tileCells))
     }
 
     /// The first sample of a tile.
-    @inline(__always) func firstSample(_ tile: SIMD2<Int>) -> SIMD2<Int> { tile &* tileCells }
+    @inline(__always) package func firstSample(_ tile: SIMD2<Int>) -> SIMD2<Int> { tile &* tileCells }
 
     /// The tile's corner, in the world.
-    func corner(_ tile: SIMD2<Int>) -> SIMD2<Double> { place(tile.x * tileCells, tile.y * tileCells) }
+    package func corner(_ tile: SIMD2<Int>) -> SIMD2<Double> { place(tile.x * tileCells, tile.y * tileCells) }
 
     /// Sample (i, j) kept inside the terrain (unchanged where it has no edge).
-    @inline(__always) func clamp(_ i: Int, _ j: Int) -> SIMD2<Int> {
+    @inline(__always) package func clamp(_ i: Int, _ j: Int) -> SIMD2<Int> {
         guard let lo, let hi else { return SIMD2(i, j) }
         return SIMD2(min(max(i, lo.x), hi.x), min(max(j, lo.y), hi.y))
     }
@@ -69,8 +70,8 @@ package struct TerrainGrid: Codable, Equatable {
         return out
     }
 
-    @inline(__always) static func floorDiv(_ a: Int, _ b: Int) -> Int { a >= 0 ? a / b : -((-a + b - 1) / b) }
-    @inline(__always) static func floorMod(_ a: Int, _ b: Int) -> Int { a - floorDiv(a, b) * b }
+    @inline(__always) package static func floorDiv(_ a: Int, _ b: Int) -> Int { a >= 0 ? a / b : -((-a + b - 1) / b) }
+    @inline(__always) package static func floorMod(_ a: Int, _ b: Int) -> Int { a - floorDiv(a, b) * b }
 }
 
 /// A piece of ground a scene meshes as one: `cells` cells (each `step` samples across) from sample `first`, inside

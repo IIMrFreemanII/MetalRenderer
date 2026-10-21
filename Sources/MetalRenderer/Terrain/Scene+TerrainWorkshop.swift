@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,7 +7,7 @@ import simd
 /// `sea` is off), under the valley's sky and day. Its document is
 /// `TerrainWorkshopSettings.document` (TerrainDocuments), kept apart from every other scene's terrain.
 extension Scene {
-    func buildTerrainWorkshop() {
+    package func buildTerrainWorkshop() {
         let w = settings.terrainWorkshop
         let size = Float(w.size.metres), cell = w.size.cell, cells = Int(size / cell)
         let base: TerrainBase
@@ -70,7 +71,7 @@ extension Scene {
 extension Scene {
     /// `count` rigid bodies (balls, boxes, rounded blocks) dropped from a few metres over the middle of the ground: they
     /// roll down its slopes and come to rest on it (the terrain's heightfield colliders: addTerrainColliders).
-    func dropBodies(_ count: Int, on s: TerrainSnapshot, seed: UInt64) {
+    package func dropBodies(_ count: Int, on s: TerrainSnapshot, seed: UInt64) {
         section("Bodies")
         var rng = SplitMix64(seed: seed ^ 0xB0D1E5)
         let shapes = [addSDFShape(SDFShape(.sphere(radius: 0.6))), addSDFShape(SDFShape(.box(halfExtents: [0.5, 0.5, 0.5], rounding: 0.06))),
@@ -92,32 +93,32 @@ extension Scene {
 /// is edited into.
 package struct TerrainWorkshopSettings: Equatable, Codable {
     package var size = Size.km1
-    var base = Base.hills
-    var seed = 1
+    package var base = Base.hills
+    package var seed = 1
     package var document = "Workshop"
     /// Rigid bodies dropped onto it (0: none).
     package var bodies = 0
     /// The hills with a sea round their lowest third (the flat ground never).
-    var sea = true
+    package var sea = true
 
     /// How far across (`metres`); each at most 1024 cells a side.
     package enum Size: Int, Codable, CaseIterable {
         case m512, km1, km2, km4
         package var metres: Int { 512 << rawValue }
-        var cell: Float { Float(max(metres / 1024, 1)) }
-        var title: String { metres < 1024 ? "\(metres) m" : "\(metres / 1024) km (\(Int(cell)) m cells)" }
+        package var cell: Float { Float(max(metres / 1024, 1)) }
+        package var title: String { metres < 1024 ? "\(metres) m" : "\(metres / 1024) km (\(Int(cell)) m cells)" }
     }
     package enum Base: String, Codable, CaseIterable {
         case flat, hills
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 
     /// The terrain's document: its own name, its size and base and seed (another of any is another ground).
-    static func terrainName(_ w: TerrainWorkshopSettings) -> String {
+    package static func terrainName(_ w: TerrainWorkshopSettings) -> String {
         "workshop-\(w.document)-\(w.size.metres)-\(w.base.rawValue)" + (w.base == .hills ? "-\(w.seed)" : "")
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(size: Size = Size.km1, base: Base = Base.hills, seed: Int = 1, document: String = "Workshop", bodies: Int = 0, sea: Bool = true) {
         self.size = size
         self.base = base

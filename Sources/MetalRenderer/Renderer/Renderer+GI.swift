@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -7,7 +8,7 @@ extension Renderer {
     // MARK: - GI techniques
 
     /// Scene buffers at the indices every ray-tracing kernel uses (1 = TraceScene, 2...8 = geometry, instances, lights).
-    func bindScene(_ enc: ComputePass, slot: Int) {
+    package func bindScene(_ enc: ComputePass, slot: Int) {
         // What the scene's argument buffers point at is declared once per encoder (it holds for every dispatch in
         // it, and the frame's stages mostly share one); the bindings are set every time, since the kernels in
         // between use the same indices for their own buffers.
@@ -44,7 +45,7 @@ extension Renderer {
     }
     /// `slot`'s TraceScene: the top-level structure the frame traces, virtual geometry's tables (the cut's clusters),
     /// the wind.
-    func writeTraceScene(slot: Int) {
+    package func writeTraceScene(slot: Int) {
         let clusters = virtualTracing?.selected(slot: slot)
         let plants = sceneBuffers.plants
         traceScene.write(slot: slot, TraceSceneArgs.Content(
@@ -70,9 +71,9 @@ extension Renderer {
 
 
     /// Specular shading is on and the scene has materials with a specular lobe (glTF ones).
-    var usesSpecular: Bool { settings.specular && scene.hasSpecular }
+    package var usesSpecular: Bool { settings.specular && scene.hasSpecular }
 
-    var usesLightMaps: Bool {
+    package var usesLightMaps: Bool {
         let wanted: Bool
         switch activeGIMode {
         case .pathTraced: wanted = settings.lightMaps
@@ -84,9 +85,9 @@ extension Renderer {
 
     /// References always path trace, so they stay ground truth whatever GI mode is selected (but
     /// METALRENDERER_BENCH=restirgicheck, which accumulates ReSTIR GI against them).
-    var activeGIMode: GIMode { accumulating ? referenceGIMode ?? .pathTraced : settings.giMode }
+    package var activeGIMode: GIMode { accumulating ? referenceGIMode ?? .pathTraced : settings.giMode }
 
-    var techniqueDenoisesIndirect: Bool {
+    package var techniqueDenoisesIndirect: Bool {
         switch activeGIMode {
         case .pathTraced: return true
         case .radianceCascades: return settings.cascades.denoiseIndirect
@@ -94,7 +95,7 @@ extension Renderer {
         }
     }
 
-    func restirGITargets(width: Int, height: Int) -> RestirGITargets? {
+    package func restirGITargets(width: Int, height: Int) -> RestirGITargets? {
         if let r = restirGIGrid, r.width == width, r.height == height { return r }
         restirGIGrid = try? RestirGITargets(device: device, width: width, height: height)
         restirGIWritten = false
@@ -102,7 +103,7 @@ extension Renderer {
     }
 
     /// ReSTIR GI's stages for this frame: initial paths, temporal reuse, spatial reuse (the last pass writes t.indirect).
-    func restirGIStages(_ plan: FramePlan, grid g: RestirGITargets, targets t: RenderTargets) -> [ComputeStage] {
+    package func restirGIStages(_ plan: FramePlan, grid g: RestirGITargets, targets t: RenderTargets) -> [ComputeStage] {
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev
         let r = settings.restirGI
         let width = t.width, height = t.height
@@ -169,7 +170,7 @@ extension Renderer {
     }
 
     /// Radiance-cascade stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
-    func radianceCascadeStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+    package func radianceCascadeStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         let slot = plan.slot
         if radianceCascades == nil || radianceCascades!.width != t.width || radianceCascades!.height != t.height
             || radianceCascades!.settings != settings.cascades {
@@ -187,7 +188,7 @@ extension Renderer {
     }
 
     /// Drops all temporal GI state (cascade feedback, denoiser history).
-    func resetGIState() {
+    package func resetGIState() {
         historyValid = false
         taaHistory = false
         restirWritten = false

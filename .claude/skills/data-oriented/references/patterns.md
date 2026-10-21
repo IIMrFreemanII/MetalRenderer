@@ -90,7 +90,7 @@ reorders an array while a loop or a GPU frame reads it: `Scene.moveInstances(_:r
 ## Finding a loop's name for hot-functions.txt
 
 ```bash
-swift build -c release
+Tools/release.sh
 python3 Tools/perf/hotcalls.py -v --list <(echo "Scene.update(time:dayTime:)")
 ```
 

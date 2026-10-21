@@ -1,3 +1,4 @@
+import EngineCore
 import simd
 
 /// One entry of the light table's alias table (MSL LightTableEntry).
@@ -20,7 +21,7 @@ struct GPUTriangleInfo {
 /// function, not the table. A share `epsilon` of the probability is uniform, so a dim light that happens to be close
 /// still gets candidates (no fireflies from tiny pdfs). The suns (at most `maxSuns`) are drawn separately, one candidate
 /// each per pixel.
-struct LightTable {
+package struct LightTable {
     static let analytic: UInt32 = 0, triangle: UInt32 = 1 << 30, indexMask: UInt32 = (1 << 30) - 1
     static let epsilon: Float = 0.1
     static let maxSuns = 2

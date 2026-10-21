@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,7 +12,7 @@ import simd
 /// an edit of the graph (the catalog's key, `SceneSettings.materials`) bakes again in place, without making the scene
 /// again. The camera turns about the shapes (`focus`, SceneKind.orbits).
 extension Scene {
-    func buildMaterialWorkshop() {
+    package func buildMaterialWorkshop() {
         let kit = Kit(self)
         let w = settings.materialWorkshop
         object("Backdrop") { materialBackdrop(w.backdrop, kit) }
@@ -42,7 +43,7 @@ extension Scene {
     }
 
     /// A shape's mesh (with UVs: a tile a UV unit), its placement over the plinth, and its size.
-    func materialShape(_ shape: MaterialWorkshopSettings.Layout) -> (Int, float4x4, SIMD3<Float>) {
+    package func materialShape(_ shape: MaterialWorkshopSettings.Layout) -> (Int, float4x4, SIMD3<Float>) {
         switch shape {
         case .sphere, .lineup: return (addMesh(Scene.uvSphere(), uvs: Scene.uvSphereUVs()), translate([0, 0.9, 0]) * scale(0.9), [1.8, 1.8, 1.8])
         case .cube:
@@ -64,7 +65,7 @@ extension Scene {
         }
     }
 
-    func materialBackdrop(_ backdrop: MaterialWorkshopSettings.Backdrop, _ kit: Kit) {
+    package func materialBackdrop(_ backdrop: MaterialWorkshopSettings.Backdrop, _ kit: Kit) {
         switch backdrop {
         case .studio:
             skyColor = [0.16, 0.16, 0.17]
@@ -98,7 +99,7 @@ extension Scene {
 
     /// A unit sphere of latitudes and longitudes (its seam doubled): U twice round it, V once from pole to pole, so a
     /// tile is about as tall as it is wide.
-    static func uvSphere(rings: Int = 48, segments: Int = 96) -> MeshGeometry {
+    package static func uvSphere(rings: Int = 48, segments: Int = 96) -> MeshGeometry {
         var positions: [SIMD3<Float>] = [], indices: [UInt32] = []
         for r in 0...rings {
             let theta = Float.pi * Float(r) / Float(rings)
@@ -117,20 +118,20 @@ extension Scene {
         return (positions, positions, indices)
     }
 
-    static func uvSphereUVs(rings: Int = 48, segments: Int = 96) -> [SIMD2<Float>] {
+    package static func uvSphereUVs(rings: Int = 48, segments: Int = 96) -> [SIMD2<Float>] {
         var uvs: [SIMD2<Float>] = []
         for r in 0...rings { for s in 0...segments { uvs.append([2 * Float(s) / Float(segments), Float(r) / Float(rings)]) } }
         return uvs
     }
 
     /// A box of half size `half` whose every face is one tile (its UVs 0...1 across it), V down its sides.
-    static func tiledBox(_ b: inout MeshBuilder, half h: Float) {
+    package static func tiledBox(_ b: inout MeshBuilder, half h: Float) {
         b.uvScale = 1 / (2 * h)
         b.box([-h, -h, -h], [h, h, h])
     }
 
     /// A capped cylinder on its base: U round it (as many tiles as make them square), V down it.
-    static func uvCylinder(radius: Float, height: Float, segments: Int = 96) -> (MeshGeometry, [SIMD2<Float>]) {
+    package static func uvCylinder(radius: Float, height: Float, segments: Int = 96) -> (MeshGeometry, [SIMD2<Float>]) {
         var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
         let around = (2 * Float.pi * radius / height).rounded()
         for s in 0...segments {

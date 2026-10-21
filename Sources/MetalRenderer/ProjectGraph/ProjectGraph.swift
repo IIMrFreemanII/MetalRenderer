@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// The project as one graph: the project, its scenes and what each is made of (their outlines, SceneOutline), the assets
@@ -6,8 +7,8 @@ import Foundation
 /// the nodes that are open.
 ///
 /// Ids: a scene is "scene:<kind>", a thing in it "<kind>:<its outline id>", an asset "asset:...", a source file "src:<path>".
-struct ProjectGraph {
-    enum Kind: String {
+package struct ProjectGraph {
+    package enum Kind: String {
         case project, scene, folder, system, group, aggregate, object, light, effect, tiles
         /// An aggregate's member: never in `nodes`, only in a visible graph.
         case member
@@ -29,14 +30,14 @@ struct ProjectGraph {
         }
 
         /// It holds others (a disclosure in the outliner).
-        var isBranch: Bool { self != .object && self != .light && self != .effect && self != .tiles && self != .member
+        package var isBranch: Bool { self != .object && self != .light && self != .effect && self != .tiles && self != .member
             && self != .asset && self != .source }
     }
 
-    enum EdgeKind: String, CaseIterable, Codable {
+    package enum EdgeKind: String, CaseIterable, Codable {
         case child, sharedAsset, generatedFrom, runtime, source
 
-        var title: String {
+        package var title: String {
             switch self {
             case .child: return "Hierarchy"
             case .sharedAsset: return "Shared assets"
@@ -47,62 +48,62 @@ struct ProjectGraph {
         }
     }
 
-    struct Node {
-        var id: String
-        var parent: Int
-        var kind: Kind
-        var name: String
+    package struct Node {
+        package var id: String
+        package var parent: Int
+        package var kind: Kind
+        package var name: String
         /// Its scene's kind (SceneKind.envName), and its id in that scene's outline.
-        var scene: String? = nil
-        var outlineID: String? = nil
+        package var scene: String? = nil
+        package var outlineID: String? = nil
         /// The things under it (an aggregate's members).
-        var count = 0
-        var hidden = false
-        var locked: String? = nil
-        var info: [String: String] = [:]
-        var assets: [AssetKey] = []
+        package var count = 0
+        package var hidden = false
+        package var locked: String? = nil
+        package var info: [String: String] = [:]
+        package var assets: [AssetKey] = []
         /// An asset's node: the asset.
-        var asset: AssetKey? = nil
-        var bounds: Box? = nil
-        var members = IndexRuns()
-        var light: Int? = nil
-        var fingerprint: String? = nil
-        var copyOf: String? = nil
-        var file: SourceIndex.File? = nil
+        package var asset: AssetKey? = nil
+        package var bounds: Box? = nil
+        package var members = IndexRuns()
+        package var light: Int? = nil
+        package var fingerprint: String? = nil
+        package var copyOf: String? = nil
+        package var file: SourceIndex.File? = nil
         /// A scene: its outline is known (it was made once, or indexed).
-        var indexed = true
-        var depth = 0
+        package var indexed = true
+        package var depth = 0
     }
 
-    struct Edge: Hashable {
-        var a: Int
-        var b: Int
-        var kind: EdgeKind
+    package struct Edge: Hashable {
+        package var a: Int
+        package var b: Int
+        package var kind: EdgeKind
     }
 
-    private(set) var nodes: [Node] = []
-    private(set) var edges: [Edge] = []
-    private(set) var children: [[Int]] = []
-    private(set) var index: [String: Int] = [:]
+    package private(set) var nodes: [Node] = []
+    package private(set) var edges: [Edge] = []
+    package private(set) var children: [[Int]] = []
+    package private(set) var index: [String: Int] = [:]
 
-    static func sceneID(_ kind: String) -> String { "scene:\(kind)" }
-    static func thingID(_ kind: String, _ outlineID: String) -> String { outlineID == "scene" ? sceneID(kind) : "\(kind):\(outlineID)" }
+    package static func sceneID(_ kind: String) -> String { "scene:\(kind)" }
+    package static func thingID(_ kind: String, _ outlineID: String) -> String { outlineID == "scene" ? sceneID(kind) : "\(kind):\(outlineID)" }
 
     /// A thing's scene and outline id, from its graph id.
-    static func split(_ id: String) -> (scene: String, outlineID: String)? {
+    package static func split(_ id: String) -> (scene: String, outlineID: String)? {
         if id.hasPrefix("scene:") { return (String(id.dropFirst(6)), "scene") }
         guard let colon = id.firstIndex(of: ":"), !id.hasPrefix("asset:"), !id.hasPrefix("src:"), !id.hasPrefix("assets") else { return nil }
         return (String(id[..<colon]), String(id[id.index(after: colon)...]))
     }
 
-    subscript(id: String) -> Node? { index[id].map { nodes[$0] } }
+    package subscript(id: String) -> Node? { index[id].map { nodes[$0] } }
 
     // MARK: - Building
 
     /// The graph of `kinds`' scenes (those without an outline: one node each), with the graph's edits (names, folders),
     /// the project's assets `library` (each a node, used or not: an unused one stands alone) and the scenes' and systems'
     /// source files.
-    static func build(outlines: [String: SceneOutline], overrides: SceneOverrides = SceneOverrides(), library: [AssetKey] = [],
+    package static func build(outlines: [String: SceneOutline], overrides: SceneOverrides = SceneOverrides(), library: [AssetKey] = [],
                       source: SourceIndex? = nil, kinds: [SceneKind] = SceneKind.allCases) -> ProjectGraph {
         var g = ProjectGraph()
         g.add(Node(id: "project", parent: -1, kind: .project, name: "Project"))
@@ -233,7 +234,7 @@ struct ProjectGraph {
     }
 
     /// `a` is `b` or above it.
-    func isAncestor(_ a: Int, of b: Int) -> Bool {
+    package func isAncestor(_ a: Int, of b: Int) -> Bool {
         var n = b
         while n >= 0 {
             if n == a { return true }
@@ -262,7 +263,7 @@ struct ProjectGraph {
     }
 
     /// The node's path from the project: its ancestors' names.
-    func path(_ n: Int) -> [Int] {
+    package func path(_ n: Int) -> [Int] {
         var out: [Int] = [], k = n
         while k >= 0 { out.append(k); k = nodes[k].parent }
         return out.reversed()
@@ -271,28 +272,36 @@ struct ProjectGraph {
     // MARK: - What is shown
 
     /// Nodes are shown under open ones (and an open aggregate's members, a page at a time).
-    static let memberPage = 200
+    package static let memberPage = 200
 
-    struct VisibleNode: Identifiable {
-        var id: String
-        var node: Int           // in `nodes` (a member's: its aggregate)
-        var member: Int?        // a member's place in its aggregate
-        var parent: Int         // in the visible graph, -1 for the project
+    package struct VisibleNode: Identifiable {
+        package var id: String
+        package var node: Int           // in `nodes` (a member's: its aggregate)
+        package var member: Int?        // a member's place in its aggregate
+        package var parent: Int         // in the visible graph, -1 for the project
         var depth: Int
     }
 
-    struct Visible {
-        var nodes: [VisibleNode] = []
-        var children: [[Int]] = []
+    package struct Visible {
+        package var nodes: [VisibleNode] = []
+        package var children: [[Int]] = []
         /// The edges between shown nodes (an edge into a closed branch goes to its top shown node), each once.
-        var edges: [(a: Int, b: Int, kind: EdgeKind)] = []
-        var index: [String: Int] = [:]
+        package var edges: [(a: Int, b: Int, kind: EdgeKind)] = []
+        package var index: [String: Int] = [:]
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(nodes: [VisibleNode] = [], children: [[Int]] = [], edges: [(a: Int, b: Int, kind: EdgeKind)] = [], index: [String: Int] = [:]) {
+            self.nodes = nodes
+            self.children = children
+            self.edges = edges
+            self.index = index
+        }
     }
 
     /// The part of the graph under the `open` nodes: `pages` of an open aggregate's members (one page if not said), and
     /// the edges of `kinds` among them.
     /// `root`: the node it starts from (a scene, to show that scene alone).
-    func visible(open: Set<String>, pages: [String: Int] = [:], kinds: Set<EdgeKind> = Set(EdgeKind.allCases), root: Int = 0) -> Visible {
+    package func visible(open: Set<String>, pages: [String: Int] = [:], kinds: Set<EdgeKind> = Set(EdgeKind.allCases), root: Int = 0) -> Visible {
         var v = Visible()
         var shownAs = [Int](repeating: -1, count: nodes.count)
         guard nodes.indices.contains(root) else { return v }
@@ -347,7 +356,7 @@ struct ProjectGraph {
     // MARK: - Search
 
     /// The ids of the nodes whose names (or ids) have `query`, the best first: an aggregate's member by "name #12".
-    func search(_ query: String, limit: Int = 200) -> [String] {
+    package func search(_ query: String, limit: Int = 200) -> [String] {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !q.isEmpty else { return [] }
         var out: [(rank: Int, id: String)] = []
@@ -367,12 +376,20 @@ struct ProjectGraph {
         }
         return out.sorted { ($0.rank, $0.id) < ($1.rank, $1.id) }.prefix(limit).map(\.id)
     }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(nodes: [Node] = [], edges: [Edge] = [], children: [[Int]] = [], index: [String: Int] = [:]) {
+        self.nodes = nodes
+        self.edges = edges
+        self.children = children
+        self.index = index
+    }
 }
 
 /// The project's assets, used by a scene or not: every plant species, building style, character, VFX graph and
 /// material graph the editors know (built in and saved).
-enum ProjectLibrary {
-    static func current() -> [AssetKey] {
+package enum ProjectLibrary {
+    package static func current() -> [AssetKey] {
         var out: [AssetKey] = []
         out += PlantStore.load().species.map { AssetKey(kind: .species, name: $0.id) }
         out += BuildingStore.load().styles.map { AssetKey(kind: .buildingStyle, name: $0.id) }

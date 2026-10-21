@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -445,14 +446,14 @@ package struct MuscleAtlas {
     /// A muscle sculpted: its strands' points (strand by strand, `samples` each, under the skin), the segments or
     /// triangles between them, each with a sphere round it (to skip it when it can't be nearest).
     package struct Shape {
-        let muscle: Muscle
-        let points: [[SIMD3<Float>]]
+        package let muscle: Muscle
+        package let points: [[SIMD3<Float>]]
         /// Out of the skin at a tube's points (its section is `wide` times wider along the skin than into it).
-        let normals: [SIMD3<Float>]
-        let lo: SIMD3<Float>
-        let hi: SIMD3<Float>
+        package let normals: [SIMD3<Float>]
+        package let lo: SIMD3<Float>
+        package let hi: SIMD3<Float>
         /// How wide a sheet is at its belly (m).
-        let width: Float
+        package let width: Float
         private let pieces: [(corners: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), uv: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>),
                               centre: SIMD3<Float>, reach: Float)]
 
@@ -491,7 +492,7 @@ package struct MuscleAtlas {
         }
 
         /// The nearest point of its middle to `p`: how far, where along (u) and across (v) it that is, and the point.
-        func nearest(_ p: SIMD3<Float>) -> (d: Float, uv: SIMD2<Float>, q: SIMD3<Float>) {
+        package func nearest(_ p: SIMD3<Float>) -> (d: Float, uv: SIMD2<Float>, q: SIMD3<Float>) {
             var best = (d: Float.infinity, uv: SIMD2<Float>(), q: SIMD3<Float>())
             for piece in pieces where simd_length(p - piece.centre) - piece.reach < best.d {
                 let (a, b, c) = piece.corners
@@ -509,7 +510,7 @@ package struct MuscleAtlas {
         }
 
         /// How far out from its middle its surface is at (u, v): its tendons' radius, swelling to its belly's.
-        func thickness(_ uv: SIMD2<Float>) -> Float {
+        package func thickness(_ uv: SIMD2<Float>) -> Float {
             var swell = MuscleAtlas.belly(uv.x, muscle)
             if points.count > 1 { swell *= pow(max(1 - (2 * uv.y - 1) * (2 * uv.y - 1), 0), 0.25) }   // a sheet's edges
             return MuscleAtlas.tendonRadius + (muscle.radius * MuscleAtlas.swell - MuscleAtlas.tendonRadius) * swell
@@ -517,7 +518,7 @@ package struct MuscleAtlas {
 
         /// Its distance (not exact: its middle's, less its thickness there; a tube's measured with its width along
         /// the skin squeezed by `wide`).
-        func distance(_ p: SIMD3<Float>) -> Float {
+        package func distance(_ p: SIMD3<Float>) -> Float {
             if p.x < lo.x || p.y < lo.y || p.z < lo.z || p.x > hi.x || p.y > hi.y || p.z > hi.z {
                 return simd_length(simd_max(simd_max(lo - p, p - hi), .zero)) + MuscleAtlas.cell
             }
@@ -529,7 +530,7 @@ package struct MuscleAtlas {
         }
 
         /// A tube's outward normal at `u` along it.
-        func normal(_ u: Float) -> SIMD3<Float> {
+        package func normal(_ u: Float) -> SIMD3<Float> {
             let f = u * Float(normals.count - 1), k = min(Int(f), normals.count - 2)
             let n = normals[k] + (normals[k + 1] - normals[k]) * (f - Float(k))
             return simd_length_squared(n) > 1e-8 ? simd_normalize(n) : SIMD3(0, 1, 0)

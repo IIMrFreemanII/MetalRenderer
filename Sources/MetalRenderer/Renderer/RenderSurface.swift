@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import Metal
 import QuartzCore
 
@@ -29,8 +30,8 @@ package struct FrameOutput {
 
 /// The window's surface: its view's CAMetalLayer, drawn into from the render thread. The view (main thread) tells it
 /// its size; the render thread reads that and sets the drawable's size, which the layer stretches to the view.
-final class LayerSurface: RenderSurface {
-    let layer = CAMetalLayer()
+package final class LayerSurface: RenderSurface {
+    package let layer = CAMetalLayer()
     private let lock = NSLock()
     private var points = CGSize(width: 1280, height: 800)
     private var scale: CGFloat = 2
@@ -38,7 +39,7 @@ final class LayerSurface: RenderSurface {
     private var refreshRate = 60
     private var titleText: String?
     /// The window whose title `title` sets. Main thread.
-    weak var window: NSWindow?
+    package weak var window: NSWindow?
 
     package init(device: MTLDevice) {
         layer.device = device
@@ -55,23 +56,23 @@ final class LayerSurface: RenderSurface {
     }
 
     /// The view's size, its screen's scale and its screen's highest refresh rate (main thread, on every change).
-    func setSize(_ points: CGSize, backingScale: CGFloat, refreshRate: Int) {
+    package func setSize(_ points: CGSize, backingScale: CGFloat, refreshRate: Int) {
         lock.lock(); self.points = points; scale = backingScale; self.refreshRate = max(refreshRate, 1); lock.unlock()
     }
-    var pointSize: CGSize { lock.lock(); defer { lock.unlock() }; return points }
+    package var pointSize: CGSize { lock.lock(); defer { lock.unlock() }; return points }
     // Not the layer's contentsScale: the drawable has the render size, and the layer stretches it.
-    var backingScale: CGFloat { lock.lock(); defer { lock.unlock() }; return scale }
+    package var backingScale: CGFloat { lock.lock(); defer { lock.unlock() }; return scale }
     /// Whether the window is on screen (main thread sets it): frames stop while it is hidden or minimized.
-    var isVisible: Bool {
+    package var isVisible: Bool {
         get { lock.lock(); defer { lock.unlock() }; return visible }
         set { lock.lock(); visible = newValue; lock.unlock() }
     }
-    var refreshInterval: CFTimeInterval? {
+    package var refreshInterval: CFTimeInterval? {
         guard layer.displaySyncEnabled else { return nil }
         lock.lock(); defer { lock.unlock() }
         return 1 / Double(refreshRate)
     }
-    var outputSize: CGSize {
+    package var outputSize: CGSize {
         get { layer.drawableSize }
         set {
             guard layer.drawableSize != newValue else { return }
@@ -82,8 +83,8 @@ final class LayerSurface: RenderSurface {
             CATransaction.commit()
         }
     }
-    func nextOutput() -> FrameOutput? { layer.nextDrawable().map { FrameOutput(texture: $0.texture, drawable: $0) } }
-    var title: String? {
+    package func nextOutput() -> FrameOutput? { layer.nextDrawable().map { FrameOutput(texture: $0.texture, drawable: $0) } }
+    package var title: String? {
         get { lock.lock(); defer { lock.unlock() }; return titleText }
         set {
             guard let newValue else { return }
@@ -95,19 +96,19 @@ final class LayerSurface: RenderSurface {
 
 /// Benchmarks run without a window, so they neither show up in the Dock nor take the focus from whatever is in front.
 /// `METALRENDERER_WINDOW=1` shows the frames in the app's window instead.
-enum Headless {
-    static let isEnabled = Benchmark.isEnabled && ProcessInfo.processInfo.environment["METALRENDERER_WINDOW"] != "1"
+package enum Headless {
+    package static let isEnabled = Benchmark.isEnabled && ProcessInfo.processInfo.environment["METALRENDERER_WINDOW"] != "1"
 }
 
 /// Frames without a window: a ring of textures in the drawable's format, one per frame in flight. Its size is that of
 /// the app's window on a Retina screen, so a run renders the same pixels with or without a window.
-final class OffscreenSurface: RenderSurface {
-    let pointSize: CGSize
-    let backingScale: CGFloat
-    var outputSize: CGSize = .zero
-    var title: String?
-    let isVisible = true
-    let refreshInterval: CFTimeInterval? = nil
+package final class OffscreenSurface: RenderSurface {
+    package let pointSize: CGSize
+    package let backingScale: CGFloat
+    package var outputSize: CGSize = .zero
+    package var title: String?
+    package let isVisible = true
+    package let refreshInterval: CFTimeInterval? = nil
     private let device: MTLDevice
     private var ring: [MTLTexture] = []
     private var next = 0
@@ -120,7 +121,7 @@ final class OffscreenSurface: RenderSurface {
         self.count = count
     }
 
-    func nextOutput() -> FrameOutput? {
+    package func nextOutput() -> FrameOutput? {
         let width = Int(outputSize.width), height = Int(outputSize.height)
         guard width > 0, height > 0 else { return nil }
         if ring.first.map({ $0.width != width || $0.height != height }) ?? true {

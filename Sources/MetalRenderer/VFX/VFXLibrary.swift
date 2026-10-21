@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -148,7 +149,7 @@ package enum VFXLibrary {
     /// stars its children on that condition), the rocket dies as it starts to fall (a Kill), and a star's colour is
     /// its rocket's (its spawn id over 8 is its parent's, through the golden ratio into a rainbow), dimming as it
     /// burns out.
-    static func fireworks(at: SIMD3<Float>) -> VFXEffect {
+    package static func fireworks(at: SIMD3<Float>) -> VFXEffect {
         let rainbow = VFXGradient([.init(0, [1, 0.25, 0.2, 1]), .init(0.17, [1, 0.6, 0.1, 1]), .init(0.33, [1, 0.95, 0.3, 1]),
                                    .init(0.5, [0.3, 1, 0.35, 1]), .init(0.67, [0.25, 0.8, 1, 1]), .init(0.83, [0.55, 0.35, 1, 1]),
                                    .init(1, [1, 0.25, 0.2, 1])])
@@ -192,7 +193,7 @@ package enum VFXLibrary {
 
     // MARK: - By name (the VFX stage's, the editor's)
 
-    static let names = ["campfire", "grinder", "magic", "rain", "rubble", "fireworks", "embers", "bubbles", "dust", "runes"]
+    package static let names = ["campfire", "grinder", "magic", "rain", "rubble", "fireworks", "embers", "bubbles", "dust", "runes"]
 
     /// A built-in effect, made about the origin (its `origin` there, at its own height).
     package static func named(_ name: String) -> VFXEffect? {

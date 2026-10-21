@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import Metal
 import MetalKit
@@ -21,29 +22,29 @@ struct MatArgs {
 /// values (`baseColor`, `emissive`: their sRGB views), occlusion-roughness-metallic packed (glTF's R, G, B), the
 /// normal (OpenGL), the height (16-bit float) and the opacity; nil: the graph has no output for it. Mipmapped.
 /// `keys` are what each was made from: a texture whose key didn't change is the same texture.
-final class MatOutputs {
-    var baseColor: MTLTexture?
-    var orm: MTLTexture?
-    var normal: MTLTexture?
-    var emissive: MTLTexture?
-    var height: MTLTexture?
-    var opacity: MTLTexture?
-    var keys: [String: UInt64] = [:]
-    var surface = MatSurface()
+package final class MatOutputs {
+    package var baseColor: MTLTexture?
+    package var orm: MTLTexture?
+    package var normal: MTLTexture?
+    package var emissive: MTLTexture?
+    package var height: MTLTexture?
+    package var opacity: MTLTexture?
+    package var keys: [String: UInt64] = [:]
+    package var surface = MatSurface()
 
-    var all: [MTLTexture] { [baseColor, orm, normal, emissive, height, opacity].compactMap { $0 } }
+    package var all: [MTLTexture] { [baseColor, orm, normal, emissive, height, opacity].compactMap { $0 } }
 }
 
 /// What an evaluation gives back: the renderer's textures, the thumbnails it made (by the step's hash), what each
 /// node's error was (a compile's, a file's), and how long the GPU took.
-struct MatResult {
-    var outputs: MatOutputs
-    var thumbnails: [UInt64: CGImage] = [:]
-    var errors: [String: String] = [:]
-    var gpuMilliseconds: Double = 0
+package struct MatResult {
+    package var outputs: MatOutputs
+    package var thumbnails: [UInt64: CGImage] = [:]
+    package var errors: [String: String] = [:]
+    package var gpuMilliseconds: Double = 0
     /// Nodes baked (the rest were cached).
-    var baked = 0
-    var plan: MatPlan
+    package var baked = 0
+    package var plan: MatPlan
 }
 
 /// Bakes a graph's plan (MatPlan) on the GPU, on a queue of its own: a node at a time, in the plan's order, each a
@@ -55,8 +56,8 @@ struct MatResult {
 /// Evaluations run one at a time, in the background: one asked for while another runs waits. Of the editor's, only the
 /// latest waits (a slider's drag asks 30 times a second; what it shows is its last); a bake's (MaterialBake) waits in
 /// line, each to the end (a scene asks for all its materials at once). The editor's goes first.
-final class MatEngine {
-    let device: MTLDevice
+package final class MatEngine {
+    package let device: MTLDevice
     private let queue: MTLCommandQueue
     private let work = DispatchQueue(label: "MetalRenderer.materials", qos: .userInitiated)
     private let lock = NSLock()
@@ -76,9 +77,9 @@ final class MatEngine {
         return t
     }()
     /// The cache's budget: images past it that the plan doesn't use are let go, the least recently used first.
-    var budget: Int
+    package var budget: Int
 
-    static let thumbnailSide = 96
+    package static let thumbnailSide = 96
 
     package init(device: MTLDevice) {
         self.device = device
@@ -90,7 +91,7 @@ final class MatEngine {
     /// Bakes `plan` (after the evaluation running now, if one is: `latestOnly`, replacing the one waiting; otherwise
     /// in line after those waiting), then calls `done` on the main thread. Thumbnails are made for the nodes baked and
     /// for those whose hashes aren't in `known`.
-    func evaluate(_ plan: MatPlan, known: Set<UInt64> = [], latestOnly: Bool = true, done: @escaping (MatResult) -> Void) {
+    package func evaluate(_ plan: MatPlan, known: Set<UInt64> = [], latestOnly: Bool = true, done: @escaping (MatResult) -> Void) {
         lock.lock()
         if busy {
             if latestOnly { pending = (plan, known, done) } else { queued.append((plan, known, done)) }
@@ -119,19 +120,19 @@ final class MatEngine {
     }
 
     /// Bakes `plan` now, on the caller's thread (benchmarks, tests).
-    func evaluateNow(_ plan: MatPlan, known: Set<UInt64> = []) -> MatResult {
+    package func evaluateNow(_ plan: MatPlan, known: Set<UInt64> = []) -> MatResult {
         work.sync { run(plan, known: known) }
     }
 
     /// Node `hash`'s output `output`, if it is baked (the editor's 2D view).
-    func texture(_ hash: UInt64, output: Int = 0) -> MTLTexture? {
+    package func texture(_ hash: UInt64, output: Int = 0) -> MTLTexture? {
         lock.lock(); defer { lock.unlock() }
         guard let i = images[hash], i.textures.indices.contains(output) else { return nil }
         return i.textures[output]
     }
 
     /// Images kept and their bytes.
-    var cacheStats: (count: Int, bytes: Int) {
+    package var cacheStats: (count: Int, bytes: Int) {
         lock.lock(); defer { lock.unlock() }
         return (images.count, images.values.reduce(0) { $0 + $1.bytes })
     }
@@ -395,7 +396,7 @@ final class MatEngine {
     // MARK: - Reading back
 
     /// `texture`'s pixels (level `level`) as floats, RGBA (a grey's in R, G and B; alpha 1): the export's, the tests'.
-    func read(_ texture: MTLTexture, level: Int = 0) -> [SIMD4<Float>] {
+    package func read(_ texture: MTLTexture, level: Int = 0) -> [SIMD4<Float>] {
         let w = max(texture.width >> level, 1), h = max(texture.height >> level, 1)
         let (channels, size): (Int, Int)
         switch texture.pixelFormat {

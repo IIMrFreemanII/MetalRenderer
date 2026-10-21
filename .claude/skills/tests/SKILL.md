@@ -34,9 +34,10 @@ By hand, with the same filter:
 ```bash
 Tools/build.sh test --filter 'CityTests|BuildingTests'
 ```
-In release, when a check needs that exact build: `swift test -c release --filter …`. Release builds are testable
-(`Package.swift`), so it shares `.build/release` with `swift build -c release` and needs no `-Xswiftc -enable-testing`;
-but a Swift edit recompiles the whole module there (about 4 min).
+In release, when a check needs that exact build: `Tools/release.sh test --filter …` (swift test -c release, after
+the modules above an `@inlinable` body that changed are marked for rebuilding, which `swift test` alone wouldn't do).
+Release builds are testable (`Package.swift`), so it shares `.build/release` with `Tools/release.sh` and needs no
+`-Xswiftc -enable-testing`; but a Swift edit recompiles its whole module there.
 For one test, use `--filter CityTests/testThePlanIsSeeded`.
 
 ## Map

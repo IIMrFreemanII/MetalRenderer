@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,22 +12,22 @@ import simd
 package struct FractureTree {
     package struct Node {
         package var cell: ConvexCell
-        var parent: Int
+        package var parent: Int
         /// Its children: contiguous (the tree is built a level at a time).
-        var children: Range<Int>
-        var level: Int
+        package var children: Range<Int>
+        package var level: Int
         /// How much of the cell is the object (all of it for a convex object; a share for a statue's box's cells).
-        var volume: Float
-        var isLeaf: Bool { children.isEmpty }
+        package var volume: Float
+        package var isLeaf: Bool { children.isEmpty }
     }
 
     package struct Weld {
-        var a: Int
-        var b: Int
+        package var a: Int
+        package var b: Int
         /// The shared faces' area inside the object (m^2), their middle and normal (out of a).
-        var area: Float
-        var centre: SIMD3<Float>
-        var normal: SIMD3<Float>
+        package var area: Float
+        package var centre: SIMD3<Float>
+        package var normal: SIMD3<Float>
     }
 
     let recipe: FractureRecipe

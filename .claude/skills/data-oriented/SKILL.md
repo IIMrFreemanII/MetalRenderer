@@ -88,7 +88,7 @@ The patterns, as code from this repo: [references/patterns.md](references/patter
    frame with `METALRENDERER_BENCH_SPLIT=0`. Run it on both APIs (`METALRENDERER_API=metal3` / `metal4`).
 3. **Lock the loop in.** Once a hot loop is clean, add its demangled name to `Tools/perf/hot-functions.txt` and run
    ```bash
-   swift build -c release && python3 Tools/perf/hotcalls.py
+   Tools/release.sh && python3 Tools/perf/hotcalls.py
    ```
    It fails if a listed function calls the runtime (retain/release, allocation, exclusivity or uniqueness checks,
    dynamic casts, Objective-C messages, generic metadata, lazy globals) or a function of another of the package's

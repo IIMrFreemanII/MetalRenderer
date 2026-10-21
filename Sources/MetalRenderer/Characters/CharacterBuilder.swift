@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -234,11 +235,11 @@ package enum CharacterBuilder {
     /// One of a generated character's materials: base colour, roughness, and how it scatters light under its surface
     /// (0: not skin; else its strength, + 2 where it is thin: Material.params.w's code, Shaders/Hair.metal).
     struct Material {
-        var color: SIMD3<Float>
-        var roughness: Float
-        var skin: Float = 0
+        package var color: SIMD3<Float>
+        package var roughness: Float
+        package var skin: Float = 0
         /// It takes the skin's textures (SkinTextures).
-        var textured = false
+        package var textured = false
     }
 
     /// A generated character's run of materials (FaceParts.Material's order). `skin`: the skin's colour (`skinColor`,
@@ -287,11 +288,11 @@ package enum CharacterBuilder {
 /// the library's) and shared.
 package final class CharacterKit {
     package let base: CharacterBase
-    let morphs: CharacterMorphs
+    package let morphs: CharacterMorphs
     package let face: FaceRig
-    let clips: [SkinnedCharacter.Clip]
+    package let clips: [SkinnedCharacter.Clip]
     /// The base's head in its skin's textures (SkinTextures), made the first time it is asked for.
-    var chart: SkinChart {
+    package var chart: SkinChart {
         chartLock.lock()
         defer { chartLock.unlock() }
         if let made = madeChart { return made }
@@ -324,10 +325,10 @@ package final class CharacterKit {
         return kit
     }
 
-    static let version: UInt32 = 16
+    package static let version: UInt32 = 16
     private static let magic: UInt32 = 0x4B43_474D   // "MGCK"
 
-    static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true, options: CharacterBase.Options = .init()) -> CharacterKit? {
+    package static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true, options: CharacterBase.Options = .init()) -> CharacterKit? {
         let library = CharacterLibrary.load(directory, cache: cache)
         guard let male = library.characters.first(where: { $0.name == "Y Bot" }) ?? library.characters.first else { return nil }
         let female = library.characters.first { $0.name == "X Bot" }
@@ -391,7 +392,7 @@ package final class CharacterKit {
 
     // MARK: Cache file
 
-    static func encoded(_ base: CharacterBase, _ morphs: CharacterMorphs, _ face: FaceRig) -> Data {
+    package static func encoded(_ base: CharacterBase, _ morphs: CharacterMorphs, _ face: FaceRig) -> Data {
         var w = BlobWriter()
         w.put(magic)
         w.put(version)
@@ -413,7 +414,7 @@ package final class CharacterKit {
         return w.data
     }
 
-    static func read(_ url: URL) throws -> (CharacterBase, CharacterMorphs, FaceRig) {
+    package static func read(_ url: URL) throws -> (CharacterBase, CharacterMorphs, FaceRig) {
         var r = BlobReader(try Data(contentsOf: url, options: .alwaysMapped))
         guard try r.get(UInt32.self) == magic, try r.get(UInt32.self) == version else { throw FBXError.invalid("not a character kit cache") }
         var c = SkinnedCharacter(name: "Generated", positions: try r.array(), normals: try r.array(), uvs: try r.array(),

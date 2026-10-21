@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,7 +12,7 @@ package enum TerrainTool: String, Codable, CaseIterable, Identifiable {
     case paint, erase, protect, unprotect
 
     package var id: String { rawValue }
-    var title: String {
+    package var title: String {
         switch self {
         case .raise: return "Raise"
         case .lower: return "Lower"
@@ -30,7 +31,7 @@ package enum TerrainTool: String, Codable, CaseIterable, Identifiable {
         case .unprotect: return "Unprotect"
         }
     }
-    var symbol: String {
+    package var symbol: String {
         switch self {
         case .raise: return "arrow.up.circle"
         case .lower: return "arrow.down.circle"
@@ -50,35 +51,35 @@ package enum TerrainTool: String, Codable, CaseIterable, Identifiable {
         }
     }
     /// It changes the ground's heights (else its paint or protection).
-    var sculpts: Bool { !paints && self != .protect && self != .unprotect }
-    var paints: Bool { self == .paint || self == .erase }
+    package var sculpts: Bool { !paints && self != .protect && self != .unprotect }
+    package var paints: Bool { self == .paint || self == .erase }
     /// It acts once, when the stroke ends (a ramp from where it began to where it ends).
-    var actsOnRelease: Bool { self == .ramp }
+    package var actsOnRelease: Bool { self == .ramp }
 }
 
 /// A terrain brush: what it does, how large (metres), how strong, how soft its edge, how far apart its dabs are.
 package struct TerrainBrush: Codable, Equatable {
-    var tool = TerrainTool.raise
-    var radius: Float = 12
-    var strength: Float = 0.5
+    package var tool = TerrainTool.raise
+    package var radius: Float = 12
+    package var strength: Float = 0.5
     /// Where the edge starts to fade, as a share of the radius (0: from the middle, 1: a hard edge).
-    var hardness: Float = 0.3
+    package var hardness: Float = 0.3
     /// Dabs apart, as a share of the radius.
-    var spacing: Float = 0.2
+    package var spacing: Float = 0.2
     /// Held still, it keeps acting (dabs a second at full strength).
-    var airbrush: Float = 6
+    package var airbrush: Float = 6
     /// Set height: metres (the world's y). Noise: metres per feature. Terrace: metres a step, and how hard (0...1).
-    var height: Float = 0
+    package var height: Float = 0
     package var noiseScale: Float = 18
     package var terraceStep: Float = 4
-    var terraceSharpness: Float = 0.8
+    package var terraceSharpness: Float = 0.8
     /// Paint: the layer.
-    var layer = 1
+    package var layer = 1
     /// Pen pressure scales its strength.
-    var pressure = true
+    package var pressure = true
 
     /// The brush's weight at `t` (distance / radius, 0...1).
-    @inline(__always) func falloff(_ t: Float) -> Float {
+    @inline(__always) package func falloff(_ t: Float) -> Float {
         guard t < 1 else { return 0 }
         let h = min(max(hardness, 0), 0.99)
         if t <= h { return 1 }
@@ -86,7 +87,7 @@ package struct TerrainBrush: Codable, Equatable {
         return 1 - x * x * (3 - 2 * x)
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(tool: TerrainTool = TerrainTool.raise, radius: Float = 12, strength: Float = 0.5, hardness: Float = 0.3, spacing: Float = 0.2, airbrush: Float = 6, height: Float = 0, noiseScale: Float = 18, terraceStep: Float = 4, terraceSharpness: Float = 0.8, layer: Int = 1, pressure: Bool = true) {
         self.tool = tool
         self.radius = radius
@@ -104,7 +105,7 @@ package struct TerrainBrush: Codable, Equatable {
 }
 
 /// A dab: where (the world's x, z) and how much of the brush's strength (pressure, the airbrush's share of a second).
-struct TerrainDab: Equatable {
+package struct TerrainDab: Equatable {
     var center: SIMD2<Double>
     var amount: Float
 }
@@ -154,7 +155,7 @@ struct TerrainStroke {
 
 /// What a stroke (or a generator's run, an import) changed: each tile as it was before and after. Undone, the tiles
 /// are put back as they were; redone, as they became. Arrays are shared with the field until it changes them again.
-struct TerrainUndoRecord {
+package struct TerrainUndoRecord {
     var before: [SIMD2<Int>: TerrainTile?] = [:]
     var after: [SIMD2<Int>: TerrainTile?] = [:]
     var title = ""

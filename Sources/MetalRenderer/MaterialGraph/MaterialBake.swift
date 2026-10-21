@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import QuartzCore
@@ -6,12 +7,12 @@ import QuartzCore
 /// into the textures the renderer puts in their slots (Renderer.applyProcedural). One engine per device, which the
 /// Material Designer shares: a graph the editor has just baked is baked again here from its cache (nothing new).
 /// A graph is known by its key (its JSON's hash): a bake is asked for once per key, and the last few are kept.
-final class MaterialBake {
+package final class MaterialBake {
     private static let lock = NSLock()
     private static var made: [ObjectIdentifier: MaterialBake] = [:]
 
     /// The device's.
-    static func shared(_ device: MTLDevice) -> MaterialBake {
+    package static func shared(_ device: MTLDevice) -> MaterialBake {
         lock.lock(); defer { lock.unlock() }
         if let b = made[ObjectIdentifier(device)] { return b }
         let b = MaterialBake(device: device)
@@ -19,7 +20,7 @@ final class MaterialBake {
         return b
     }
 
-    let engine: MatEngine
+    package let engine: MatEngine
     private let lock = NSLock()
     private var outputs: [String: MatOutputs] = [:]
     private var order: [String] = []
@@ -29,7 +30,7 @@ final class MaterialBake {
     package init(device: MTLDevice) { engine = MatEngine(device: device) }
 
     /// A graph's key: what its bake depends on (the graph, and its subgraphs as `catalog` has them).
-    static func key(_ graph: MaterialGraph, catalog: MaterialCatalog) -> String {
+    package static func key(_ graph: MaterialGraph, catalog: MaterialCatalog) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         var h = Hasher64()
@@ -41,19 +42,19 @@ final class MaterialBake {
     }
 
     /// `key`'s textures, if they are baked.
-    func baked(_ key: String) -> MatOutputs? {
+    package func baked(_ key: String) -> MatOutputs? {
         lock.lock(); defer { lock.unlock() }
         return outputs[key]
     }
 
     /// Why `key`'s bake failed, if it did.
-    func failure(_ key: String) -> String? {
+    package func failure(_ key: String) -> String? {
         lock.lock(); defer { lock.unlock() }
         return failures[key]
     }
 
     /// Bakes `graph` under `key` in the background (once a key), then calls `done` on the main thread.
-    func request(_ graph: MaterialGraph, key: String, catalog: MaterialCatalog, done: @escaping () -> Void) {
+    package func request(_ graph: MaterialGraph, key: String, catalog: MaterialCatalog, done: @escaping () -> Void) {
         lock.lock()
         guard outputs[key] == nil, asked.insert(key).inserted else { lock.unlock(); return }
         lock.unlock()
@@ -66,7 +67,7 @@ final class MaterialBake {
 
     /// Bakes `graph` now (benchmarks: a scene's first frame has its materials).
     @discardableResult
-    func bakeNow(_ graph: MaterialGraph, key: String, catalog: MaterialCatalog) -> MatOutputs? {
+    package func bakeNow(_ graph: MaterialGraph, key: String, catalog: MaterialCatalog) -> MatOutputs? {
         if let o = baked(key) { return o }
         guard let plan = plan(graph, key: key, catalog: catalog) else { return nil }
         let start = CACurrentMediaTime()
@@ -79,7 +80,7 @@ final class MaterialBake {
     }
 
     /// What the Material Designer baked as it edits (its result is this key's bake).
-    func adopt(_ result: MatResult, key: String) { keep(key, result) }
+    package func adopt(_ result: MatResult, key: String) { keep(key, result) }
 
     private func plan(_ graph: MaterialGraph, key: String, catalog: MaterialCatalog) -> MatPlan? {
         do {

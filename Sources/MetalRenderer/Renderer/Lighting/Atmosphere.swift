@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -42,27 +43,27 @@ enum Atmosphere {
 }
 
 /// An equirectangular HDR environment (.hdr, .exr) for the sky, with its sun cut out: the sun light carries it.
-struct SkyImage {
-    let width: Int, height: Int
-    let pixels: [SIMD4<Float>]          // linear radiance, the sun replaced by the sky around it, scaled (see `load`)
-    let sunDirection: SIMD3<Float>?     // toward the sun, if the image has one
-    let sunIrradiance: SIMD3<Float>
-    let sunAngularRadius: Float
+package struct SkyImage {
+    package let width: Int, height: Int
+    package let pixels: [SIMD4<Float>]          // linear radiance, the sun replaced by the sky around it, scaled (see `load`)
+    package let sunDirection: SIMD3<Float>?     // toward the sun, if the image has one
+    package let sunIrradiance: SIMD3<Float>
+    package let sunAngularRadius: Float
 
-    static let fileExtensions: Set<String> = ["hdr", "exr"]
+    package static let fileExtensions: Set<String> = ["hdr", "exr"]
 
     /// Direction of texel (x, y): u = 0.5 faces -z, v = 0 is straight up (as equirectSample in Shaders/Sky.metal).
-    static func direction(u: Float, v: Float) -> SIMD3<Float> {
+    package static func direction(u: Float, v: Float) -> SIMD3<Float> {
         let phi = (u - 0.5) * 2 * Float.pi, theta = v * Float.pi
         return SIMD3(sin(theta) * sin(phi), cos(theta), -sin(theta) * cos(phi))
     }
 
-    enum LoadError: Error { case unreadable(String) }
+    package enum LoadError: Error { case unreadable(String) }
 
     /// Loads an image (downsampled to at most 2048 wide), finds the sun (the brightest compact spot, far brighter
     /// than the sky) and replaces it by the ring around it, then scales everything so that the light on a level
     /// floor (sun + sky) is about 4 renderer units, times 2^exposure.
-    static func load(path: String, exposure: Float = 0) throws -> SkyImage {
+    package static func load(path: String, exposure: Float = 0) throws -> SkyImage {
         let url = URL(fileURLWithPath: path) as CFURL
         guard let source = CGImageSourceCreateWithURL(url, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldAllowFloat: true] as CFDictionary) else {

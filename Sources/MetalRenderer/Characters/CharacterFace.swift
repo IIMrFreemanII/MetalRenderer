@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -22,10 +23,10 @@ package final class FaceRig {
     static let groupCount = Group.allCases.count
 
     package struct Target: Equatable {
-        var name: String
-        var vertices: [UInt32]
-        var deltas: [SIMD3<Float>]
-        var normals: [SIMD3<Float>]
+        package var name: String
+        package var vertices: [UInt32]
+        package var deltas: [SIMD3<Float>]
+        package var normals: [SIMD3<Float>]
     }
 
     let targets: [Target]
@@ -42,8 +43,8 @@ package final class FaceRig {
 
     /// MSL FaceEntry: one target's movement of one vertex (`delta.w`: the target's index, as bits).
     struct Entry {
-        var delta: SIMD4<Float>
-        var normal: SIMD4<Float>
+        package var delta: SIMD4<Float>
+        package var normal: SIMD4<Float>
     }
 
     /// The targets by vertex (what the GPU reads): vertex v's entries are `entries[ranges[v] ..< ranges[v + 1]]`.
@@ -278,9 +279,9 @@ package final class FaceRig {
 
 /// One slot's face this frame: each expression target's weight and each group's turn (MSL FaceTurn).
 struct FaceState: Equatable {
-    struct Turn: Equatable {
-        var axisAngle = SIMD4<Float>(1, 0, 0, 0)   // axis, and the angle at weight 1 (radians)
-        var pivot = SIMD4<Float>()                // the eye's centre (bind space)
+    package struct Turn: Equatable {
+        package var axisAngle = SIMD4<Float>(1, 0, 0, 0)   // axis, and the angle at weight 1 (radians)
+        package var pivot = SIMD4<Float>()                // the eye's centre (bind space)
     }
     var weights = [Float](repeating: 0, count: FaceRig.targetNames.count)
     var turns = [Turn](repeating: Turn(), count: FaceRig.groupCount)
@@ -290,7 +291,7 @@ struct FaceState: Equatable {
 package enum FaceExpression: Int, Codable, CaseIterable {
     case neutral, smile, frown, surprise, talk, cycle
 
-    var title: String {
+    package var title: String {
         switch self {
         case .neutral: return "Neutral"
         case .smile: return "Smile"

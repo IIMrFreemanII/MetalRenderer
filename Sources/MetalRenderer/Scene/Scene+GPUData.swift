@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -12,7 +13,7 @@ extension Scene {
     /// Into the renderer's records, kept from frame to frame. `all`: every instance (a scene's first frame); otherwise
     /// only the ones that move, the rest being unchanged.
     /// `range`: of all the instances, these (a part of them, for a caller that writes the parts side by side).
-    func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool, range: Range<Int>? = nil) {
+    package func writeInstanceData(into out: UnsafeMutablePointer<GPUInstanceData>, all: Bool, range: Range<Int>? = nil) {
         // Through the arrays' buffers, with the counts taken once: reading `self`'s arrays per instance cost an
         // exclusivity check each.
         let meshCount = meshes.count, virtualCount = virtualMeshes.count, assemblyCount = assemblies.count
@@ -46,11 +47,11 @@ extension Scene {
     /// More lights than this (analytic + emissive meshes): nothing may loop over the lights or keep something per light
     /// (LIGHT_TABLE in Shaders/Types.metal): no light maps, GI and the path tracer sample the light table.
     /// `METALRENDERER_LIGHT_TABLE=1` / `=0` forces it on / off. Set once, by init.
-    static let lightTableThreshold = 256
+    package static let lightTableThreshold = 256
 
     /// One bit per light type present (GPULight.sphere ...): the shaders are specialised for it. Bit 31: usesLightTable.
     /// The bits under it: the features the scene's shaders are compiled with.
-    var lightTypeMask: UInt32 {
+    package var lightTypeMask: UInt32 {
         // Bits 30 and 29: FOLIAGE, the scene has assemblies or leaning ground cover, and ALPHA_TEST, it has leaf cards.
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots, cloths). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
@@ -89,7 +90,7 @@ extension Scene {
     }
 
     /// `all`: every light (a scene's first frame); otherwise only the ones whose record changes over time.
-    func writeLights(into out: UnsafeMutableBufferPointer<GPULight>, all: Bool) {
+    package func writeLights(into out: UnsafeMutableBufferPointer<GPULight>, all: Bool) {
         if all {
             for l in lights.indices { out[l] = gpuLight(l) }
         } else {

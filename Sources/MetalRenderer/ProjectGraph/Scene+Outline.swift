@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import QuartzCore
 import simd
@@ -6,9 +7,9 @@ import simd
 /// is an instance of.
 extension Scene {
     /// Groups of more than this many instances of one thing are one node (an aggregate).
-    static let outlineGroupLimit = 24
+    package static let outlineGroupLimit = 24
 
-    func makeOutline() -> SceneOutline {
+    package func makeOutline() -> SceneOutline {
         let start = CACurrentMediaTime()
         var b = OutlineBuilder(self)
         b.build()
@@ -34,7 +35,7 @@ extension Scene {
 
     /// What instance `i` is as its builder made it: its geometry and its size. An edit made of it (SceneOverrides) holds
     /// while this does.
-    func outlineFingerprint(_ i: Int) -> String {
+    package func outlineFingerprint(_ i: Int) -> String {
         guard instances.indices.contains(i) else { return "" }
         let inst = instances[i]
         var h = Hasher64()
@@ -50,7 +51,7 @@ extension Scene {
     }
 
     /// Instance `i`'s bounds in the world, as it is now.
-    func worldBounds(of i: Int) -> AABB {
+    package func worldBounds(of i: Int) -> AABB {
         guard instances.indices.contains(i) else { return AABB() }
         let (lo, hi) = localBounds(of: instances[i])
         return AABB(lo: lo, hi: hi).transformed(sceneOverrides.hiddenTransforms[i] ?? instances[i].transform)

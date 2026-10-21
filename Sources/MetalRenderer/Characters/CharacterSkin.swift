@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -23,7 +24,7 @@ enum SkinAtlas {
 /// head's surface it shows and its normal, in FaceSculpt's space, and how far apart neighbouring texels are on it
 /// (metres per texel along u and v). Made by drawing the base's triangles into the atlas, the outermost surface
 /// (furthest from the axis) kept where several fall on one texel (the lips' inside behind their outside).
-struct SkinChart {
+package struct SkinChart {
     static let defaultSize = 1024
     let size: Int
     var points: [SIMD3<Float>]

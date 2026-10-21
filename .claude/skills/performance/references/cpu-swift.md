@@ -1,6 +1,6 @@
 # CPU (Swift) practices for MetalRenderer
 
-Always measure release builds (`swift build -c release`). Debug Swift is 10–100× slower in hot loops and tells you
+Always measure release builds (`Tools/release.sh`). Debug Swift is 10–100× slower in hot loops and tells you
 nothing. The dev build (`Tools/build.sh`, debug configuration with `-O`) is close to release and fine for iterating,
 but quote release numbers.
 
@@ -82,7 +82,7 @@ but quote release numbers.
   `[MTLResource]` casts every element with a protocol check, and `structure.gpuResourceID` is a message send: make
   such lists and IDs once and keep them (`PlantTracing.resources(slot:)`, `SceneBuffers.primitiveIDs`; the forest's
   CPU time a frame halved).
-* **Check the compiled loop.** `python3 Tools/perf/hotcalls.py` (after `swift build -c release`) disassembles the
+* **Check the compiled loop.** `python3 Tools/perf/hotcalls.py` (after `Tools/release.sh`) disassembles the
   functions listed in `Tools/perf/hot-functions.txt` and fails if one calls the runtime: retain/release, allocation,
   `swift_beginAccess`, uniqueness checks, dynamic casts, `objc_msgSend`. Add a hot loop there once it is clean; a name
   that no longer matches fails too. It reads each function's own body only (inlined closures have none; callees aren't

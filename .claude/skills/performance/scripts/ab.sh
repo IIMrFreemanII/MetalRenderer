@@ -42,7 +42,7 @@ env_b=("$@")
 
 check_bin() {
   local bin=$1
-  [[ -x $bin ]] || { echo "ab.sh: $bin not found; run swift build -c release" >&2; exit 1; }
+  [[ -x $bin ]] || { echo "ab.sh: $bin not found; run Tools/release.sh" >&2; exit 1; }
   [[ $bin == */release/* ]] || { echo "ab.sh: $bin is not a release build" >&2; exit 1; }
 }
 check_bin "$bin_a"; check_bin "$bin_b"

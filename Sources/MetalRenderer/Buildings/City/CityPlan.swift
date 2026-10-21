@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -19,11 +20,11 @@ package struct CityPlan {
         package func contains(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
             r.lo.x >= lo.x - tolerance && r.lo.y >= lo.y - tolerance && r.hi.x <= hi.x + tolerance && r.hi.y <= hi.y + tolerance
         }
-        func overlaps(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
+        package func overlaps(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
             r.lo.x < hi.x - tolerance && r.hi.x > lo.x + tolerance && r.lo.y < hi.y - tolerance && r.hi.y > lo.y + tolerance
         }
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(lo: SIMD2<Float>, hi: SIMD2<Float>) {
             self.lo = lo
             self.hi = hi
@@ -46,7 +47,7 @@ package struct CityPlan {
         package var edges: [Edge]
         package var style: CityStyle            // never .mixed
         package var floors: Int
-        var seed: UInt64
+        package var seed: UInt64
         var block: Int
 
         /// Width (across the front) and depth.
@@ -77,7 +78,7 @@ package struct CityPlan {
         package var water: Rect
     }
     /// The canal's avenue is this much wider than it was; its quays are `quay` wide.
-    static let canalExtra: Float = 16, quay: Float = 4
+    package static let canalExtra: Float = 16, quay: Float = 4
     /// How far under the streets its water is, and its bed.
     package static let canalLevel: Float = 1.5, canalBed: Float = 4
 
@@ -92,8 +93,8 @@ package struct CityPlan {
     package static let sidewalk: Float = 3.5
     package static let margin: Float = 300      // open ground around the outermost streets
 
-    let settings: CitySettings
-    let seed: Int
+    package let settings: CitySettings
+    package let seed: Int
     package private(set) var blocks: [Block] = []
     package private(set) var lots: [Lot] = []
     package private(set) var streets: [Street] = []

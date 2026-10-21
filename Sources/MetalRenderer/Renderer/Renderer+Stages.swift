@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -8,7 +9,7 @@ extension Renderer {
 
     /// Starts a kernel's dispatch: its pipeline, the uniforms, and for kernels that trace rays the scene.
     /// `pass`: the kernel's own flags, for the kernels with variants (Kernel.fixedPassFlags).
-    func bind(_ enc: ComputePass, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
+    package func bind(_ enc: ComputePass, _ kernel: Kernel, _ uniforms: Uniforms, pass: UInt32 = 0, sceneSlot: Int? = nil) {
         var u = uniforms
         // While the blue-noise tile is on its way (a first launch), the general pipelines: a variant for the flags
         // of those few frames would be compiled for nothing.
@@ -20,7 +21,7 @@ extension Renderer {
     }
 
     /// 1a. The light grid's build. It reads only the light and instance buffers, which the CPU wrote.
-    func lightGridStages(_ plan: FramePlan) -> [ComputeStage] {
+    package func lightGridStages(_ plan: FramePlan) -> [ComputeStage] {
         guard let grid = plan.lightGrid else { return [] }
         let uniforms = plan.uniforms, slot = plan.slot
         return [ComputeStage(pass: "regir") { [self] enc in
@@ -31,7 +32,7 @@ extension Renderer {
 
     /// 1b. Light-visibility maps. 2. Ray trace: primary visibility (G-buffer), direct light with shadow rays,
     /// path-traced indirect light.
-    func headStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+    package func headStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
         var stages: [ComputeStage] = []
         if plan.lightMaps {
@@ -97,7 +98,7 @@ extension Renderer {
     }
 
     /// 1c. The particles' light, once a particle (Shaders/ParticleLight.metal): it needs only the structures.
-    func particleLightStages(_ plan: FramePlan) -> [ComputeStage] {
+    package func particleLightStages(_ plan: FramePlan) -> [ComputeStage] {
         guard plan.particles != nil, let gpu = particlesGPU else { return [] }
         let uniforms = plan.uniforms, slot = plan.slot
         return [ComputeStage(pass: "particle light") { [self] enc in
@@ -113,7 +114,7 @@ extension Renderer {
     /// 3e. The particles in front of the camera's surfaces, after the fog's grid (they're fogged where they are). The
     /// composite puts the layer over the scene, or particleOverlayKernel over MetalFX's output (which would filter it
     /// with the scene's motion), upsampled by depth where the layer is smaller than the frame (`particleScale`).
-    func particleLayerStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+    package func particleLayerStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard let layer = plan.particles else { return [] }
         if !plan.neuralDenoise { composite.uniforms.flags |= UniformFlags.particles }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
@@ -137,7 +138,7 @@ extension Renderer {
 
     /// 2b. The GI technique, if one runs: it writes t.indirect (the path tracer already did, inside traceKernel), after
     /// the trace (its G-buffer) and before the reflections (they read it).
-    func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+    package func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         if plan.cascades { return radianceCascadeStages(plan, targets: t) }
         if let grid = plan.restirGIGrid { return restirGIStages(plan, grid: grid, targets: t) }
         return []
@@ -145,7 +146,7 @@ extension Renderer {
 
     /// 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers. The second
     /// group is their own denoiser.
-    func reflectionStages(_ plan: FramePlan, targets t: RenderTargets,
+    package func reflectionStages(_ plan: FramePlan, targets t: RenderTargets,
                                   composite: inout CompositeInputs) -> (trace: [ComputeStage], denoise: [ComputeStage]) {
         guard plan.specular else { return ([], []) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
@@ -190,7 +191,7 @@ extension Renderer {
 
     /// 2e. ReSTIR DI: after the trace (its G-buffer), before the reflections (they add its direct specular) and the
     /// denoiser.
-    func restirStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+    package func restirStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         guard let rg = plan.restirGrid else { return [] }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         let r = plan.restirSettings
@@ -240,7 +241,7 @@ extension Renderer {
 
     /// 2c. Direct light that is sampled per pixel: one light per group with more than 4 lights (manyLightsKernel), and
     /// the emissive-mesh lights. After the trace and before anything that reads direct light or visibility.
-    func sampledLightStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+    package func sampledLightStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         var stages: [ComputeStage] = []
         if plan.manyLights {
@@ -271,7 +272,7 @@ extension Renderer {
     }
 
     /// 3b. The shadow denoiser: direct light's per-group visibility through its own temporal and spatial filter.
-    func shadowDenoiseStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+    package func shadowDenoiseStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard plan.shadowDenoiser else { return [] }
         let uniforms = plan.uniforms, cur = plan.cur, prev = plan.prev, size = plan.size
         let d = settings.denoiser, s = t.shadow
@@ -306,7 +307,7 @@ extension Renderer {
 
     /// Reference "Path traced": this frame's paths join the running mean (Shaders/PathTrace.metal), which encodeOutput
     /// tone maps. Nothing to add once it has max samples.
-    func pathTraceStages(_ plan: FramePlan) -> [ComputeStage] {
+    package func pathTraceStages(_ plan: FramePlan) -> [ComputeStage] {
         guard let pt = plan.pathTrace, pt.params.samples.y > 0 else { return [] }
         let uniforms = plan.uniforms, size = plan.size, slot = plan.slot
         return [ComputeStage(pass: "path trace") { [self] enc in
@@ -322,7 +323,7 @@ extension Renderer {
     }
 
     /// Benchmark references: this frame's raw light joins the average, which the composite shows.
-    func accumulateStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+    package func accumulateStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard let accum = plan.accumulation else { return [] }
         let uniforms = plan.uniforms, size = plan.size, averaged = plan.accumCount
         composite.illumination = [accum.direct, accum.indirect]
@@ -379,7 +380,7 @@ extension Renderer {
     }
 
     /// 3. SVGF: one temporal pass and up to five a-trous passes over every signal.
-    func svgfStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+    package func svgfStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard plan.svgf else { return [] }
         let signals = denoiseSignals(plan, targets: t)
         guard !signals.isEmpty else { return [] }
@@ -420,7 +421,7 @@ extension Renderer {
 
     /// 3d. Volumetric fog: light the froxel grid in front of the surfaces and integrate it (or, for references, march
     /// every camera ray). It needs the TLAS, the lights and the G-buffer's depth.
-    func fogStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
+    package func fogStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard let (g, noise) = plan.fog else { return [] }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
         let fogParams = plan.fogParams, samples = plan.fogSamples

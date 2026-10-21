@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -8,26 +9,26 @@ package struct WaterLook: Codable, Equatable {
     package enum Preset: String, Codable, CaseIterable, Identifiable {
         case ocean, lake, river, swamp, pool
         package var id: String { rawValue }
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        package var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
     /// Per metre, red green blue.
     package var absorption: SIMD3<Float>
-    var scattering: SIMD3<Float>
-    var ior: Float = 1.333
-    var roughness: Float = 0.02
+    package var scattering: SIMD3<Float>
+    package var ior: Float = 1.333
+    package var roughness: Float = 0.02
     /// The share of the wind's sea it has (0: still, a mirror but for its ripples), the waves' sideways push (choppy
     /// crests), the small ripples' strength.
     package var waves: Float
-    var chop: Float
-    var ripples: Float
+    package var chop: Float
+    package var ripples: Float
     /// Foam where the waves break (0...1), the foam line along the shore (as deep as the water it lies on, m), white water where a river
     /// runs fast (0...1), how fast a river runs in its middle (m/s).
-    var foam: Float
-    var shoreFoam: Float
-    var whiteWater: Float
-    var flowSpeed: Float
+    package var foam: Float
+    package var shoreFoam: Float
+    package var whiteWater: Float
+    package var flowSpeed: Float
     /// How forward the light it scatters goes (Henyey-Greenstein g).
-    var phase: Float = 0.7
+    package var phase: Float = 0.7
 
     package static func preset(_ p: Preset) -> WaterLook {
         switch p {
@@ -50,7 +51,7 @@ package struct WaterLook: Codable, Equatable {
     }
 
     /// What a body of its kind looks like unless it says otherwise.
-    static func standard(_ kind: WaterBody.Kind) -> WaterLook {
+    package static func standard(_ kind: WaterBody.Kind) -> WaterLook {
         switch kind {
         case .sea: return .preset(.ocean)
         case .lake: return .preset(.lake)
@@ -60,12 +61,12 @@ package struct WaterLook: Codable, Equatable {
 
     /// The colour deep water of this look shows (its single-scattering albedo): what GI rays that meet it see, and the
     /// map's swatch.
-    var deepColor: SIMD3<Float> {
+    package var deepColor: SIMD3<Float> {
         let t = absorption + scattering
         return scattering / simd_max(t, SIMD3(repeating: 1e-4)) * 0.35
     }
 
-    var gpu: GPUWaterLook {
+    package var gpu: GPUWaterLook {
         GPUWaterLook(absorption: SIMD4(simd_max(absorption, .zero), max(ior, 1.0001)), scattering: SIMD4(simd_max(scattering, .zero), min(max(phase, -0.95), 0.95)),
                      waves: SIMD4(max(waves, 0), max(chop, 0), max(ripples, 0), min(max(roughness, 0.002), 0.5)),
                      foam: SIMD4(max(foam, 0), max(shoreFoam, 0), max(whiteWater, 0), max(flowSpeed, 0)))
@@ -74,5 +75,5 @@ package struct WaterLook: Codable, Equatable {
 
 extension WaterBody {
     /// Its look: its own, or its kind's.
-    var appearance: WaterLook { look ?? WaterLook.standard(kind) }
+    package var appearance: WaterLook { look ?? WaterLook.standard(kind) }
 }

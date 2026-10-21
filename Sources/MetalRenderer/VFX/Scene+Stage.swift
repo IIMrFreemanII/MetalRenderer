@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,7 +12,7 @@ import simd
 /// - night: the plain under the moon.
 /// Where the VFX editor shows what it edits; its camera turns about the effects (`focus`, SceneKind.orbits).
 extension Scene {
-    func buildVFXStage() {
+    package func buildVFXStage() {
         let kit = Kit(self)
         let backdrop = settings.stage.backdrop
         object("Backdrop") { buildBackdrop(backdrop, kit) }
@@ -85,7 +86,7 @@ extension Scene {
     }
 
     /// A floor that curves up into a back wall (a quarter circle of `radius` m), 30 m wide: no corner behind the effects.
-    func cyclorama(_ kit: Kit, _ material: Int) {
+    package func cyclorama(_ kit: Kit, _ material: Int) {
         let w: Float = 30, back: Float = -6, radius: Float = 3, height: Float = 14, steps = 10
         addInstance(kit.quad, material, translate([0, 0, (back + 12) / 2]) * scale([w, 1, 12 - back]))
         for k in 0..<steps {
@@ -99,13 +100,13 @@ extension Scene {
     }
 
     /// The effect of that name: the catalog's (a saved file's, the editor's), else the built-in one.
-    func stageEffect(_ name: String) -> VFXEffect? {
+    package func stageEffect(_ name: String) -> VFXEffect? {
         VFXCatalog.resolve(settings.effects).effects[name] ?? VFXLibrary.named(name)
     }
 
     /// Where `effect`'s particles go in its first `seconds` (the CPU's interpreter of its graph, without the scene to
     /// collide with), padded: what the stage's camera frames.
-    static func previewBounds(_ effect: VFXEffect, seconds: Float = 4) -> AABB {
+    package static func previewBounds(_ effect: VFXEffect, seconds: Float = 4) -> AABB {
         let system = VFXLowering.system([VFXInstance(effect: effect, place: .identity)]).system
         var box = AABB()
         box.grow(effect.origin)
