@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 
 /// Which of a scene's materials a Material Designer graph replaces (click-to-pick, then Assign): per scene — its kind
 /// and what decides its materials' order (its seed; the showcase's model) — the materials by their index, each with a

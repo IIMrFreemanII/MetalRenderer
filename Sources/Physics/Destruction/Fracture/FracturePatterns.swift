@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// What a fractured object is made of: how it breaks (its pattern), how hard it is to break, what its broken faces

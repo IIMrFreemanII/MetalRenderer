@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A building's tops: a flat roof with a parapet and things standing on it, or a pitched one (gabled, hipped,
@@ -58,8 +54,8 @@ extension BuildingAssembler {
     }
 
     private struct Ends: OptionSet {
-        let rawValue: Int
-        static let back = Ends(rawValue: 1), front = Ends(rawValue: 2)   // the ridge's low and high end
+        package let rawValue: Int
+        package static let back = Ends(rawValue: 1), front = Ends(rawValue: 2)   // the ridge's low and high end
     }
 
     /// A gabled roof over `r` from height `y`: two slopes up to a ridge `rise` higher, along x or z, with eaves that

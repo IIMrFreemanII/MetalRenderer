@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// Furniture from glTF files, in place of the generated pieces (FurnitureKit): `Assets/Props/props.json` lists them,
@@ -40,7 +36,7 @@ package final class PropLibrary {
     /// The assets folder's list, read once (a test sets its own).
     package static var shared: PropLibrary = {
         let env = ProcessInfo.processInfo.environment["METALRENDERER_PROPS"]
-        let assets = Scene.assetsDirectory
+        let assets = Assets.directory
         guard env != "none" else { return PropLibrary(entries: [], folder: assets) }
         let list = env.map { URL(fileURLWithPath: $0) } ?? assets.appendingPathComponent("Props/props.json")
         guard let data = try? Data(contentsOf: list) else { return PropLibrary(entries: [], folder: assets) }

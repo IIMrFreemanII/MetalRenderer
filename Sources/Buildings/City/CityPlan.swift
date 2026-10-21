@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// The city's layout, from its settings alone (no geometry yet): a street grid with jittered block sizes and wider
@@ -47,13 +43,13 @@ package struct CityPlan {
     /// front toward +z, standing on y = 0 around the origin. `yaw` turns that frame into the world.
     package struct Lot {
         package var rect: Rect
-        var yaw: Float
+        package var yaw: Float
         /// front (+z), right (+x), back (-z), left (-x), in the lot's frame.
         package var edges: [Edge]
         package var style: CityStyle            // never .mixed
         package var floors: Int
         package var seed: UInt64
-        var block: Int
+        package var block: Int
 
         /// Width (across the front) and depth.
         package var size: SIMD2<Float> {
@@ -62,12 +58,12 @@ package struct CityPlan {
         }
         package var transform: float4x4 { translate([rect.center.x, 0, rect.center.y]) * rotate(yaw, [0, 1, 0]) }
         /// The world direction (x, z) the front faces.
-        var front: SIMD2<Float> { SIMD2(sin(yaw), cos(yaw)).rounded(.toNearestOrAwayFromZero) }
+        package var front: SIMD2<Float> { SIMD2(sin(yaw), cos(yaw)).rounded(.toNearestOrAwayFromZero) }
     }
 
     package struct Block {
         package var rect: Rect                  // kerb to kerb: the sidewalk and what stands inside it
-        var style: CityStyle            // never .mixed
+        package var style: CityStyle            // never .mixed
         package var park = false
     }
 
@@ -108,7 +104,7 @@ package struct CityPlan {
     /// The courtyards: the open ground inside a block whose houses stand around its edge.
     package private(set) var courts: [Rect] = []
     /// A courtyard's trees (x, z and size), for whoever plants them (`init(block:)`).
-    private(set) var courtTrees: [SIMD3<Float>] = []
+    package private(set) var courtTrees: [SIMD3<Float>] = []
     /// The streets and everything inside them.
     package private(set) var extent = Rect(lo: .zero, hi: .zero)
     /// The canal along x through the city's middle, if it has one.
@@ -377,7 +373,7 @@ package struct CityPlan {
 
 extension SplitMix64 {
     /// One well-mixed value from `x`: a seed for something's own generator.
-    static func mix(_ x: UInt64) -> UInt64 {
+    package static func mix(_ x: UInt64) -> UInt64 {
         var g = SplitMix64(seed: x)
         return g.nextUInt64()
     }

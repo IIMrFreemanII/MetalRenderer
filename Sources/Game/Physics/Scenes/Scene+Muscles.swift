@@ -1,3 +1,4 @@
+import Buildings
 import Characters
 import Effects
 import EngineCore

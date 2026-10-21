@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// The built-in effects, as graphs (each a function of where a scene puts it: written in the scene's own space and

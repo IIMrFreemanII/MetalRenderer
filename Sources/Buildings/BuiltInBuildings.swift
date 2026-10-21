@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// The built-in building styles: one for each of the city's districts (CityStyle), what the generator made before

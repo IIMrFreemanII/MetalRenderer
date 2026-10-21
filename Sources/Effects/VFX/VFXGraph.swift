@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// A particle effect as a graph (the VFX editor's): its emitters, each four contexts of blocks run in order (Spawn,

@@ -1,22 +1,18 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// What a part of a generated mesh is made of. The scene turns each distinct one into a material (Scene+City), so
 /// the buildings of a style share theirs.
 package struct SurfaceMaterial: Hashable {
-    var color: SIMD3<Float>
+    package var color: SIMD3<Float>
     /// Its tiling texture, used when the city's textures are on (the colour then tints it).
-    var surface: SurfaceKind? = nil
-    var roughness: Float = 1
-    var metallic: Float = 0
+    package var surface: SurfaceKind? = nil
+    package var roughness: Float = 1
+    package var metallic: Float = 0
     /// Has a specular lobe (otherwise diffuse only, as the other generated scenes' materials).
-    var specular = false
+    package var specular = false
     package var emission = SIMD3<Float>.zero
     /// Window glass: seen through and reflecting for the camera, clear to light (Scene.maskGlass); `color` tints it.
     package var glass = false
@@ -39,37 +35,37 @@ package struct SurfaceMaterial: Hashable {
 /// What to build: a lot in its own frame (width along x, depth along z, the front toward +z, the ground at y = 0,
 /// centred on the origin), what each side looks onto, and the building's style, height and seed.
 package struct BuildingSpec {
-    var size: SIMD2<Float>
+    package var size: SIMD2<Float>
     /// front (+z), right (+x), back (-z), left (-x).
     package var edges: [CityPlan.Edge] = [.street, .party, .open, .party]
     /// Its district (the city's), and the style it is built in (that district's own unless a catalog says otherwise).
-    var style = CityStyle.residential {
+    package var style = CityStyle.residential {
         didSet { def = BuiltInBuildings.style(style) }
     }
     package var def = BuiltInBuildings.residential
     package var floors = 5
     package var seed: UInt64 = 1
     /// Night: `lit` of the windows have a light on behind them (emissive blinds, lamps in the rooms).
-    var night = false
-    var lit: Float = 0.35
+    package var night = false
+    package var lit: Float = 0.35
     /// The share of windows with a room behind the glass instead of a blind.
-    var rooms: Float = 0.15
+    package var rooms: Float = 0.15
     /// Its windows' shells are modules (`Building.modules`): made once and placed at each window, for a tracer that
     /// instances them (the custom tracer's assemblies).
     package var modules = false
     /// How much of it to make: in full, or plainly (seen from further away). Every level draws the same numbers, so
     /// the same windows are lit at each.
-    var detail = Detail.full
+    package var detail = Detail.full
     /// Make its interior too (Building.interior): the inside of its walls, its floors, rooms, stairs, furniture.
     package var interior = false
     /// The plan's hand edits (a single building's, LotOverride).
-    var edits: [PlanEdit] = []
+    package var edits: [PlanEdit] = []
     /// The workshop's cutaway: no roof, and nothing above this storey (nil: all of it).
-    var cut: Int? = nil
+    package var cut: Int? = nil
     /// ...and its dollhouse: no front wall either (the facades facing +z).
-    var dollhouse = false
+    package var dollhouse = false
 
-    enum Detail: Int {
+    package enum Detail: Int {
         /// Windows with frames, sills, lintels and shutters, rooms behind some, balconies with their balustrades.
         case full
         /// What stands out of the walls as its front faces alone (frames, sills, lintels, shutters, railings: their
@@ -120,7 +116,7 @@ package struct Building {
         case leafDark       // ...and the dark behind it
 
         /// What stands behind the glass of a building without its interior: dropped when the interior is there.
-        var isFill: Bool { [.blind, .dark, .interior, .floor, .lit, .lamp, .roomProp, .leaf, .leafGlass, .leafDark].contains(self) }
+        package var isFill: Bool { [.blind, .dark, .interior, .floor, .lit, .lamp, .roomProp, .leaf, .leafGlass, .leafDark].contains(self) }
     }
 
     package private(set) var materials: [SurfaceMaterial?] = Array(repeating: nil, count: Slot.allCases.count)
@@ -369,7 +365,7 @@ package struct BuildingTier {
 /// Builds `BuildingSpec`s. Pure and seeded: a spec always gives the same building, whatever thread makes it.
 package enum BuildingGenerator {
     /// A building is kept under this many triangles: the upper floors' windows of a big one lose their frames and sills.
-    static let triangleLimit = 60_000
+    package static let triangleLimit = 60_000
 
     package static func generate(_ spec: BuildingSpec) -> Building {
         var assembler = BuildingAssembler(spec)
@@ -379,7 +375,7 @@ package enum BuildingGenerator {
 }
 
 /// The state of one building while it is made (Building+Facade.swift, Building+Roof.swift add to it).
-struct BuildingAssembler {
+package struct BuildingAssembler {
     let spec: BuildingSpec
     let style: BuildingStyle
     var rng: SplitMix64

@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// A skeleton the flesh hangs on (PhysicsFlesh.swift), in its rest pose: its bones, each a body and the shape that

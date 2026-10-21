@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// The Metal an emitter's program is (VFXProgram): its birth, step and look as the fixed emitter's code

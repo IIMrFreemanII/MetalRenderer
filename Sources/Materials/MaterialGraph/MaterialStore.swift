@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 
 /// Material graphs saved as JSON: `Assets/Materials/<name>.mat.json`, a graph a file, `{"format": 1, "graph": {...}}`.
 /// A file named as a built-in graph (MaterialLibrary) replaces it. The folder is `METALRENDERER_MATERIALS` if set

@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Metal
 import Physics
-import Plants
 import simd
 
 /// A scene's particle effects on the GPU (Shaders/ParticleSim.metal): the pool, its dead and alive lists, the events

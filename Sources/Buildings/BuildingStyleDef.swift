@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A building style as data: what the building editor edits and Assets/Buildings/Styles keeps, the built-in ones
@@ -350,7 +346,7 @@ struct StyleDraw {
 
 extension BuildingStyle {
     /// One building's style, drawn from `def` with `seed`.
-    static func draw(_ def: BuildingStyleDef, seed: UInt64) -> BuildingStyle {
+    package static func draw(_ def: BuildingStyleDef, seed: UInt64) -> BuildingStyle {
         let d = StyleDraw(seed: seed)
         var s = BuildingStyle()
         s.def = def

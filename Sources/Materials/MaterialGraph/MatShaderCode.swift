@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// A graph as code the shading runs (the shader-code mode: MatSurface.shaderMode) instead of baked textures: each node

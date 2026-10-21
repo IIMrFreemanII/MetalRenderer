@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// What moves and switches in a scene's interiors: the doors' leaves (how far each is open), the rooms' lights (on
@@ -12,7 +8,9 @@ import simd
 /// and lights read it in their poses (Scene.update); the renderer moves it on before each frame (`advance`) and
 /// tells it what the walker does (`use`). Only the render thread touches it.
 package final class InteriorControls {
-    struct Door {
+    package init() {}
+
+    package struct Door {
         /// The hinge's foot (the world), the leaf's direction from it when shut (x, z, unit), and which way it opens
         /// (+1: turning the leaf counter-clockwise seen from above).
         package var hinge: SIMD3<Float>
@@ -49,36 +47,65 @@ package final class InteriorControls {
             }
             return out
         }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(hinge: SIMD3<Float>, along: SIMD2<Float>, turn: Float, width: Float, height: Float, thickness: Float = 0.04, open: Float, target: Float, auto: Bool = true, autoOpened: Bool = false, openedAt: Float = -100) {
+            self.hinge = hinge
+            self.along = along
+            self.turn = turn
+            self.width = width
+            self.height = height
+            self.thickness = thickness
+            self.open = open
+            self.target = target
+            self.auto = auto
+            self.autoOpened = autoOpened
+            self.openedAt = openedAt
+        }
     }
 
-    struct Switch {
-        var position: SIMD3<Float>
-        var normal: SIMD3<Float>
-        var lights: [Int]
-        var on: Bool
+    package struct Switch {
+        package var position: SIMD3<Float>
+        package var normal: SIMD3<Float>
+        package var lights: [Int]
+        package var on: Bool
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(position: SIMD3<Float>, normal: SIMD3<Float>, lights: [Int], on: Bool) {
+            self.position = position
+            self.normal = normal
+            self.lights = lights
+            self.on = on
+        }
     }
 
-    var doors: [Door] = []
-    var switches: [Switch] = []
+    package var doors: [Door] = []
+    package var switches: [Switch] = []
     /// Each light's brightness now (0 off, 1 on): what its pose's scale is.
-    var lights: [Float] = []
-    var lifts: [Lift] = []
+    package var lights: [Float] = []
+    package var lifts: [Lift] = []
     /// The loose furniture: its bodies in the scene's physics (Scene.physics) and the boxes' half sizes.
-    struct Prop {
-        var body: Int
-        var half: SIMD3<Float>
+    package struct Prop {
+        package var body: Int
+        package var half: SIMD3<Float>
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(body: Int, half: SIMD3<Float>) {
+            self.body = body
+            self.half = half
+        }
     }
-    var props: [Prop] = []
+    package var props: [Prop] = []
     /// The walker's flashlight: on, and where it is and points (the renderer's camera).
-    var flashlight = (on: false, position: SIMD3<Float>.zero, direction: SIMD3<Float>(0, 0, -1))
+    package var flashlight = (on: false, position: SIMD3<Float>.zero, direction: SIMD3<Float>(0, 0, -1))
     /// Doors open by themselves as the walker comes up to them.
-    var autoDoors = true
+    package var autoDoors = true
     private(set) var time: Float = 0
 
     /// What changed since the frame before (the renderer redraws the reference image only then).
     private(set) var moving = false
 
-    func advance(_ dt: Float, walker: SIMD3<Float>?) {
+    package func advance(_ dt: Float, walker: SIMD3<Float>?) {
         time += dt
         moving = false
         for i in doors.indices {
@@ -108,7 +135,7 @@ package final class InteriorControls {
     /// The walker uses what it looks at, within `reach`: a door opens or shuts, a switch flips, a lift button calls.
     /// `blocked`: how far the view is clear (the first wall). Returns what it used, for the status line.
     @discardableResult
-    func use(from eye: SIMD3<Float>, along ray: SIMD3<Float>, reach: Float = 2.4, blocked: Float? = nil) -> String? {
+    package func use(from eye: SIMD3<Float>, along ray: SIMD3<Float>, reach: Float = 2.4, blocked: Float? = nil) -> String? {
         let limit = min(reach, (blocked ?? .infinity) + 0.15)
         var best: (t: Float, what: Int, kind: Int)?
         for (i, d) in doors.enumerated() {
@@ -151,7 +178,7 @@ package final class InteriorControls {
     }
 
     /// The switches within `reach` of `point` turned on or off (and their lights).
-    func setSwitches(near point: SIMD3<Float>, within reach: Float, on: Bool) {
+    package func setSwitches(near point: SIMD3<Float>, within reach: Float, on: Bool) {
         for i in switches.indices where simd_distance(switches[i].position, point) < reach && switches[i].on != on {
             switches[i].on = on
             for l in switches[i].lights { lights[l] = on ? 1 : 0 }
@@ -160,7 +187,7 @@ package final class InteriorControls {
     }
 
     /// The loose furniture as the walker meets it: each body's box (turned as it lies) as the box round it.
-    func propObstacles(_ physics: PhysicsWorld?) -> [Walker.Moving] {
+    package func propObstacles(_ physics: PhysicsWorld?) -> [Walker.Moving] {
         guard let physics, !props.isEmpty else { return [] }
         return props.compactMap { p in
             guard physics.bodies.indices.contains(p.body) else { return nil }
@@ -177,7 +204,7 @@ package final class InteriorControls {
 
     /// The walker at `feet` moving at `velocity` shoves what it walks into: each body it touches gets going its way
     /// (and wakes); a heavy one hardly.
-    func push(_ physics: PhysicsWorld?, feet: SIMD3<Float>, velocity: SIMD3<Float>, height: Float) {
+    package func push(_ physics: PhysicsWorld?, feet: SIMD3<Float>, velocity: SIMD3<Float>, height: Float) {
         guard let physics, !props.isEmpty else { return }
         let along = SIMD2(velocity.x, velocity.z)
         guard length(along) > 0.2 else { return }
@@ -201,7 +228,7 @@ package final class InteriorControls {
     }
 
     /// What of it the walker can't walk through, and what it stands on (lift cabs).
-    var obstacles: [Walker.Moving] {
+    package var obstacles: [Walker.Moving] {
         doors.map { Walker.Moving(boxes: $0.colliders, platform: nil) } + lifts.enumerated().map { Walker.Moving(boxes: $1.colliders, platform: $0) }
     }
 }

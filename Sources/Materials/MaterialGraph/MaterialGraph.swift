@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// A procedural material as a graph (the Material Designer's, after Substance Designer): image nodes wired into each

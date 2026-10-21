@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 
 /// Effects saved as JSON: `Assets/Effects/<name>.vfx.json`, an effect a file, `{"format": 1, "effect": {...}}`. A file
 /// named as a built-in effect is (campfire, rain, grinder, magic, rubble...) replaces it in every scene that places

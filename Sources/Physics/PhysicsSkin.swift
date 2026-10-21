@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// A skin that slides over the flesh (PhysicsFlesh.swift): a thin shell of particles (a surface of the flesh's shape)

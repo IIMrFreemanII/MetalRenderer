@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A building's facades: a split grammar. A wall is cut into storeys, each storey into a pier at either end and
@@ -23,9 +19,9 @@ import simd
 extension BuildingAssembler {
     /// A bay's rectangle on the wall: one storey high.
     struct Cell {
-        var x0: Float, x1: Float, y0: Float, y1: Float
-        var width: Float { x1 - x0 }
-        var center: Float { (x0 + x1) / 2 }
+        package var x0: Float, x1: Float, y0: Float, y1: Float
+        package var width: Float { x1 - x0 }
+        package var center: Float { (x0 + x1) / 2 }
     }
 
     /// A rectangular hole in the wall.

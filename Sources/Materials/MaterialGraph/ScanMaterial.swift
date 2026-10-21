@@ -1,11 +1,8 @@
-import Characters
 import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
 import ImageIO
-import Physics
-import Plants
 import UniformTypeIdentifiers
 
 /// A photo-scanned material from a download (a Poly Haven or ambientCG .zip, or its folder of maps) as a Material

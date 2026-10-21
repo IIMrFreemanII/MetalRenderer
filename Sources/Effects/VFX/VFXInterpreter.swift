@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// The particles' step on the CPU, in the GPU's order (begin, emit, simulate): the reference ParticleTests and

@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 
 /// The Fracture Editor's saved recipes (FractureRecipe), by object name, in `Assets/Fracture/recipes.json`: what the
 /// destruction scene builds its objects from in place of their defaults. `METALRENDERER_FRACTURE=builtin` leaves them

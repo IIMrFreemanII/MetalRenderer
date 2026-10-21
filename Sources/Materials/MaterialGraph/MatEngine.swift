@@ -1,12 +1,9 @@
-import Characters
 import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
 import Metal
 import MetalKit
-import Physics
-import Plants
 import QuartzCore
 import simd
 

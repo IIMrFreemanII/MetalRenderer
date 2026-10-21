@@ -1,9 +1,7 @@
-import Characters
 import EngineCore
 import Foundation
 import Metal
 import Physics
-import Plants
 import QuartzCore
 
 /// The step's and the pose's kernels a particle system runs (ParticlesGPU): the main library's, or the VFX library's

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import simd
+@testable import Buildings
 @testable import Characters
 @testable import Editors
 @testable import Effects

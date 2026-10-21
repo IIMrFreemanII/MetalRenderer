@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// What a room is for: what furnishes it, what its floor and walls are, what it connects to.
@@ -68,7 +64,7 @@ package struct PlanDoor: Equatable {
     package var at: SIMD2<Float>
     package var alongX: Bool
     package var width: Float
-    var height: Float = 2.1
+    package var height: Float = 2.1
     /// The leaf turns into this room (an id), hinged at its lower (x or z) end or its upper one.
     package var into: Int = -1
     package var hingeLow = true
@@ -89,10 +85,10 @@ package struct StairPlan: Equatable {
     package var flightWidth: Float
     package static let landing: Float = 1.2
     package static let run: Float = 0.27
-    static let spine: Float = 0.14
+    package static let spine: Float = 0.14
 
     /// The landing at the entry end (the slab above isn't cut there).
-    var entry: CityPlan.Rect {
+    package var entry: CityPlan.Rect {
         let l = StairPlan.landing
         switch (alongX, entryLow) {
         case (true, true): return CityPlan.Rect(lo: rect.lo, hi: SIMD2(rect.lo.x + l, rect.hi.y))
@@ -117,7 +113,7 @@ package struct StairPlan: Equatable {
         return ((n + 1) / 2, n / 2, rise / Float(n))
     }
     /// How long a stair for `rise` is.
-    static func length(_ rise: Float) -> Float { 2 * landing + Float(steps(rise).first) * run }
+    package static func length(_ rise: Float) -> Float { 2 * landing + Float(steps(rise).first) * run }
 }
 
 /// One storey's plan.
@@ -190,9 +186,9 @@ package struct SharedEdge: Equatable {
     package var at: Float
     package var from: Float
     package var to: Float
-    var length: Float { to - from }
-    var middle: SIMD2<Float> { alongX ? SIMD2((from + to) / 2, at) : SIMD2(at, (from + to) / 2) }
-    func point(_ t: Float) -> SIMD2<Float> { alongX ? SIMD2(t, at) : SIMD2(at, t) }
+    package var length: Float { to - from }
+    package var middle: SIMD2<Float> { alongX ? SIMD2((from + to) / 2, at) : SIMD2(at, (from + to) / 2) }
+    package func point(_ t: Float) -> SIMD2<Float> { alongX ? SIMD2(t, at) : SIMD2(at, t) }
 
     /// The edge `a` and `b` share, if they touch along more than `least`.
     package static func between(_ a: CityPlan.Rect, _ b: CityPlan.Rect, least: Float = 0.05) -> SharedEdge? {

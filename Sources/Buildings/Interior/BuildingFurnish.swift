@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 extension Interior {
@@ -13,7 +9,7 @@ extension Interior {
     /// with its room (`switchID`). `panels` (x, z offsets from its middle, width, depth; none for a single panel) are
     /// what is drawn, glowing `glow`; `color` spreads their power over the whole rect. One light a room, not one a
     /// panel: the many-light loops cost per light and pixel (a house by day had 66 panels, an office tower 423).
-    struct Light {
+    package struct Light {
         package var position: SIMD3<Float>
         package var size: SIMD2<Float>
         package var color: SIMD3<Float>
@@ -28,11 +24,11 @@ extension Interior {
         package var reach: Float = 0
     }
     /// A light switch by a room's door: where its plate is (the lot's frame) and which way it faces.
-    struct Switch {
-        var position: SIMD3<Float>
-        var normal: SIMD3<Float>
-        var storey: Int
-        var room: Int
+    package struct Switch {
+        package var position: SIMD3<Float>
+        package var normal: SIMD3<Float>
+        package var storey: Int
+        package var room: Int
     }
     /// A loose piece of furniture (a chair, a box): its own instance, in the storey's frame (its floor at y = 0).
     package struct Prop {
@@ -40,29 +36,29 @@ extension Interior {
         package var frame: float4x4
         package var storey: Int
         /// Its parts' materials, by role.
-        var materials: [SurfaceMaterial]
+        package var materials: [SurfaceMaterial]
     }
 }
 
 /// The roles' materials for one building (its style's palette) and, for the fabrics, one room.
-struct FurnishPalette {
-    let wood: SurfaceMaterial, woodDark: SurfaceMaterial
-    let fabrics: [SIMD3<Float>]
-    let books: [SurfaceMaterial]
-    static let linen = SurfaceMaterial(color: [0.88, 0.87, 0.84])
-    static let metal = SurfaceMaterial(color: [0.32, 0.33, 0.35], roughness: 0.45, metallic: 0.8, specular: true)
-    static let chrome = SurfaceMaterial(color: [0.75, 0.76, 0.78], roughness: 0.2, metallic: 1, specular: true)
-    static let ceramic = SurfaceMaterial(color: [0.9, 0.9, 0.88], roughness: 0.15, specular: true)
-    static let dark = SurfaceMaterial(color: [0.05, 0.05, 0.055], roughness: 0.4, specular: true)
-    static let screen = SurfaceMaterial(color: [0.015, 0.016, 0.02], roughness: 0.1, specular: true)
-    static let stone = SurfaceMaterial(color: [0.62, 0.6, 0.57], surface: .concrete, roughness: 0.3, specular: true)
-    static let leaf = SurfaceMaterial(color: [0.1, 0.26, 0.08], roughness: 0.6, specular: true)
-    static let pot = SurfaceMaterial(color: [0.55, 0.28, 0.17])
-    static let soil = SurfaceMaterial(color: [0.1, 0.07, 0.05])
-    static let carton = SurfaceMaterial(color: [0.6, 0.45, 0.28])
-    static let glass = SurfaceMaterial(color: [0.9, 0.94, 0.94], glass: true)
-    static let shade = SurfaceMaterial(color: [0.92, 0.88, 0.78])
-    static let paper = SurfaceMaterial(color: [0.94, 0.94, 0.92])
+package struct FurnishPalette {
+    package let wood: SurfaceMaterial, woodDark: SurfaceMaterial
+    package let fabrics: [SIMD3<Float>]
+    package let books: [SurfaceMaterial]
+    package static let linen = SurfaceMaterial(color: [0.88, 0.87, 0.84])
+    package static let metal = SurfaceMaterial(color: [0.32, 0.33, 0.35], roughness: 0.45, metallic: 0.8, specular: true)
+    package static let chrome = SurfaceMaterial(color: [0.75, 0.76, 0.78], roughness: 0.2, metallic: 1, specular: true)
+    package static let ceramic = SurfaceMaterial(color: [0.9, 0.9, 0.88], roughness: 0.15, specular: true)
+    package static let dark = SurfaceMaterial(color: [0.05, 0.05, 0.055], roughness: 0.4, specular: true)
+    package static let screen = SurfaceMaterial(color: [0.015, 0.016, 0.02], roughness: 0.1, specular: true)
+    package static let stone = SurfaceMaterial(color: [0.62, 0.6, 0.57], surface: .concrete, roughness: 0.3, specular: true)
+    package static let leaf = SurfaceMaterial(color: [0.1, 0.26, 0.08], roughness: 0.6, specular: true)
+    package static let pot = SurfaceMaterial(color: [0.55, 0.28, 0.17])
+    package static let soil = SurfaceMaterial(color: [0.1, 0.07, 0.05])
+    package static let carton = SurfaceMaterial(color: [0.6, 0.45, 0.28])
+    package static let glass = SurfaceMaterial(color: [0.9, 0.94, 0.94], glass: true)
+    package static let shade = SurfaceMaterial(color: [0.92, 0.88, 0.78])
+    package static let paper = SurfaceMaterial(color: [0.94, 0.94, 0.92])
 
     package init(_ finishes: InteriorBuilder.Finishes, style: BuildingStyle) {
         wood = SurfaceMaterial(color: finishes.wood, roughness: 0.5, specular: true)
@@ -72,7 +68,7 @@ struct FurnishPalette {
     }
 
     /// Role `role`'s material in a room whose fabric is `fabric`.
-    func material(_ role: FurnitureItem.Role, fabric: Int) -> SurfaceMaterial {
+    package func material(_ role: FurnitureItem.Role, fabric: Int) -> SurfaceMaterial {
         let f = fabrics[fabric % fabrics.count]
         switch role {
         case .wood: return wood
@@ -128,14 +124,14 @@ struct Furnisher {
 
     /// One wall of the room, from inside: from `origin` along `u` for `length`, `n` into the room.
     struct Side {
-        var origin: SIMD2<Float>
-        var u: SIMD2<Float>
-        var n: SIMD2<Float>
-        var length: Float
+        package var origin: SIMD2<Float>
+        package var u: SIMD2<Float>
+        package var n: SIMD2<Float>
+        package var length: Float
         /// Where along it nothing stands (doors), and its windows (where along, and their sill over the floor).
-        var blocked: [(Float, Float)]
-        var windows: [(Float, Float, sill: Float)]
-        var outer: Bool
+        package var blocked: [(Float, Float)]
+        package var windows: [(Float, Float, sill: Float)]
+        package var outer: Bool
     }
 
     package init(floor: FloorPlan, plan: BuildingPlan, openings: [Building.WallOpening], palette: FurnishPalette, style: BuildingStyle, seed: UInt64) {

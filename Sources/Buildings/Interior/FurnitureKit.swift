@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// The furniture and the things on it, made of boxes and cylinders like the buildings: each piece in its own frame,
@@ -22,38 +18,38 @@ package struct FurnitureItem {
         case cubicle, counter, rack, pallet, bench, reception, coatRack
     }
 
-    var kind: Kind
-    var size: SIMD3<Float>
-    private(set) var boxes: [(role: Role, lo: SIMD3<Float>, hi: SIMD3<Float>, faces: MeshBuilder.Faces)] = []
-    private(set) var cylinders: [(role: Role, base: SIMD3<Float>, radius: Float, top: Float?, height: Float, segments: Int)] = []
+    package var kind: Kind
+    package var size: SIMD3<Float>
+    package private(set) var boxes: [(role: Role, lo: SIMD3<Float>, hi: SIMD3<Float>, faces: MeshBuilder.Faces)] = []
+    package private(set) var cylinders: [(role: Role, base: SIMD3<Float>, radius: Float, top: Float?, height: Float, segments: Int)] = []
     private(set) var triangles: [(role: Role, a: SIMD3<Float>, b: SIMD3<Float>, c: SIMD3<Float>)] = []
     /// What the walker meets of it (its own frame), if not its bounds: a table's top it can't walk through, its legs.
-    var colliders: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]?
+    package var colliders: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]?
     /// It can be pushed and knocked over (a chair, a box): a body of its own (Interior.Prop).
     package var pushable = false
-    var mass: Float = 5
+    package var mass: Float = 5
 
     package init(_ kind: Kind, _ size: SIMD3<Float>) {
         self.kind = kind
         self.size = size
     }
 
-    mutating func box(_ role: Role, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>, _ faces: MeshBuilder.Faces = .all) {
+    package mutating func box(_ role: Role, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>, _ faces: MeshBuilder.Faces = .all) {
         guard hi.x > lo.x, hi.y > lo.y, hi.z > lo.z else { return }
         boxes.append((role, lo, hi, faces))
     }
     /// A box standing on the floor (its bottom face is left out: it would lie on the floor's).
-    mutating func block(_ role: Role, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
+    package mutating func block(_ role: Role, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
         box(role, lo, hi, lo.y <= 0.001 ? [.left, .right, .back, .front, .top] : .all)
     }
-    mutating func cylinder(_ role: Role, _ base: SIMD3<Float>, radius: Float, top: Float? = nil, height: Float, segments: Int = 10) {
+    package mutating func cylinder(_ role: Role, _ base: SIMD3<Float>, radius: Float, top: Float? = nil, height: Float, segments: Int = 10) {
         cylinders.append((role, base, radius, top, height, segments))
     }
-    mutating func triangle(_ role: Role, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) {
+    package mutating func triangle(_ role: Role, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) {
         triangles.append((role, a, b, c))
     }
     /// Four legs under a top at `height`, `t` thick, inset `inset` from its corners.
-    mutating func legs(_ role: Role, width: Float, depth: Float, height: Float, t: Float = 0.045, inset: Float = 0.04) {
+    package mutating func legs(_ role: Role, width: Float, depth: Float, height: Float, t: Float = 0.045, inset: Float = 0.04) {
         for (x, z) in [(inset, inset), (width - inset - t, inset), (inset, depth - inset - t), (width - inset - t, depth - inset - t)] {
             block(role, [x, 0, z], [x + t, height, z + t])
         }
@@ -61,7 +57,7 @@ package struct FurnitureItem {
 
     // MARK: - The pieces
 
-    static func make(_ kind: Kind, width w: Float, depth d: Float, rng: inout SplitMix64, clutter: Float) -> FurnitureItem {
+    package static func make(_ kind: Kind, width w: Float, depth d: Float, rng: inout SplitMix64, clutter: Float) -> FurnitureItem {
         var f = FurnitureItem(kind, [w, 0, d])
         func chance(_ p: Float) -> Bool { rng.next() < p }
         switch kind {
@@ -351,21 +347,21 @@ package struct FurnitureItem {
     }
 
     /// Moves every part by `d` (its own frame).
-    mutating func shift(_ d: SIMD3<Float>) {
+    package mutating func shift(_ d: SIMD3<Float>) {
         boxes = boxes.map { ($0.role, $0.lo + d, $0.hi + d, $0.faces) }
         cylinders = cylinders.map { ($0.role, $0.base + d, $0.radius, $0.top, $0.height, $0.segments) }
         triangles = triangles.map { ($0.role, $0.a + d, $0.b + d, $0.c + d) }
     }
 
     /// `other`'s parts added to its own.
-    mutating func append(_ other: FurnitureItem) {
+    package mutating func append(_ other: FurnitureItem) {
         boxes += other.boxes
         cylinders += other.cylinders
         triangles += other.triangles
     }
 
     /// Its parts into `out`, placed by `frame` (a rotation about y and a translation), each role's material `material`.
-    func emit(into out: inout MaterialMeshes, frame: float4x4, material: (Role) -> SurfaceMaterial) {
+    package func emit(into out: inout MaterialMeshes, frame: float4x4, material: (Role) -> SurfaceMaterial) {
         // (Each mesh's frame back to the identity after: the storey's other shapes are given in its own frame.)
         for b in boxes {
             let m = material(b.role)
@@ -389,14 +385,14 @@ package struct FurnitureItem {
 
     /// Its colliders (its own frame): the ones it says, or its bounds.
     /// What most of it is made of: the role of the most of its boxes' volume.
-    var mainRole: Role {
+    package var mainRole: Role {
         var volume = [Float](repeating: 0, count: Role.allCases.count)
         for b in boxes { let e = b.hi - b.lo; volume[b.role.rawValue] += e.x * e.y * e.z }
         for c in cylinders { volume[c.role.rawValue] += .pi * c.radius * c.radius * c.height }
         return Role(rawValue: volume.indices.max { volume[$0] < volume[$1] } ?? 0) ?? .wood
     }
 
-    var collisionBoxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)] {
+    package var collisionBoxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)] {
         if let colliders { return colliders }
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for b in boxes { lo = simd_min(lo, b.lo); hi = simd_max(hi, b.hi) }

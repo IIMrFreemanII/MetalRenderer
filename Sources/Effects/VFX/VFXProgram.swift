@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// An emitter's generated code (an effect's emitter the fixed one can't run: VFXLowering): Metal functions the

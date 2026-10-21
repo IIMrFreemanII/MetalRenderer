@@ -2,6 +2,7 @@ import Metal
 import QuartzCore
 import XCTest
 import simd
+@testable import Buildings
 @testable import Characters
 @testable import Editors
 @testable import Effects

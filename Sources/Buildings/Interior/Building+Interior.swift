@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A building's inside, made from its plan (BuildingPlan): the inner face of its outer walls (cut round the windows
@@ -15,29 +11,29 @@ import simd
 /// Nothing is laid flat on anything else: a partition runs into the wall it meets (never along one in line with it),
 /// floors and ceilings meet the walls edge on.
 package struct Interior {
-    struct Part {
-        var material: SurfaceMaterial
-        var mesh: MeshBuilder
+    package struct Part {
+        package var material: SurfaceMaterial
+        package var mesh: MeshBuilder
     }
     /// One storey's own geometry, its floor at y = 0 (`key`: what it is made of, the same for the same storey).
-    struct Storey {
-        var parts: [Part]
-        var key: Int
+    package struct Storey {
+        package var parts: [Part]
+        package var key: Int
     }
-    var storeys: [Storey] = []
+    package var storeys: [Storey] = []
     /// Where each storey's mesh stands: `storeys[mesh]` at height `y` (the lot's frame), for storey `storey`.
-    var placements: [(mesh: Int, storey: Int, y: Float)] = []
+    package var placements: [(mesh: Int, storey: Int, y: Float)] = []
     /// What the walker meets (the lot's frame), and what the scene's lights, doors and furniture are
     /// (Building+Furnish.swift, Interior+Controls).
-    var colliders: [Collider] = []
-    var lights: [Light] = []
-    var switches: [Switch] = []
+    package var colliders: [Collider] = []
+    package var lights: [Light] = []
+    package var switches: [Switch] = []
     package var props: [Prop] = []
-    var doors: [Door] = []
-    var lifts: [LiftShaft] = []
+    package var doors: [Door] = []
+    package var lifts: [LiftShaft] = []
     /// The glTF props (PropLibrary): which, where in its storey's frame (fitted into a piece's box of `size`), on
     /// which storey.
-    var models: [(entry: Int, frame: float4x4, size: SIMD3<Float>, storey: Int)] = []
+    package var models: [(entry: Int, frame: float4x4, size: SIMD3<Float>, storey: Int)] = []
     /// Every piece of furniture as boxes (the demolition scene's, which fractures them): its kind, its frame in the lot
     /// (on its storey's floor), its collision boxes in that frame, what most of it is made of, its storey.
     package var furniture: [Furniture] = []
@@ -50,11 +46,11 @@ package struct Interior {
     }
     /// It is night: every room's lights are there to switch (by day only the lit ones'; a light that is off still
     /// costs its sampling).
-    var night = false
+    package var night = false
 
     /// A door's leaf (the lot's frame): its hinge's foot, the leaf's direction from it when shut, which way it
     /// opens (+1 counter-clockwise seen from above), its size, and whether it starts open.
-    struct Door {
+    package struct Door {
         package var hinge: SIMD3<Float>
         package var along: SIMD2<Float>
         package var turn: Float
@@ -66,12 +62,12 @@ package struct Interior {
         package var color: SIMD3<Float>
     }
     /// A lift's shaft (the lot's frame): its inside, the side its doors are on, its floors' heights.
-    struct LiftShaft {
-        var shaft: CityPlan.Rect
-        var doorSide: SIMD2<Float>
-        var floors: [Float]
+    package struct LiftShaft {
+        package var shaft: CityPlan.Rect
+        package var doorSide: SIMD2<Float>
+        package var floors: [Float]
     }
-    var triangles = 0
+    package var triangles = 0
 
     /// An axis-aligned box the walker can't pass (glass is one too).
     package struct Collider: Equatable {
@@ -89,11 +85,11 @@ package struct Interior {
 }
 
 /// Collects one storey's meshes by material, in the order the materials come.
-struct MaterialMeshes {
-    private(set) var parts: [Interior.Part] = []
+package struct MaterialMeshes {
+    package private(set) var parts: [Interior.Part] = []
     private var index: [SurfaceMaterial: Int] = [:]
 
-    subscript(_ m: SurfaceMaterial) -> MeshBuilder {
+    package subscript(_ m: SurfaceMaterial) -> MeshBuilder {
         get { index[m].map { parts[$0].mesh } ?? MeshBuilder(uvScale: m.uvScale) }
         _modify {
             // In place: a storey adds thousands of shapes to the same few meshes.
@@ -106,19 +102,24 @@ struct MaterialMeshes {
             yield &parts[i].mesh
         }
     }
-    var triangles: Int { parts.reduce(0) { $0 + $1.mesh.triangleCount } }
+    package var triangles: Int { parts.reduce(0) { $0 + $1.mesh.triangleCount } }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(parts: [Interior.Part] = []) {
+        self.parts = parts
+    }
 }
 
-enum InteriorBuilder {
-    typealias Rect = CityPlan.Rect
+package enum InteriorBuilder {
+    package typealias Rect = CityPlan.Rect
 
-    static func build(_ a: BuildingAssembler) -> Interior {
+    package static func build(_ a: BuildingAssembler) -> Interior {
         var maker = Maker(a)
         return maker.make()
     }
 
     /// The finishes of a building's rooms: drawn once for it from its style.
-    struct Finishes {
+    package struct Finishes {
         package let paints: [SIMD3<Float>]
         package let wood: SIMD3<Float>, tile: SIMD3<Float>, carpet: SIMD3<Float>, ceiling: SIMD3<Float>, door: SIMD3<Float>
         package let concrete = SurfaceMaterial(color: [0.52, 0.51, 0.49], surface: .concrete)
@@ -164,7 +165,7 @@ enum InteriorBuilder {
     }
 
     /// Makes one building's interior.
-    struct Maker {
+    package struct Maker {
         let a: BuildingAssembler
         let plan: BuildingPlan
         let finishes: Finishes

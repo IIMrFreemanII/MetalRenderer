@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// The demolition scene's weapons and walker in the physics (Scene+Demolition.swift): what the CPU's step does for

@@ -1,21 +1,23 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A lift: a cab in its shaft from the ground floor to the top, the landing doors that slide open when it stands at
 /// a floor, and the buttons that call it (one by each landing door; inside it, the number keys). It goes where it is
 /// called in turn: shuts its doors, moves at up to 1.5 m/s (easing in and out), opens them, waits.
-struct Lift {
+package struct Lift {
     package enum State { case idle, closing, moving, opening, waiting }
 
     package struct Button {
         package var position: SIMD3<Float>
         package var floor: Int
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(position: SIMD3<Float>, floor: Int) {
+            self.position = position
+            self.floor = floor
+        }
     }
 
     /// The shaft's inside (x, z: the world), the floors' heights, and the side its doors are on (x, z, unit: out of the

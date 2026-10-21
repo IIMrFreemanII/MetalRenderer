@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 
 /// The building styles that scenes are built with: the built-in ones (one per district, BuiltInBuildings) with any
 /// saved over them, then the custom ones; and single buildings' own plans (LotOverride, BuildingOverrides.swift).
@@ -171,7 +167,7 @@ package enum BuildingStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_BUILDINGS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Buildings")
+        default: return Assets.directory.appendingPathComponent("Buildings")
         }
     }
 
@@ -193,7 +189,7 @@ package enum BuildingStore {
               let base = try JSONSerialization.jsonObject(with: JSONEncoder().encode(BuildingStyleDef(id: "", name: ""))) as? [String: Any] else {
             return try JSONDecoder().decode(File.self, from: data)
         }
-        file["style"] = SettingsStore.merge(base, style)
+        file["style"] = JSONMerge.merge(base, style)
         return try JSONDecoder().decode(File.self, from: JSONSerialization.data(withJSONObject: file))
     }
 
@@ -254,8 +250,8 @@ package enum BuildingStore {
     private static let draftKey = "buildingDraft"
 
     private struct Draft: Codable {
-        var styles: [BuildingStyleDef]
-        var overrides: [LotOverride]
+        package var styles: [BuildingStyleDef]
+        package var overrides: [LotOverride]
     }
 
     package static func loadDraft() -> BuildingCatalog? {

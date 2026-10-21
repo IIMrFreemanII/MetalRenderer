@@ -1,7 +1,6 @@
 import CoreGraphics
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// The Fracture Editor's look at one object's pieces (DestructionSettings.preview).

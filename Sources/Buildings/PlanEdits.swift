@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A hand edit of a building's floor plan (the Floor Plan window's tools), saved with its building (LotOverride).
@@ -78,6 +74,14 @@ package struct LotRef: Codable, Equatable, Hashable {
     package var key: String { "\(context)#\(lot)" }
     package var title: String {
         isWorkshop ? "the workshop's \(context.dropFirst(9)) building" : "lot \(lot) of \(context)"
+    }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(context: String, lot: Int, seed: UInt64, size: SIMD2<Float>) {
+        self.context = context
+        self.lot = lot
+        self.seed = seed
+        self.size = size
     }
 }
 

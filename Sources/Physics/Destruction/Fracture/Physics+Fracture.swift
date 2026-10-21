@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// Destruction (UE Chaos's, in this engine): fractured objects whose pieces break off under impacts.

@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// A mesh as the Material Painter sees it: its own vertices (object space, a character's bind pose), its triangles,

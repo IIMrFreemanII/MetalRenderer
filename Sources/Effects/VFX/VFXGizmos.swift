@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// What the VFX editor draws over the frame for the effect it shows (Shaders/Gizmo.metal): each of its emitters'

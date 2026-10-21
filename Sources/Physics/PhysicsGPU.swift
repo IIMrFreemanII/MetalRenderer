@@ -1,6 +1,5 @@
 import EngineCore
 import Metal
-import Plants
 import simd
 
 /// The physics on the GPU (Shaders/Physics.metal): the world's state in buffers, its steps encoded into the frame's

@@ -1,10 +1,7 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
 import Metal
-import Physics
-import Plants
 import QuartzCore
 
 /// The renderer's side of the material graphs: bakes the graphs a scene's procedural materials name (Scene+Procedural)

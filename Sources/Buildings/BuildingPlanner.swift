@@ -1,10 +1,6 @@
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
-import Plants
 import simd
 
 /// A building's floor plans, made before its facades so that the facades follow them: its rooms behind its windows,
