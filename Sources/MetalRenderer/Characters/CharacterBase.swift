@@ -9,10 +9,10 @@ import simd
 /// between panels close); its hands are cut off at the wrists and made again of a palm and fingers on the skeleton's
 /// finger joints; then the field is meshed (sparse surface nets), simplified, and each vertex takes the weights of the
 /// Y Bot's skin under it (the hands' from their bones).
-struct CharacterBase {
+package struct CharacterBase {
     /// The body in its bind pose (the Y Bot's T pose): mesh, skin, joints and names. No clips: CharacterBuilder gives
     /// each character the library's.
-    var character: SkinnedCharacter
+    package var character: SkinnedCharacter
     /// Per vertex, what part of the body it is (Region), for the morphs' masks.
     var regions: [UInt8]
     /// Per vertex, its material (FaceParts.Material); a triangle takes its corners' (`triangleMaterials`).
@@ -67,7 +67,7 @@ struct CharacterBase {
         let hand: Int                      // the hand's joint
         let reach: Float                   // a sphere round the wrist that holds it all
 
-        init?(_ c: SkinnedCharacter, side: String, body: BodySurface) {
+        package init?(_ c: SkinnedCharacter, side: String, body: BodySurface) {
             let bind = CharacterBase.bindPositions(c)
             guard let h = CharacterBase.joint("\(side)Hand", in: c), let fore = CharacterBase.joint("\(side)ForeArm", in: c),
                   let index = CharacterBase.joint("\(side)HandIndex1", in: c), let middle = CharacterBase.joint("\(side)HandMiddle1", in: c),
@@ -195,7 +195,7 @@ struct CharacterBase {
         /// Breasts (a woman's): two ellipsoids on the chest, centres and radii.
         let breasts: [(centre: SIMD3<Float>, radii: SIMD3<Float>)]
 
-        init(_ c: SkinnedCharacter, female: Bool) {
+        package init(_ c: SkinnedCharacter, female: Bool) {
             let bind = CharacterBase.bindPositions(c)
             func at(_ n: String) -> SIMD3<Float> { bind[CharacterBase.joint(n, in: c) ?? 0] }
             // Heights from the crotch (a hip joint less 9 cm) to the neck, widths by the shoulders.

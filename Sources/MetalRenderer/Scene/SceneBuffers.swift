@@ -21,7 +21,7 @@ final class MeshBlock {
         weights ? weightsOffset(vertices: vertices, indices: indices) + vertices * 16 : indexOffset(vertices: vertices) + indices * 4 + indices / 3
     }
 
-    init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {
+    package init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {
         self.name = name
         (vertexCount, indexCount) = (mesh.positions.count, mesh.indices.count)
         let length = MeshBlock.length(vertices: vertexCount, indices: indexCount, weights: mesh.weights != nil)
@@ -73,7 +73,7 @@ final class InstanceBlock {
     private static let numbers = NSLock()
     private let lock = NSLock()
 
-    init(device: MTLDevice, name: String, instances: [Scene.Instance]) throws {
+    package init(device: MTLDevice, name: String, instances: [Scene.Instance]) throws {
         guard !instances.isEmpty, instances.count <= 1 << InstanceBlock.shift, instances.allSatisfy(\.isStatic),
               let buffer = device.makeBuffer(length: max(instances.count * MemoryLayout<GPUInstanceData>.stride, 16), options: .storageModeShared) else {
             throw RendererError.resourceCreation("the instances of \(name)")
@@ -297,7 +297,7 @@ struct SceneBuffers {
 
     /// `queue`: for the builds, which this waits for. Not the frames' queue when they are being drawn meanwhile: its
     /// command buffers run in order, and a frame would wait behind a build.
-    init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, options: Options) throws {
+    package init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, options: Options) throws {
         func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             let length = max(MemoryLayout<T>.stride * array.count, 16)
             let made: MTLBuffer? = array.withUnsafeBytes { raw in

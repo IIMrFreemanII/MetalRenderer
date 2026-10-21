@@ -458,7 +458,7 @@ final class Renderer: NSObject {
     var traversal: (stats: TraversalStats, frames: Int)?
 
     /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
-    init(device: MTLDevice, surface: RenderSurface) throws {
+    package init(device: MTLDevice, surface: RenderSurface) throws {
         validateGPULayouts()
         // Every ray is traced through Metal's acceleration structures: there is nothing to fall back to.
         guard Capabilities.current.metalRayTracing else { throw RendererError.unsupported("Metal ray tracing") }

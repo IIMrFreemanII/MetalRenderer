@@ -1,5 +1,6 @@
 import Metal
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// M0 of the water: what the near patch's structure costs a frame on this GPU, built fast from scratch against refit

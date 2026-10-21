@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Hair and fur (PhysicsHair.swift, Shaders/Physics.metal's hair kernels, Scene+Hair.swift, HairBSDF.swift): strands

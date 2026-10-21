@@ -6,7 +6,7 @@ import simd
 extension Scene {
     /// Places the built-in `builtIn`, or the effect of its name the scene's catalog has in its place (a saved file's,
     /// the editor's), moved from where that one is made (its origin) to where `builtIn` is.
-    func addEffect(builtIn: VFXEffect, meshes: [String: (mesh: Int, material: Int)] = [:]) {
+    package func addEffect(builtIn: VFXEffect, meshes: [String: (mesh: Int, material: Int)] = [:]) {
         guard let fx = VFXCatalog.resolve(settings.effects).effects[builtIn.name] else {
             addEffect(builtIn, meshes: meshes)
             return
@@ -16,17 +16,17 @@ extension Scene {
 
     /// Places `effect` (`at`: moved by; an effect written in the scene's own space is placed where it is), its Mesh
     /// blocks' names bound to the scene's meshes and materials.
-    func addEffect(_ effect: VFXEffect, at place: VFXPlacement = .identity, meshes: [String: (mesh: Int, material: Int)] = [:]) {
+    package func addEffect(_ effect: VFXEffect, at place: VFXPlacement = .identity, meshes: [String: (mesh: Int, material: Int)] = [:]) {
         effects.append(VFXInstance(effect: effect, place: place, meshes: meshes))
     }
 
     /// A collider the effects' Collide blocks can name: the scene's floor, a crate, an SDF shape's instance.
-    func addParticleCollider(_ name: String, _ collider: ParticleCollider) {
+    package func addParticleCollider(_ name: String, _ collider: ParticleCollider) {
         effectColliders.append((name, collider))
     }
 
     /// The placed effects as the scene's particle system (once, after the last is placed).
-    func addEffects() {
+    package func addEffects() {
         let lowered = VFXLowering.system(effects, colliders: effectColliders)
         effectNotes = lowered.diagnostics
         for note in lowered.diagnostics { print("Effects: \(note)") }

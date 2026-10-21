@@ -4,7 +4,7 @@ import simd
 /// What the edits keep of a tile: per sample (tileCells squared, rows along j), the height added to the base, and if
 /// it has been painted, the ground layers' painted weights (16 a sample, 0...255) with how much of the paint shows
 /// over the layers' own rules (`mask`); and where the city's ground is kept level whatever the brushes do (`protect`).
-struct TerrainTile: Equatable {
+package struct TerrainTile: Equatable {
     static let layers = 16
     var delta: [Float]
     var paint: [UInt8]? = nil
@@ -39,15 +39,15 @@ struct TerrainTile: Equatable {
         return r
     }
 
-    init(cells: Int) { delta = [Float](repeating: 0, count: cells * cells) }
-    init(delta: [Float], paint: [UInt8]? = nil, mask: [UInt8]? = nil, protect: [UInt8]? = nil, revision: Int = 0) {
+    package init(cells: Int) { delta = [Float](repeating: 0, count: cells * cells) }
+    package init(delta: [Float], paint: [UInt8]? = nil, mask: [UInt8]? = nil, protect: [UInt8]? = nil, revision: Int = 0) {
         (self.delta, self.paint, self.mask, self.protect, self.revision) = (delta, paint, mask, protect, revision)
     }
 
     /// Nothing in it changes the ground.
     var isEmpty: Bool { paint == nil && protect == nil && !delta.contains { $0 != 0 } }
 
-    static func == (a: TerrainTile, b: TerrainTile) -> Bool {
+    package static func == (a: TerrainTile, b: TerrainTile) -> Bool {
         a.delta == b.delta && a.paint == b.paint && a.mask == b.mask && a.protect == b.protect && a.revision == b.revision
     }
 }
@@ -55,7 +55,7 @@ struct TerrainTile: Equatable {
 /// A terrain as it is now: its base, and the tiles its edits have made (`tiles`). Its height at a sample is the base's
 /// plus the tile's delta. A value: a snapshot of a field (TerrainField) that the scenes are made from, that the
 /// walker and the brushes' cursor read, that is saved.
-struct TerrainSnapshot {
+package struct TerrainSnapshot {
     let base: TerrainBase
     var tiles: [SIMD2<Int>: TerrainTile] = [:]
     /// The base's heights of the tiles that were asked for (TerrainBaseCache), shared by every snapshot of the field.
@@ -211,7 +211,7 @@ struct TerrainSnapshot {
 
     /// What the edits are, as a word for the keys of what is made from the ground (a scene's generated textures):
     /// empty without any, else a hash of every edited tile's heights.
-    var editsFingerprint: String {
+    package var editsFingerprint: String {
         let edited = tiles.filter { !$0.value.isEmpty }.sorted { ($0.key.y, $0.key.x) < ($1.key.y, $1.key.x) }
         guard !edited.isEmpty else { return "" }
         var h: UInt64 = 0xCBF2_9CE4_8422_2325
@@ -233,17 +233,24 @@ struct TerrainSnapshot {
             return max(r, tile.revision(simd_max(lo, first) &- first, simd_min(hi, first &+ (n - 1)) &- first, cells: n))
         }
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(base: TerrainBase, tiles: [SIMD2<Int>: TerrainTile] = [:], baseCache: TerrainBaseCache) {
+        self.base = base
+        self.tiles = tiles
+        self.baseCache = baseCache
+    }
 }
 
 /// The base's heights of whole tiles, kept once asked for (a brush reads around it many times a frame): at most
 /// `capacity` tiles, the oldest let go of. Any thread.
-final class TerrainBaseCache {
+package final class TerrainBaseCache {
     private let lock = NSLock()
     private var tiles: [SIMD2<Int>: [Float]] = [:]
     private var order: [SIMD2<Int>] = []
     let capacity: Int
 
-    init(capacity: Int = 48) { self.capacity = capacity }
+    package init(capacity: Int = 48) { self.capacity = capacity }
 
     /// The tile's heights, made now if it isn't kept.
     func heights(_ tile: SIMD2<Int>, base: TerrainBase) -> [Float] {
@@ -292,12 +299,12 @@ final class TerrainBaseCache {
 
 /// A terrain being edited: its snapshot as it is now, which the brushes change (on the render thread) and anyone
 /// else takes a copy of (`snapshot`). Edits make the touched tiles' revision go up, and `revision` with them.
-final class TerrainField {
+package final class TerrainField {
     private let lock = NSLock()
     private var current: TerrainSnapshot
     private(set) var revision = 0
 
-    init(base: TerrainBase, tiles: [SIMD2<Int>: TerrainTile] = [:]) {
+    package init(base: TerrainBase, tiles: [SIMD2<Int>: TerrainTile] = [:]) {
         current = TerrainSnapshot(base: base, tiles: tiles, baseCache: TerrainBaseCache())
         revision = tiles.values.map(\.revision).max() ?? 0
     }
@@ -306,7 +313,7 @@ final class TerrainField {
     var grid: TerrainGrid { current.base.grid }
 
     /// The terrain as it is now (a copy: its arrays are shared until either side changes them).
-    func snapshot() -> TerrainSnapshot {
+    package func snapshot() -> TerrainSnapshot {
         lock.lock(); defer { lock.unlock() }
         return current
     }

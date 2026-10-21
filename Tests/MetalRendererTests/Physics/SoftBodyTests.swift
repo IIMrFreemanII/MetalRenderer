@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// PhysicsSoft.swift, the soft bodies' stages of PhysicsCPU.swift and Shaders/Physics.metal, and the soft body scene:

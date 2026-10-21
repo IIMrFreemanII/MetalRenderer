@@ -5,12 +5,12 @@ import simd
 /// cover turned off, an undo): they read a stand-in then, and write nothing.
 extension Binding {
     /// Element `i` of `array`, or `stand` once the array is shorter.
-    init<E>(_ array: Binding<[E]>, _ i: Int, or stand: E) where Value == E {
+    package init<E>(_ array: Binding<[E]>, _ i: Int, or stand: E) where Value == E {
         self.init(get: { array.wrappedValue.indices.contains(i) ? array.wrappedValue[i] : stand },
                   set: { if array.wrappedValue.indices.contains(i) { array.wrappedValue[i] = $0 } })
     }
     /// What `optional` holds, or `stand` while it holds nothing (a write then is dropped).
-    init<W>(_ optional: Binding<W?>, or stand: W) where Value == W {
+    package init<W>(_ optional: Binding<W?>, or stand: W) where Value == W {
         self.init(get: { optional.wrappedValue ?? stand }, set: { if optional.wrappedValue != nil { optional.wrappedValue = $0 } })
     }
 }

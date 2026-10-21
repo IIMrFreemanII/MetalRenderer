@@ -23,13 +23,13 @@ import simd
 /// narrow phase, against the bodies where they are, it pours what its nozzle has poured by then (a function of the
 /// group's clock alone), runs its own substeps, and leaves the impulses it gave each body to be applied before the
 /// bodies' substeps (`applyFluidImpulses`).
-enum LiquidKind: Int, CaseIterable {
+package enum LiquidKind: Int, CaseIterable {
     case water, blood, honey
 
     var name: String { ["water", "blood", "honey"][rawValue] }
 
     /// How it moves.
-    struct Physics {
+    package struct Physics {
         var density: Float                   // kg/m^3
         var viscosity: SIMD4<Float>          // Carreau: mu0, mu infinity (Pa s), lambda (s), n (Newtonian: mu0 = mu inf)
         var bulk: Float                      // MPM: Tait's bulk modulus (Pa)
@@ -37,7 +37,7 @@ enum LiquidKind: Int, CaseIterable {
         var stickiness: Float                // 0...1: how much of its slide along a wall it keeps off (1: no slip)
         var xsph: Float                      // PBF: XSPH viscosity
         var vorticity: Float                 // PBF: vorticity confinement (m/s)
-        var nozzleRadius: Float              // m
+        package var nozzleRadius: Float              // m
         var speed: Float                     // m/s out of the nozzle
     }
 
@@ -48,7 +48,7 @@ enum LiquidKind: Int, CaseIterable {
         var roughness: Float
     }
 
-    var physics: Physics {
+    package var physics: Physics {
         switch self {
         case .water:
             return Physics(density: 1000, viscosity: SIMD4(1e-3, 1e-3, 0, 1), bulk: 1.2e4, friction: 0.1, stickiness: 0,

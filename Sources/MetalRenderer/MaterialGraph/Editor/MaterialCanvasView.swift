@@ -65,7 +65,7 @@ struct MatCanvasLayout {
     private(set) var bounds = CGRect.zero
     let function: Bool
 
-    init(_ model: MaterialEditorModel) {
+    package init(_ model: MaterialEditorModel) {
         let c = model.catalog
         if let f = model.function {
             function = true

@@ -3,16 +3,16 @@ import Foundation
 /// A stack of layers kept to be dropped on any object (the Material Painter's smart materials): their masks generated
 /// from the object's bakes (edge wear, dirt in cavities, dust, rust), so they fit wherever they go. The built-in ones,
 /// and any saved as `Assets/Painter/Smart/<name>.smart.json`.
-struct SmartMaterial: Codable, Equatable, Identifiable {
-    var name: String
+package struct SmartMaterial: Codable, Equatable, Identifiable {
+    package var name: String
     var layers: [PaintLayer]
-    var id: String { name }
+    package var id: String { name }
 
     static let suffix = ".smart.json"
     static var folder: URL? { PainterStore.folder?.appendingPathComponent("Smart") }
 
     /// Its layers with new ids (a second drop is layers of its own), named after it.
-    func instantiate() -> [PaintLayer] {
+    package func instantiate() -> [PaintLayer] {
         layers.map { l in
             var c = l
             c.id = UUID()
@@ -27,7 +27,7 @@ struct SmartMaterial: Codable, Equatable, Identifiable {
         return l
     }
 
-    static let builtIn: [SmartMaterial] = [
+    package static let builtIn: [SmartMaterial] = [
         SmartMaterial(name: "Worn Painted Metal", layers: [
             fill("Steel", PaintValues(color: [0.56, 0.57, 0.58], roughness: 0.32, metallic: 1), [.color, .roughness, .metallic]),
             fill("Paint", PaintValues(color: [0.42, 0.05, 0.035], roughness: 0.45, metallic: 0, height: 0.56), [.color, .roughness, .metallic, .height],

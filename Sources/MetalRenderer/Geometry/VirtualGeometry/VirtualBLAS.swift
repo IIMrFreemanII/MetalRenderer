@@ -64,7 +64,7 @@ final class VirtualBLAS {
     private(set) var stats = (triangles: 0, clusters: 0, rebuilds: 0, lastBuildMs: 0.0, megabytes: 0.0, lastCutMs: 0.0,
                               skippedInstances: 0)
 
-    init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], slots: Int) throws {
+    package init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], slots: Int) throws {
         guard let queue = device.makeCommandQueue() else { throw RendererError.resourceCreation("command queue (virtual geometry)") }
         queue.label = "vgBLAS"
         self.device = device

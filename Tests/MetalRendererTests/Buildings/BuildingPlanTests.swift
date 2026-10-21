@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The buildings' floor plans (BuildingPlanner.swift) and the interiors made from them (Building+Interior.swift):

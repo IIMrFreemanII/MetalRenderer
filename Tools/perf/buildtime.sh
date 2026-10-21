@@ -21,16 +21,17 @@
 #   editor     a line in a SwiftUI body (MaterialEditorView.swift)
 #   test       a line in a test (PhysicsThreadsTests.swift)
 #   interface  a static added to Uniforms (GPUTypes.swift), which nearly every file sees
+#   game       a line in a function body of a scene's builder (Scene+Demolition.swift, in the engine or the game)
 # Each edit scenario is measured twice, the line added and then removed; the faster counts. Before each build it waits
 # for other sessions' compiles to finish. Prints: scenario, build, seconds, the object files it recompiled.
 set -euo pipefail
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 work=${TMPDIR:-/tmp}/metalrenderer-buildtime
 builds=dev,devtest,release,releasetest
-scenarios=clean,noop,renderer,physics,editor,test,interface
+scenarios=clean,noop,renderer,physics,editor,test,interface,game
 stats=0
 rev=
 while (($#)); do
@@ -65,6 +66,8 @@ edit_for() {
     editor) echo "Sources/MetalRenderer/MaterialGraph/Editor/MaterialEditorView.swift|    var body: some View {|        let _ = 1 // buildtime" ;;
     test) echo "Tests/MetalRendererTests/Physics/PhysicsThreadsTests.swift|    func testOneThreadAndAllAgree() throws {|        _ = 1 // buildtime" ;;
     interface) echo "Sources/MetalRenderer/Renderer/GPUTypes.swift|struct Uniforms {|    static let buildtimeProbe = 0 // buildtime" ;;
+    # (wherever the file is: it moved from the engine to the game)
+    game) echo "$(cd "$w" && find Sources -name 'Scene+Demolition.swift' | head -1)|    func buildDemolition(|        _ = 1 // buildtime" ;;
   esac
 }
 

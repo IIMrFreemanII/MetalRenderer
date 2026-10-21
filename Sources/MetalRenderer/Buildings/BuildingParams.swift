@@ -81,8 +81,8 @@ enum BuildingParams {
 }
 
 /// Variations of a style (the editor's Mutate): a few of its numbers moved within their ranges, by a seed.
-enum BuildingMutate {
-    static func mutants(of def: BuildingStyleDef, count: Int = 6, seed: UInt64) -> [BuildingStyleDef] {
+package enum BuildingMutate {
+    package static func mutants(of def: BuildingStyleDef, count: Int = 6, seed: UInt64) -> [BuildingStyleDef] {
         var rng = SplitMix64(seed: seed)
         let table = BuildingParams.all.filter { $0.mutation > 0 }
         return (0..<count).map { k in

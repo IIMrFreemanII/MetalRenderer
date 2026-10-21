@@ -37,7 +37,7 @@ struct MeshCutter {
     /// Each triangle's box, for the cells to skip what they don't meet.
     private let boxes: [AABB]
 
-    init(_ mesh: Mesh, inside: @escaping (SIMD3<Float>) -> Float) {
+    package init(_ mesh: Mesh, inside: @escaping (SIMD3<Float>) -> Float) {
         self.mesh = mesh
         self.inside = inside
         boxes = (0..<mesh.triangleCount).map { t in

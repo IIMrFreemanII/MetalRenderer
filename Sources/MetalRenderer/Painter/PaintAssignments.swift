@@ -9,7 +9,7 @@ struct PaintAssignments: Codable, Equatable {
     struct Entry: Codable, Equatable {
         var instance: Int
         var fingerprint: String
-        var document: String
+        package var document: String
     }
     var scenes: [String: [Entry]] = [:]
     /// Bumped when a document's shape changes (its holes, its emission, its size): the same paint, the scene made again.

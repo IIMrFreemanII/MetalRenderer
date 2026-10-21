@@ -5,13 +5,13 @@ import simd
 /// (the field the renderer's water map is drawn from, in the world's x, z; `offset` the world's place of the scene's
 /// origin). The surfaces are not among the scene's instances: the water's rays meet them in a structure of their own
 /// (WaterSystem), and no other ray need walk past them (a sea's sheet under a whole terrain would cost every ray).
-final class SceneWater {
+package final class SceneWater {
     var looks: [WaterLook] = []
-    var field: WaterField?
+    package var field: WaterField?
     var offset = SIMD2<Double>.zero
     /// Something that tells the water map apart from the last scene's (a terrain's document's version, its edits):
     /// the same key keeps the map that is drawn.
-    var key = ""
+    package var key = ""
     /// The still surfaces' triangles (the scene's coordinates) and their looks: the water's own structure
     /// (WaterSystem), which the water's rays meet instead of the scene's.
     var positions: [SIMD3<Float>] = []
@@ -23,7 +23,7 @@ final class SceneWater {
 
 extension Scene {
     /// A look for water surfaces: its index in the scene's looks.
-    func addWaterLook(_ look: WaterLook) -> Int {
+    package func addWaterLook(_ look: WaterLook) -> Int {
         let w = water ?? SceneWater()
         water = w
         w.looks.append(look)
@@ -33,7 +33,7 @@ extension Scene {
 
     /// A water surface: `geometry`'s triangles (the scene's coordinates) of a look (addWaterLook), into the water's
     /// own structure.
-    func addWaterSurface(_ geometry: MeshGeometry, look: Int) {
+    package func addWaterSurface(_ geometry: MeshGeometry, look: Int) {
         let w = water ?? SceneWater()
         water = w
         let base = UInt32(w.positions.count)
@@ -47,7 +47,7 @@ extension Scene {
     /// A pool's still water at `level` over `outline` (a convex polygon of x, z, either way round), its floor at
     /// `floor` (its rim is the scene's to build): its surface, and where it is for the water map (`key` tells the map
     /// apart from other scenes').
-    func addPoolWater(_ outline: [SIMD2<Float>], level: Float, floor: Float, look: WaterLook = .preset(.pool), key: String) {
+    package func addPoolWater(_ outline: [SIMD2<Float>], level: Float, floor: Float, look: WaterLook = .preset(.pool), key: String) {
         guard !WaterSystem.off, outline.count >= 3 else { return }
         let index = addWaterLook(look)
         let centre = outline.reduce(.zero, +) / Float(outline.count)

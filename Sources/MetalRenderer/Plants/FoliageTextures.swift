@@ -7,9 +7,9 @@ import simd
 /// blade of grass. Each is detail on top of its material's colour, which the seasons change: its mean is `mean`
 /// (linear), and the material's colour is divided by that, so a plant keeps the brightness its colour gives it,
 /// and its far voxels, which take the colour alone, match its triangles.
-enum FoliageTextures {
+package enum FoliageTextures {
     /// RGBA8 pixels, sRGB-encoded, rows from v = 0.
-    struct Image {
+    package struct Image {
         var width: Int
         var height: Int
         var pixels: [UInt8]
@@ -26,7 +26,7 @@ enum FoliageTextures {
     /// Of what `make` and the scenes' own generated textures draw (the forest's ground): the caches name a texture
     /// by this, not by its pixels, so that a cached one is never drawn at all. Whoever changes a pattern changes this
     /// (FoliageTests holds each texture's hash and fails otherwise).
-    static let version = 1
+    package static let version = 1
 
     static func size(_ kind: Kind) -> (width: Int, height: Int) {
         switch kind {
@@ -204,7 +204,7 @@ enum FoliageTextures {
 
     /// An image of `color(u, v)` (linear, at each pixel's centre), its rows filled in parallel. `normalized`: scaled so
     /// that its mean is `mean`.
-    static func image(_ width: Int, _ height: Int, normalized: Bool = false, _ color: (Float, Float) -> SIMD3<Float>) -> Image {
+    package static func image(_ width: Int, _ height: Int, normalized: Bool = false, _ color: (Float, Float) -> SIMD3<Float>) -> Image {
         var linear = [SIMD3<Float>](repeating: .zero, count: width * height)
         linear.withUnsafeMutableBufferPointer { out in
             DispatchQueue.concurrentPerform(iterations: height) { y in   // a row each: disjoint slots

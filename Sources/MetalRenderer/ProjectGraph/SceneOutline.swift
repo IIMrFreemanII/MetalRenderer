@@ -80,8 +80,8 @@ struct SceneOutline: Codable, Equatable {
 
 /// Something an outline's node is made from or with: a mesh, a material, a plant species, a VFX graph. `local`: the
 /// scene's own (its mesh 3); otherwise the project's (a species, a model file, a graph), shared among the scenes that use it.
-struct AssetKey: Codable, Hashable, Comparable {
-    enum Kind: String, Codable, CaseIterable {
+package struct AssetKey: Codable, Hashable, Comparable {
+    package enum Kind: String, Codable, CaseIterable {
         case mesh, model, material, materialGraph, painterDoc, species, building, buildingStyle, character, vfxGraph, sdfShape
 
         var title: String {
@@ -107,10 +107,17 @@ struct AssetKey: Codable, Hashable, Comparable {
     var name: String
     var local = false
 
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(kind: Kind, name: String, local: Bool = false) {
+        self.kind = kind
+        self.name = name
+        self.local = local
+    }
+
     /// Its id in the project graph: a scene's own are that scene's.
     func id(scope: String) -> String { local ? "asset:\(scope)|\(kind.rawValue)|\(name)" : "asset:\(kind.rawValue)|\(name)" }
 
-    static func < (a: AssetKey, b: AssetKey) -> Bool { (a.kind.rawValue, a.name) < (b.kind.rawValue, b.name) }
+    package static func < (a: AssetKey, b: AssetKey) -> Bool { (a.kind.rawValue, a.name) < (b.kind.rawValue, b.name) }
 }
 
 /// An axis-aligned box that encodes as two arrays.
@@ -118,8 +125,8 @@ struct Box: Codable, Equatable {
     var lo: SIMD3<Float>
     var hi: SIMD3<Float>
 
-    init(lo: SIMD3<Float>, hi: SIMD3<Float>) { self.lo = lo; self.hi = hi }
-    init?(_ b: AABB) {
+    package init(lo: SIMD3<Float>, hi: SIMD3<Float>) { self.lo = lo; self.hi = hi }
+    package init?(_ b: AABB) {
         guard !b.isEmpty, b.lo.x.isFinite, b.hi.x.isFinite else { return nil }
         lo = b.lo; hi = b.hi
     }
@@ -135,10 +142,10 @@ struct IndexRuns: Codable, Equatable, Sequence {
     private(set) var runs: [Int] = []
     private(set) var count = 0
 
-    init() {}
-    init<S: Sequence>(_ indices: S) where S.Element == Int { for i in indices { append(i) } }
+    package init() {}
+    package init<S: Sequence>(_ indices: S) where S.Element == Int { for i in indices { append(i) } }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         runs = try decoder.singleValueContainer().decode([Int].self)
         count = stride(from: 1, to: runs.count, by: 2).reduce(0) { $0 + runs[$1] }
     }

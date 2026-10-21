@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The FBX reader and the character import (FBXReader.swift, SkinnedCharacter.swift), on the characters in

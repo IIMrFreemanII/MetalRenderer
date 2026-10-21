@@ -38,7 +38,7 @@ final class PaintBakeJob {
     private var made: PaintBake??
     let started = CACurrentMediaTime()
 
-    init(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
+    package init(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
         // A queue of its own: the frames' queue runs between its command buffers.
         let own = device.makeCommandQueue() ?? queue
         own.label = "painter bakes"
@@ -66,7 +66,7 @@ final class PaintMaskJob {
     private let lock = NSLock()
     private var made: MTLTexture??
 
-    init(_ g: PaintGenerator, bake: PaintBake, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) {
+    package init(_ g: PaintGenerator, bake: PaintBake, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) {
         generator = g
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             let t = bake.mask(g, map: map, size: size, catalog: catalog, device: device, queue: queue)
@@ -105,7 +105,7 @@ final class PaintBake {
     static let reach: Float = 0.035
 
     /// `bandRows`: rows of occlusion and curvature per command buffer (nil: about 128K texels' worth).
-    init?(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
+    package init?(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
         func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: size, height: size, mipmapped: false)
             d.usage = [.shaderRead, .shaderWrite]

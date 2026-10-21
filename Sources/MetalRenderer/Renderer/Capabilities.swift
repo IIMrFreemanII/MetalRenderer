@@ -17,11 +17,11 @@ struct Capabilities: Equatable {
     /// The running device's. Everything until `main` sets it: tests have no device.
     static var current = Capabilities()
 
-    init() {}
+    package init() {}
 
     /// `METALRENDERER_CAPS="rt,denoiser"` keeps only the capabilities it names (rt, hwrt, denoiser, interpolator, metal4;
     /// `none` keeps nothing), to try the fallbacks on a GPU that has them all.
-    init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
+    package init(device: MTLDevice, env: [String: String] = ProcessInfo.processInfo.environment) {
         metalRayTracing = device.supportsRaytracing
         hardwareRayTracing = metalRayTracing && device.supportsFamily(.apple9)
         if #available(macOS 26.0, *) {

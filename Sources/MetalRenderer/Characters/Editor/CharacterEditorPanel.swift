@@ -10,7 +10,7 @@ final class CharacterEditorPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(controller: RendererController) {
+    package init(controller: RendererController) {
         model = CharacterEditorModel(controller: controller)
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 430, height: 760),
                         styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],

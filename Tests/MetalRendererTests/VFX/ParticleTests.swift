@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Particles.swift, ParticleMath.swift, VFXInterpreter.swift, ParticlesGPU.swift and Shaders/ParticleSim.metal: what emitters ask for, the

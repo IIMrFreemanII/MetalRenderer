@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+@testable import Game
 @testable import MetalRenderer
 
 /// The character editor without its UI: its parameter table (CharacterParams), Randomize and Mutate, and its model

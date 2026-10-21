@@ -40,7 +40,7 @@ struct WorldPlace {
 extension World {
     /// Where the world is first seen from: in the fields south of the origin's city, looking at it. (So near its
     /// level ground the belt is always open: `belt`.)
-    var start: (place: SIMD3<Double>, yaw: Float) {
+    package var start: (place: SIMD3<Double>, yaw: Float) {
         let city = city(cell: SIMD2(0, 0))!
         let x = city.center.x + 30, z = city.center.y + Double(city.radius + World.cityApron) + 24
         return (SIMD3(x, Double(height(x, z)) + 1.7, z), 0)
@@ -48,7 +48,7 @@ extension World {
 
     /// The scenes' first origin: the tile the origin's city has its middle in. (The origin follows the camera from
     /// afar: WorldPlace.anchorTile(around:).)
-    var anchorTile: SIMD2<Int> {
+    package var anchorTile: SIMD2<Int> {
         let city = city(cell: SIMD2(0, 0))!, side = Double(World.tileSize)
         return SIMD2(Int((city.center.x / side).rounded(.down)), Int((city.center.y / side).rounded(.down)))
     }
@@ -75,7 +75,7 @@ extension Scene {
     private static var keptTiles: [String: WorldTile] = [:]
     private static let keptLock = NSLock()
 
-    func buildWorld() {
+    package func buildWorld() {
         let start = CFAbsoluteTimeGetCurrent()
         var world = World(seed: UInt64(max(settings.seed, 0)))
         world.treeDensity = Float(max(settings.trees, 0)) / 10.24      // the Forest's square is 10.24 hectares

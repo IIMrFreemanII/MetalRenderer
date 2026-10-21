@@ -2174,29 +2174,69 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 
 ## Source layout
 
-`Sources/MetalRenderer` is one module, in a folder per feature. A `Type+Feature.swift` extension (`Scene+Water`,
-`Renderer+Terrain`, `Benchmark+Demolition`) sits in its feature's folder, and an editor sits inside its feature
-(`Buildings/Editor`). The shaders stay at the top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`,
-`ShadersMaterial*.metal` and `MaterialShaders/`. Code finds them, the assets and the fixtures through `SourceTree`
-(`Util/SourceTree.swift`), not from its own path. The tests in `Tests/MetalRendererTests` use the same folders.
+Two modules, each in a folder per feature:
+
+* **`Sources/MetalRenderer`, the engine:** the renderer and its systems (physics, plants, buildings, terrain, water,
+  the open world, particles...), the editors and their workshops, the benchmark harness, and the Cornell room.
+* **`Sources/Game`, the game:** the demo scenes. It holds their builders, what suits each scene (fog, sky, lens,
+  camera, day: `GameScenes.swift`), their settings rows (`Settings/GameScenes+Rows.swift`) and the benchmark modes
+  that show them (`Benchmark/`).
+  * It reaches the engine through `package` declarations: the engine's API, marked where the game uses it. Nothing
+    is `public`.
+  * A change in it recompiles only the game target. A change in the engine recompiles the engine, and the game as
+    well when the engine's interface changed.
+
+**How a scene is found.** A scene is a `SceneKind`, which is a name (`Scene/SceneDefinition.swift`). Its
+`SceneDefinition`, registered in `SceneRegistry`, holds its builder, its traits (`simulates`, `isCity`, `hasPlants`…)
+and its presets. Everything the engine asks of a scene goes through it: what it is, how to build it, what suits it.
+The engine never names a game scene.
+
+* **Who registers what:** the engine registers its own scenes, the Cornell room and the workshops. The game registers
+  the rest from `GameScenes`, which the engine finds by its Objective-C name, so the engine needn't import the game.
+* **Editors:** an editor opens a game scene by its role (`SceneRole`: the city, the forest, the Fracture Editor's
+  courtyard), and by `SceneDefinition.effects` (the VFX editor's previews).
+* **Saved settings** from before the split hold the scene's old enum number. They read back by it
+  (`SceneKind.numbered`).
+
+**Placing a new file:**
+
+* A new demo scene is a builder in the game's feature folder plus an entry in `GameScenes.scenes()`.
+* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder.
+* An editor sits inside its feature (`Buildings/Editor`).
+
+**Shaders, assets and tests:**
+
+* The shaders stay at the engine's top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`, `ShadersMaterial*.metal` and
+  `MaterialShaders/`.
+* Code finds the shaders, the assets and the fixtures through `SourceTree` (`Util/SourceTree.swift`), not from its own
+  path.
+* The tests in `Tests/MetalRendererTests` import both modules and use the same folders.
+
+The engine's folders:
 
 | Folder | What is in it |
 |---|---|
 | `App/` | The window, the view, the controller, panels and overlays, the day bar, the graph editors' canvas |
 | `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store, the panel |
 | `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), pipelines, the backends; `Lighting/` and `Post/` |
-| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`), its buffers, navigation, the walker; `Builders/` for the scenes with no feature of their own |
+| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation, the walker |
 | `Geometry/` | BVH, meshes, simplification; `VirtualGeometry/` (Nanite-like), `SDF/` |
-| `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids; `Scenes/` |
-| `Destruction/` | The courtyard; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` |
+| `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids |
+| `Destruction/` | The tools' rigs and the players; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` (its physics and player) |
 | `Buildings/` | The generator, plans, styles; `Interior/`, `City/`, `Editor/` |
 | `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/`; each with its `Editor/` |
 | `Terrain/`, `Water/`, `World/` | The terrain system and its editor, water, the open world |
 | `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer and its editor, the Material Painter, texture sets and streaming |
 | `Particles/`, `VFX/` | GPU particles; effects as graphs and their editor |
 | `ProjectGraph/` | Outlines, overrides, the Project Graph and its window |
-| `Benchmark/` | The modes (`Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`), the renderer's side |
+| `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
 | `IO/`, `Util/` | glTF, EXR, cache and section files, glTF models in scenes; maths, catalogs, `SourceTree` |
+
+The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland),
+`Physics/Scenes/`, `Buildings/City/`, `Destruction/` (the courtyard, `Demolition/`: the office and its blueprint),
+`Characters/Crowd/`, `Geometry/SDF/`, `Particles/`, `Plants/` (the forest), `IO/` (the gallery), `Settings/`, and
+`Benchmark/` (the modes: `Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`, `+Realism`), with each
+feature's own modes in its folder (`Water/`, `Terrain/`, `Buildings/`, `Destruction/`).
 
 ## How a frame works
 

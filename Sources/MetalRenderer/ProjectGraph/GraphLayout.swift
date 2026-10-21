@@ -11,7 +11,7 @@ struct LayoutTree {
 
     var count: Int { parent.count }
 
-    init(parent: [Int], radius: [Float], links: [(a: Int, b: Int)] = []) {
+    package init(parent: [Int], radius: [Float], links: [(a: Int, b: Int)] = []) {
         self.parent = parent
         self.radius = radius
         self.links = links
@@ -22,7 +22,7 @@ struct LayoutTree {
     /// A node's size from the things under it: 7 points alone, growing with the log of its count.
     static func radius(count: Int) -> Float { 7 + 3.2 * log2(Float(max(count, 1))) }
 
-    init(_ v: ProjectGraph.Visible, graph: ProjectGraph) {
+    package init(_ v: ProjectGraph.Visible, graph: ProjectGraph) {
         self.init(parent: v.nodes.map(\.parent),
                   radius: v.nodes.map { $0.member != nil ? 6 : LayoutTree.radius(count: graph.nodes[$0.node].count) },
                   links: v.edges.map { ($0.a, $0.b) })
@@ -199,7 +199,7 @@ struct ForceLayout {
     var linkDistance: Float = 140
     private var links: [(a: Int, b: Int, strength: Float, distance: Float)] = []
 
-    init(_ tree: LayoutTree, start: [SIMD2<Float>]) {
+    package init(_ tree: LayoutTree, start: [SIMD2<Float>]) {
         self.tree = tree
         positions = start
         velocity = [SIMD2<Float>](repeating: .zero, count: tree.count)
@@ -270,7 +270,7 @@ private struct QuadTree {
     private let mass: [Float]
     let theta2: Float = 0.81
 
-    init(_ positions: [SIMD2<Float>], mass: [Float]) {
+    package init(_ positions: [SIMD2<Float>], mass: [Float]) {
         self.positions = positions
         self.mass = mass
         guard !positions.isEmpty else { return }

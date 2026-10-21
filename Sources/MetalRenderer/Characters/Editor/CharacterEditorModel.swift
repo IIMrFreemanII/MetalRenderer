@@ -48,7 +48,7 @@ final class CharacterEditorModel: ObservableObject {
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
 
-    init(controller: CharacterEditorHost, saved: CharacterCatalog = CharacterCatalog.launch, folder: URL? = CharacterStore.folder,
+    package init(controller: CharacterEditorHost, saved: CharacterCatalog = CharacterCatalog.launch, folder: URL? = CharacterStore.folder,
          draft: Bool = true) {
         self.controller = controller
         self.saved = saved

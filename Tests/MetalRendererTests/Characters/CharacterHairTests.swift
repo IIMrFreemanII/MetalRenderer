@@ -2,6 +2,7 @@ import Metal
 import QuartzCore
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Hair (CharacterHair, CharacterHairCap): where it roots, that it stays off the head, that the brows and lashes ride

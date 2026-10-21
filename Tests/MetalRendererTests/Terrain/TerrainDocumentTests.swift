@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The terrain's data: its grid, its bases, its edits, its sectors' meshes and its files.

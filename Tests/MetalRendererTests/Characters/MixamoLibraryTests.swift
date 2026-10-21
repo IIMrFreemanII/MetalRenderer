@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Mixamo clip library (MixamoLibrary.swift): its index, names, picks, and the clips Tools/mixamo/download.py

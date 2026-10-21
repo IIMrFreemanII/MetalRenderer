@@ -2,6 +2,7 @@ import XCTest
 import AppKit
 import SwiftUI
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The VFX editor without its window (VFXEditorModel, VFXLayout), how its edits reach a running particle system

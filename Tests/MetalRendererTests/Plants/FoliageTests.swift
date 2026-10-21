@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Foliage.swift: the plants are a pure function of the seed (built in parallel or not), every mesh is sound (a

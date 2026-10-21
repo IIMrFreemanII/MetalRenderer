@@ -9,7 +9,7 @@ final class DemolitionHUD: NSView {
     private let label = NSTextField(labelWithString: "")
     private var shown: DemolitionStatus?
 
-    init() {
+    package init() {
         super.init(frame: .zero)
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
@@ -40,7 +40,7 @@ final class DemolitionHUD: NSView {
         ])
         isHidden = true
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Mouse and keys go to the render view underneath.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }

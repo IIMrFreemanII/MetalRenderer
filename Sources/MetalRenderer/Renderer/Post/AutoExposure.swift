@@ -22,7 +22,7 @@ final class AutoExposure {
     private var exposure: Float = 1
     private var settled = false
 
-    init(device: MTLDevice, framesInFlight: Int) {
+    package init(device: MTLDevice, framesInFlight: Int) {
         buffers = (0...framesInFlight).map { _ in
             let b = device.makeBuffer(length: AutoExposure.bins * 4, options: .storageModeShared)!
             memset(b.contents(), 0, AutoExposure.bins * 4)

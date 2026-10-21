@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The demolition scene's office as blocks (DemolitionBlueprint): there for every size, nothing inside anything, each

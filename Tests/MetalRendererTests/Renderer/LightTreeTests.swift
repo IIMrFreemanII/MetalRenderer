@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The light tree (LightTree.swift), the path tracer's many lights: every light but the suns at the end of its path, nodes

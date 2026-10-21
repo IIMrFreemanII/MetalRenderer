@@ -228,7 +228,7 @@ extension Scene {
     /// The scene's particle effects (a builder's, once): see `particles`.
     /// A mesh emitter's particles are instances, one a slot, reserved here (the GPU poses them: ParticlesGPU
     /// .encodeMeshPose); they move every frame, so the scene isn't still.
-    func addParticles(_ system: ParticleSystem) {
+    package func addParticles(_ system: ParticleSystem) {
         precondition(particles == nil, "a scene has one particle system")
         let p = ParticleSystem(emitters: settings.particles.applied(to: system.emitters), colliders: system.colliders,
                                fields: Array(system.fields.prefix(system.bakedCurlField ?? system.fields.count)),
@@ -264,7 +264,7 @@ extension Scene {
         return taken
     }
 
-    func setTransform(_ i: Int, _ transform: float4x4) {
+    package func setTransform(_ i: Int, _ transform: float4x4) {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }
@@ -314,7 +314,7 @@ extension Scene {
     }
 
     /// Rotation taking +Y to `d` (unit).
-    static func alignY(_ d: SIMD3<Float>) -> float4x4 {
+    package static func alignY(_ d: SIMD3<Float>) -> float4x4 {
         if dot(d, [0, 1, 0]) < -0.9999 { return rotate(.pi, [1, 0, 0]) }
         return float4x4(simd_quatf(from: [0, 1, 0], to: d))
     }

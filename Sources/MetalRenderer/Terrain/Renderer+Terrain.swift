@@ -632,7 +632,7 @@ extension Renderer {
 /// A step of a scripted terrain edit (benchmarks: Benchmark.Config.Event.terrain): sculpt mode, the brush, a stroke
 /// through points of the view (0...1 across and down) or of the world (x, z), a frame's wait, undo or redo of the last
 /// change.
-enum TerrainStep {
+package enum TerrainStep {
     case mode(Bool)
     case brush(TerrainBrush)
     case stroke([SIMD2<Float>])

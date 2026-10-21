@@ -123,7 +123,7 @@ final class RendererController: InputHandler {
     var debugInfo: DebugInfo { status?.debugInfo ?? DebugInfo() }
 
     /// Takes `renderer` before its render thread starts: reads what doesn't change and sets its callbacks.
-    init(renderer: Renderer) {
+    package init(renderer: Renderer) {
         self.renderer = renderer
         settings = renderer.settings
         defaultSettings = renderer.defaultSettings
@@ -347,7 +347,7 @@ final class RendererController: InputHandler {
     }
 
     /// The demolition scene is up (the last tick said so).
-    private var demolitionActive: Bool { settings.scene.kind == .demolition && status?.demolition != nil }
+    private var demolitionActive: Bool { status?.demolition != nil }
 
     /// The mouse captured for the demolition scene's aim, or let go (the window's view and the renderer both told).
     func setCaptured(_ on: Bool) {

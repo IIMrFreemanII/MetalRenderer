@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 import simd
 
 /// A generated, tiling surface: what a building's wall, a roof or a pavement is made of.
-enum SurfaceKind: Int, CaseIterable, Hashable {
+package enum SurfaceKind: Int, CaseIterable, Hashable {
     case brick, plaster, concrete, rooftile, asphalt, paving, metalpanel
 
     /// The side of one repeat of its texture, in metres.
@@ -48,14 +48,14 @@ enum SurfaceKind: Int, CaseIterable, Hashable {
 
 /// Written by name (building styles' files).
 extension SurfaceKind: Codable {
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let name = try decoder.singleValueContainer().decode(String.self)
         guard let found = SurfaceKind.allCases.first(where: { "\($0)" == name }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no surface \(name)"))
         }
         self = found
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         try c.encode("\(self)")
     }
@@ -68,7 +68,7 @@ extension SurfaceKind: Codable {
 /// `sources` hands them to the scene as PNGs that are made once and kept in the user's cache folder (a new
 /// `version` or size makes new files); each kind's maps name its base PNG as their model, so the texture streamer
 /// keeps a mip-chain cache per kind next to it and later launches only read.
-enum ProceduralTextures {
+package enum ProceduralTextures {
     /// Bump this when what `generate` draws changes.
     static let version = 1
 
@@ -229,7 +229,7 @@ enum ProceduralTextures {
     /// The scene's textures for `kinds`: each kind's base colour, normal and (if it has one) roughness map, read from
     /// `folder` or made and written there first (the missing kinds in parallel). A kind that can't be made or
     /// written is left out.
-    static func sources(_ kinds: [SurfaceKind], in folder: URL = ProceduralTextures.folder, size: Int? = nil)
+    package static func sources(_ kinds: [SurfaceKind], in folder: URL = ProceduralTextures.folder, size: Int? = nil)
         -> [SurfaceKind: (base: Scene.TextureSource, normal: Scene.TextureSource, roughness: Scene.TextureSource?)] {
         func url(_ kind: SurfaceKind, _ map: String) -> URL {
             folder.appendingPathComponent("\(kind)-\(size ?? kind.size)-g\(version)-\(map).png")

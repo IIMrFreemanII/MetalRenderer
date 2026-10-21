@@ -24,7 +24,7 @@ struct SectionFile {
     private let data: Data
     private var sections: [UInt32: (offset: Int, bytes: Int, stride: Int)] = [:]
 
-    init?(url: URL, key: String) {
+    package init?(url: URL, key: String) {
         guard let data = try? Data(contentsOf: url, options: .alwaysMapped), data.count >= 16 else { return nil }
         func word(_ at: Int) -> UInt32 { data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt32.self) } }
         func long(_ at: Int) -> UInt64 { data.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: at, as: UInt64.self) } }
@@ -128,7 +128,7 @@ struct SectionFile {
 /// tree before it is in the file). A mapped one takes no memory until it is read, and what was read the system can
 /// drop again: an open world's tiles, half a gigabyte of them in sight, are then their files' pages, not the
 /// process's.
-enum Stored<T> {
+package enum Stored<T> {
     case made([T])
     case mapped(Data)
 

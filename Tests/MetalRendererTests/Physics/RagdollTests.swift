@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Joints and ragdolls (Physics.swift's addJoint, PhysicsCPU.solveJoint, Shaders/Physics.metal's physSolveJoint,

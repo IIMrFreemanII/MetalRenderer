@@ -10,7 +10,7 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(controller: RendererController) {
+    package init(controller: RendererController) {
         model = PlantEditorModel(controller: controller)
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 430, height: 760),
                         styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],

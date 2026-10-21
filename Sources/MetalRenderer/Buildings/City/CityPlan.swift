@@ -9,23 +9,29 @@ import simd
 /// to shoulder around the block's edge with a courtyard behind them (or back to back if the block is narrow);
 /// towers and warehouses stand free, a few to a block. A lot knows what is on each of its four sides: a street,
 /// open ground (a courtyard, a yard), or a neighbour's wall.
-struct CityPlan {
+package struct CityPlan {
     /// An axis-aligned rectangle on the ground: `lo` and `hi` are (x, z).
-    struct Rect: Equatable {
-        var lo: SIMD2<Float>, hi: SIMD2<Float>
-        var size: SIMD2<Float> { hi - lo }
-        var center: SIMD2<Float> { (lo + hi) / 2 }
-        func inset(_ d: Float) -> Rect { Rect(lo: lo + SIMD2(d, d), hi: hi - SIMD2(d, d)) }
-        func contains(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
+    package struct Rect: Equatable {
+        package var lo: SIMD2<Float>, hi: SIMD2<Float>
+        package var size: SIMD2<Float> { hi - lo }
+        package var center: SIMD2<Float> { (lo + hi) / 2 }
+        package func inset(_ d: Float) -> Rect { Rect(lo: lo + SIMD2(d, d), hi: hi - SIMD2(d, d)) }
+        package func contains(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
             r.lo.x >= lo.x - tolerance && r.lo.y >= lo.y - tolerance && r.hi.x <= hi.x + tolerance && r.hi.y <= hi.y + tolerance
         }
         func overlaps(_ r: Rect, tolerance: Float = 1e-3) -> Bool {
             r.lo.x < hi.x - tolerance && r.hi.x > lo.x + tolerance && r.lo.y < hi.y - tolerance && r.hi.y > lo.y + tolerance
         }
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(lo: SIMD2<Float>, hi: SIMD2<Float>) {
+            self.lo = lo
+            self.hi = hi
+        }
     }
 
     /// What a lot's side looks onto.
-    enum Edge: Equatable {
+    package enum Edge: Equatable {
         case street     // the building's front, or a corner lot's other street side
         case open       // a courtyard, a yard, a plaza: windows, but no shop fronts or doors
         case party      // a neighbour stands against it: a blank wall
@@ -33,76 +39,76 @@ struct CityPlan {
 
     /// A building's site. The building is made in the lot's own frame: its width along x, its depth along z, its
     /// front toward +z, standing on y = 0 around the origin. `yaw` turns that frame into the world.
-    struct Lot {
-        var rect: Rect
+    package struct Lot {
+        package var rect: Rect
         var yaw: Float
         /// front (+z), right (+x), back (-z), left (-x), in the lot's frame.
-        var edges: [Edge]
-        var style: CityStyle            // never .mixed
-        var floors: Int
+        package var edges: [Edge]
+        package var style: CityStyle            // never .mixed
+        package var floors: Int
         var seed: UInt64
         var block: Int
 
         /// Width (across the front) and depth.
-        var size: SIMD2<Float> {
+        package var size: SIMD2<Float> {
             let s = rect.size
             return abs(sin(yaw)) > 0.5 ? SIMD2(s.y, s.x) : s
         }
-        var transform: float4x4 { translate([rect.center.x, 0, rect.center.y]) * rotate(yaw, [0, 1, 0]) }
+        package var transform: float4x4 { translate([rect.center.x, 0, rect.center.y]) * rotate(yaw, [0, 1, 0]) }
         /// The world direction (x, z) the front faces.
         var front: SIMD2<Float> { SIMD2(sin(yaw), cos(yaw)).rounded(.toNearestOrAwayFromZero) }
     }
 
-    struct Block {
-        var rect: Rect                  // kerb to kerb: the sidewalk and what stands inside it
+    package struct Block {
+        package var rect: Rect                  // kerb to kerb: the sidewalk and what stands inside it
         var style: CityStyle            // never .mixed
-        var park = false
+        package var park = false
     }
 
     /// A stretch of road between the kerbs, with `along` = 0 for one running along x, 1 along z.
-    struct Street {
-        var rect: Rect
-        var along: Int
+    package struct Street {
+        package var rect: Rect
+        package var along: Int
     }
 
     /// The canal (CitySettings.canal): the avenue it took the place of (quay to quay) and its water between the quays.
-    struct Canal {
-        var rect: Rect
-        var water: Rect
+    package struct Canal {
+        package var rect: Rect
+        package var water: Rect
     }
     /// The canal's avenue is this much wider than it was; its quays are `quay` wide.
     static let canalExtra: Float = 16, quay: Float = 4
     /// How far under the streets its water is, and its bed.
-    static let canalLevel: Float = 1.5, canalBed: Float = 4
+    package static let canalLevel: Float = 1.5, canalBed: Float = 4
 
-    struct Lamp {
-        var position: SIMD2<Float>
-        var toRoad: SIMD2<Float>        // unit, from the pole to the road it lights
-        var block: Int
+    package struct Lamp {
+        package var position: SIMD2<Float>
+        package var toRoad: SIMD2<Float>        // unit, from the pole to the road it lights
+        package var block: Int
     }
 
-    enum View { case overview, street, facade }
+    package enum View { case overview, street, facade }
 
-    static let sidewalk: Float = 3.5
-    static let margin: Float = 300      // open ground around the outermost streets
+    package static let sidewalk: Float = 3.5
+    package static let margin: Float = 300      // open ground around the outermost streets
 
     let settings: CitySettings
     let seed: Int
-    private(set) var blocks: [Block] = []
-    private(set) var lots: [Lot] = []
-    private(set) var streets: [Street] = []
-    private(set) var lamps: [Lamp] = []
-    private(set) var trees: [SIMD3<Float>] = []         // x, z and the tree's size
+    package private(set) var blocks: [Block] = []
+    package private(set) var lots: [Lot] = []
+    package private(set) var streets: [Street] = []
+    package private(set) var lamps: [Lamp] = []
+    package private(set) var trees: [SIMD3<Float>] = []         // x, z and the tree's size
     /// The courtyards: the open ground inside a block whose houses stand around its edge.
-    private(set) var courts: [Rect] = []
+    package private(set) var courts: [Rect] = []
     /// A courtyard's trees (x, z and size), for whoever plants them (`init(block:)`).
     private(set) var courtTrees: [SIMD3<Float>] = []
     /// The streets and everything inside them.
-    private(set) var extent = Rect(lo: .zero, hi: .zero)
+    package private(set) var extent = Rect(lo: .zero, hi: .zero)
     /// The canal along x through the city's middle, if it has one.
-    private(set) var canal: Canal?
+    package private(set) var canal: Canal?
 
-    init(_ settings: CitySettings, seed: Int = 1) {
+    package init(_ settings: CitySettings, seed: Int = 1) {
         self.settings = settings
         self.seed = seed
         let n = max(settings.blocks, 1)
@@ -168,7 +174,7 @@ struct CityPlan {
     /// One block by itself, for a city that has no end (World.swift): `rect` from kerb to kerb, `ring` = how far out
     /// of its city it is (0 = the middle, 1 = the edge), everything else from `seed`. Its lots, lamps and trees are
     /// in `rect`'s coordinates; no streets (the world lays the roads between its blocks).
-    init(block rect: Rect, ring: Float, seed: UInt64, park: Bool = false) {
+    package init(block rect: Rect, ring: Float, seed: UInt64, park: Bool = false) {
         settings = CitySettings()
         self.seed = Int(truncatingIfNeeded: seed)
         var rng = SplitMix64(seed: seed)
@@ -330,7 +336,7 @@ struct CityPlan {
     // MARK: - Cameras
 
     /// Where to look at the city from: above a corner, from a pavement in the middle, or in front of one building.
-    func camera(_ view: View) -> Camera {
+    package func camera(_ view: View) -> Camera {
         func looking(from position: SIMD3<Float>, at target: SIMD3<Float>) -> Camera {
             var c = Camera()
             let d = normalize(target - position)

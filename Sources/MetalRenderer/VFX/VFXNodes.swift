@@ -23,7 +23,7 @@ struct VFXPinSpec {
     var span: ClosedRange<Float>?
     var choices: [String] = []
 
-    init(_ name: String, _ title: String, _ value: VFXParam, wire: VFXType? = nil, generic: Bool = false,
+    package init(_ name: String, _ title: String, _ value: VFXParam, wire: VFXType? = nil, generic: Bool = false,
          span: ClosedRange<Float>? = nil, choices: [String] = []) {
         self.name = name
         self.title = title
@@ -47,7 +47,7 @@ struct VFXBlockSpec {
 }
 
 /// The blocks, by context. Their names are the JSON's and the Swift builder's (VFXBuilder.swift).
-enum VFXBlockKind: String, Codable, CaseIterable {
+package enum VFXBlockKind: String, Codable, CaseIterable {
     // Spawn
     case rate, burst, event
     // Initialize
@@ -243,7 +243,7 @@ struct VFXOpSpec {
 }
 
 /// The operators. Their code is VFXProgram's (Metal and the CPU's, side by side).
-enum VFXOpKind: String, Codable, CaseIterable {
+package enum VFXOpKind: String, Codable, CaseIterable {
     // Inputs: the particle and the clock.
     case age, ageOverLife, lifetime, position, velocity, speed, particleID, random, time, deltaTime, emitterPosition
     // Values
@@ -376,7 +376,7 @@ enum VFXOpKind: String, Codable, CaseIterable {
 extension ParticleTextures.Kind {
     /// The name the effects' JSON and the editor use.
     var name: String { "\(self)" }
-    init?(name: String) {
+    package init?(name: String) {
         guard let k = ParticleTextures.Kind.allCases.first(where: { "\($0)" == name }) else { return nil }
         self = k
     }

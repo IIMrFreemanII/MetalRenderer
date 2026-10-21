@@ -1,4 +1,5 @@
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// The OpenEXR reader (EXRImage.swift) against what the OpenEXR library itself decodes from the same files: the

@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// PlantSpecies.swift, PlantCurve.swift: the species as data give exactly what the code before them did, and come

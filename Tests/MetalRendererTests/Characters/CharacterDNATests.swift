@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import QuartzCore
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// A character as data (CharacterDNA) and its catalog and store.

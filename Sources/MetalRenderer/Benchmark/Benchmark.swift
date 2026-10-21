@@ -10,32 +10,32 @@ import UniformTypeIdentifiers
 /// Runs a fixed list of render settings with a deterministic animation clock, times every GPU
 /// pass (each pass goes into its own command buffer so `gpuStartTime`/`gpuEndTime` isolate it),
 /// prints a table and quits. Set `METALRENDERER_BENCH_DIR=<folder>` to also save a PNG per setting.
-final class Benchmark {
+package final class Benchmark {
     /// One setting of a benchmark run: what it renders with and how the run goes. The lists are in
     /// Benchmark+Modes.swift, built with the modifiers below (`still`, `reference`, `cameraMove`, ...).
-    struct Config {
-        var name: String
+    package struct Config {
+        package var name: String
         /// What it renders with, before the METALRENDERER_* lists override it (`resolvedSettings`).
-        var settings: RenderSettings
+        package var settings: RenderSettings
         /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / Auto.
         var directLight: DirectLightMode? = nil
-        var startTime: Float = 0            // the animation clock at the first frame
+        package var startTime: Float = 0            // the animation clock at the first frame
         var dt: Float = 1.0 / 60.0          // the clock's step a frame (seconds)
-        var frames: Int? = nil              // measured frames, if not the default
+        package var frames: Int? = nil              // measured frames, if not the default
         var accumulate = false              // reference image: average raw frames instead of denoising
-        var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
+        package var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
         var supersample = false             // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
-        var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
+        package var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
         var record = false                  // also save every other measured frame (30 fps), as JPEGs in a folder of its own
         var cameraPath = false              // fly the camera along cameraPose(progress:), ending at the default pose
-        var camera: Camera? = nil           // a fixed camera instead of the scene's default
+        package var camera: Camera? = nil           // a fixed camera instead of the scene's default
         var flight: SIMD3<Float>? = nil     // the camera flies from there: metres a second (the open world's tiles)
-        var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
+        package var track: CameraTrack? = nil       // the camera follows it, from its start at the first measured frame
         var body = false                    // the camera is a walker's body: doors open for it, it shoves loose furniture
         var ride: Int? = nil                // the camera rides lift `ride` (its track keyed at the lift's lowest floor)
-        var events: [(time: Float, event: Event)] = []   // what happens at times of its track (`at`)
+        package var events: [(time: Float, event: Event)] = []   // what happens at times of its track (`at`)
         /// Something done in a building at a moment of a setting's track, as the walker would (InteriorControls).
-        enum Event {
+        package enum Event {
             case callLift(Int, floor: Int)          // lift n to that floor
             case lights(on: Bool, within: Float)    // the switches that near the camera, on or off
             case flashlight(Bool)
@@ -52,7 +52,7 @@ final class Benchmark {
         /// without upscaling or temporal AA unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
         /// `upscale`: the upscaling factor, 0 = off; `gi`: the GI method, nil = GI off. The scene brings its fog and sky
         /// presets (`fog` and `sky` edit them); `change` edits anything else.
-        init(_ name: String, scale: CGFloat = 0.75, upscale: CGFloat = 0, gi: GIMode? = .pathTraced,
+        package init(_ name: String, scale: CGFloat = 0.75, upscale: CGFloat = 0, gi: GIMode? = .pathTraced,
              scene: SceneSettings = SceneSettings(), _ change: (inout RenderSettings) -> Void = { _ in }) {
             var s = RenderSettings()
             s.renderScale = scale
@@ -71,38 +71,38 @@ final class Benchmark {
         }
 
         // Modifiers: each returns a changed copy.
-        func named(_ name: String) -> Config { var c = self; c.name = name; return c }
-        func with(_ change: (inout RenderSettings) -> Void) -> Config { var c = self; change(&c.settings); return c }
-        func view(_ mode: Int) -> Config { with { $0.viewMode = mode } }
+        package func named(_ name: String) -> Config { var c = self; c.name = name; return c }
+        package func with(_ change: (inout RenderSettings) -> Void) -> Config { var c = self; change(&c.settings); return c }
+        package func view(_ mode: Int) -> Config { with { $0.viewMode = mode } }
         /// Edits the fog (the scene's preset until then). It then stays as set, whatever scene METALRENDERER_SCENE picks.
-        func fog(_ change: (inout FogSettings) -> Void) -> Config { var c = self; change(&c.settings.fog); c.ownFog = true; return c }
+        package func fog(_ change: (inout FogSettings) -> Void) -> Config { var c = self; change(&c.settings.fog); c.ownFog = true; return c }
         /// The same for the sky.
-        func sky(_ change: (inout SkySettings) -> Void) -> Config { var c = self; change(&c.settings.sky); c.ownSky = true; return c }
-        func frames(_ count: Int?) -> Config { var c = self; c.frames = count; return c }
+        package func sky(_ change: (inout SkySettings) -> Void) -> Config { var c = self; change(&c.settings.sky); c.ownSky = true; return c }
+        package func frames(_ count: Int?) -> Config { var c = self; c.frames = count; return c }
         /// The clock steps `seconds` a frame (the animation, tracks, flights) instead of 1/60.
-        func step(_ seconds: Float) -> Config { var c = self; c.dt = seconds; return c }
-        func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
-        func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
-        func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        package func step(_ seconds: Float) -> Config { var c = self; c.dt = seconds; return c }
+        package func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
+        package func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
+        package func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
         /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
-        func recording() -> Config { var c = self; c.record = true; return c }
-        func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
+        package func recording() -> Config { var c = self; c.record = true; return c }
+        package func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
         /// The camera follows `track`, the warm-up holding its first pose; the setting runs as long as the track.
-        func track(_ track: CameraTrack) -> Config {
+        package func track(_ track: CameraTrack) -> Config {
             var c = self
             c.track = track
             c.frames = Int((track.duration * 60).rounded()) + 1
             return c
         }
         /// The camera walks: doors open as it comes up to them, it shoves the loose furniture it walks into.
-        func walking() -> Config { var c = self; c.body = true; return c }
+        package func walking() -> Config { var c = self; c.body = true; return c }
         /// The camera rides lift `n`: its track's heights are from the lift's lowest floor, carried up with the cab.
-        func riding(_ n: Int) -> Config { var c = self; c.ride = n; return c }
+        package func riding(_ n: Int) -> Config { var c = self; c.ride = n; return c }
         /// `event` at `time` seconds of the track.
-        func at(_ time: Float, _ event: Event) -> Config { var c = self; c.events.append((time, event)); return c }
+        package func at(_ time: Float, _ event: Event) -> Config { var c = self; c.events.append((time, event)); return c }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
-        func still(at time: Float = 5, previous: Bool = false) -> Config {
+        package func still(at time: Float = 5, previous: Bool = false) -> Config {
             var c = self
             c.settings.paused = true
             c.startTime = time
@@ -110,7 +110,7 @@ final class Benchmark {
             return c
         }
         /// A converged reference: paused at `time`, `frames` raw frames averaged instead of denoised.
-        func reference(frames: Int, at time: Float = 5, supersample: Bool = false) -> Config {
+        package func reference(frames: Int, at time: Float = 5, supersample: Bool = false) -> Config {
             var c = still(at: time)
             c.accumulate = true
             c.frames = frames
@@ -118,7 +118,7 @@ final class Benchmark {
             return c
         }
         /// Animated again (after `still`), from the same start time and for the default number of frames.
-        func moving() -> Config {
+        package func moving() -> Config {
             var c = self
             c.settings.paused = false
             c.frames = nil
@@ -146,10 +146,32 @@ final class Benchmark {
             if let directLight { s.directLight = directLight }
             return s
         }
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(name: String, settings: RenderSettings, directLight: DirectLightMode? = nil, startTime: Float = 0, dt: Float = 1.0 / 60.0, frames: Int? = nil, accumulate: Bool = false, accumulateTechnique: Bool = false, supersample: Bool = false, capturePrevious: Bool = false, record: Bool = false, cameraPath: Bool = false, camera: Camera? = nil, flight: SIMD3<Float>? = nil, track: CameraTrack? = nil, body: Bool = false, ride: Int? = nil, events: [(time: Float, event: Event)] = []) {
+            self.name = name
+            self.settings = settings
+            self.directLight = directLight
+            self.startTime = startTime
+            self.dt = dt
+            self.frames = frames
+            self.accumulate = accumulate
+            self.accumulateTechnique = accumulateTechnique
+            self.supersample = supersample
+            self.capturePrevious = capturePrevious
+            self.record = record
+            self.cameraPath = cameraPath
+            self.camera = camera
+            self.flight = flight
+            self.track = track
+            self.body = body
+            self.ride = ride
+            self.events = events
+        }
     }
 
     /// Close to the gallery's owl and its neighbours, looking down at the floor's reflections.
-    static let galleryCloseup: Camera = {
+    package static let galleryCloseup: Camera = {
         var c = Camera()
         c.position = [1.6, 1.35, -1.6]
         c.yaw = 0.62
@@ -161,30 +183,10 @@ final class Benchmark {
     /// still moving, so the last frame can be scored against the same t = 5 s references as the static frames.
     /// `sceneCamera`: the scene's own default camera, for a scene whose camera depends on how it was built (the crowd,
     /// the city).
-    static func cameraPose(progress p: Float, scene: SceneKind = .cornell, sceneCamera: Camera? = nil) -> Camera {
+    package static func cameraPose(progress p: Float, scene: SceneKind = .cornell, sceneCamera: Camera? = nil) -> Camera {
+        if let move = scene.definition.cameraMove, let c = move(p, sceneCamera) { return c }   // the gallery's, the showcase's...
         var c = Camera(), start = Camera()
-        if scene == .gallery {
-            // From close to the left models, gliding back to the gallery overview.
-            c = Scene.galleryCamera
-            start.position = SIMD3<Float>(-3.2, 1.5, 0.2)
-            start.yaw = -0.7
-            start.pitch = -0.05
-        } else if scene == .stress {
-            // Low in the central aisle, turned toward the office, rising and backing up to the overview.
-            c = Scene.stressCamera
-            start.position = SIMD3<Float>(0, 2.4, 12.0)
-            start.yaw = 0.35
-            start.pitch = -0.05
-        } else if scene == .showcase, let sceneCamera {
-            // An orbit round the model (it stands on the vertical axis): from 40 degrees round to the default view.
-            let a = -40 * (1 - p) * .pi / 180
-            let turn = simd_quatf(angle: a, axis: [0, 1, 0])
-            let f = turn.act(sceneCamera.forward)
-            c = sceneCamera
-            c.position = turn.act(sceneCamera.position)
-            c.yaw = atan2(f.x, -f.z)
-            return c
-        } else if let demo = Scene.demoCamera(scene) ?? (scene.cameraFromScene ? sceneCamera : nil) {
+        if let demo = Scene.demoCamera(scene) ?? (scene.cameraFromScene ? sceneCamera : nil) {
             // A step to the side and back, turning toward the default view.
             c = demo
             start.position = demo.position + SIMD3<Float>(1.5, 0.3, 1.5)
@@ -195,11 +197,31 @@ final class Benchmark {
             start.yaw = -0.9
             start.pitch = -0.25
         }
+        return glide(from: start, to: c, p)
+    }
+
+    /// The camera at progress p of the way from `start` to `end` (METALRENDERER_PAN=rotate: turning only).
+    package static func glide(from start: Camera, to end: Camera, _ p: Float) -> Camera {
+        var start = start, c = end
         if ProcessInfo.processInfo.environment["METALRENDERER_PAN"] == "rotate" { start.position = c.position; start.pitch = c.pitch }   // yaw only
         c.position = start.position + (c.position - start.position) * p
         c.yaw = start.yaw + (c.yaw - start.yaw) * p
         c.pitch = start.pitch + (c.pitch - start.pitch) * p
         return c
+    }
+
+    /// The modes by name (`METALRENDERER_BENCH=<name>`): the game's, registered with its scenes (SceneProvider).
+    package static var modes: [String: () -> [Config]] = [:]
+    /// What any other value of METALRENDERER_BENCH runs (the documented one is `1`).
+    package static var standardMode: () -> [Config] = { [] }
+
+    static func configs(for mode: String) -> [Config] {
+        _ = SceneRegistry.kinds   // (the modes are registered with the scenes)
+        if let build = modes[mode] { return build() }
+        if mode != "1" && !mode.isEmpty {
+            print("METALRENDERER_BENCH=\(mode) isn't a mode (\(modes.keys.sorted().joined(separator: ", "))): running the default list")
+        }
+        return standardMode()
     }
 
     /// Where the current setting's track is: seconds since its first measured frame (0 while it warms up).
@@ -270,7 +292,7 @@ final class Benchmark {
     private let lock = NSLock()
     private var records: [FrameRecord] = []
 
-    init() {
+    package init() {
         resolutions = Array(repeating: "", count: configs.count)
     }
 
@@ -408,17 +430,24 @@ final class Benchmark {
 /// A camera's way through a scene for a benchmark setting (`Config.track`): keys of where it is and what it looks at,
 /// at times in seconds, joined by Catmull-Rom curves and eased in and out at each key's time. Before the first key it
 /// holds the first pose, after the last the last.
-struct CameraTrack {
-    struct Key {
-        var time: Float
-        var position: SIMD3<Float>
-        var target: SIMD3<Float>
+package struct CameraTrack {
+    package struct Key {
+        package var time: Float
+        package var position: SIMD3<Float>
+        package var target: SIMD3<Float>
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(time: Float, position: SIMD3<Float>, target: SIMD3<Float>) {
+            self.time = time
+            self.position = position
+            self.target = target
+        }
     }
-    var keys: [Key]
+    package var keys: [Key]
     /// Straight from key to key at a steady pace (a walk's dense keys), not curved and eased at each.
     var linear = false
 
-    init(_ keys: [Key], linear: Bool = false) {
+    package init(_ keys: [Key], linear: Bool = false) {
         precondition(!keys.isEmpty && zip(keys, keys.dropFirst()).allSatisfy { $0.time < $1.time }, "a track's keys in time")
         self.keys = keys
         self.linear = linear
@@ -442,7 +471,7 @@ struct CameraTrack {
     }
 
     /// The camera at `t` (Camera.forward: yaw 0 looks down -z, a positive yaw toward +x).
-    func camera(at t: Float) -> Camera {
+    package func camera(at t: Float) -> Camera {
         let (position, target) = pose(at: t)
         let d = simd_normalize(target - position)
         var c = Camera()

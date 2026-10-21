@@ -26,7 +26,7 @@ final class PropLibrary {
     private var models: [Int: (model: GLTFModel, url: URL, lo: SIMD3<Float>, hi: SIMD3<Float>)?] = [:]
     private let lock = NSLock()
 
-    init(entries: [Entry], folder: URL) {
+    package init(entries: [Entry], folder: URL) {
         self.entries = entries
         self.folder = folder
     }

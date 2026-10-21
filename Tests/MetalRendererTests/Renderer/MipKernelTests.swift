@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+@testable import Game
 @testable import MetalRenderer
 
 /// The mip kernels Metal 4 frames use (Shaders/Mips.metal, Metal4Frame.generateMipmaps) against the blit encoder's

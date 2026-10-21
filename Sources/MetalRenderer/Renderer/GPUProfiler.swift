@@ -30,7 +30,7 @@ final class GPUProfiler {
     private var calibration: (cpu: MTLTimestamp, gpu: MTLTimestamp)
     private var nsPerTick = 1.0
 
-    init?(device: MTLDevice, framesInFlight: Int) {
+    package init?(device: MTLDevice, framesInFlight: Int) {
         guard GPUProfiler.isSupported(on: device), let set = GPUProfiler.timestampSet(device) else { return nil }
         let desc = MTLCounterSampleBufferDescriptor()
         desc.counterSet = set

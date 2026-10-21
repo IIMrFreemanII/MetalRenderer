@@ -11,8 +11,8 @@ extension ClosedRange {
 /// Defaults were tuned with `METALRENDERER_BENCH=denoise` against converged reference images. Compared with the original
 /// settings (5 passes, sigma 4, 32 frames, combined signal) they gain about 3 dB on static scenes and 4.7 dB on
 /// moving ones, for ~0.4 ms more GPU time at 640x400 and slightly more frame-to-frame flicker.
-struct DenoiserSettings: Equatable, Codable {
-    var enabled = true
+package struct DenoiserSettings: Equatable, Codable {
+    package var enabled = true
     var atrousPasses = 4            // 1...5 wavelet passes with step sizes 1, 2, 4, 8, 16 (fewer = sharper, noisier)
     var techniquePasses = 2         // the same with cascade GI, where only direct light is filtered: it is
                                     // much less noisy, and 2 passes look the same as 4 (measured) for half the cost
@@ -22,7 +22,7 @@ struct DenoiserSettings: Equatable, Codable {
     var separateSignals = true      // filter direct and indirect light separately (sharper shadows, 2x the cost)
     // Shadow denoiser for direct light (up to 4 lights; see Shaders/Denoise.metal, 3b): filters each light's visibility
     // instead of the lit color, and clamps its history so moving shadows don't lag.
-    var shadowDenoiser = true
+    package var shadowDenoiser = true
     var shadowPasses = 3            // 3x3 a-trous passes, steps 1, 2, 4, ...
     var shadowHistory: Float = 32   // max frames averaged (the clamp keeps long histories from lagging)
     var shadowClamp: Float = 0.35   // history clamp width, in standard deviations of the neighbourhood's visibility
@@ -41,13 +41,13 @@ struct DenoiserSettings: Equatable, Codable {
 }
 
 /// How direct light from the lights is computed.
-enum DirectLightMode: Int, CaseIterable, Codable {
+package enum DirectLightMode: Int, CaseIterable, Codable {
     case auto       // ReSTIR with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
     case exact      // one shadow ray per light (cost grows with the light count; references)
     case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
     case restir     // ReSTIR DI: candidates from the light table, temporal + spatial reuse, one shadow ray (O(1))
 
-    var title: String {
+    package var title: String {
         switch self {
         case .auto: return "Auto"
         case .exact: return "Exact"
@@ -66,7 +66,7 @@ enum DirectLightMode: Int, CaseIterable, Codable {
 
 /// ReSTIR DI (Shaders/RestirDI.metal): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
 /// light count. Defaults from METALRENDERER_BENCH=restirq.
-struct RestirSettings: Equatable, Codable {
+package struct RestirSettings: Equatable, Codable {
     var candidates = 8              // initial candidates per pixel from the light table (plus one per sun)
     var chains = 4                  // independent reservoirs per pixel, one shadow ray each (4 = the grouped path's rays)
     var temporal = true             // reuse last frame's reservoir (reprojected)
@@ -82,7 +82,7 @@ struct RestirSettings: Equatable, Codable {
     var denoisePasses = 4
     var denoiseHistory: Float = 8   // SVGF history (frames) for ReSTIR's direct light (with splitVisibility: its unshadowed light)
     var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
-    var grid = RegirSettings()      // the light grid the candidates come from (ReGIR)
+    package var grid = RegirSettings()      // the light grid the candidates come from (ReGIR)
 
     static let candidateRange = 1...32
     static let chainRange = 1...4
@@ -97,15 +97,15 @@ struct RestirSettings: Equatable, Codable {
 /// than the whole table by power. `levels` cascaded levels of `cells`^3 cells, the first `cellSize` m wide and each
 /// next `levelScale` times wider; `slots` reservoirs per cell, each the pick of `candidates` table draws; `share` of
 /// RestirSettings.candidates come from the grid, the rest from the table.
-struct RegirSettings: Equatable, Codable {
-    var enabled = true
+package struct RegirSettings: Equatable, Codable {
+    package var enabled = true
     var cells = 16
     var levels = 2
     var cellSize: Float = 1
     var levelScale: Float = 3
     var slots = 32
     var candidates = 8
-    var share = 6
+    package var share = 6
 
     static let cellRange = 8...32
     static let levelRange = 1...4
@@ -122,7 +122,7 @@ struct RegirSettings: Equatable, Codable {
 }
 
 /// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
-enum ToneMap: Int, CaseIterable, Codable {
+package enum ToneMap: Int, CaseIterable, Codable {
     case aces       // Narkowicz's ACES fit: contrasty, saturated highlights shift toward white
     case agx        // AgX (Troy Sobotka), polynomial fit: softer, keeps bright saturated lights from going flat
     case reinhard   // luminance Reinhard: gentle, keeps hue
@@ -141,7 +141,7 @@ enum ToneMap: Int, CaseIterable, Codable {
 /// How real the outdoor scenes look (SceneSettings.realism): off, the generated textures as they always were; on,
 /// photo-scanned ground, rocks and plants (TextureSet) height-blended into each other, with the lighting's realistic
 /// looks; high, also the costly parts (stochastic tiling, the ground displaced near the camera, denser grass).
-enum Realism: Int, CaseIterable, Codable {
+package enum Realism: Int, CaseIterable, Codable {
     case off, on, high
 
     var title: String {
@@ -154,7 +154,7 @@ enum Realism: Int, CaseIterable, Codable {
 }
 
 /// How indirect light (global illumination) is computed.
-enum GIMode: Int, CaseIterable, Codable {
+package enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
     case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
@@ -170,7 +170,7 @@ enum GIMode: Int, CaseIterable, Codable {
 
 /// A converged reference picture for debugging (README "Reference rendering"): samples averaged over frames, the
 /// average restarted whenever the picture would change (the camera, a setting, the scene animating).
-enum ReferenceMode: Int, CaseIterable, Codable {
+package enum ReferenceMode: Int, CaseIterable, Codable {
     case off
     case accumulated    // the frame's own passes (path traced GI, exact direct light, raw specular) averaged: the benchmarks' references
     case pathTraced     // one kernel traces whole paths (PathTrace.metal): glossy bounces, glass, lights met by rays
@@ -185,8 +185,8 @@ enum ReferenceMode: Int, CaseIterable, Codable {
 }
 
 /// The reference modes' parameters.
-struct ReferenceSettings: Equatable, Codable {
-    var mode = ReferenceMode.off
+package struct ReferenceSettings: Equatable, Codable {
+    package var mode = ReferenceMode.off
     var bounces = 8             // path length (both modes)
     var samplesPerFrame = 1     // path traced: paths per pixel per frame
     var maxSamples = 0          // stop adding samples at this many per pixel; 0 = never
@@ -198,19 +198,19 @@ struct ReferenceSettings: Equatable, Codable {
 
 /// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
 /// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
-struct RestirGISettings: Equatable, Codable {
-    var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
+package struct RestirGISettings: Equatable, Codable {
+    package var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
                                     // pixels that lost their history wait up to 4 frames (-5 to -15 dB in motion), so off
     var bounces = 2                 // path length (the first bounce is the reused sample)
     var lightMaps = false           // light the paths' hits from the light maps instead of shadow rays
-    var feedback = true             // multi-bounce: the paths' last hits add last frame's indirect light where on screen
+    package var feedback = true             // multi-bounce: the paths' last hits add last frame's indirect light where on screen
                                     // (+16 dB in Cornell with the fallback: 2 bounces miss a quarter of the light)
     var denoisedFeedback = true     // ...the denoised indirect light (else the raw one)
     var feedbackFallback = true     // ...and off screen, last frame's mean indirect light
-    var temporal = true             // reuse last frame's reservoir (reprojected): half the flicker
+    package var temporal = true             // reuse last frame's reservoir (reprojected): half the flicker
     var maxM: Float = 2             // confidence cap: higher = steadier, laggier (16: -0.5 dB still, -2 to -4.5 dB moving)
     var maxAge = 30                 // the pixel's fresh paths a sample may outlive (its light is from when it was traced)
-    var spatialPasses = 0           // 0...2 passes of spatial reuse: unbiased, but after the denoiser no better (and 2-13
+    package var spatialPasses = 0           // 0...2 passes of spatial reuse: unbiased, but after the denoiser no better (and 2-13
                                     // ms at 640x400), so off
     var spatialSamples = 2          // neighbours per pass (1 scored as 5)
     var unbiased = true             // spatial reuse: visibility in the targets, two rays per neighbour (without: cheaper,
@@ -233,10 +233,10 @@ struct RestirGISettings: Equatable, Codable {
 }
 
 /// Radiance cascades parameters.
-struct CascadeSettings: Equatable, Codable {
-    var probeSpacing = 8            // cascade-0 probe spacing in traced pixels (4 or 8)
+package struct CascadeSettings: Equatable, Codable {
+    package var probeSpacing = 8            // cascade-0 probe spacing in traced pixels (4 or 8)
     var cascades = 4
-    var firstInterval: Float = 0.4  // cascade-0 ray length in meters; each cascade's interval is 4x longer
+    package var firstInterval: Float = 0.4  // cascade-0 ray length in meters; each cascade's interval is 4x longer
     var feedback = true             // multi-bounce: shade ray hits with last frame's indirect light where visible
     var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
 
@@ -247,7 +247,7 @@ struct CascadeSettings: Equatable, Codable {
 
 /// Solid shading's look (RenderSettings.solidLook): what tells things apart in it. `classic` is the old one, every
 /// surface the same grey under a light on the camera.
-struct SolidLook: Equatable, Codable {
+package struct SolidLook: Equatable, Codable {
     var classic = false
     /// Each surface its material's colour (its texture's too), each object a little lighter or darker than the next,
     /// a fractured object's broken faces darker and warmer (Scene.markCutFace).
@@ -271,9 +271,9 @@ struct SolidLook: Equatable, Codable {
 }
 
 /// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
-struct VirtualGeometrySettings: Equatable, Codable {
-    var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
-    var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
+package struct VirtualGeometrySettings: Equatable, Codable {
+    package var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
+    package var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
@@ -285,22 +285,22 @@ struct VirtualGeometrySettings: Equatable, Codable {
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
 /// local fog volumes. Each scene kind has a preset (`preset(for:)`); the volumes themselves come with the scene.
-struct FogSettings: Equatable, Codable {
-    var enabled = false
-    var density: Float = 0.02           // height fog's extinction at and below its base height (1/m); 0 = volumes only
-    var heightFalloff: Float = 0.1      // per metre above the base height (0 = the same density everywhere)
-    var baseHeight: Float = 0
-    var anisotropy: Float = 0.5         // Henyey-Greenstein g: > 0 scatters forward (brightest looking toward a light)
-    var ambient: Float = 1              // the sky colour x this lights the fog evenly (stands in for indirect light)
-    var albedo = SIMD3<Float>(repeating: 0.9)
-    var noise: Float = 0.4              // how much the drifting noise modulates the height fog (volumes have their own)
-    var noiseScale: Float = 6           // noise tile size (m)
-    var wind = SIMD3<Float>(0.35, 0.05, 0.15)   // m/s
-    var maxDistance: Float = 40         // the froxel grid's far end (view depth); beyond, no more fog accumulates...
-    var haze: Float = 0                 // ...but the height fog at this share of its density, as far as the eye sees (0 = none)
-    var volumes = true                  // the scene's local fog volumes
-    var reflections = true              // fog along reflection rays (one more shadow ray per reflection)
-    var lights = true                   // the scene's lights scatter in it; off: only the sun (or the moon) and the sky
+package struct FogSettings: Equatable, Codable {
+    package var enabled = false
+    package var density: Float = 0.02           // height fog's extinction at and below its base height (1/m); 0 = volumes only
+    package var heightFalloff: Float = 0.1      // per metre above the base height (0 = the same density everywhere)
+    package var baseHeight: Float = 0
+    package var anisotropy: Float = 0.5         // Henyey-Greenstein g: > 0 scatters forward (brightest looking toward a light)
+    package var ambient: Float = 1              // the sky colour x this lights the fog evenly (stands in for indirect light)
+    package var albedo = SIMD3<Float>(repeating: 0.9)
+    package var noise: Float = 0.4              // how much the drifting noise modulates the height fog (volumes have their own)
+    package var noiseScale: Float = 6           // noise tile size (m)
+    package var wind = SIMD3<Float>(0.35, 0.05, 0.15)   // m/s
+    package var maxDistance: Float = 40         // the froxel grid's far end (view depth); beyond, no more fog accumulates...
+    package var haze: Float = 0                 // ...but the height fog at this share of its density, as far as the eye sees (0 = none)
+    package var volumes = true                  // the scene's local fog volumes
+    package var reflections = true              // fog along reflection rays (one more shadow ray per reflection)
+    package var lights = true                   // the scene's lights scatter in it; off: only the sun (or the moon) and the sky
 
     static let densityRange: ClosedRange<Float> = 0.002...0.3   // log slider
     static let falloffRange: ClosedRange<Float> = 0...1
@@ -326,64 +326,17 @@ struct FogSettings: Equatable, Codable {
     /// `METALRENDERER_FOG=0/1` turns fog off or on in every preset.
     static let override: Bool? = ProcessInfo.processInfo.environment["METALRENDERER_FOG"].map { $0 != "0" }
 
-    /// The fog that suits scene `kind`: off in the Cornell room, stress test, gallery and studio.
-    static func preset(for kind: SceneKind) -> FogSettings {
-        var f = FogSettings()
-        switch kind {
-        case .cornell, .stress, .gallery, .area, .crowd, .cityNight, .shapes, .physics, .ragdolls, .hair, .softBodies, .muscles, .fluids,
-             .particles, .plants, .vfxStage, .buildings, .characters, .materials, .painter, .destruction, .demolition:   // at night: thousands of lit windows scatter in blotches
-            break
-        case .city:
-            // Haze: the far end of an avenue fades toward the sky.
-            f.enabled = true; f.density = 0.0012; f.heightFalloff = 0.01; f.anisotropy = 0.5; f.noise = 0.15
-            f.maxDistance = 150
-        case .market:
-            f.enabled = true; f.density = 0.012; f.heightFalloff = 0.08; f.anisotropy = 0.4; f.ambient = 0.5; f.maxDistance = 60
-        case .valley:
-            f.enabled = true; f.density = 0.0015; f.heightFalloff = 0.02; f.anisotropy = 0.5; f.noise = 0.2
-            f.maxDistance = 150
-        case .terrain:   // a light haze: the far side of kilometres of ground fades
-            f.enabled = true; f.density = 0.0003; f.heightFalloff = 0.006; f.anisotropy = 0.5; f.noise = 0.1
-            f.maxDistance = 400; f.haze = 0.25
-        case .forest:
-            f.enabled = true; f.density = 0.004; f.heightFalloff = 0.03; f.anisotropy = 0.7; f.noise = 0.3
-            f.maxDistance = 150
-        case .mireland:
-            // A misty morning: the far trees grey, the low sun's beams through the mist.
-            f.enabled = true; f.density = 0.05; f.heightFalloff = 0.1; f.anisotropy = 0.75; f.ambient = 0.35; f.noise = 0.5
-            f.maxDistance = 90
-        case .world:
-            // The noise's tile divides the tiles' 256 m, so the fog stays as it is when the scene's origin moves.
-            f.enabled = true; f.density = 0.002; f.heightFalloff = 0.012; f.anisotropy = 0.6; f.noise = 0.2; f.noiseScale = 8
-            f.maxDistance = 150; f.haze = 0.4
-            // At night a froxel's one sample among a city's thousands of lamps and windows scatters in blotches.
-            f.lights = false
-        case .spots:
-            f.enabled = true; f.density = 0.03; f.heightFalloff = 0.05; f.anisotropy = 0.55; f.maxDistance = 30
-        case .sun:
-            f.enabled = true; f.density = 0.012; f.heightFalloff = 0.1; f.anisotropy = 0.3; f.noise = 0.3
-            f.maxDistance = 100
-        case .tubes:
-            f.enabled = true; f.density = 0.05; f.heightFalloff = 0; f.anisotropy = 0.3; f.maxDistance = 30
-        case .emissive:
-            f.enabled = true; f.density = 0.02; f.heightFalloff = 0; f.anisotropy = 0.3; f.maxDistance = 30
-        case .mixed:
-            f.enabled = true; f.density = 0.03; f.heightFalloff = 0; f.anisotropy = 0.2; f.maxDistance = 30
-        case .fog:
-            f.enabled = true; f.density = 0.045; f.heightFalloff = 0.04; f.anisotropy = 0.7; f.ambient = 0.25; f.noise = 0.6
-            f.maxDistance = 60
-        case .showcase:   // the base every model's look tunes (ShowcaseLook.fog)
-            f.enabled = true; f.density = 0.03; f.heightFalloff = 0.15; f.anisotropy = 0.65; f.ambient = 0.15; f.noise = 0.5
-            f.noiseScale = 4; f.wind = [0.15, 0.04, 0.08]; f.maxDistance = 30
-        }
+    /// The fog that suits scene `kind` (its definition's): off unless the scene sets it.
+    package static func preset(for kind: SceneKind) -> FogSettings {
+        var f = kind.definition.fog
         if let override { f.enabled = override }
         return f
     }
 
     /// The fog that suits `scene`: its kind's, and in the showcase the model's look on top.
-    static func preset(for scene: SceneSettings) -> FogSettings {
+    package static func preset(for scene: SceneSettings) -> FogSettings {
         var f = preset(for: scene.kind)
-        if scene.kind == .showcase { ShowcaseLook.look(for: scene.showcase).fog(&f) }
+        scene.kind.definition.tuneFog?(scene, &f)
         if scene.realism != .off && scene.kind.hasRealisticLook {
             // Air: the distance fades blue-grey (aerial perspective), a light haze in the forest's shade.
             if !f.enabled {
@@ -394,14 +347,33 @@ struct FogSettings: Equatable, Codable {
                 f.noise = 0.15
                 f.maxDistance = 90
             }
-            f.haze = max(f.haze, scene.kind == .forest ? 0.3 : 0.55)
+            f.haze = max(f.haze, scene.kind.definition.realisticHaze)
         }
         return f
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(enabled: Bool = false, density: Float = 0.02, heightFalloff: Float = 0.1, baseHeight: Float = 0, anisotropy: Float = 0.5, ambient: Float = 1, albedo: SIMD3<Float> = SIMD3<Float>(repeating: 0.9), noise: Float = 0.4, noiseScale: Float = 6, wind: SIMD3<Float> = SIMD3<Float>(0.35, 0.05, 0.15), maxDistance: Float = 40, haze: Float = 0, volumes: Bool = true, reflections: Bool = true, lights: Bool = true) {
+        self.enabled = enabled
+        self.density = density
+        self.heightFalloff = heightFalloff
+        self.baseHeight = baseHeight
+        self.anisotropy = anisotropy
+        self.ambient = ambient
+        self.albedo = albedo
+        self.noise = noise
+        self.noiseScale = noiseScale
+        self.wind = wind
+        self.maxDistance = maxDistance
+        self.haze = haze
+        self.volumes = volumes
+        self.reflections = reflections
+        self.lights = lights
     }
 }
 
 /// Where the sky comes from (Shaders/Sky.metal).
-enum SkyMode: Int, CaseIterable, Codable {
+package enum SkyMode: Int, CaseIterable, Codable {
     case constant           // one colour (the scene's), as indoor scenes use
     case atmosphere         // physically based atmosphere; the sun light's colour follows it
     case image              // an HDR environment image (.hdr, .exr); its sun drives the sun light
@@ -416,22 +388,22 @@ enum SkyMode: Int, CaseIterable, Codable {
 }
 
 /// The sky and its clouds. Each scene kind has a preset (`preset(for:)`).
-struct SkySettings: Equatable, Codable {
-    var mode = SkyMode.constant
+package struct SkySettings: Equatable, Codable {
+    package var mode = SkyMode.constant
     var imagePath: String? = nil        // .image: the environment file
     var imageExposure: Float = 0        // .image: stops on top of the automatic scale
-    var clouds = true
+    package var clouds = true
     var cloudsOverImage = false         // .image: the volumetric clouds in front of the image too
-    var coverage: Float = 0.35          // 0 = clear, ~0.3 scattered cumulus, 1 = overcast
-    var density: Float = 0.03           // extinction inside a cloud (1/m)
-    var cloudBase: Float = 1500         // altitude of the layer's bottom (m)
-    var cloudThickness: Float = 1500
-    var cloudScale: Float = 4000        // shape noise tile (m): smaller = smaller clouds
+    package var coverage: Float = 0.35          // 0 = clear, ~0.3 scattered cumulus, 1 = overcast
+    package var density: Float = 0.03           // extinction inside a cloud (1/m)
+    package var cloudBase: Float = 1500         // altitude of the layer's bottom (m)
+    package var cloudThickness: Float = 1500
+    package var cloudScale: Float = 4000        // shape noise tile (m): smaller = smaller clouds
     var erosion: Float = 0.35           // detail noise eating the edges
-    var windSpeed: Float = 12           // m/s, blowing toward windDirection (degrees from +x toward +z)
+    package var windSpeed: Float = 12           // m/s, blowing toward windDirection (degrees from +x toward +z)
     var windDirection: Float = 30
-    var shadows = true                  // the clouds shadow the scene
-    var shadowStrength: Float = 1
+    package var shadows = true                  // the clouds shadow the scene
+    package var shadowStrength: Float = 1
 
     static let coverageRange: ClosedRange<Float> = 0...1
     static let densityRange: ClosedRange<Float> = 0.005...0.1
@@ -448,46 +420,15 @@ struct SkySettings: Equatable, Codable {
     /// ...and for the scene's own settings: the building workshop at night has the city's night sky.
     static func preset(for scene: SceneSettings) -> SkySettings {
         var s = preset(for: scene.kind)
-        if scene.kind == .buildings && scene.buildings.night { s = preset(for: .cityNight) }
+        if scene.kind == .buildings && scene.buildings.night { s = overridden(SkySettings()) }   // the night city's
         return s
     }
 
-    static func preset(for kind: SceneKind) -> SkySettings {
-        var s = SkySettings()
-        switch kind {
-        case .cornell, .stress, .gallery, .spots, .area, .tubes, .emissive, .fog, .market, .cityNight, .showcase, .shapes, .physics, .ragdolls, .hair,
-             .softBodies, .muscles, .fluids, .particles, .vfxStage, .materials, .painter:
-            break
-        case .sun:
-            s.mode = .atmosphere; s.coverage = 0.35; s.cloudBase = 1200; s.cloudThickness = 1200; s.cloudScale = 2500
-        case .mixed:
-            s.mode = .atmosphere; s.coverage = 0.25; s.shadows = false   // the sun is low: clouds near the horizon
-        case .crowd:
-            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1200; s.cloudThickness = 1000; s.cloudScale = 2500
-        case .city:
-            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1400; s.cloudThickness = 1200; s.cloudScale = 3000
-            s.shadowStrength = 0.6
-        case .valley:
-            // Small, low clouds (a stylised scale), so their shadows visibly cross the 400 m valley.
-            s.mode = .atmosphere; s.coverage = 0.4; s.cloudBase = 700; s.cloudThickness = 800; s.cloudScale = 800
-            s.density = 0.04; s.windSpeed = 14; s.shadowStrength = 0.7
-        case .forest:
-            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 900; s.cloudThickness = 900; s.cloudScale = 1400
-            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
-        case .mireland:
-            s.mode = .atmosphere; s.coverage = 0.45; s.cloudBase = 800; s.cloudThickness = 900; s.cloudScale = 1400
-            s.density = 0.04; s.windSpeed = 4; s.shadowStrength = 0.5
-        case .world:
-            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
-            s.density = 0.04; s.windSpeed = 10; s.shadowStrength = 0.6
-        case .terrain:
-            s.mode = .atmosphere; s.coverage = 0.3; s.cloudBase = 1300; s.cloudThickness = 1100; s.cloudScale = 2800
-            s.density = 0.04; s.windSpeed = 8; s.shadowStrength = 0.6
-        case .destruction, .demolition:   // a courtyard (a lot) under an afternoon sun, a few clouds
-            s.mode = .atmosphere; s.coverage = 0.25; s.cloudBase = 1300; s.cloudThickness = 1000; s.cloudScale = 2600
-        case .plants, .buildings, .characters:   // a few high clouds, no shadows of them: the plant is what is looked at
-            s.mode = .atmosphere; s.coverage = 0.15; s.cloudBase = 1500; s.cloudThickness = 900; s.cloudScale = 2500; s.shadows = false
-        }
+    static func preset(for kind: SceneKind) -> SkySettings { overridden(kind.definition.sky) }
+
+    /// `s` with METALRENDERER_SKY's mode.
+    private static func overridden(_ sky: SkySettings) -> SkySettings {
+        var s = sky
         if let o = override {
             switch o {
             case "constant": s.mode = .constant
@@ -497,22 +438,41 @@ struct SkySettings: Equatable, Codable {
         }
         return s
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(mode: SkyMode = SkyMode.constant, imagePath: String? = nil, imageExposure: Float = 0, clouds: Bool = true, cloudsOverImage: Bool = false, coverage: Float = 0.35, density: Float = 0.03, cloudBase: Float = 1500, cloudThickness: Float = 1500, cloudScale: Float = 4000, erosion: Float = 0.35, windSpeed: Float = 12, windDirection: Float = 30, shadows: Bool = true, shadowStrength: Float = 1) {
+        self.mode = mode
+        self.imagePath = imagePath
+        self.imageExposure = imageExposure
+        self.clouds = clouds
+        self.cloudsOverImage = cloudsOverImage
+        self.coverage = coverage
+        self.density = density
+        self.cloudBase = cloudBase
+        self.cloudThickness = cloudThickness
+        self.cloudScale = cloudScale
+        self.erosion = erosion
+        self.windSpeed = windSpeed
+        self.windDirection = windDirection
+        self.shadows = shadows
+        self.shadowStrength = shadowStrength
+    }
 }
 
 /// The camera's lens and the image's finish (Shaders/Post.metal), on the light at the output resolution before and
 /// after the tone curve: depth of field, bloom, chromatic aberration, vignette and film grain. Each is off at 0, and
 /// all are off but in the showcase (`preset(for:)`), so the other scenes' frames are what they were.
-struct PostSettings: Equatable, Codable {
-    var bloom: Float = 0                // the share of the light spread out as glow (0 = no bloom)
+package struct PostSettings: Equatable, Codable {
+    package var bloom: Float = 0                // the share of the light spread out as glow (0 = no bloom)
     var bloomThreshold: Float = 1       // the brightness (after exposure) where glow starts, with a soft knee below it
-    var aperture: Float = 0             // the blur circle's radius in output pixels far behind the focus (as much at half
+    package var aperture: Float = 0             // the blur circle's radius in output pixels far behind the focus (as much at half
                                         // the focus distance, more nearer, at most `maxBlur`); 0 = no depth of field
     var focus: Float = 0                // focus distance (m); 0 = autofocus on what is at the centre of the frame
-    var vignette: Float = 0             // how much the corners darken
-    var grain: Float = 0                // film grain's strength
-    var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
+    package var vignette: Float = 0             // how much the corners darken
+    package var grain: Float = 0                // film grain's strength
+    package var aberration: Float = 0           // chromatic aberration: red and blue apart by this share of the width at the corners
     /// The exposure follows the frame's light (a histogram's middle, eased toward): `exposure` then shifts it.
-    var autoExposure = false
+    package var autoExposure = false
     /// The colour grade (applied when any is off its neutral value): warmth (-1 cooler ... 1 warmer: white balance),
     /// saturation (1 as it is) and contrast about middle grey (1 as it is).
     var warmth: Float = 0
@@ -535,32 +495,40 @@ struct PostSettings: Equatable, Codable {
     static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
     static let bloomLevels = 6          // the glow's halvings, from half the output size
 
-    /// Off, but in the showcase: the model's look; and with the realistic look outdoors, a camera's: exposure that
-    /// follows the light, a gentle filmic grade, a little bloom and vignette.
+    /// Off, but in a scene with its own (the showcase's model's look, the city's exposure); and with the realistic look
+    /// outdoors, a camera's: exposure that follows the light, a gentle filmic grade, a little bloom and vignette.
     static func preset(for scene: SceneSettings) -> PostSettings {
-        if scene.kind == .showcase { return ShowcaseLook.look(for: scene.showcase).post }
-        if scene.kind == .city {
-            // Its rooms to walk into (CitySettings.interiors): exposure that follows the light (at the street's, a room
-            // lit by its windows is black).
-            var p = PostSettings()
-            p.autoExposure = true
-            return p
-        }
+        if let own = scene.kind.definition.post { return own(scene) }
         guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
         var p = PostSettings()
         p.autoExposure = true
         p.saturation = 1.06
         p.contrast = 1.1
-        p.warmth = scene.kind == .forest ? 0.12 : 0.06
+        p.warmth = scene.kind.definition.realisticWarmth
         p.bloom = 0.035
         p.bloomThreshold = 1.6
         p.vignette = 0.16
         return p
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(bloom: Float = 0, bloomThreshold: Float = 1, aperture: Float = 0, focus: Float = 0, vignette: Float = 0, grain: Float = 0, aberration: Float = 0, autoExposure: Bool = false, warmth: Float = 0, saturation: Float = 1, contrast: Float = 1) {
+        self.bloom = bloom
+        self.bloomThreshold = bloomThreshold
+        self.aperture = aperture
+        self.focus = focus
+        self.vignette = vignette
+        self.grain = grain
+        self.aberration = aberration
+        self.autoExposure = autoExposure
+        self.warmth = warmth
+        self.saturation = saturation
+        self.contrast = contrast
+    }
 }
 
 /// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures.
-enum RenderAPI: Int, CaseIterable, Codable {
+package enum RenderAPI: Int, CaseIterable, Codable {
     case metal3             // MTLCommandQueue, one compute encoder per frame
     case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
 
@@ -573,13 +541,13 @@ enum RenderAPI: Int, CaseIterable, Codable {
 /// Everything the settings panel and the keyboard shortcuts can change.
 /// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (plants as
 /// assemblies; baked plants stand still).
-struct FoliageSettings: Equatable, Codable {
-    var wind: Float = 0                 // 0 = still ... 1 = a strong wind
+package struct FoliageSettings: Equatable, Codable {
+    package var wind: Float = 0                 // 0 = still ... 1 = a strong wind
     var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
     var gusts: Float = 0.7              // 0 = steady ... 1 = it comes in waves
     /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
-    var lod: Float = 2
+    package var lod: Float = 2
     /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
     /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 20 m the moving forest is
     /// 7-16% faster than with every limb moving (M1 Max, Metal 3); from above, where every crown is farther, only whole trees lean.
@@ -587,7 +555,7 @@ struct FoliageSettings: Equatable, Codable {
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
     var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
-    var translucency: Float = 1
+    package var translucency: Float = 1
 
     static let windRange: ClosedRange<Float> = 0...1
     static let directionRange: ClosedRange<Float> = -180...180
@@ -606,67 +574,67 @@ struct FoliageSettings: Equatable, Codable {
     }
 }
 
-struct RenderSettings: Equatable, Codable {
-    var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
-    var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
+package struct RenderSettings: Equatable, Codable {
+    package var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
+    package var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
     /// With upscaling: MetalFX's in-between picture each frame, presented half a frame before the frame's own
     /// (FrameInterpolator). Auto only while frames take over three of the display's refreshes; never offscreen.
-    var frameInterpolation = FrameInterpolation.auto
-    var giEnabled = true
-    var bounces = 2
-    var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
-    var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
-    var paused = false
+    package var frameInterpolation = FrameInterpolation.auto
+    package var giEnabled = true
+    package var bounces = 2
+    package var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
+    package var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
+    package var paused = false
     var viewMode = 0
     /// Solid shading, like Blender's viewport: every surface flat grey under a fixed studio light, one camera ray a
     /// pixel and nothing else (no shadows, GI, reflections, fog, sky, denoisers, MetalFX or lens). For iterating on
     /// scenes and physics fast (Renderer: FramePlan.solid, Shaders/Output.metal solidKernel).
-    var solid = false
+    package var solid = false
     /// What solid shading draws (Shaders/Output.metal solidTraceKernel, solidResolveKernel).
     var solidLook = SolidLook()
-    /// `solid` was turned on by entering the demolition scene (applySceneDefaults turns it back when leaving).
+    /// `solid` was turned on by entering a scene in the solid look (applySceneDefaults turns it back when leaving).
     var solidFromScene = false
-    var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
-    var denoiser = DenoiserSettings()
-    var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
-    var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
+    package var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
+    package var denoiser = DenoiserSettings()
+    package var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
+    package var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     var directLight = DirectLightMode.initial
-    var restir = RestirSettings()
-    var restirGI = RestirGISettings()
+    package var restir = RestirSettings()
+    package var restirGI = RestirGISettings()
     var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
-    var cascades = CascadeSettings()
-    var scene = SceneSettings()
-    var api = RenderAPI.initial
-    var virtualGeometry = VirtualGeometrySettings()
-    var specular = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
+    package var cascades = CascadeSettings()
+    package var scene = SceneSettings()
+    package var api = RenderAPI.initial
+    package var virtualGeometry = VirtualGeometrySettings()
+    var specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
     var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
     var fog = FogSettings.preset(for: .cornell)
     var sky = SkySettings.preset(for: .cornell)
-    var foliage = FoliageSettings.preset(for: .cornell)
-    var post = PostSettings()
+    package var foliage = FoliageSettings.preset(for: .cornell)
+    package var post = PostSettings()
     // Camera and animation
-    var exposure: Float = 0            // stops (EV) before the tone curve
-    var toneMap = ToneMap.aces
+    package var exposure: Float = 0            // stops (EV) before the tone curve
+    package var toneMap = ToneMap.aces
     var fovDegrees: Float = 60         // vertical field of view
     var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     var timeScale: Float = 1           // animation speed (Pause stops it too)
-    var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
+    package var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
     /// The day is held where `timeOfDay` puts it (the day bar, DayClock): `timeOfDay` is then the time of the day
     /// itself, as a fraction of the cycle, and the rest of the scene goes on moving.
     var dayHeld = false
     /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
-    var particleScale: Float = 1
+    package var particleScale: Float = 1
 
     /// The physics scene's traced resolution (`usePhysicsLook`).
-    static let physicsScale: CGFloat = 0.375
+    package static let physicsScale: CGFloat = 0.375
 
     /// The physics scene's look, which leaves the GPU to the simulation: no GI and no reflections, traced at 0.375 of
     /// the window (3x upscaled, 1440x900 out). On the M1 Max its frame renders in 5 ms against the app look's 15
     /// (reflections 4.7 ms, cascades 2.9, and the smaller frame halves the trace and the upscaler). The panel can turn
     /// either back on.
-    mutating func usePhysicsLook() {
+    package mutating func usePhysicsLook() {
         giEnabled = false
         specular = false
         renderScale = RenderSettings.physicsScale
@@ -677,11 +645,12 @@ struct RenderSettings: Equatable, Codable {
     /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
     mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
-        // The demolition scene in the solid look (its own: the look is the user's again when they leave it).
-        if scene.kind == .demolition && !solid {
+        // A scene in the solid look (the demolition's: the look is the user's again when they leave it).
+        let solidScene = scene.kind.definition.solid
+        if solidScene && !solid {
             solid = true
             solidFromScene = true
-        } else if scene.kind != .demolition && solidFromScene {
+        } else if !solidScene && solidFromScene {
             solid = defaults.solid
             solidFromScene = false
         }
@@ -692,7 +661,7 @@ struct RenderSettings: Equatable, Codable {
             specular = defaults.specular
             renderScale = defaults.renderScale
         }
-        if scene.kind == .market && scene.lights == SceneSettings().lights { scene.lights = SceneSettings.marketLights }
+        scene.startLights()
         fog = FogSettings.preset(for: scene)
         post = PostSettings.preset(for: scene)
         foliage = FoliageSettings.preset(for: scene.kind)
@@ -710,7 +679,7 @@ struct RenderSettings: Equatable, Codable {
     static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
     static let renderScaleStep: CGFloat = 0.125
     static let bounceRange = 1...8
-    static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
+    package static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
                             "Fog scattering"]
@@ -722,5 +691,48 @@ struct RenderSettings: Equatable, Codable {
     }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
-    static let geometryViews = 8...13
+    package static let geometryViews = 8...13
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(renderScale: CGFloat = 0.5, upscaleFactor: CGFloat = 3, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, restir: RestirSettings = RestirSettings(), restirGI: RestirGISettings = RestirGISettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), api: RenderAPI = RenderAPI.initial, virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings(), exposure: Float = 0, toneMap: ToneMap = ToneMap.aces, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
+        self.renderScale = renderScale
+        self.upscaleFactor = upscaleFactor
+        self.frameInterpolation = frameInterpolation
+        self.giEnabled = giEnabled
+        self.bounces = bounces
+        self.blueNoise = blueNoise
+        self.taa = taa
+        self.paused = paused
+        self.viewMode = viewMode
+        self.solid = solid
+        self.solidLook = solidLook
+        self.solidFromScene = solidFromScene
+        self.reference = reference
+        self.denoiser = denoiser
+        self.giMode = giMode
+        self.lightMaps = lightMaps
+        self.directLight = directLight
+        self.restir = restir
+        self.restirGI = restirGI
+        self.manyLightRays = manyLightRays
+        self.manyLightReuse = manyLightReuse
+        self.cascades = cascades
+        self.scene = scene
+        self.api = api
+        self.virtualGeometry = virtualGeometry
+        self.specular = specular
+        self.textureBudgetMB = textureBudgetMB
+        self.fog = fog
+        self.sky = sky
+        self.foliage = foliage
+        self.post = post
+        self.exposure = exposure
+        self.toneMap = toneMap
+        self.fovDegrees = fovDegrees
+        self.moveSpeed = moveSpeed
+        self.timeScale = timeScale
+        self.timeOfDay = timeOfDay
+        self.dayHeld = dayHeld
+        self.particleScale = particleScale
+    }
 }

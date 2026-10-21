@@ -175,7 +175,7 @@ struct MaterialInspector: View {
 /// A node's size choice: inherited, relative (½ ... ×4) or absolute (256 ... 4096).
 struct MatSizeChoice: Hashable {
     let size: MatSize
-    init(_ s: MatSize) { size = s }
+    package init(_ s: MatSize) { size = s }
     static let all: [MatSizeChoice] = [MatSizeChoice(.inherit)] + (-3...2).filter { $0 != 0 }.map { MatSizeChoice(.relative($0)) }
         + (8...12).map { MatSizeChoice(.absolute($0)) }
     var title: String {

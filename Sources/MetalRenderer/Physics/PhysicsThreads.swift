@@ -256,8 +256,8 @@ struct NarrowMemo {
 struct PhysicsBoxFrame {
     var x = SIMD3<Float>(), y = SIMD3<Float>(), z = SIMD3<Float>(), centre = SIMD3<Float>()
 
-    init() {}
-    @inline(__always) init(_ b: GPUPhysicsBody, _ box: SIMD4<Float>) {
+    package init() {}
+    @inline(__always) package init(_ b: GPUPhysicsBody, _ box: SIMD4<Float>) {
         x = PhysicsMath.qrot(b.rotation, [1, 0, 0])
         y = PhysicsMath.qrot(b.rotation, [0, 1, 0])
         z = PhysicsMath.qrot(b.rotation, [0, 0, 1])
@@ -549,7 +549,7 @@ final class PhysicsStepper {
         var demolition: DemolitionState
         var stepIndex: Int
 
-        init(_ w: PhysicsWorld) {
+        package init(_ w: PhysicsWorld) {
             bodies = w.bodies
             particles = w.particles
             hairVertices = w.hairVertices
@@ -580,7 +580,7 @@ final class PhysicsStepper {
     /// pace, a frame behind).
     static let queued = 2
 
-    init(world: PhysicsWorld) {
+    package init(world: PhysicsWorld) {
         self.world = world
         grab = world.grab
         drawn = Drawn(world)

@@ -4,36 +4,50 @@ import simd
 /// A skeleton the flesh hangs on (PhysicsFlesh.swift), in its rest pose: its bones, each a body and the shape that
 /// stands for it, where each was at rest (the space the flesh is built in), and what part of a body each is (the
 /// muscles find their bones by it).
-struct FleshFigure {
-    enum Role: Equatable {
+package struct FleshFigure {
+    package enum Role: Equatable {
         case pelvis, spine, chest, neck, head
         case upperArm(Float), forearm(Float), hand(Float)   // the side: -1 (the figure's right, -x) or 1
         case thigh(Float), shin(Float), foot(Float)
     }
 
-    struct Bone {
-        var role: Role
+    package struct Bone {
+        package var role: Role
         var body: Int
         /// Its SDF shape (a single primitive at its origin) and where that is at rest.
-        var shape: SDFShape
-        var rest: float4x4
+        package var shape: SDFShape
+        package var rest: float4x4
         /// The body's pose at rest (centre of mass, rotation): what its pins' rest points are in.
         var restPose: (position: SIMD3<Float>, rotation: SIMD4<Float>)
         /// The bone along its length at rest (from its joint to the next), and how thick it is there.
-        var from: SIMD3<Float>
-        var to: SIMD3<Float>
-        var thickness: Float
+        package var from: SIMD3<Float>
+        package var to: SIMD3<Float>
+        package var thickness: Float
         /// Drawn on its body, with no flesh of its own (a head, a hand, a foot).
-        var rigid: Bool
+        package var rigid: Bool
         /// The bone it hangs from (-1: none): its joint with it is at its `from`.
-        var parent = -1
+        package var parent = -1
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(role: Role, body: Int, shape: SDFShape, rest: float4x4, restPose: (position: SIMD3<Float>, rotation: SIMD4<Float>), from: SIMD3<Float>, to: SIMD3<Float>, thickness: Float, rigid: Bool, parent: Int = -1) {
+            self.role = role
+            self.body = body
+            self.shape = shape
+            self.rest = rest
+            self.restPose = restPose
+            self.from = from
+            self.to = to
+            self.thickness = thickness
+            self.rigid = rigid
+            self.parent = parent
+        }
     }
 
-    var bones: [Bone]
+    package var bones: [Bone]
     /// Its bodies: they don't meet its flesh (GPUPhysicsParticle.info.z).
     var bodies: Range<Int> { (bones.map(\.body).min() ?? 0)..<((bones.map(\.body).max() ?? -1) + 1) }
 
-    func bone(_ role: Role) -> Bone? { bones.first { $0.role == role } }
+    package func bone(_ role: Role) -> Bone? { bones.first { $0.role == role } }
 
     /// Whether flesh at `p` (rest space) may bind bones `a` and `b` together: one hangs from the other and `p` is at
     /// their joint (within 1.5 times the hanging one's thickness of it). Elsewhere a limb lying against another, or
@@ -48,6 +62,11 @@ struct FleshFigure {
     func depth(_ b: Bone, _ p: SIMD3<Float>) -> Float {
         1 + b.shape.distance(PhysicsMath.xyz(b.rest.inverse * SIMD4(p, 1))).d / b.thickness
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(bones: [Bone]) {
+        self.bones = bones
+    }
 }
 
 /// A character's bones as kinematic bodies (PhysicsWorld.addKinematicBody) and the table of their poses, a row a
@@ -60,7 +79,7 @@ struct FleshFigure {
 /// chain (a finger is its hand, the shoulder the chest). Each is shaped to the mesh's vertices it moves most, in its
 /// bind pose: a limb a capsule from its joint to the next, as thick as most of them are from its axis; the trunk's
 /// and the hands' and feet's rounded boxes in the joint's frame, as wide as most of them reach; the head a sphere.
-struct CharacterRig {
+package struct CharacterRig {
     /// The joints that are bones: Mixamo's names, without "mixamorig:", the joint their length runs to, and the part.
     static let modelled: [(joint: String, next: String, role: FleshFigure.Role)] = [
         ("Hips", "Spine", .pelvis), ("Spine", "Spine1", .spine), ("Spine1", "Spine2", .spine), ("Spine2", "Neck", .chest),
@@ -72,29 +91,29 @@ struct CharacterRig {
         ("LeftUpLeg", "LeftLeg", .thigh(1)), ("LeftLeg", "LeftFoot", .shin(1)), ("LeftFoot", "LeftToe_End", .foot(1)),
     ]
 
-    struct Bone {
+    package struct Bone {
         var joint: Int
-        var role: FleshFigure.Role
-        var shape: SDFShape
+        package var role: FleshFigure.Role
+        package var shape: SDFShape
         /// The shape's placement relative to its joint's bind pose (so that the pose's joint carries it).
         var offset: float4x4
-        var from: SIMD3<Float>
-        var to: SIMD3<Float>
-        var thickness: Float
-        var rigid: Bool
-        var parent: Int
+        package var from: SIMD3<Float>
+        package var to: SIMD3<Float>
+        package var thickness: Float
+        package var rigid: Bool
+        package var parent: Int
     }
 
     let character: SkinnedCharacter
     let bind: [(q: simd_quatf, t: SIMD3<Float>)]
-    private(set) var bones: [Bone] = []
+    package private(set) var bones: [Bone] = []
     /// Per joint, the bone it moves with (its own, or the nearest one up its chain).
-    private(set) var boneOf: [Int] = []
+    package private(set) var boneOf: [Int] = []
     /// The routine's clips (indices into the character's) and when each starts (s), and how long it is.
     let programme: [(clip: Int, start: Float)]
     let seconds: Float
 
-    init?(_ character: SkinnedCharacter) {
+    package init?(_ character: SkinnedCharacter) {
         self.character = character
         bind = character.bindPoses
         // A dance lasts its clip less a crossfade, so the fade into the next ends as it does (it never starts over).
@@ -180,7 +199,7 @@ struct CharacterRig {
     }
 
     /// ...in the bind pose.
-    func restPlacement(_ b: Int) -> float4x4 { placement(b, bind) }
+    package func restPlacement(_ b: Int) -> float4x4 { placement(b, bind) }
 
     // MARK: The programme
 
@@ -213,7 +232,7 @@ struct CharacterRig {
     /// its shape's placement) with the character on `spot`, facing +x, moved by its clips' travel as it dances. What
     /// that adds up to over the programme is taken back a little at every step, so the last row runs into the first.
     /// Returns the rows and how far the character strays from its spot.
-    func table(spot: SIMD3<Float>, bodyPose: (Int, float4x4) -> (SIMD3<Float>, SIMD4<Float>)) -> (rows: [SIMD4<Float>], reach: Float) {
+    package func table(spot: SIMD3<Float>, bodyPose: (Int, float4x4) -> (SIMD3<Float>, SIMD4<Float>)) -> (rows: [SIMD4<Float>], reach: Float) {
         let rows = Int((seconds / PhysicsWorld.stepLength).rounded())
         let poses = (0..<rows).map { pose(at: Float($0) * PhysicsWorld.stepLength) }
         let facing = rotate(.pi / 2, [0, 1, 0])

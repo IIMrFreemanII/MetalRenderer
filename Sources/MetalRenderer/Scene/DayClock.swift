@@ -2,7 +2,7 @@ import Foundation
 
 /// A scene's sun along its day: where it is between morning (0) and evening (1) at time t of the scene's day clock.
 /// The scenes pose their suns with it (Scene+Lights, Scene+City), and the day bar reads it as a clock (`DayClock`).
-struct DaySweep: Equatable {
+package struct DaySweep: Equatable {
     /// Seconds from morning to evening.
     var length: Float
     /// The sun then goes back the way it came, in as long (the valley's, the city's); or else the day starts again at
@@ -12,16 +12,16 @@ struct DaySweep: Equatable {
     var lead: Float
 
     /// The sun courtyard's: 60 s from morning to evening, the sun 8 degrees up at each end.
-    static let courtyard = DaySweep(length: 60, back: false, lead: 0.2)
+    package static let courtyard = DaySweep(length: 60, back: false, lead: 0.2)
     /// The valley's and the forest's, and the day city's: 90 s each way.
-    static let valley = DaySweep(length: 90, back: true, lead: 0.35)
-    static let city = DaySweep(length: 90, back: true, lead: 0.3)
+    package static let valley = DaySweep(length: 90, back: true, lead: 0.35)
+    package static let city = DaySweep(length: 90, back: true, lead: 0.3)
 
     /// The whole day, there and back.
     var cycle: Float { back ? 2 * length : length }
 
     /// 0 = morning ... 1 = evening.
-    func phase(_ t: Float) -> Float {
+    package func phase(_ t: Float) -> Float {
         if back { return 0.5 - 0.5 * cos(.pi * (t / length + lead)) }
         let p = t / length + lead
         return p - p.rounded(.down)
@@ -46,8 +46,8 @@ enum DayPreset: Int, CaseIterable {
 /// the 24 hours with its night (Heavens); the scenes whose sun only goes from morning to evening and back (the sun
 /// courtyard, the valley, the forest, the city) show that as 07:00 to 19:00, and the city's night is the night city,
 /// another scene.
-struct DayClock {
-    enum Path {
+package struct DayClock {
+    package enum Path {
         case heavens                // the open world's
         case sweep(DaySweep)        // morning to evening (and back)
         case night                  // the night city's: always night, no clock
@@ -63,16 +63,8 @@ struct DayClock {
     /// smear the old light into the new. Less than that moves as the sun does when the day runs.
     static let lightJump: Float = 1 / 48
 
-    static func of(_ kind: SceneKind) -> DayClock? {
-        switch kind {
-        case .world: return DayClock(path: .heavens, hours: 0...24, otherScene: nil)
-        case .sun: return DayClock(path: .sweep(.courtyard), hours: 7...19, otherScene: nil)
-        case .valley, .forest: return DayClock(path: .sweep(.valley), hours: 7...19, otherScene: nil)
-        case .city: return DayClock(path: .sweep(.city), hours: 7...19, otherScene: .cityNight)
-        case .cityNight: return DayClock(path: .night, hours: 0...24, otherScene: .city)
-        default: return nil
-        }
-    }
+    /// Scene `kind`'s clock (its definition's), if it has one.
+    static func of(_ kind: SceneKind) -> DayClock? { kind.definition.dayClock }
 
     /// Seconds of the scene's day clock (`SceneKind.dayCycle`); 0 for the night city's.
     var cycle: Float {
@@ -159,6 +151,13 @@ struct DayClock {
         guard length > 0 else { return 0 }
         let r = t - length * (t / length).rounded(.down)
         return r < length ? r : 0
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(path: Path, hours: ClosedRange<Float>, otherScene: SceneKind?) {
+        self.path = path
+        self.hours = hours
+        self.otherScene = otherScene
     }
 }
 

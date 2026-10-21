@@ -24,7 +24,7 @@ final class VFXInterpreter {
     private(set) var stepIndex = 0
     private let env = VFXEnv()
 
-    init(_ system: ParticleSystem) {
+    package init(_ system: ParticleSystem) {
         self.system = system
         emitters = system.gpuEmitters
         colliders = system.gpuColliders

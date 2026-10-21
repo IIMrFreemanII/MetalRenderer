@@ -102,7 +102,7 @@ enum MacroRig {
 /// Makes a character from its DNA: the base body plus its weighted morphs, its skeleton reshaped (bones lengthened,
 /// moved toward the X Bot's), the skin carried by the joints it hangs on, normals made again, and the clips with their
 /// root's travel scaled to the new hips.
-enum CharacterBuilder {
+package enum CharacterBuilder {
     /// The new bind positions of every joint for `shape`.
     static func bind(_ shape: CharacterShape, base c: SkinnedCharacter, morphs: CharacterMorphs) -> [SIMD3<Float>] {
         let old = CharacterBase.bindPositions(c)
@@ -146,7 +146,7 @@ enum CharacterBuilder {
 
     /// The character `dna` describes, made from `kit`'s base, with `kit`'s clips. `cap`: its hair as a cap of its mesh
     /// (CharacterHairCap; a crowd's), not strands.
-    static func build(_ dna: CharacterDNA, kit: CharacterKit, cap: Bool = false) -> SkinnedCharacter {
+    package static func build(_ dna: CharacterDNA, kit: CharacterKit, cap: Bool = false) -> SkinnedCharacter {
         let base = kit.base.character
         let shape = MacroRig.shape(dna, character: base)
         let newBind = bind(shape, base: base, morphs: kit.morphs)
@@ -285,10 +285,10 @@ enum CharacterBuilder {
 /// The parts every generated character is made from: the base body, its morph targets, and the clips (the Y Bot's,
 /// with a T pose and an A pose). Made once from the character library (built, or read from a cache file next to
 /// the library's) and shared.
-final class CharacterKit {
-    let base: CharacterBase
+package final class CharacterKit {
+    package let base: CharacterBase
     let morphs: CharacterMorphs
-    let face: FaceRig
+    package let face: FaceRig
     let clips: [SkinnedCharacter.Clip]
     /// The base's head in its skin's textures (SkinTextures), made the first time it is asked for.
     var chart: SkinChart {
@@ -304,7 +304,7 @@ final class CharacterKit {
     private var madeChart: SkinChart?
     private let chartLock = NSLock()
 
-    init(base: CharacterBase, morphs: CharacterMorphs, face: FaceRig, clips: [SkinnedCharacter.Clip]) {
+    package init(base: CharacterBase, morphs: CharacterMorphs, face: FaceRig, clips: [SkinnedCharacter.Clip]) {
         self.base = base
         self.morphs = morphs
         self.face = face
@@ -315,7 +315,7 @@ final class CharacterKit {
     private static var cached: CharacterKit??
 
     /// The shared kit (nil if the library has no Y Bot): made the first time it is asked for.
-    static func shared() -> CharacterKit? {
+    package static func shared() -> CharacterKit? {
         lock.lock()
         defer { lock.unlock() }
         if let cached { return cached }
@@ -358,7 +358,7 @@ final class CharacterKit {
     }
 
     /// A still clip of the bind pose (the T pose), and one with the arms down at 45 degrees (the A pose).
-    static func poseClips(_ c: SkinnedCharacter) -> [SkinnedCharacter.Clip] {
+    package static func poseClips(_ c: SkinnedCharacter) -> [SkinnedCharacter.Clip] {
         let world = c.bindPoses
         let names = c.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
         func clip(_ name: String, turn: (Int) -> simd_quatf?) -> SkinnedCharacter.Clip {

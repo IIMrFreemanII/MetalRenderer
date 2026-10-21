@@ -339,7 +339,7 @@ final class WorldWater {
 final class WorldWaterField: WaterField {
     let world: World
     let looks: (sea: Int, lake: Int, river: Int)
-    init(world: World, looks: (sea: Int, lake: Int, river: Int)) { (self.world, self.looks) = (world, looks) }
+    package init(world: World, looks: (sea: Int, lake: Int, river: Int)) { (self.world, self.looks) = (world, looks) }
     func ground(_ x: Double, _ z: Double) -> Float { world.water.carve(x, z, world.water.natural(x, z)) }
     func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         let (edges, ponds) = world.water.near(lo: SIMD2(x, z), hi: SIMD2(x, z))

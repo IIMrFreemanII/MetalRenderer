@@ -11,7 +11,7 @@ import simd
 /// six-way light maps (how much of a light from each of six directions its puff passes on to the eye: right, left,
 /// top, bottom in one layer; front, back in the next) and the motion of smoke's and flame's pictures from a frame to
 /// the next (the generator's own drift), which the frame blending follows (ParticleTrace.metal).
-enum ParticleTextures {
+package enum ParticleTextures {
     /// The layers after the kinds'.
     enum Aux: Int, CaseIterable {
         case smokeLight     // rgba: a light from the right, the left, the top, the bottom
@@ -31,7 +31,7 @@ enum ParticleTextures {
     }
     /// The largest motion a frame the motion channels hold (cell units, -1...1 across it): 0.5 is ± this.
     static let motionRange: Float = 0.1
-    enum Kind: Int, CaseIterable {
+    package enum Kind: Int, CaseIterable {
         /// A soft round dot (motes, glows).
         case dot
         /// A puff of smoke that billows over its frames.

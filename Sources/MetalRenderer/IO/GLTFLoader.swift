@@ -5,7 +5,7 @@ import simd
 /// metallic-roughness materials and their images, flattened into mesh parts with model-space transforms.
 /// Static geometry only: skins, morph targets, animations and cameras are ignored. Punctual lights
 /// (KHR_lights_punctual: point, spot, directional) come with their node transforms.
-struct GLTFModel {
+package struct GLTFModel {
     struct Mesh {
         var positions: [SIMD3<Float>]
         var normals: [SIMD3<Float>]
@@ -28,12 +28,12 @@ struct GLTFModel {
         var normalTexture: TextureRef?
         var emissiveTexture: TextureRef?
     }
-    struct Image {
+    package struct Image {
         var data: Data                   // encoded (PNG, JPEG, ...), decoded later with ImageIO
         var name: String
     }
     /// A KHR_lights_punctual light placed by a node: it sits at the transform's origin and points down its -Z.
-    struct Light {
+    package struct Light {
         enum Kind { case point, spot(inner: Float, outer: Float), directional }
         var kind: Kind
         var color: SIMD3<Float>          // linear
@@ -41,17 +41,17 @@ struct GLTFModel {
         var transform: float4x4          // model space
     }
 
-    var name: String
+    package var name: String
     var meshes: [Mesh] = []
     var parts: [(mesh: Int, transform: float4x4)] = []   // one per mesh use in the node hierarchy
     var materials: [Material] = []
-    var images: [Image] = []
+    package var images: [Image] = []
     var lights: [Light] = []
 
-    var triangleCount: Int { parts.reduce(0) { $0 + meshes[$1.mesh].indices.count / 3 } }
+    package var triangleCount: Int { parts.reduce(0) { $0 + meshes[$1.mesh].indices.count / 3 } }
 
     /// Model-space bounds of all parts.
-    var bounds: AABB {
+    package var bounds: AABB {
         var b = AABB()
         for part in parts {
             for p in meshes[part.mesh].positions {
@@ -74,7 +74,7 @@ enum GLTFError: Error, CustomStringConvertible {
     }
 }
 
-enum GLTFLoader {
+package enum GLTFLoader {
     // MARK: JSON schema (the parts we read)
 
     private struct Document: Decodable {
@@ -167,7 +167,7 @@ enum GLTFLoader {
 
     // MARK: Loading
 
-    static func load(_ url: URL) throws -> GLTFModel {
+    package static func load(_ url: URL) throws -> GLTFModel {
         let file = try Data(contentsOf: url, options: .mappedIfSafe)
         // A clone without git-lfs checks out the pointer text in place of the model.
         if file.starts(with: Data("version https://git-lfs".utf8)) {

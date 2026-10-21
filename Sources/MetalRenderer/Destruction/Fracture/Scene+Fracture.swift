@@ -9,7 +9,7 @@ extension Scene {
     /// Where a fractured object is held: nowhere (it falls, rolls, is knocked over), by the ground under it (its
     /// lowest pieces don't move until they come free), or round its edge (a pane in its frame: the pieces along its
     /// rim), and the object itself until it breaks.
-    enum FractureAnchor {
+    package enum FractureAnchor {
         case none
         case ground(Float)
         case rim
@@ -20,17 +20,17 @@ extension Scene {
     static let foundation: Float = 0.25
 
     /// What one fractured object became: its root's body and instance, its tree.
-    struct Fractured {
-        var tree: FractureTree
-        var firstBody: Int
+    package struct Fractured {
+        package var tree: FractureTree
+        package var firstBody: Int
         var firstInstance: Int
-        var name: String
+        package var name: String
     }
 
     /// Object `shape` (shape space) placed by `transform` (a rotation and a translation), fractured by `recipe`, drawn
     /// with `material` outside and `interior` (a later material) on its broken faces. `mask`: its instances' (glass's).
     @discardableResult
-    func addFractured(_ name: String, shape: SDFShape, recipe: FractureRecipe, transform: float4x4, material: Int, interior: Int,
+    package func addFractured(_ name: String, shape: SDFShape, recipe: FractureRecipe, transform: float4x4, material: Int, interior: Int,
                       anchor: FractureAnchor, mask: UInt32 = Scene.maskGeometry, toughness: Float = 1, strength: Float = 1,
                       fadeRadius: Float = 0.1) -> Fractured {
         precondition(interior >= material, "the interior material comes after the outside's")
@@ -109,7 +109,7 @@ extension Scene {
     /// triangles, their textures kept, and caps of `interior` on the cuts), and collides as the mesh's baked distance
     /// grid cut by the cell. Nil if the model can't be read.
     @discardableResult
-    func addFracturedModel(_ name: String, url: URL, height: Float, transform: float4x4, recipe: FractureRecipe,
+    package func addFracturedModel(_ name: String, url: URL, height: Float, transform: float4x4, recipe: FractureRecipe,
                            interior: SIMD3<Float>, anchor: FractureAnchor, toughness: Float = 1, strength: Float = 1) -> Fractured? {
         guard let model = try? GLTFLoader.load(url), !model.parts.isEmpty else {
             print("Destruction: can't load \(url.lastPathComponent)")

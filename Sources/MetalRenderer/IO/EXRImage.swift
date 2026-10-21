@@ -115,7 +115,7 @@ private struct EXRDecoder {
     /// Where the chunk offset table starts.
     let headerEnd: Int
 
-    init(file: UnsafeRawBufferPointer) throws {
+    package init(file: UnsafeRawBufferPointer) throws {
         self.file = file
         var r = ByteReader(bytes: file)
         guard file.count >= 8, try r.u32() == 20000630 else { throw Damaged(reason: "it has no OpenEXR signature") }
@@ -624,7 +624,7 @@ private enum Huffman {
         var longStart: [Int32]         // where an entry's long-code symbols start in `longSymbols`
         var longSymbols: [UInt32]
 
-        init(codes: UnsafeBufferPointer<UInt64>, im: Int, iM: Int) throws {
+        package init(codes: UnsafeBufferPointer<UInt64>, im: Int, iM: Int) throws {
             let size = Huffman.decodingSize, bits = Huffman.decodingBits
             length = [Int32](repeating: 0, count: size)
             symbol = [UInt32](repeating: 0, count: size)

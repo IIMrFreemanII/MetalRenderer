@@ -62,13 +62,13 @@ extension PhysicsWorld {
 
 /// A figure's skin shell (PhysicsWorld.addSkin): its particles (from `first`, one a vertex of `mesh`, its rest
 /// surface), and a finder of the triangle nearest a point.
-struct SkinShell {
+package struct SkinShell {
     var mesh: MeshGeometry
     var first: Int
     private var cells: [SIMD3<Int32>: [Int]] = [:]
     private let cell: Float
 
-    init(mesh: MeshGeometry, first: Int, cell: Float = 0.05) {
+    package init(mesh: MeshGeometry, first: Int, cell: Float = 0.05) {
         self.mesh = mesh
         self.first = first
         self.cell = cell
@@ -130,7 +130,7 @@ struct SkinShell {
 extension PhysicsWorld {
     /// How the skin is made: its links' compliance across and bending, how hard it is held along the flesh's normal
     /// and across it, how far it may slide, how heavy it is (kg/m^2), and its particles' radius.
-    struct SkinOptions {
+    package struct SkinOptions {
         var stretch: Float = 1e-6
         var bend: Float = 1e-3
         var normal: Float = 0
@@ -142,7 +142,7 @@ extension PhysicsWorld {
 
     /// A skin shell over `flesh` (its figure's): `mesh`, a surface of the flesh's shape in its rest space, each vertex
     /// a particle held to where it rests in the flesh (and 1 cm under it, its normal), starting where the flesh puts it.
-    func addSkin(_ mesh: MeshGeometry, over flesh: Flesh, figure: FleshFigure, _ o: SkinOptions = SkinOptions()) -> SkinShell {
+    package func addSkin(_ mesh: MeshGeometry, over flesh: Flesh, figure: FleshFigure, _ o: SkinOptions = SkinOptions()) -> SkinShell {
         let first = particles.count, base = UInt32(first), bones = figure.bodies
         // Each vertex's share of the area.
         var area = [Float](repeating: 0, count: mesh.positions.count)

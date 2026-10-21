@@ -36,7 +36,7 @@ final class Upscaler {
     /// assertion in MPSGraph as it was made ("Incompatible shape for parameter at index 0") for nearly every size (of 19
     /// tried, only 960x540 and 960x544 to twice that worked), so there Metal 3's runs under Metal 4 too, on a Metal 3
     /// command buffer between two of the frame's (Metal4Frame.interlude). On macOS 27.0.1 every size tried is made.
-    init(device: MTLDevice, inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
+    package init(device: MTLDevice, inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
          synchronous: Bool = false, compiler: AnyObject? = nil) throws {   // compiler: MTL4Compiler
         self.inputWidth = inputWidth
         self.inputHeight = inputHeight

@@ -32,7 +32,7 @@ struct VFXLayout {
     /// Around everything.
     private(set) var bounds = CGRect.zero
 
-    init(_ effect: VFXEffect) {
+    package init(_ effect: VFXEffect) {
         arranged = VFXLayout.arrange(effect)
         for e in arranged.emitters { place(e) }
         for n in arranged.nodes { place(n) }

@@ -31,10 +31,10 @@ final class FractureEditorModel: ObservableObject {
     @Published var explode: Float = 0.4
     @Published private(set) var message = ""
 
-    var inScene: Bool { host?.settings.scene.kind == .destruction }
+    var inScene: Bool { host.map { SceneRegistry.kind(for: .fracture) == $0.settings.scene.kind } ?? false }
     var info: FractureObjectInfo? { objects.first { $0.name == selected } }
 
-    init(host: FractureEditorHost) {
+    package init(host: FractureEditorHost) {
         self.host = host
         host.observeTick { [weak self] in self?.tick() }
         tick()
@@ -58,12 +58,12 @@ final class FractureEditorModel: ObservableObject {
     /// The recipe was changed in the form.
     func changed() { edited = recipe != info?.recipe }
 
-    /// Opens the destruction scene (with its defaults).
+    /// Opens the destruction scene (with its defaults), if this build has one.
     func openScene() {
-        guard let host else { return }
+        guard let host, let kind = SceneRegistry.kind(for: .fracture) else { return }
         let defaults = host.defaultSettings
         host.update { s in
-            s.scene.kind = .destruction
+            s.scene.kind = kind
             s.applySceneDefaults(from: defaults)
         }
     }

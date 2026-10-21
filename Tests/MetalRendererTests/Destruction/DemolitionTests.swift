@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The demolition scene's world (Scene+Demolition.swift, Physics+Demolition.swift) on the CPU: the office stands, the

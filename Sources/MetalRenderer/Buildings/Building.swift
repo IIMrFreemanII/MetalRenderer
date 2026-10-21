@@ -3,7 +3,7 @@ import simd
 
 /// What a part of a generated mesh is made of. The scene turns each distinct one into a material (Scene+City), so
 /// the buildings of a style share theirs.
-struct SurfaceMaterial: Hashable {
+package struct SurfaceMaterial: Hashable {
     var color: SIMD3<Float>
     /// Its tiling texture, used when the city's textures are on (the colour then tints it).
     var surface: SurfaceKind? = nil
@@ -11,27 +11,38 @@ struct SurfaceMaterial: Hashable {
     var metallic: Float = 0
     /// Has a specular lobe (otherwise diffuse only, as the other generated scenes' materials).
     var specular = false
-    var emission = SIMD3<Float>.zero
+    package var emission = SIMD3<Float>.zero
     /// Window glass: seen through and reflecting for the camera, clear to light (Scene.maskGlass); `color` tints it.
-    var glass = false
+    package var glass = false
 
     /// Texture repeats per metre for a mesh of this material.
-    var uvScale: Float { 1 / (surface?.tile ?? 2) }
+    package var uvScale: Float { 1 / (surface?.tile ?? 2) }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(color: SIMD3<Float>, surface: SurfaceKind? = nil, roughness: Float = 1, metallic: Float = 0, specular: Bool = false, emission: SIMD3<Float> = SIMD3<Float>.zero, glass: Bool = false) {
+        self.color = color
+        self.surface = surface
+        self.roughness = roughness
+        self.metallic = metallic
+        self.specular = specular
+        self.emission = emission
+        self.glass = glass
+    }
 }
 
 /// What to build: a lot in its own frame (width along x, depth along z, the front toward +z, the ground at y = 0,
 /// centred on the origin), what each side looks onto, and the building's style, height and seed.
-struct BuildingSpec {
+package struct BuildingSpec {
     var size: SIMD2<Float>
     /// front (+z), right (+x), back (-z), left (-x).
-    var edges: [CityPlan.Edge] = [.street, .party, .open, .party]
+    package var edges: [CityPlan.Edge] = [.street, .party, .open, .party]
     /// Its district (the city's), and the style it is built in (that district's own unless a catalog says otherwise).
     var style = CityStyle.residential {
         didSet { def = BuiltInBuildings.style(style) }
     }
-    var def = BuiltInBuildings.residential
-    var floors = 5
-    var seed: UInt64 = 1
+    package var def = BuiltInBuildings.residential
+    package var floors = 5
+    package var seed: UInt64 = 1
     /// Night: `lit` of the windows have a light on behind them (emissive blinds, lamps in the rooms).
     var night = false
     var lit: Float = 0.35
@@ -39,12 +50,12 @@ struct BuildingSpec {
     var rooms: Float = 0.15
     /// Its windows' shells are modules (`Building.modules`): made once and placed at each window, for a tracer that
     /// instances them (the custom tracer's assemblies).
-    var modules = false
+    package var modules = false
     /// How much of it to make: in full, or plainly (seen from further away). Every level draws the same numbers, so
     /// the same windows are lit at each.
     var detail = Detail.full
     /// Make its interior too (Building.interior): the inside of its walls, its floors, rooms, stairs, furniture.
-    var interior = false
+    package var interior = false
     /// The plan's hand edits (a single building's, LotOverride).
     var edits: [PlanEdit] = []
     /// The workshop's cutaway: no roof, and nothing above this storey (nil: all of it).
@@ -61,8 +72,8 @@ struct BuildingSpec {
         case flat
     }
 
-    init(size: SIMD2<Float>) { self.size = size }
-    init(lot: CityPlan.Lot, city: CitySettings, night: Bool, catalog: BuildingCatalog? = nil) {
+    package init(size: SIMD2<Float>) { self.size = size }
+    package init(lot: CityPlan.Lot, city: CitySettings, night: Bool, catalog: BuildingCatalog? = nil) {
         size = lot.size
         edges = lot.edges
         style = lot.style
@@ -80,9 +91,9 @@ struct BuildingSpec {
 }
 
 /// A generated building: one mesh per material, in the lot's frame.
-struct Building {
+package struct Building {
     /// The parts a building is assembled from; each is one mesh of one material.
-    enum Slot: Int, CaseIterable {
+    package enum Slot: Int, CaseIterable {
         case wall           // the upper floors' walls
         case base           // the ground floor's walls
         case trim           // ledges, cornices, sills, lintels, parapets, balcony slabs
@@ -106,44 +117,44 @@ struct Building {
         var isFill: Bool { [.blind, .dark, .interior, .floor, .lit, .lamp, .roomProp, .leaf, .leafGlass, .leafDark].contains(self) }
     }
 
-    private(set) var materials: [SurfaceMaterial?] = Array(repeating: nil, count: Slot.allCases.count)
-    private(set) var meshes: [MeshBuilder] = Array(repeating: MeshBuilder(), count: Slot.allCases.count)
-    var height: Float = 0
+    package private(set) var materials: [SurfaceMaterial?] = Array(repeating: nil, count: Slot.allCases.count)
+    package private(set) var meshes: [MeshBuilder] = Array(repeating: MeshBuilder(), count: Slot.allCases.count)
+    package var height: Float = 0
     /// How many windows it has, and how many of them have rooms and lights.
-    var windows = 0, rooms = 0, lights = 0
+    package var windows = 0, rooms = 0, lights = 0
     /// Its floor plans, and the storeys' tiers.
-    var plan = BuildingPlan()
-    var tiers: [BuildingTier] = []
+    package var plan = BuildingPlan()
+    package var tiers: [BuildingTier] = []
     /// The style it was drawn in.
     var style = BuildingStyle()
     /// Its interior, if the spec asked for it.
-    var interior: Interior?
+    package var interior: Interior?
 
     /// A hole through an outer wall: a window's or a door's. From `a` to `c` along the wall's face (x, z in the lot),
     /// `normal` out of it, from `y0` to `y1`, on `storey`.
-    struct WallOpening {
-        var storey: Int
-        var a: SIMD2<Float>, c: SIMD2<Float>
-        var normal: SIMD2<Float>
-        var y0: Float, y1: Float
-        var glass: Bool
+    package struct WallOpening {
+        package var storey: Int
+        package var a: SIMD2<Float>, c: SIMD2<Float>
+        package var normal: SIMD2<Float>
+        package var y0: Float, y1: Float
+        package var glass: Bool
     }
-    var openings: [WallOpening] = []
+    package var openings: [WallOpening] = []
 
     /// What is made once and placed many times (BuildingSpec.modules): a window's shell (its reveal, frame, sill,
     /// lintel, shutters), a mesh per slot in its own frame, its texture coordinates from its own corner. `key`: its
     /// triangles, said in full, so that the same module of any building is the same mesh.
-    struct Module {
-        var meshes: [MeshBuilder]
-        var key: Data
+    package struct Module {
+        package var meshes: [MeshBuilder]
+        package var key: Data
     }
-    private(set) var modules: [Module] = []
+    package private(set) var modules: [Module] = []
     /// Each place a module is at: into the lot's frame.
-    private(set) var placements: [(module: Int, transform: float4x4)] = []
+    package private(set) var placements: [(module: Int, transform: float4x4)] = []
     private var moduleIndex: [Data: Int] = [:]
 
     /// The used parts.
-    var parts: [(slot: Slot, material: SurfaceMaterial, mesh: MeshBuilder)] {
+    package var parts: [(slot: Slot, material: SurfaceMaterial, mesh: MeshBuilder)] {
         Slot.allCases.compactMap { slot in
             guard let m = materials[slot.rawValue], !meshes[slot.rawValue].isEmpty else { return nil }
             return (slot, m, meshes[slot.rawValue])
@@ -212,10 +223,10 @@ struct Building {
 /// A building's plan: a rectangle, or an L, U, T or ring made of a bar along the front (+z) and wings behind it.
 /// It knows its outlines (for the walls), a set of rectangles that tile it (for the floors and roofs), and how to
 /// step in from its edges (for setbacks and parapets). x and z, in the lot's frame.
-struct Footprint {
-    typealias Rect = CityPlan.Rect
+package struct Footprint {
+    package typealias Rect = CityPlan.Rect
 
-    enum Shape: Equatable {
+    package enum Shape: Equatable {
         case rect
         case l(bar: Float, wing: Float, right: Bool)    // the wing behind the bar's left or right end
         case u(bar: Float, wing: Float)                 // a wing behind each end
@@ -229,7 +240,7 @@ struct Footprint {
     /// The thinnest a bar or wing may get.
     static let thinnest: Float = 4
 
-    init(_ rect: Rect, _ shape: Shape = .rect) {
+    package init(_ rect: Rect, _ shape: Shape = .rect) {
         self.rect = rect
         self.shape = shape
     }
@@ -260,7 +271,7 @@ struct Footprint {
     }
 
     /// Rectangles that tile the plan without overlapping.
-    var cover: [Rect] {
+    package var cover: [Rect] {
         let (x0, z0, x1, z1) = (rect.lo.x, rect.lo.y, rect.hi.x, rect.hi.y)
         func r(_ ax: Float, _ az: Float, _ bx: Float, _ bz: Float) -> Rect { Rect(lo: SIMD2(ax, az), hi: SIMD2(bx, bz)) }
         switch shape {
@@ -338,23 +349,23 @@ struct Footprint {
 
 /// One storey-stack of a building: a plan from `y0` up, a storey per entry of `heights`, and what closes its top.
 /// A tower on a podium is two tiers; a setback or a penthouse starts another.
-struct BuildingTier {
-    var footprint: Footprint
+package struct BuildingTier {
+    package var footprint: Footprint
     var y0: Float
     var heights: [Float]
     /// Its lowest storey stands on the ground (doors, shop fronts).
     var ground: Bool
     var roof: RoofKind
 
-    var top: Float { y0 + heights.reduce(0, +) }
+    package var top: Float { y0 + heights.reduce(0, +) }
 }
 
 /// Builds `BuildingSpec`s. Pure and seeded: a spec always gives the same building, whatever thread makes it.
-enum BuildingGenerator {
+package enum BuildingGenerator {
     /// A building is kept under this many triangles: the upper floors' windows of a big one lose their frames and sills.
     static let triangleLimit = 60_000
 
-    static func generate(_ spec: BuildingSpec) -> Building {
+    package static func generate(_ spec: BuildingSpec) -> Building {
         var assembler = BuildingAssembler(spec)
         assembler.build()
         return assembler.b
@@ -384,7 +395,7 @@ struct BuildingAssembler {
     /// The ground floor's level above the lot's ground (the sidewalk is 0.15 high).
     static let step: Float = 0.2
 
-    init(_ spec: BuildingSpec) {
+    package init(_ spec: BuildingSpec) {
         self.spec = spec
         style = BuildingStyle.draw(spec.def, seed: spec.seed)
         rng = SplitMix64(seed: spec.seed &* 0x9E37_79B9_7F4A_7C15 ^ 0xFACADE)

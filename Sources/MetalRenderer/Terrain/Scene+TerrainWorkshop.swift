@@ -90,24 +90,24 @@ extension Scene {
 
 /// The terrain workshop's settings: how big its terrain is (and so how fine), what it starts from, and the document it
 /// is edited into.
-struct TerrainWorkshopSettings: Equatable, Codable {
-    var size = Size.km1
+package struct TerrainWorkshopSettings: Equatable, Codable {
+    package var size = Size.km1
     var base = Base.hills
     var seed = 1
-    var document = "Workshop"
+    package var document = "Workshop"
     /// Rigid bodies dropped onto it (0: none).
-    var bodies = 0
+    package var bodies = 0
     /// The hills with a sea round their lowest third (the flat ground never).
     var sea = true
 
     /// How far across (`metres`); each at most 1024 cells a side.
-    enum Size: Int, Codable, CaseIterable {
+    package enum Size: Int, Codable, CaseIterable {
         case m512, km1, km2, km4
-        var metres: Int { 512 << rawValue }
+        package var metres: Int { 512 << rawValue }
         var cell: Float { Float(max(metres / 1024, 1)) }
         var title: String { metres < 1024 ? "\(metres) m" : "\(metres / 1024) km (\(Int(cell)) m cells)" }
     }
-    enum Base: String, Codable, CaseIterable {
+    package enum Base: String, Codable, CaseIterable {
         case flat, hills
         var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
@@ -115,5 +115,15 @@ struct TerrainWorkshopSettings: Equatable, Codable {
     /// The terrain's document: its own name, its size and base and seed (another of any is another ground).
     static func terrainName(_ w: TerrainWorkshopSettings) -> String {
         "workshop-\(w.document)-\(w.size.metres)-\(w.base.rawValue)" + (w.base == .hills ? "-\(w.seed)" : "")
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(size: Size = Size.km1, base: Base = Base.hills, seed: Int = 1, document: String = "Workshop", bodies: Int = 0, sea: Bool = true) {
+        self.size = size
+        self.base = base
+        self.seed = seed
+        self.document = document
+        self.bodies = bodies
+        self.sea = sea
     }
 }

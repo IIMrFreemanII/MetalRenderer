@@ -6,14 +6,14 @@ extension Scene {
     // MARK: - Mesh generators
 
     /// Unit quad in the XZ plane, facing +Y.
-    static func quadMesh() -> MeshGeometry {
+    package static func quadMesh() -> MeshGeometry {
         let p: [SIMD3<Float>] = [[-0.5, 0, -0.5], [0.5, 0, -0.5], [0.5, 0, 0.5], [-0.5, 0, 0.5]]
         let n = [SIMD3<Float>](repeating: [0, 1, 0], count: 4)
         return (p, n, [0, 1, 2, 0, 2, 3])
     }
 
     /// Unit cube centered at the origin with flat face normals.
-    static func cubeMesh() -> MeshGeometry {
+    package static func cubeMesh() -> MeshGeometry {
         let faces: [(n: SIMD3<Float>, u: SIMD3<Float>, v: SIMD3<Float>)] = [
             ([1, 0, 0], [0, 1, 0], [0, 0, 1]), ([-1, 0, 0], [0, 0, 1], [0, 1, 0]),
             ([0, 1, 0], [0, 0, 1], [1, 0, 0]), ([0, -1, 0], [1, 0, 0], [0, 0, 1]),
@@ -32,7 +32,7 @@ extension Scene {
     }
 
     /// Capsule along Y: a cylinder of `halfLength` either side of the origin with hemispherical caps, smooth normals.
-    static func capsuleMesh(halfLength: Float, radius: Float, segments: Int = 24, rings: Int = 6) -> MeshGeometry {
+    package static func capsuleMesh(halfLength: Float, radius: Float, segments: Int = 24, rings: Int = 6) -> MeshGeometry {
         var p: [SIMD3<Float>] = [], n: [SIMD3<Float>] = [], idx: [UInt32] = []
         // Rows from the bottom pole to the top pole; the two equator rows sit at -halfLength and +halfLength.
         var rows: [(y: Float, r: Float, ny: Float)] = []
@@ -64,7 +64,7 @@ extension Scene {
     }
 
     /// Unit-radius icosphere with smooth normals.
-    static func icosphere(subdivisions: Int) -> MeshGeometry {
+    package static func icosphere(subdivisions: Int) -> MeshGeometry {
         let t: Float = (1 + Float(5).squareRoot()) / 2
         let base: [SIMD3<Float>] = [
             [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],

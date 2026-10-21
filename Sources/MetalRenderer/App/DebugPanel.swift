@@ -69,7 +69,7 @@ final class DebugPanel: NSObject {
     /// Shown at the last launch (the window comes back where it was).
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(renderer: RendererController) {
+    package init(renderer: RendererController) {
         self.renderer = renderer
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 820),
                         styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
@@ -339,7 +339,7 @@ final class DebugPanel: NSObject {
         private var labels: [String] = []
         static let labelWidth: CGFloat = 112
 
-        init(_ title: String) {
+        package init(_ title: String) {
             super.init(frame: .zero)
             orientation = .vertical
             alignment = .leading
@@ -351,7 +351,7 @@ final class DebugPanel: NSObject {
             grid.columnSpacing = 10
             addArrangedSubview(grid)
         }
-        required init?(coder: NSCoder) { fatalError() }
+        package required init?(coder: NSCoder) { fatalError() }
 
         /// Adds a view between the title and the rows.
         func add(_ view: NSView) {

@@ -31,7 +31,7 @@ final class SDFBuffers {
     /// What a frame reads of it, besides the structures.
     var buffers: [MTLBuffer] { [shapes, nodes, volumes, cells, scene] + boxBuffers }
 
-    init(device: MTLDevice, scene sdf: Scene) throws {
+    package init(device: MTLDevice, scene sdf: Scene) throws {
         func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             guard let made = array.withUnsafeBytes({ raw in
                 raw.isEmpty ? device.makeBuffer(length: 16, options: .storageModeShared)

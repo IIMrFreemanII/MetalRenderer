@@ -11,7 +11,7 @@ struct PaintMesh {
     var indices: [UInt32]            // into its own vertices
     var triangleCount: Int { indices.count / 3 }
 
-    init(positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>]? = nil, indices: [UInt32]) {
+    package init(positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>]? = nil, indices: [UInt32]) {
         self.positions = positions
         self.normals = normals
         self.uvs = uvs ?? [SIMD2<Float>](repeating: .zero, count: positions.count)
@@ -20,7 +20,7 @@ struct PaintMesh {
 
     /// Mesh `m` of a scene, out of the shared arrays: the vertices its triangles name (a pose slot's bind pose: the
     /// ones before its `vertexOffset`), renumbered from 0.
-    init(scene: Scene, mesh m: Int) {
+    package init(scene: Scene, mesh m: Int) {
         let mesh = scene.meshes[m]
         let range = Int(mesh.firstIndex)..<Int(mesh.firstIndex + mesh.indexCount)
         let own = scene.indices[range]

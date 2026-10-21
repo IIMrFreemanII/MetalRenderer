@@ -62,7 +62,7 @@ final class WaterSystem {
     /// `METALRENDERER_WATER_DEBUG`: 1 shows the map on the water (wet, depth, flow), 2 its normals.
     static let debug = ProcessInfo.processInfo.environment["METALRENDERER_WATER_DEBUG"].flatMap(UInt32.init) ?? 0
 
-    init?(device: MTLDevice) {
+    package init?(device: MTLDevice) {
         self.device = device
         func array(_ format: MTLPixelFormat, _ size: Int, _ slices: Int, mips: Bool, _ label: String, shared: Bool) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: size, height: size, mipmapped: mips)

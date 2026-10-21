@@ -2,7 +2,7 @@ import Foundation
 import simd
 
 /// What a terrain brush does where it is dragged.
-enum TerrainTool: String, Codable, CaseIterable, Identifiable {
+package enum TerrainTool: String, Codable, CaseIterable, Identifiable {
     // Sculpting.
     case raise, lower, smooth, flatten, setHeight, ramp, noise, terrace
     // Erosion and the generator, as brushes (TerrainErosion, TerrainGenerator).
@@ -10,7 +10,7 @@ enum TerrainTool: String, Codable, CaseIterable, Identifiable {
     // The ground's layers (TerrainPaint), and where the brushes leave it alone.
     case paint, erase, protect, unprotect
 
-    var id: String { rawValue }
+    package var id: String { rawValue }
     var title: String {
         switch self {
         case .raise: return "Raise"
@@ -57,7 +57,7 @@ enum TerrainTool: String, Codable, CaseIterable, Identifiable {
 }
 
 /// A terrain brush: what it does, how large (metres), how strong, how soft its edge, how far apart its dabs are.
-struct TerrainBrush: Codable, Equatable {
+package struct TerrainBrush: Codable, Equatable {
     var tool = TerrainTool.raise
     var radius: Float = 12
     var strength: Float = 0.5
@@ -69,8 +69,8 @@ struct TerrainBrush: Codable, Equatable {
     var airbrush: Float = 6
     /// Set height: metres (the world's y). Noise: metres per feature. Terrace: metres a step, and how hard (0...1).
     var height: Float = 0
-    var noiseScale: Float = 18
-    var terraceStep: Float = 4
+    package var noiseScale: Float = 18
+    package var terraceStep: Float = 4
     var terraceSharpness: Float = 0.8
     /// Paint: the layer.
     var layer = 1
@@ -84,6 +84,22 @@ struct TerrainBrush: Codable, Equatable {
         if t <= h { return 1 }
         let x = (t - h) / (1 - h)
         return 1 - x * x * (3 - 2 * x)
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(tool: TerrainTool = TerrainTool.raise, radius: Float = 12, strength: Float = 0.5, hardness: Float = 0.3, spacing: Float = 0.2, airbrush: Float = 6, height: Float = 0, noiseScale: Float = 18, terraceStep: Float = 4, terraceSharpness: Float = 0.8, layer: Int = 1, pressure: Bool = true) {
+        self.tool = tool
+        self.radius = radius
+        self.strength = strength
+        self.hardness = hardness
+        self.spacing = spacing
+        self.airbrush = airbrush
+        self.height = height
+        self.noiseScale = noiseScale
+        self.terraceStep = terraceStep
+        self.terraceSharpness = terraceSharpness
+        self.layer = layer
+        self.pressure = pressure
     }
 }
 
@@ -105,7 +121,7 @@ struct TerrainStroke {
     private(set) var path: [SIMD2<Double>]
     private var carried: Double = 0   // metres along the path since the last dab
 
-    init(brush: TerrainBrush, start: SIMD2<Double>, height: Float) {
+    package init(brush: TerrainBrush, start: SIMD2<Double>, height: Float) {
         self.brush = brush
         self.start = start
         startHeight = height

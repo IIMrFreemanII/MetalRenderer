@@ -358,7 +358,7 @@ struct PickedMaterial: View {
                     if let g = pick.graph { Text("now: \(g)").foregroundColor(.orange) }
                 }
             }
-            if model.scene.kind == .world {
+            if model.scene.kind.isWorld {
                 Text("The open world's tiles keep their own materials").foregroundColor(.secondary)
             } else {
                 HStack {

@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The stress building (Scene+Stress.swift), on the CPU: its knobs mean what the benchmarks' names say.

@@ -5,7 +5,7 @@ import simd
 /// the muscle atlas sculpts to. The mesh may be in pieces (a Mixamo bot's panels and joints overlap): which side is
 /// in is found by flooding the grid from outside, around the cells the skin passes near (a gap narrower than about
 /// four cells is closed), and the distance is to the skin the flood meets, not to a joint's piece inside the body.
-struct BodySurface {
+package struct BodySurface {
     let lo: SIMD3<Float>
     let cell: Float
     let counts: SIMD3<Int>
@@ -14,7 +14,7 @@ struct BodySurface {
 
     /// `solids`: shapes (each its bounds and distance) that are inside too, within a centimetre of the mesh, whatever
     /// it says there (a bot's hollow elbows, its deep grooves).
-    init(_ mesh: MeshGeometry, cell: Float = 0.006, band: Float = 0.05, smoothing: Int = 3,
+    package init(_ mesh: MeshGeometry, cell: Float = 0.006, band: Float = 0.05, smoothing: Int = 3,
          solids: [(bounds: AABB, distance: (SIMD3<Float>) -> Float)] = []) {
         self.cell = cell
         self.band = band
@@ -201,14 +201,14 @@ struct BodySurface {
 
 /// Where marks are on a character's body (MuscleAtlas.Mark): its trunk's line (the hips' joint to the neck's, through
 /// the spine's), and a mark's point under its skin.
-struct BodyMarks {
+package struct BodyMarks {
     let rig: CharacterRig
     let body: BodySurface
     let trunk: [SIMD3<Float>]
     /// How far along the trunk's line each of its points is.
     let lengths: [Float]
 
-    init(_ rig: CharacterRig, body: BodySurface) {
+    package init(_ rig: CharacterRig, body: BodySurface) {
         self.rig = rig
         self.body = body
         let spine = rig.bones.prefix { $0.role == .pelvis || $0.role == .spine || $0.role == .chest }
@@ -294,7 +294,7 @@ struct BodyMarks {
 /// `gap` from the layers above it, and shares with its own layer's neighbours what they both fill, cut where it is
 /// equally deep in each, so that they lie side by side with a groove between; under them all a fascia, the skin
 /// `fascia` deeper, fills what the grooves show. The head, the hands and the feet are the character's own mesh.
-struct MuscleAtlas {
+package struct MuscleAtlas {
     /// Where a mark is: up the trunk (0 at the hips' joint, 1 at the neck's; beyond that along its ends), or along a
     /// bone (0 at its joint, 1 at the next).
     enum Place {
@@ -310,7 +310,7 @@ struct MuscleAtlas {
         var angle: Float
     }
 
-    struct Muscle {
+    package struct Muscle {
         var name: String
         var side: Float
         /// 0: on top; 1: under others (carved by them all).
@@ -444,7 +444,7 @@ struct MuscleAtlas {
 
     /// A muscle sculpted: its strands' points (strand by strand, `samples` each, under the skin), the segments or
     /// triangles between them, each with a sphere round it (to skip it when it can't be nearest).
-    struct Shape {
+    package struct Shape {
         let muscle: Muscle
         let points: [[SIMD3<Float>]]
         /// Out of the skin at a tube's points (its section is `wide` times wider along the skin than into it).
@@ -456,7 +456,7 @@ struct MuscleAtlas {
         private let pieces: [(corners: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), uv: (SIMD2<Float>, SIMD2<Float>, SIMD2<Float>),
                               centre: SIMD3<Float>, reach: Float)]
 
-        init(_ muscle: Muscle, points: [[SIMD3<Float>]], normals: [SIMD3<Float>]) {
+        package init(_ muscle: Muscle, points: [[SIMD3<Float>]], normals: [SIMD3<Float>]) {
             self.muscle = muscle
             self.points = points
             self.normals = normals
@@ -552,21 +552,21 @@ struct MuscleAtlas {
 
     // MARK: Built
 
-    let shapes: [Shape]
+    package let shapes: [Shape]
     /// The skin it is sculpted to.
     let body: BodySurface
     let marks: BodyMarks
-    let skeleton: SkeletonAtlas
+    package let skeleton: SkeletonAtlas
     /// The drawn mesh: the muscles', then the fascia's, then the bones'; per vertex its texture's place and the rig's
     /// bone it moves with (a muscle's or the fascia's the one it is deepest in, a bone's the one it rides); per triangle
     /// its material (0 muscle, 1 fascia, 2 bone).
-    let mesh: MeshGeometry
-    let uvs: [SIMD2<Float>]
-    let bones: [Int]
-    let materials: [UInt8]
+    package let mesh: MeshGeometry
+    package let uvs: [SIMD2<Float>]
+    package let bones: [Int]
+    package let materials: [UInt8]
     /// Each muscle's vertices, and each of its skeleton's pieces'.
     let ranges: [Range<Int>]
-    let pieces: [Range<Int>]
+    package let pieces: [Range<Int>]
 
     /// `rig`'s bones' shapes (all but the rigid ones: head, hands, feet) 8 mm within them, as BodySurface's `solids`:
     /// inside too, whatever the mesh says (the Y Bot's elbows are hollow).
@@ -585,7 +585,7 @@ struct MuscleAtlas {
 
     /// The atlas on `rig`'s character, sculpted on its whole mesh (its coarser levels, simplified when the character cache
     /// is built, aren't symmetric: a rebuilt cache moved a muscle a centimetre off its mirror).
-    init(_ rig: CharacterRig, muscles: [Muscle] = MuscleAtlas.all) {
+    package init(_ rig: CharacterRig, muscles: [Muscle] = MuscleAtlas.all) {
         let level = rig.character.level(0)
         let body = BodySurface((level.positions, level.normals, level.indices), solids: MuscleAtlas.boneSolids(rig))
         self.body = body
@@ -787,7 +787,7 @@ struct MuscleAtlas {
 
     /// The muscles' textures: along x a tendon's white into the belly's red and back (`textureU`), across y the
     /// fibres' stripes, wandering a little; and their relief as a normal map.
-    static func textures() -> (base: FoliageTextures.Image, normal: FoliageTextures.Image) {
+    package static func textures() -> (base: FoliageTextures.Image, normal: FoliageTextures.Image) {
         let size = 512, stripes: Float = 16
         func height(_ x: Float, _ y: Float) -> Float {
             let wander = 0.35 * FoliageTextures.noise(x * 6, y * 4, 6, 4, 11)

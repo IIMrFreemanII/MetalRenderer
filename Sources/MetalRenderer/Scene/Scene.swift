@@ -6,12 +6,12 @@ import simd
 /// scenes (`SceneSettings`; the stress building is in Scene+Stress.swift).
 /// All geometry lives in one shared vertex/index buffer; each mesh gets its own
 /// primitive acceleration structure and every object is an instance of a mesh.
-typealias MeshGeometry = (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32])
+package typealias MeshGeometry = (positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32])
 
-final class Scene {
-    struct Instance {
-        var mesh: Int
-        var material: Int
+package final class Scene {
+    package struct Instance {
+        package var mesh: Int
+        package var material: Int
         var mask: UInt32
         var transform: float4x4
         var prevTransform: float4x4
@@ -29,9 +29,9 @@ final class Scene {
         /// ...that walks: `Scene.update` moves it along its lane.
         var travels = false
         /// >= 0: an SDF shape's instance, index into `sdfShapes` (then `mesh` is -1 and `material` is its nodes' first).
-        var sdf = -1
+        package var sdf = -1
         /// A rigid body's: the physics (Physics.swift) moves it.
-        var simulated = false
+        package var simulated = false
 
         /// Never moves or deforms: its transform is the one it was added with (a still scene's structure is built once).
         var isStatic: Bool { animation == nil && !poseAnimated && !deforms && !simulated }
@@ -43,9 +43,9 @@ final class Scene {
 
     /// A plant as parts (Foliage.Plant): meshes placed in the plant's own space, many of them the same few meshes
     /// (the species' boughs). Every instance of the plant shares it, through the structures over its parts (PlantTracing).
-    struct Assembly {
+    package struct Assembly {
         /// What a part turns about in the wind (Shaders/Foliage.metal). `angle`: its largest turn, at full wind; 0 = it doesn't.
-        struct Bone {
+        package struct Bone {
             var pivot = SIMD3<Float>()        // plant space, at rest
             var angle: Float = 0
             var axis = SIMD3<Float>(1, 0, 0)
@@ -53,16 +53,29 @@ final class Scene {
         }
         /// The whole plant's largest lean about its foot, at full wind (WIND_ROOT_SWAY in Shaders/Foliage.metal).
         static let rootSway: Float = 0.022
-        struct Part {
+        package struct Part {
             var mesh: Int
             var transform: float4x4           // into plant space: a rotation, a uniform scale and a translation
             var firstLeaf: UInt32             // the mesh's triangles from here on take the leaves' material
             var leafCount: UInt32 = 0         // how many they are (autumn drops them from the end); 0 = it keeps them
             var bone: Int
-            var bounds: AABB                  // of the placed mesh, in plant space (its vertices', not its box's)
+            package var bounds: AABB                  // of the placed mesh, in plant space (its vertices', not its box's)
             var windPad: Float = 0            // how far its bones' largest turns (full wind) can move any of it
             var limb = Bone()                 // the limb it is, or hangs on
             var bough = Bone()                // itself on that limb, if it is a bough
+
+            /// (As the memberwise initializer, for the game: Sources/Game.)
+            package init(mesh: Int, transform: float4x4, firstLeaf: UInt32, leafCount: UInt32 = 0, bone: Int, bounds: AABB, windPad: Float = 0, limb: Bone = Bone(), bough: Bone = Bone()) {
+                self.mesh = mesh
+                self.transform = transform
+                self.firstLeaf = firstLeaf
+                self.leafCount = leafCount
+                self.bone = bone
+                self.bounds = bounds
+                self.windPad = windPad
+                self.limb = limb
+                self.bough = bough
+            }
         }
         var parts: [Part]
         var bounds: AABB
@@ -70,6 +83,14 @@ final class Scene {
         /// Not a plant: a building of modules (Building.Module). It has no wind, no leaves and no voxels, and one
         /// variant (PlantTracing).
         var rigid = false
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(parts: [Part], bounds: AABB, evergreen: Bool = false, rigid: Bool = false) {
+            self.parts = parts
+            self.bounds = bounds
+            self.evergreen = evergreen
+            self.rigid = rigid
+        }
     }
 
     /// A leaf material as `setLeaves` changes it: its summer colour, what it turns to in autumn and when in the year
@@ -84,7 +105,7 @@ final class Scene {
     }
 
     /// An encoded image a material samples (decoded and uploaded by the renderer).
-    struct TextureSource {
+    package struct TextureSource {
         var data: Data
         var srgb: Bool                        // colour data (base colour, emissive) vs linear (normal, metallic-roughness)
         var name: String
@@ -104,7 +125,7 @@ final class Scene {
     }
 
     /// A light's shape. Angles in radians.
-    enum LightKind {
+    package enum LightKind {
         case sphere(radius: Float)                              // color = radiant intensity
         case spot(radius: Float, inner: Float, outer: Float)    // a sphere light inside a cone (half angles), same units
         case sun(angularRadius: Float)                          // color = irradiance, from LightPose.direction
@@ -116,22 +137,30 @@ final class Scene {
     }
 
     /// Where a light is and how bright, at one time.
-    struct LightPose {
+    package struct LightPose {
         var position: SIMD3<Float>
         var direction = SIMD3<Float>(0, -1, 0)   // spot axis, rect normal, toward the sun, tube axis
         var tangent: SIMD3<Float>? = nil         // rect: its width's direction (default: horizontal)
         var scale = SIMD3<Float>(repeating: 1)   // multiplies the colour (flicker, the sun's colour over the day)
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(position: SIMD3<Float>, direction: SIMD3<Float> = SIMD3<Float>(0, -1, 0), tangent: SIMD3<Float>? = nil, scale: SIMD3<Float> = SIMD3<Float>(repeating: 1)) {
+            self.position = position
+            self.direction = direction
+            self.tangent = tangent
+            self.scale = scale
+        }
     }
 
     /// What of a light's pose changes over time: `update` re-evaluates only that, and only an `animated` light's proxy
     /// is a moving instance for the ray tracers. (Suns are always re-posed: they follow the time of day.)
-    enum LightMotion {
+    package enum LightMotion {
         case animated      // position / direction (and maybe scale)
         case scaleOnly     // fixed in place, its brightness or colour changes (flicker, chases)
         case constant      // nothing
     }
 
-    struct Light {
+    package struct Light {
         var kind: LightKind
         var color: SIMD3<Float>               // see LightKind for the units
         var pose: (Float) -> LightPose
@@ -150,7 +179,7 @@ final class Scene {
     }
 
     /// An emissive instance sampled as a light: its triangles are `emissiveTriangles[first ..< first + count]`.
-    struct MeshLight {
+    package struct MeshLight {
         var instance: Int
         var firstTriangle: Int
         var triangleCount: Int
@@ -208,15 +237,15 @@ final class Scene {
 
     /// A mesh light made already (an open world's tile has its own in its file): `light.instance` is the instance of
     /// the borrowed mesh it is of, its triangles are `triangles[range]`.
-    struct BorrowedLight {
+    package struct BorrowedLight {
         var light: MeshLight
         var triangles: Stored<GPUEmissiveTriangle>
         var range: Range<Int>
     }
 
     /// A local fog volume (FogVolume in Shaders/Types.metal): a soft-edged box or sphere of denser fog, optionally moving.
-    struct FogVolume {
-        enum Shape {
+    package struct FogVolume {
+        package enum Shape {
             case box(halfExtents: SIMD3<Float>)
             case sphere(radius: Float)
         }
@@ -238,21 +267,33 @@ final class Scene {
             return GPUFogVolume(centerShape: SIMD4(center, shapeID), extentDensity: SIMD4(extent, density),
                                 albedoEdge: SIMD4(albedo, edge), params: SIMD4(noise, heightFalloff, 0, 0))
         }
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(shape: Shape, center: SIMD3<Float>, density: Float, albedo: SIMD3<Float> = SIMD3<Float>(repeating: 0.9), edge: Float = 0.5, noise: Float = 0.6, heightFalloff: Float = 0, motion: ((Float) -> SIMD3<Float>)? = nil) {
+            self.shape = shape
+            self.center = center
+            self.density = density
+            self.albedo = albedo
+            self.edge = edge
+            self.noise = noise
+            self.heightFalloff = heightFalloff
+            self.motion = motion
+        }
     }
 
     /// Instance masks. Shadow and GI rays only test `geometry`, so the visible
     /// light spheres never block their own light.
-    static let maskGeometry: UInt32 = 1
+    package static let maskGeometry: UInt32 = 1
     static let maskLights: UInt32 = 2
     /// Window glass: only camera rays meet it (they pass through it and take its reflection, traceKernel); to shadow
     /// and GI rays it isn't there, so light goes through windows.
-    static let maskGlass: UInt32 = 4
+    package static let maskGlass: UInt32 = 4
     /// A far plant as its voxels (VoxelLOD): met by the rays that meet `geometry` (MASK_VOXELS).
     static let maskVoxels: UInt32 = 8
     /// A liquid's surface (FluidSurface.swift): only liquidKernel's rays meet it, which bend the camera's through it.
     static let maskLiquid: UInt32 = 32
     /// An effect's glowing shape (the demolition scene's fireballs): camera rays meet it, shadow and GI rays don't.
-    static let maskEffect: UInt32 = 64
+    package static let maskEffect: UInt32 = 64
     /// Not a mask: what an SDF shape's instance has besides its mask in its record's (GPUInstanceData.pad0). No ray's
     /// mask has it, so no ray tests it as one.
     static let instanceSDF: UInt32 = 0x2000_0000
@@ -354,19 +395,19 @@ final class Scene {
 
     /// What `body` adds is the object `path` ("Harbor/Crane": an object in a folder), inside the one open now, if any.
     @discardableResult
-    func object<T>(_ path: String, assets: [AssetKey] = [], _ body: () throws -> T) rethrows -> T {
+    package func object<T>(_ path: String, assets: [AssetKey] = [], _ body: () throws -> T) rethrows -> T {
         beginObject(path, assets: assets)
         defer { endObject() }
         return try body()
     }
 
-    func beginObject(_ path: String, assets: [AssetKey] = []) {
+    package func beginObject(_ path: String, assets: [AssetKey] = []) {
         openTags.append((path, assets, instances.count, lights.count, effects.count))
     }
 
     /// A builder's next part ("Stage", "Props", "Lights"): what it adds from here, until the next `section` (or the end of
     /// the builder), is that object. It closes the section open before it, and what was opened in that.
-    func section(_ name: String, assets: [AssetKey] = []) {
+    package func section(_ name: String, assets: [AssetKey] = []) {
         if let d = sectionDepth { while openTags.count > d { endObject() } }
         let depth = openTags.count
         beginObject(name, assets: assets)
@@ -374,7 +415,7 @@ final class Scene {
     }
     private var sectionDepth: Int?
 
-    func endObject() {
+    package func endObject() {
         guard let open = openTags.popLast() else { return }
         if let d = sectionDepth, openTags.count <= d { sectionDepth = nil }
         let parent = openTags.flatMap { $0.name.split(separator: "/").map(String.init) }
@@ -387,7 +428,7 @@ final class Scene {
     var sceneOverrides = AppliedOverrides()
 
     /// The edits' way in (SceneOverrides.swift): an instance changed, one appended, lights taken out.
-    func editInstance(_ i: Int, _ change: (inout Instance) -> Void) { change(&instances[i]) }
+    package func editInstance(_ i: Int, _ change: (inout Instance) -> Void) { change(&instances[i]) }
     @discardableResult
     func appendInstance(_ instance: Instance) -> Int {
         instances.append(instance)
@@ -396,15 +437,15 @@ final class Scene {
     func removeLights(where shouldRemove: (Light) -> Bool) { lights.removeAll(where: shouldRemove) }
 
     /// Names a mesh, an assembly or an SDF shape for the outline ("oak", "lamp post"): unlike `meshNames`, only a label.
-    func label(mesh: Int, _ name: String, shared: Bool = false, asset: AssetKey? = nil) {
+    package func label(mesh: Int, _ name: String, shared: Bool = false, asset: AssetKey? = nil) {
         if mesh >= 0 { meshLabels[mesh] = (name, shared, asset) }
     }
-    func label(assembly: Int, _ name: String) { if assembly >= 0 { assemblyLabels[assembly] = name } }
-    func label(sdf: Int, _ name: String) { if sdf >= 0 { sdfLabels[sdf] = name } }
+    package func label(assembly: Int, _ name: String) { if assembly >= 0 { assemblyLabels[assembly] = name } }
+    package func label(sdf: Int, _ name: String) { if sdf >= 0 { sdfLabels[sdf] = name } }
     var meshes: [GPUMesh] = []
     /// Shapes given by signed distance fields (SDFShapes.swift), the baked grids their nodes may be, and each shape's box.
-    var sdfShapes: [SDFShape] = []
-    var sdfVolumes: [SDFVolume] = []
+    package var sdfShapes: [SDFShape] = []
+    package var sdfVolumes: [SDFVolume] = []
     var sdfBounds: [AABB] = []
     /// Some instance is an SDF shape's (set once, by init): the shaders are compiled with SDF_SHAPES.
     private(set) var hasSDFShapes = false
@@ -412,7 +453,7 @@ final class Scene {
     /// of the same name in another scene is the same triangles in the same order, so what was built for it holds
     /// there too (Metal's per-mesh structures: SceneBuffers).
     var meshNames: [Int: String] = [:]
-    var materials: [GPUMaterial] = []
+    package var materials: [GPUMaterial] = []
     /// Procedural materials' extras (GPUMaterialExtra), by material index: height, opacity, UV scale, occlusion
     /// (Scene+Procedural.swift). A scene with any compiles MATERIAL_EXTRAS in; one whose graphs give opacity, OPACITY.
     var materialExtras: [Int: GPUMaterialExtra] = [:]
@@ -436,14 +477,14 @@ final class Scene {
     var displacementNotes: [String] = []
     /// Procedural materials a scene keeps undisplaced (their parallax instead), so its triangles go where relief shows:
     /// the swamp's ground, its flat patches and its far trees, leaving them to its near gnarly trunks.
-    var undisplacedMaterials: Set<Int> = []
+    package var undisplacedMaterials: Set<Int> = []
     /// Objects the Material Painter paints (Scene+Painted.swift): each its instance's texture set's slots and layout,
     /// and the UVs of their corners, three per triangle, after the meshes' own on the GPU (the painted materials' extras
     /// say where theirs start). The painter workshop's object (Scene+Painter.swift), painted whatever is assigned.
     var painted: [PaintedObject] = []
     var paintUVs: [SIMD2<Float>] = []
     var paintSubject: Int? = nil
-    var instances: [Instance] = []
+    package var instances: [Instance] = []
     var lights: [Light] = []
     var meshLights: [MeshLight] = []
     var borrowedLights: [BorrowedLight] = []
@@ -471,9 +512,9 @@ final class Scene {
     var deforming: [(mesh: Int, first: Int, count: Int)] = []
     /// glTF parts with emissive materials: their geometry, for mesh lights (virtual meshes keep none of it).
     var emitterSources: [Int: (positions: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32])] = [:]
-    var defaultCamera = Camera()
+    package var defaultCamera = Camera()
     /// The plant workshop's: what its camera orbits and frames, and what its plant costs (Scene+Plants.swift).
-    var focus: AABB?
+    package var focus: AABB?
     var plantStats: PlantStats?
     /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
     var buildingStats: BuildingStats?
@@ -482,27 +523,27 @@ final class Scene {
     var characterStats: CharacterStats?
     /// What the walker (Walker.swift) meets: the interiors' walls, floors, stairs and furniture, the ground round
     /// them; and the buildings that can be walked in, where they stand.
-    var walkColliders: [Interior.Collider] = []
-    var walkAreas: [WalkArea] = []
+    package var walkColliders: [Interior.Collider] = []
+    package var walkAreas: [WalkArea] = []
     /// The ground under what the colliders don't cover (the open world's terrain: its height at x, z).
     var walkGround: ((Float, Float) -> Float)?
     /// The scene's terrain, if its ground is one (Scene+Terrain.swift): its sectors' meshes and instances.
-    var terrain: SceneTerrain?
+    package var terrain: SceneTerrain?
     /// The scene's water, if it has some (Scene+Water.swift): its looks, which materials are its surfaces', and where
     /// it is (the water map's field).
-    var water: SceneWater?
+    package var water: SceneWater?
     /// The city's buildings: which (LotRef.key), where (the world's x, z) and how tall: the renderer makes the interior
     /// of the one the camera comes near (SceneSettings.interior).
-    var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
+    package var lotAreas: [(key: String, rect: CityPlan.Rect, height: Float)] = []
     /// What moves and switches in its interiors (doors, lights, lifts, the flashlight): read by their poses.
     var interiorControls: InteriorControls?
     /// Made again at every edit (the workshop): its structures are built to be ready soon, not to trace fastest or
     /// keep least (uncompacted), and its plants keep all their leaves (no leaf fall's variants).
     var remadeOften = false
     /// Its settings; only the effects' key changes after it is made (`adoptEffects`).
-    var settings: SceneSettings
+    package var settings: SceneSettings
     /// While `init` builds the scene: the load's step that the builders report models to (the loading overlay).
-    private(set) var loadStep: LoadStep?
+    package private(set) var loadStep: LoadStep?
     /// Some instance is window glass (maskGlass). Set by `addGlassMaterial`.
     var hasGlass = false
     /// The open world: what counts as the scene for the sun's light map, the fog and the clouds' shadows is what is
@@ -516,17 +557,17 @@ final class Scene {
     /// Where the camera is (the renderer sets it before `update`): the workshop's faces look at it.
     var viewer: SIMD3<Float>?
     /// The scene's rigid bodies, if it has any (Physics.swift): `update` steps them on the CPU unless `physicsOnGPU`.
-    var physics: PhysicsWorld?
+    package var physics: PhysicsWorld?
     /// The destruction scene's shots (Scene+Destruction.swift), if it is that scene.
-    var destructionRig: DestructionRig?
+    package var destructionRig: DestructionRig?
     /// The demolition scene's tools (Scene+Demolition.swift), if it is that scene.
-    var demolitionRig: DemolitionRig?
+    package var demolitionRig: DemolitionRig?
     /// Per material, what the solid look should know of it (Scene.cutFace): a fractured object's broken inside.
     private(set) var materialFlags: [UInt8] = []
     static let cutFace: UInt8 = 1
 
     /// Material `m` is a fractured object's broken inside (the solid look draws it darker and warmer).
-    func markCutFace(_ m: Int) {
+    package func markCutFace(_ m: Int) {
         if materialFlags.count <= m { materialFlags.append(contentsOf: repeatElement(0, count: m + 1 - materialFlags.count)) }
         materialFlags[m] |= Scene.cutFace
     }
@@ -581,10 +622,10 @@ final class Scene {
     var cityLightRadiance: [Float] = []
     var lightTrianglesDirty: Range<Int>?
 
-    var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
-    var skyAnimation: ((Float) -> SIMD3<Float>)?
+    package var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
+    package var skyAnimation: ((Float) -> SIMD3<Float>)?
     /// Local fog volumes (used while the fog and its volumes are on), at most GPUFogParams.maxVolumes.
-    var fogVolumes: [FogVolume] = []
+    package var fogVolumes: [FogVolume] = []
     /// Bounding sphere of the static scene (the sun's orthographic light map covers it).
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
     /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
@@ -600,7 +641,7 @@ final class Scene {
     /// `load`: the load to report the build to; a gallery stops loading models when it is cancelled.
     deinit { physicsStepper?.stop() }
 
-    init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
+    package init(_ settings: SceneSettings = SceneSettings(), virtualGeometry: Bool = false, assemblies: Bool = false, voxelBoxes: Bool = false,
          load: LoadJob? = nil, building: ((Scene) -> Void)? = nil) {
         self.settings = settings
         loadStep = load?.step("Scene", detail: settings.kind.title)
@@ -609,44 +650,7 @@ final class Scene {
         self.usesCards = assemblies && settings.leafCards
         self.usesVoxelBoxes = voxelBoxes
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
-        switch settings.kind {
-        case .cornell: buildCornell()
-        case .stress: buildStress(objects: settings.objects, lights: settings.lights)
-        case .gallery: buildGallery()
-        case .spots: buildSpots()
-        case .sun: buildSun()
-        case .area: buildArea()
-        case .tubes: buildTubes()
-        case .emissive: buildEmissive()
-        case .mixed: buildMixed()
-        case .fog: buildFogHall()
-        case .valley: buildValley()
-        case .market: buildMarket()
-        case .forest: buildForest()
-        case .crowd: buildCrowd(characters: settings.characters, poses: settings.poses, detail: settings.detail)
-        case .city: buildCity(settings.city, seed: settings.seed, night: false)
-        case .cityNight: buildCity(settings.city, seed: settings.seed, night: true)
-        case .world: buildWorld()
-        case .showcase: buildShowcase()
-        case .shapes: buildShapes()
-        case .physics: buildPhysics(settings.physics)
-        case .ragdolls: buildRagdolls(settings.physics)
-        case .hair: buildHair(settings.physics)
-        case .softBodies: buildSoftBodies(settings.physics)
-        case .muscles: buildMuscles(settings.physics)
-        case .fluids: buildFluids(settings.physics)
-        case .particles: buildParticles()
-        case .plants: buildPlantWorkshop()
-        case .vfxStage: buildVFXStage()
-        case .buildings: buildBuildingWorkshop()
-        case .characters: buildCharacterWorkshop()
-        case .materials: buildMaterialWorkshop()
-        case .mireland: buildMireland()
-        case .painter: buildPainterWorkshop()
-        case .terrain: buildTerrainWorkshop()
-        case .destruction: buildDestruction(settings.destruction)
-        case .demolition: buildDemolition(settings.demolition)
-        }
+        settings.kind.definition.build(self)
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
         buildProceduralPrograms()
@@ -740,7 +744,7 @@ final class Scene {
     private(set) var usesLightTable = false
     /// Set by a scene's builder: the light table whatever the count. (The city at night: a building's lit windows are
     /// one mesh light wrapped around it, which the per-light loops of a scene with few lights sample badly.)
-    var forcesLightTable = false
+    package var forcesLightTable = false
 
     // MARK: - Scene construction: state
 
@@ -757,7 +761,7 @@ final class Scene {
     var curveRadii: [Float] = []
     /// The hair's groups of drawn strands and their curve meshes (Scene+Hair.swift): once the meshes are done, each
     /// group is told where its mesh's control points are (`finishHair`).
-    var hairMeshes: [(group: Int, mesh: Int)] = []
+    package var hairMeshes: [(group: Int, mesh: Int)] = []
 
     // MARK: - Physics: state
 

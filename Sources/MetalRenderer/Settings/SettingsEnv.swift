@@ -5,7 +5,7 @@ import Foundation
 ///
 /// Three things are not rows of the table and are handled here: the scene's kind, check scene and added models in
 /// `METALRENDERER_SCENE`, and `METALRENDERER_SKY`, which is the sky mode's name or an image's path.
-enum SettingsEnv {
+package enum SettingsEnv {
     // MARK: - Export
 
     /// The variables that reproduce `s` in a fresh launch (or in every setting of a benchmark run), listing only what
@@ -67,7 +67,7 @@ enum SettingsEnv {
     /// Applies `variable`, if `env` has it, to `s`. Lists are `key=value,key=value`; a key the table doesn't know, or a
     /// value that doesn't read as the setting's type, is reported and skipped. `interactive`: outside benchmarks,
     /// which choose some settings (the view, paused) themselves.
-    static func apply(_ variable: EnvVariable, to s: inout RenderSettings, interactive: Bool = false,
+    package static func apply(_ variable: EnvVariable, to s: inout RenderSettings, interactive: Bool = false,
                       from env: [String: String] = ProcessInfo.processInfo.environment) {
         guard let text = env[variable.rawValue] else { return }
         let specs = SettingsTable.named.filter { $0.variable == variable }
@@ -99,7 +99,7 @@ enum SettingsEnv {
     private static func applySceneItem(_ kv: [String], to s: inout SceneSettings) -> Bool {
         if kv.count == 1, let kind = SceneKind(envText: kv[0]) {
             s.kind = kind
-            if kind == .market && s.lights == SceneSettings().lights { s.lights = SceneSettings.marketLights }
+            s.startLights()
             return true
         }
         guard kv.count == 2 else { return false }

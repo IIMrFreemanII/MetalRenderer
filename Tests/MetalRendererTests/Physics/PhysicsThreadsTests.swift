@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The CPU step on PhysicsThreads' workers (PhysicsCPU.swift): the same numbers, bit for bit, on one thread and on all

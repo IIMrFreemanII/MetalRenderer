@@ -6,8 +6,8 @@ import simd
 /// made of up to eight scanned layers (TextureSet) that a map the scene draws mixes (a weight per layer a texel), rock
 /// where the ground is steep, each layer's height deciding where it shows through the others (Shaders/Surface.metal
 /// `terrainRealistic`, UE's height lerp). What it would be in the Terrain Editor's terms: an automatic material.
-struct GroundLook {
-    struct Layer {
+package struct GroundLook {
+    package struct Layer {
         var set: String
         /// Without the scan: its plain colour over the generated detail texture.
         var color: SIMD3<Float>
@@ -21,8 +21,19 @@ struct GroundLook {
         /// How far its height raises and sinks the near ground with realism high, metres (nil: its scan's own:
         /// GroundRelief.relief(of:)).
         var relief: Float? = nil
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(set: String, color: SIMD3<Float>, tint: SIMD3<Float> = .one, metres: Float? = nil, contrast: Float = 1, roughness: Float = 1, relief: Float? = nil) {
+            self.set = set
+            self.color = color
+            self.tint = tint
+            self.metres = metres
+            self.contrast = contrast
+            self.roughness = roughness
+            self.relief = relief
+        }
     }
-    var layers: [Layer]
+    package var layers: [Layer]
     /// The layer steep ground is (nil: none), and the normals' y between which it comes in (all of it under `slope.x`).
     var rock: Int? = nil
     var slope = SIMD2<Float>(0.62, 0.82)
@@ -31,9 +42,9 @@ struct GroundLook {
     var size: SIMD2<Float>
     var texels: Int
     /// What the map's pixels depend on (the caches' key: change it with anything `weights` reads).
-    var key: String
+    package var key: String
     /// Each layer's weight at a place (scene x, z): `layers.count` of them, normalised where they're drawn.
-    var weights: (Float, Float) -> [Float]
+    package var weights: (Float, Float) -> [Float]
 
     static let maxLayers = 8
 
@@ -54,7 +65,7 @@ struct GroundLook {
 
     /// Rolling grassland: grass with patches of dry grass and bare earth, mud round water (`water`'s, within 3 m) and
     /// pebbles under it, rock where it is steep. `bare` adds earth (0...1) where a scene wants it (a path, a yard).
-    static func meadow(lo: SIMD2<Float>, size: SIMD2<Float>, texels: Int, key: String, seed: UInt32, water: WaterField? = nil,
+    package static func meadow(lo: SIMD2<Float>, size: SIMD2<Float>, texels: Int, key: String, seed: UInt32, water: WaterField? = nil,
                        bare: @escaping (Float, Float) -> Float = { _, _ in 0 }) -> GroundLook {
         GroundLook(
             layers: [.init(set: "grass", color: [0.2, 0.3, 0.1], contrast: 0.6),
@@ -110,9 +121,21 @@ struct GroundLook {
     }
 
     /// A smooth step from 0 at `a` to 1 at `b`.
-    static func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float {
+    package static func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(max((x - a) / (b - a), 0), 1)
         return t * t * (3 - 2 * t)
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(layers: [Layer], rock: Int? = nil, slope: SIMD2<Float> = SIMD2<Float>(0.62, 0.82), lo: SIMD2<Float>, size: SIMD2<Float>, texels: Int, key: String, weights: @escaping (Float, Float) -> [Float]) {
+        self.layers = layers
+        self.rock = rock
+        self.slope = slope
+        self.lo = lo
+        self.size = size
+        self.texels = texels
+        self.key = key
+        self.weights = weights
     }
 }
 
@@ -157,7 +180,7 @@ extension Scene {
 
     /// The scene's terrain's ground as `look` says (with the realistic look on; after `addTerrain`, before
     /// `finishTerrainLayers`).
-    func addGroundLook(_ look: GroundLook) {
+    package func addGroundLook(_ look: GroundLook) {
         guard settings.realism != .off, let t = terrain else { return }
         let detail = t.detail != .max ? t.detail : terrainDetailTexture()
         var rows = GroundRows()
@@ -266,7 +289,7 @@ extension Scene {
     /// The realistic look's grass on the scene's terrain round `center` (Flora.meadow), where `density` says, with its own
     /// flora (the built-in grass) unless the scene's has grass. How many patches.
     @discardableResult
-    func addMeadowGrass(center: SIMD2<Float>, reach: Float, seed: UInt64, flora given: Flora? = nil, density: (Float, Float) -> Float) -> Int {
+    package func addMeadowGrass(center: SIMD2<Float>, reach: Float, seed: UInt64, flora given: Flora? = nil, density: (Float, Float) -> Float) -> Int {
         guard settings.realism != .off, let t = terrain else { return 0 }
         let flora = given ?? Flora(self, seed: seed, catalog: .builtIn, species: [.grass])
         func ground(_ x: Float, _ z: Float) -> (Float, SIMD3<Float>) {

@@ -5,8 +5,8 @@ import simd
 /// It names what it changes by where it is, not by an id: replayed on the plan the generator makes (BuildingPlanner),
 /// it finds its room, wall or door there again, so that it survives a change of the style, the floors or the seed
 /// as long as what it changed is still there. One that finds nothing is kept, but does nothing (`BuildingPlan.orphaned`).
-struct PlanEdit: Codable, Equatable {
-    enum Op: String, Codable, CaseIterable {
+package struct PlanEdit: Codable, Equatable {
+    package enum Op: String, Codable, CaseIterable {
         case split          // the room at `at` in two, by a wall through `at` (along x if `alongX`)
         case merge          // the rooms at `at` and `to`, if together they are a rectangle
         case setType        // the room at `at` is a `type`
@@ -25,10 +25,21 @@ struct PlanEdit: Codable, Equatable {
     var width: Float? = nil
 
     var changesRooms: Bool { [.split, .merge, .setType, .moveWall].contains(op) }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(op: Op, storeys: StoreySel, at: SIMD2<Float>, to: SIMD2<Float>? = nil, alongX: Bool? = nil, type: RoomType? = nil, width: Float? = nil) {
+        self.op = op
+        self.storeys = storeys
+        self.at = at
+        self.to = to
+        self.alongX = alongX
+        self.type = type
+        self.width = width
+    }
 }
 
 /// Which storeys an edit is for.
-enum StoreySel: Codable, Equatable {
+package enum StoreySel: Codable, Equatable {
     case one(Int)
     case range(Int, Int)
     case all
@@ -44,13 +55,13 @@ enum StoreySel: Codable, Equatable {
 
 /// Which building of which scene a single building's plan is for: its city (seed and settings) or the world's
 /// block, and its lot (index, seed, size). The workshop's own building is `workshop`'s.
-struct LotRef: Codable, Equatable, Hashable {
+package struct LotRef: Codable, Equatable, Hashable {
     var context: String
     var lot: Int
     var seed: UInt64
     var size: SIMD2<Float>
 
-    static func city(_ city: CitySettings, seed: Int, lot: Int, _ l: CityPlan.Lot) -> LotRef {
+    package static func city(_ city: CitySettings, seed: Int, lot: Int, _ l: CityPlan.Lot) -> LotRef {
         LotRef(context: "city \(seed) \(city.blocks) \(city.style.name)", lot: lot, seed: l.seed, size: l.size)
     }
     static func workshop(style: String, size: SIMD2<Float>, seed: UInt64) -> LotRef {
@@ -58,7 +69,7 @@ struct LotRef: Codable, Equatable, Hashable {
     }
     var isWorkshop: Bool { context.hasPrefix("workshop") }
     /// Said in one string (SceneSettings.interior).
-    var key: String { "\(context)#\(lot)" }
+    package var key: String { "\(context)#\(lot)" }
     var title: String {
         isWorkshop ? "the workshop's \(context.dropFirst(9)) building" : "lot \(lot) of \(context)"
     }
@@ -66,7 +77,7 @@ struct LotRef: Codable, Equatable, Hashable {
 
 /// A single building's own plan: its style, floors, shape, use instead of its lot's and its style's, and its hand
 /// edits (Assets/Buildings/overrides.json).
-struct LotOverride: Codable, Equatable {
+package struct LotOverride: Codable, Equatable {
     var ref: LotRef
     var style: String? = nil
     var floors: Int? = nil
@@ -79,15 +90,25 @@ struct LotOverride: Codable, Equatable {
         self.ref.context == ref.context && self.ref.lot == ref.lot && self.ref.seed == ref.seed
             && simd_length(self.ref.size - ref.size) < 0.01
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(ref: LotRef, style: String? = nil, floors: Int? = nil, shape: PlanShape? = nil, use: BuildingUse? = nil, edits: [PlanEdit] = []) {
+        self.ref = ref
+        self.style = style
+        self.floors = floors
+        self.shape = shape
+        self.use = use
+        self.edits = edits
+    }
 }
 
 extension BuildingCatalog {
-    func override(for ref: LotRef) -> LotOverride? { overrides.first { $0.matches(ref) } }
+    package func override(for ref: LotRef) -> LotOverride? { overrides.first { $0.matches(ref) } }
 }
 
 extension BuildingSpec {
     /// `o` applied: its style, floors, use and edits.
-    mutating func apply(_ o: LotOverride, catalog: BuildingCatalog) {
+    package mutating func apply(_ o: LotOverride, catalog: BuildingCatalog) {
         if let id = o.style, let def = catalog.style(id: id) { self.def = def }
         if let f = o.floors { floors = max(1, f) }
         if let shape = o.shape { def.massing.shapes = [shape] }

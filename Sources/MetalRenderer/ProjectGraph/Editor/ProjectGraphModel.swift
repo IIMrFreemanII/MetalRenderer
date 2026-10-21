@@ -35,7 +35,7 @@ struct FrameTarget: Equatable {
 enum EditorTarget: Equatable {
     case material(String), effect(String), plant(String), building(String), character(String), painter(String)
 
-    init?(_ key: AssetKey) {
+    package init?(_ key: AssetKey) {
         switch key.kind {
         case .materialGraph: self = .material(key.name)
         case .vfxGraph: self = .effect(key.name)
@@ -132,7 +132,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
     private var saveWork: DispatchWorkItem?
 
     /// `folder`: where outlines and edits are (nil: nothing is read or written); `saved`: the edits as they are saved.
-    init(host: ProjectGraphHost, folder: URL? = SceneOverrides.folder, outlines: [String: SceneOutline]? = nil,
+    package init(host: ProjectGraphHost, folder: URL? = SceneOverrides.folder, outlines: [String: SceneOutline]? = nil,
          saved: SceneOverrides? = nil, library: [AssetKey]? = nil, loadSource: Bool = true) {
         self.host = host
         self.folder = folder

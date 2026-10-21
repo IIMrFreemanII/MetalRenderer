@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Material graphs without the GPU: their JSON, the plan the engine bakes (order, types, sizes, precision, packed

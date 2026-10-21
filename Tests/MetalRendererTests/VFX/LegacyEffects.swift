@@ -1,5 +1,6 @@
 import Foundation
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The particles scene's and the showcase's emitters as they were written before effects were graphs (Scene+Particles

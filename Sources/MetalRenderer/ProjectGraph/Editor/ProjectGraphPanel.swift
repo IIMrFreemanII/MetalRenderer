@@ -11,7 +11,7 @@ final class ProjectGraphPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(host: ProjectGraphHost, openEditor: @escaping (EditorTarget) -> Void) {
+    package init(host: ProjectGraphHost, openEditor: @escaping (EditorTarget) -> Void) {
         model = ProjectGraphModel(host: host)
         model.openEditor = openEditor
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 860),

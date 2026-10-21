@@ -8,16 +8,16 @@ struct Quadric {
     var weight: Float = 0
 
     /// Plane through `p` with unit normal `n`, weighted by `w`.
-    init(plane n: SIMD3<Float>, through p: SIMD3<Float>, weight w: Float) {
+    package init(plane n: SIMD3<Float>, through p: SIMD3<Float>, weight w: Float) {
         let d = -dot(n, p)
         a2 = n.x * n.x * w; b2 = n.y * n.y * w; c2 = n.z * n.z * w
         ab = n.x * n.y * w; ac = n.x * n.z * w; bc = n.y * n.z * w
         ad = n.x * d * w; bd = n.y * d * w; cd = n.z * d * w; d2 = d * d * w
         weight = w
     }
-    init() {}
+    package init() {}
 
-    static func += (q: inout Quadric, r: Quadric) {
+    package static func += (q: inout Quadric, r: Quadric) {
         q.a2 += r.a2; q.b2 += r.b2; q.c2 += r.c2; q.ab += r.ab; q.ac += r.ac; q.bc += r.bc
         q.ad += r.ad; q.bd += r.bd; q.cd += r.cd; q.d2 += r.d2; q.weight += r.weight
     }
@@ -89,7 +89,7 @@ enum MeshSimplifier {
         var markU: [UInt32], markV: [UInt32]
         var stamp: UInt32 = 0
 
-        init(triangles input: [UInt32], positions: UnsafeBufferPointer<SIMD3<Float>>, posId: UnsafeBufferPointer<Int32>,
+        package init(triangles input: [UInt32], positions: UnsafeBufferPointer<SIMD3<Float>>, posId: UnsafeBufferPointer<Int32>,
              uvs: UnsafeBufferPointer<SIMD2<Float>>, relaxed: Bool, locked groupBorder: (Int32) -> Bool) {
             self.relaxed = relaxed
             self.uvs = uvs

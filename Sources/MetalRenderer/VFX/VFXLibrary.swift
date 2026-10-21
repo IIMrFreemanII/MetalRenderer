@@ -5,11 +5,11 @@ import simd
 /// placed where it is, so its numbers are the scene's own, bit for bit). Each emitter keeps the seed it had as an
 /// emitter of the scene before effects were graphs (its place in the scene's list then), so the scenes look as they did.
 /// A saved effect of the same name replaces one in every scene (VFXStore).
-enum VFXLibrary {
+package enum VFXLibrary {
     // MARK: - The particles scene (Scene+Particles.swift)
 
     /// A fire in a brazier's bowl: flames, the smoke over them, and the heat haze, both carried up the fire's hot air.
-    static func campfire(fire: SIMD3<Float>) -> VFXEffect {
+    package static func campfire(fire: SIMD3<Float>) -> VFXEffect {
         VFXEffect("campfire", origin: fire, emitters: [
             VFXEmitter("flames", capacity: 200, seed: 0,
                        spawn: [.rate(180)],
@@ -47,7 +47,7 @@ enum VFXLibrary {
     /// Sparks off a grinder's wheel where a bar is pressed on its rim (`contact`, `out` the rim's outward there):
     /// along the rim's way, bouncing off the floor, the crate and the scene; a puff of smoke where each dies; a glow
     /// of hot points at the contact.
-    static func grinder(contact: SIMD3<Float>, out: SIMD3<Float>) -> VFXEffect {
+    package static func grinder(contact: SIMD3<Float>, out: SIMD3<Float>) -> VFXEffect {
         VFXEffect("grinder", origin: contact, emitters: [
             VFXEmitter("sparks", capacity: 1200, seed: 2,
                        spawn: [.rate(260), .burst(at: 2, count: 300, every: 3)],
@@ -77,7 +77,7 @@ enum VFXLibrary {
     }
 
     /// Magic motes swirling in curl noise round a point, and wisps among them with glowing ribbons behind.
-    static func magic(at center: SIMD3<Float>) -> VFXEffect {
+    package static func magic(at center: SIMD3<Float>) -> VFXEffect {
         let update: [VFXBlock] = [.drag(0.4), .curl(1.2, frequency: 1.6, speed: 0.5), .vortex(swirl: 1.6, attraction: 0.6)]
         return VFXEffect("magic", origin: center, emitters: [
             VFXEmitter("magic", capacity: 1000, seed: 4,
@@ -98,7 +98,7 @@ enum VFXLibrary {
     }
 
     /// Rain from a box (`center`, `half` its half extents), dying where it lands, and the rings it splashes there.
-    static func rain(center: SIMD3<Float>, half: SIMD3<Float>) -> VFXEffect {
+    package static func rain(center: SIMD3<Float>, half: SIMD3<Float>) -> VFXEffect {
         VFXEffect("rain", origin: center, emitters: [
             VFXEmitter("rain", capacity: 2000, seed: 5,
                        spawn: [.rate(900)],
@@ -118,7 +118,7 @@ enum VFXLibrary {
 
     /// A burst of stone chunks every 2.5 s (mesh particles: the scene binds "rock" and "stone"), thrown up from a spot
     /// on the floor, tumbling and bouncing; dust where they land, in the little whirl they stir.
-    static func rubble(at: SIMD3<Float>) -> VFXEffect {
+    package static func rubble(at: SIMD3<Float>) -> VFXEffect {
         VFXEffect("rubble", origin: at, emitters: [
             VFXEmitter("rubble", capacity: 120, seed: 7,
                        spawn: [.burst(at: 0.5, count: 36, every: 2.5)],
@@ -195,7 +195,7 @@ enum VFXLibrary {
     static let names = ["campfire", "grinder", "magic", "rain", "rubble", "fireworks", "embers", "bubbles", "dust", "runes"]
 
     /// A built-in effect, made about the origin (its `origin` there, at its own height).
-    static func named(_ name: String) -> VFXEffect? {
+    package static func named(_ name: String) -> VFXEffect? {
         switch name {
         case "campfire": return campfire(fire: [0, 0.95, 0])
         case "grinder": return grinder(contact: [0, 1.2, 0], out: [cos(Scene.degrees(66)), sin(Scene.degrees(66)), 0])
@@ -214,7 +214,7 @@ enum VFXLibrary {
     // MARK: - The showcase's (Scene+Showcase.swift: what drifts in the air round a model; none casts a shadow)
 
     /// Embers rising from a pit's box (`at`), swaying in curl noise, shrinking as they cool.
-    static func embers(at: SIMD3<Float>) -> VFXEffect {
+    package static func embers(at: SIMD3<Float>) -> VFXEffect {
         VFXEffect("embers", origin: at, emitters: [
             VFXEmitter("embers", capacity: 600, seed: 0,
                        spawn: [.rate(30)],
@@ -228,7 +228,7 @@ enum VFXLibrary {
     }
 
     /// Bubbles from a sea floor's disc of `radius`, up and wobbling.
-    static func bubbles(radius: Float) -> VFXEffect {
+    package static func bubbles(radius: Float) -> VFXEffect {
         VFXEffect("bubbles", emitters: [
             VFXEmitter("bubbles", capacity: 800, seed: 0,
                        spawn: [.rate(12)],
@@ -241,7 +241,7 @@ enum VFXLibrary {
     }
 
     /// Motes drifting in a box (`at`, `half`), lit by what lights them.
-    static func dust(at: SIMD3<Float>, half: SIMD3<Float>) -> VFXEffect {
+    package static func dust(at: SIMD3<Float>, half: SIMD3<Float>) -> VFXEffect {
         VFXEffect("dust", origin: at, emitters: [
             VFXEmitter("dust", capacity: 1500, seed: 0,
                        spawn: [.rate(120)],
@@ -255,7 +255,7 @@ enum VFXLibrary {
 
     /// Glowing tablets circling at `height` on a circle of `radius` at `speed`: held on it by the vortex against the
     /// drag, turned by the pull toward the centre (v^2 / r); each keeps its glyph.
-    static func runes(height: Float, radius: Float, speed: Float, color: SIMD3<Float>) -> VFXEffect {
+    package static func runes(height: Float, radius: Float, speed: Float, color: SIMD3<Float>) -> VFXEffect {
         let c = SIMD4(color, 1)
         return VFXEffect("runes", origin: [0, height, 0], emitters: [
             VFXEmitter("runes", capacity: 12, seed: 0,

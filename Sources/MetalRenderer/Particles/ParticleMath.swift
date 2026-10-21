@@ -247,11 +247,11 @@ struct ParticleEvent {
     var a = SIMD4<Float>()
     var b = SIMD4<Float>()
 
-    init(_ p: GPUParticle) {
+    package init(_ p: GPUParticle) {
         a = SIMD4(ParticleMath.xyz(p.position), Float(bitPattern: p.info.y))
         b = SIMD4(ParticleMath.xyz(p.velocity), Float(bitPattern: p.info.x))
     }
-    init(a: SIMD4<Float>, b: SIMD4<Float>) { self.a = a; self.b = b }
+    package init(a: SIMD4<Float>, b: SIMD4<Float>) { self.a = a; self.b = b }
     var seed: UInt32 { a.w.bitPattern }
     var spawn: UInt32 { b.w.bitPattern }
 }

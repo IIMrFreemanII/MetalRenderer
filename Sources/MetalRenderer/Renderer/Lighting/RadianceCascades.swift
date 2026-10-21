@@ -50,7 +50,7 @@ final class RadianceCascades {
     /// Forget last frame's indirect light (after a reset or teleport).
     func reset() { historyReady = false }
 
-    init(device: MTLDevice, width: Int, height: Int, settings: CascadeSettings) throws {
+    package init(device: MTLDevice, width: Int, height: Int, settings: CascadeSettings) throws {
         self.width = width
         self.height = height
         self.settings = settings

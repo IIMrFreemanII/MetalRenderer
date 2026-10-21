@@ -165,7 +165,7 @@ final class PlantTracing {
 
     /// `meshStructures`: each mesh's (SceneBuffers.primitives); `positions` and `indices`: the scene's arrays, which the
     /// leafy meshes' prefixes are built over. `sets`: 1 for a still scene, else the frame slots.
-    init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, meshStructures: [MTLAccelerationStructure], positions: MTLBuffer,
+    package init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, meshStructures: [MTLAccelerationStructure], positions: MTLBuffer,
          indices: MTLBuffer, sets setCount: Int) throws {
         func buffer(_ length: Int, _ label: String, shared: Bool = true) throws -> MTLBuffer {
             guard let b = device.makeBuffer(length: max(length, 16), options: shared ? .storageModeShared : .storageModePrivate) else {

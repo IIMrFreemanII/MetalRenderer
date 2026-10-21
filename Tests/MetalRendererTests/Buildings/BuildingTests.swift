@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The building generator (Building*.swift) on the CPU: every style, on lots of several sizes with their sides

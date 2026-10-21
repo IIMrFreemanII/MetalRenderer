@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The face (FaceSculpt, FaceParts, FaceRig, the face sliders): its parts, how its lids, eyes and jaw move, and what

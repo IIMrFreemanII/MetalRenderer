@@ -54,7 +54,7 @@ final class PlantEditorModel: ObservableObject {
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
 
-    init(controller: PlantEditorHost, saved: PlantCatalog = PlantCatalog.launch, folder: URL? = PlantStore.folder, draft: Bool = true) {
+    package init(controller: PlantEditorHost, saved: PlantCatalog = PlantCatalog.launch, folder: URL? = PlantStore.folder, draft: Bool = true) {
         self.controller = controller
         self.saved = saved
         self.folder = folder
@@ -193,7 +193,9 @@ final class PlantEditorModel: ObservableObject {
 
     /// To the workshop, showing the selected species (a scene of its own: its sky and wind).
     func goToWorkshop() { go(to: .plants) }
-    func goToForest() { go(to: .forest) }
+    /// The forest, if this build has one.
+    var forest: SceneKind? { SceneRegistry.kind(for: .forest) }
+    func goToForest() { forest.map { go(to: $0) } }
 
     private func go(to kind: SceneKind) {
         let id = selected, key = self.key, defaults = controller.defaultSettings

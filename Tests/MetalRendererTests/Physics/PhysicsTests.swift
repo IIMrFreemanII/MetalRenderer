@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Physics.swift, PhysicsCollide.swift, PhysicsCPU.swift, PhysicsGPU.swift and Shaders/Physics.metal: shapes' mass

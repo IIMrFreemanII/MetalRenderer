@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The benchmark modes (Benchmark+Modes.swift) and the `Benchmark.Config` modifiers they are built with.

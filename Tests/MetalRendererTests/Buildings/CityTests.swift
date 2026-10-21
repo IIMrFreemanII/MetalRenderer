@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The city's layout (CityPlan.swift) and the city scenes built from it (Scene+City.swift), on the CPU: scenes are

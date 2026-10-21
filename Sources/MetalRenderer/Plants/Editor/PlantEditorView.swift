@@ -103,7 +103,7 @@ struct PlantEditorView: View {
                 Button { model.undo.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                     .disabled(!model.undo.canRedo).help("Redo (Shift-Cmd-Z)")
                 Spacer()
-                if model.inWorkshop { Button("Forest") { model.goToForest() }.help("The forest, with these plants") }
+                if model.inWorkshop && model.forest != nil { Button("Forest") { model.goToForest() }.help("The forest, with these plants") }
                 Button("Revert") { model.revert() }.disabled(model.savedDef == model.def || model.savedDef == nil)
                     .help("This species as it is saved")
                 Button("Revert All") { model.revertAll() }.disabled(!model.isDirty)

@@ -7,8 +7,8 @@ import simd
 ///
 /// A child emitter (`parent`) spawns `perEvent` particles where each of its parent's particles dies (or collides,
 /// `trigger`), with a share of its velocity: sparks that leave smoke, rain that splashes.
-struct ParticleEmitter {
-    enum Shape {
+package struct ParticleEmitter {
+    package enum Shape {
         case point
         case sphere(radius: Float, surface: Bool = false)
         /// A disc of `radius` across the axis; the velocity spreads about the axis (`spread`).
@@ -57,7 +57,7 @@ struct ParticleEmitter {
 
     /// What makes a parent's particle an event for its children: its death, a collision, or a condition its own
     /// code raises (an effect's Trigger Event block: VFXProgram).
-    enum Trigger { case death, collision, condition }
+    package enum Trigger { case death, collision, condition }
 
     /// GPUParticleEmitter.ids.w; the low 8 bits reach the rays (GPUParticleRender.info.x >> 24; bits 3 and 4 hold the
     /// orientation there).
@@ -79,7 +79,7 @@ struct ParticleEmitter {
     var position: SIMD3<Float>
     /// The shape's and the velocity's axis.
     var direction: SIMD3<Float> = [0, 1, 0]
-    var shape: Shape = .point
+    package var shape: Shape = .point
     /// Particles a second, from `start` to `stop`.
     var rate: Float = 0
     /// The rate times a curve over time (an effect's Rate block): its keys as its program has them (VFXProgram
@@ -89,28 +89,28 @@ struct ParticleEmitter {
     var stop: Float = .greatestFiniteMagnitude
     /// `count` at `time`, then every `period` (0: once), `repeats` times (0: no end).
     var burst: (time: Float, count: Int, period: Float, repeats: Int)?
-    var lifetime: ClosedRange<Float> = 1...1
-    var speed: ClosedRange<Float> = 0...0
+    package var lifetime: ClosedRange<Float> = 1...1
+    package var speed: ClosedRange<Float> = 0...0
     /// Half angle about `direction` (rad).
     var spread: Float = 0
     /// Outward from `position` instead of along `direction`.
-    var radial = false
-    var velocity: SIMD3<Float> = .zero
+    package var radial = false
+    package var velocity: SIMD3<Float> = .zero
 
     // Forces.
     /// Share of gravity: 1 falls, negative rises (hot smoke).
-    var gravity: Float = 1
+    package var gravity: Float = 1
     /// How fast the particle takes the air's velocity (1/s).
-    var drag: Float = 0
+    package var drag: Float = 0
     /// Share of the scene's wind in that air.
     var wind: Float = 0
     /// Curl noise: a divergence-free swirl (m/s^2), its frequency (1/m) and how fast it scrolls (1/s).
-    var curl: Float = 0
-    var curlFrequency: Float = 1
-    var curlSpeed: Float = 0
+    package var curl: Float = 0
+    package var curlFrequency: Float = 1
+    package var curlSpeed: Float = 0
     /// Curl noise from the system's baked tile (ParticleField.curl, read trilinearly) instead of three noise
     /// channels' gradients a step: about the same swirl for a fraction of the arithmetic.
-    var bakedCurl = false
+    package var bakedCurl = false
     /// A vector field (the system's `fields[index]`): with `follow`, the air's velocity there, which the particle
     /// takes at `strength` (1/s, as drag does); otherwise an acceleration, times `strength`.
     var field: (index: Int, strength: Float, follow: Bool)?
@@ -122,41 +122,41 @@ struct ParticleEmitter {
     // Collisions.
     /// The system's colliders it meets (bit i: collider i).
     var colliders: UInt32 = 0
-    var restitution: Float = 0.3
-    var friction: Float = 0.2
+    package var restitution: Float = 0.3
+    package var friction: Float = 0.2
     /// It dies where it first meets one (rain).
     var dieOnCollision = false
     /// It bounces off the scene's geometry too (on the GPU: a ray along each step; the CPU's reference has no scene).
-    var collidesWithScene = false
+    package var collidesWithScene = false
     /// It meets the colliders as a ball this big (m): a mesh particle's size, so it rests on the floor, not in it.
-    var collisionRadius: Float = 0
+    package var collisionRadius: Float = 0
 
     // Look.
-    var size: (start: Float, end: Float) = (0.05, 0.05)
+    package var size: (start: Float, end: Float) = (0.05, 0.05)
     /// Each particle smaller by up to this share.
-    var sizeJitter: Float = 0
+    package var sizeJitter: Float = 0
     /// rgba at birth, at `midpoint` of its life, at death.
-    var colors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = ([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 0])
-    var midpoint: Float = 0.5
+    package var colors: (SIMD4<Float>, SIMD4<Float>, SIMD4<Float>) = ([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 0])
+    package var midpoint: Float = 0.5
     /// Unlit, sending its colour x this (W/sr/m^2 per unit of colour); 0: lit by the scene's lights.
     var emission: Float = 0
-    var atlas: ParticleTextures.Kind = .dot
+    package var atlas: ParticleTextures.Kind = .dot
     /// Frames of its flipbook it plays (up to ParticleTextures.frames), `fps` a second (0: once over its life).
-    var frames: Int = 1
+    package var frames: Int = 1
     var fps: Float = 0
-    var randomFrame = false
+    package var randomFrame = false
     var frameBlend = true
     var orientation: Orientation = .rayFacing
     /// Most spin (rad/s), either way.
-    var spin: Float = 0
+    package var spin: Float = 0
     /// Fades over this distance in front of what is behind it (m).
-    var soft: Float = 0.1
-    var castsShadows = true
+    package var soft: Float = 0.1
+    package var castsShadows = true
     /// A mesh in the scene's top-level structure instead of a billboard (debris, chunks): an instance a slot, `size`
     /// its scale, turning at up to `spin` rad/s about an axis of its own; opaque, so it shadows, reflects and takes
     /// GI as any geometry does. The scene reserves the instances (Scene.addParticles); the pose places them every
     /// frame, a dead one shrunk to nothing at the emitter.
-    var mesh: (mesh: Int, material: Int)?
+    package var mesh: (mesh: Int, material: Int)?
     /// A trail behind each particle: where it was at its last `points` places, `every` steps apart, and where it is,
     /// as a ribbon that faces every ray (flat Catmull-Rom curves in a structure of their own: ParticleTrace.metal),
     /// tapering to nothing at its end and fading along it; as wide as the particle times `trailWidth` at its head.
@@ -165,7 +165,7 @@ struct ParticleEmitter {
     var trailWidth: Float = 1
     /// How much of its opacity a shadow ray takes (0...1): a billboard stands for a soft volume, and a ray through a
     /// column of them at their full opacity sees far denser smoke than there is.
-    var shadowDensity: Float = 1
+    package var shadowDensity: Float = 1
     /// Heat haze: its particles are never drawn, but bend the camera's rays through them by up to this much
     /// (radians), each a disc that faces the ray, its opacity over life (`colors`' alpha) how much of it there is
     /// (Shaders/ParticleLight.metal particleDistortKernel). 0: an ordinary emitter. Its slots aren't boxes: no ray but the
@@ -177,14 +177,14 @@ struct ParticleEmitter {
     var seed: UInt32?
 
     // A child.
-    var parent: Int?
-    var trigger: Trigger = .death
+    package var parent: Int?
+    package var trigger: Trigger = .death
     /// Children an event (1...8).
-    var perEvent = 1
+    package var perEvent = 1
     /// Share of the parent's velocity it starts with.
-    var inherit: Float = 0
+    package var inherit: Float = 0
 
-    init(_ name: String, capacity: Int, at position: SIMD3<Float>) {
+    package init(_ name: String, capacity: Int, at position: SIMD3<Float>) {
         self.name = name
         self.capacity = capacity
         self.position = position
@@ -206,7 +206,7 @@ struct ParticleEmitter {
 /// An analytic shape particles bounce off (or die on: ParticleEmitter.Flags.killOnCollision), or one of the scene's
 /// SDF shapes' instances, met by its distance (a ball of the particle's collision radius against the shape's
 /// surface, pushed out along its gradient: only on the GPU, with the scene bound, as the scene's own collisions).
-enum ParticleCollider {
+package enum ParticleCollider {
     case plane(normal: SIMD3<Float>, point: SIMD3<Float>)
     case sphere(center: SIMD3<Float>, radius: Float)
     case box(center: SIMD3<Float>, halfExtents: SIMD3<Float>)
@@ -230,7 +230,7 @@ enum ParticleCollider {
 /// read trilinearly between them (MSL particleField; ParticleMath.field its twin). Outside the box, nothing; a
 /// `periodic` one repeats instead (a tile: the box's size its period, the nodes `dims` apart along it with the
 /// first standing in for the one past the last).
-struct ParticleField {
+package struct ParticleField {
     var lo: SIMD3<Float>
     var size: SIMD3<Float>
     var dims: SIMD3<Int32>
@@ -238,7 +238,7 @@ struct ParticleField {
     var samples: [SIMD3<Float>]
 
     /// `f` at the nodes of a `dims` grid over the box at `center`.
-    init(center: SIMD3<Float>, halfExtents: SIMD3<Float>, dims: SIMD3<Int32>, periodic: Bool = false, _ f: (SIMD3<Float>) -> SIMD3<Float>) {
+    package init(center: SIMD3<Float>, halfExtents: SIMD3<Float>, dims: SIMD3<Int32>, periodic: Bool = false, _ f: (SIMD3<Float>) -> SIMD3<Float>) {
         precondition(all(dims .>= 2), "two nodes or more along each axis")
         lo = center - halfExtents
         size = halfExtents * 2
@@ -311,10 +311,10 @@ struct ParticleField {
 /// writes the indirect arguments; `emit` writes the newborns and appends them to the alive list; `simulate` ages and
 /// moves every alive particle, pushes the dead back on their emitter's dead list and appends the rest to the other
 /// alive list, which the next step reads. The CPU never reads a count back.
-final class ParticleSystem {
+package final class ParticleSystem {
     static let stepLength: Float = 1.0 / 60.0
     static let maxEmitters = 32         // PARTICLE_EMITTERS: `begin` is one SIMD group, a thread an emitter
-    static let none = UInt32.max
+    package static let none = UInt32.max
     static let alive: UInt32 = 1        // GPUParticle.info.w
     static let maxPerEvent = 8          // a child's spawn id is its parent's x 8 + which
 
@@ -358,7 +358,7 @@ final class ParticleSystem {
     /// Steps run (or claimed by the GPU).
     private(set) var stepIndex = 0
 
-    init(emitters: [ParticleEmitter], colliders: [ParticleCollider] = [], fields: [ParticleField] = [], programs: [VFXProgram?] = []) {
+    package init(emitters: [ParticleEmitter], colliders: [ParticleCollider] = [], fields: [ParticleField] = [], programs: [VFXProgram?] = []) {
         precondition(!emitters.isEmpty && emitters.count <= ParticleSystem.maxEmitters, "1 to \(ParticleSystem.maxEmitters) emitters")
         precondition(colliders.count <= 32, "a mask holds 32 colliders")
         for (i, e) in emitters.enumerated() {

@@ -82,7 +82,7 @@ enum PlantStore {
 extension PlantCatalog {
     /// The built-in species (in their order, any of them replaced by a definition of its id) and then the others,
     /// in the order of their seeds.
-    func merging(_ defs: [Foliage.SpeciesDef]) -> PlantCatalog {
+    package func merging(_ defs: [Foliage.SpeciesDef]) -> PlantCatalog {
         var out = self
         var custom: [Foliage.SpeciesDef] = []
         for def in defs {
@@ -146,7 +146,7 @@ extension PlantCatalog {
     private static var launchCatalog: PlantCatalog?
 
     /// What scenes are built with unless the editor says otherwise: the built-in species with the saved files.
-    static var launch: PlantCatalog {
+    package static var launch: PlantCatalog {
         lock.lock()
         defer { lock.unlock() }
         if let made = launchCatalog { return made }
@@ -164,7 +164,7 @@ extension PlantCatalog {
 
     /// Keeps the catalog for scenes to build with, by the key returned (SceneSettings.plantCatalog).
     @discardableResult
-    static func register(_ catalog: PlantCatalog) -> String {
+    package static func register(_ catalog: PlantCatalog) -> String {
         let key = catalog.fingerprint
         registry.register(catalog, key: key)
         return key
@@ -175,7 +175,7 @@ extension PlantCatalog {
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in species, otherwise a registered
     /// one (the launch one if it is no longer kept).
-    static func resolve(_ key: String) -> PlantCatalog {
+    package static func resolve(_ key: String) -> PlantCatalog {
         switch key {
         case "": return launch
         case "builtin": return .builtIn

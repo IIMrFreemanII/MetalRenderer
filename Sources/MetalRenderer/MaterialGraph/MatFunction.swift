@@ -9,7 +9,7 @@ struct MatFunction: Codable, Equatable, Hashable {
     var nodes: [MatFnNode] = []
     var links: [MatLink] = []
 
-    init(nodes: [MatFnNode] = [], links: [MatLink] = []) {
+    package init(nodes: [MatFnNode] = [], links: [MatLink] = []) {
         self.nodes = nodes
         self.links = links
         normalizeIDs()
@@ -54,7 +54,7 @@ struct MatFnNode: Codable, Equatable, Hashable, Identifiable {
     var params: [String: MatParam] = [:]
     var at = SIMD2<Float>.zero
 
-    init(_ kind: MatFnKind, _ params: [String: MatParam] = [:], id: String = "", at: SIMD2<Float> = .zero) {
+    package init(_ kind: MatFnKind, _ params: [String: MatParam] = [:], id: String = "", at: SIMD2<Float> = .zero) {
         self.kind = kind
         self.params = params
         self.id = id
@@ -83,7 +83,7 @@ struct MatFnPinSpec {
     var span: ClosedRange<Float>?
     var choices: [String] = []
 
-    init(_ name: String, _ value: MatParam = .float(0), _ type: MatFnType? = .float, generic: Bool = false,
+    package init(_ name: String, _ value: MatParam = .float(0), _ type: MatFnType? = .float, generic: Bool = false,
          span: ClosedRange<Float>? = nil, choices: [String] = []) {
         self.name = name
         self.value = value

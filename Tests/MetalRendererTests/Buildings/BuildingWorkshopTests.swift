@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import QuartzCore
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The building workshop (Scene+Buildings.swift): what it holds, and how long an edit's new scene takes to make with

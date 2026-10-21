@@ -69,7 +69,7 @@ enum VFXStore {
 /// editor's as it edits them. A scene's settings name one (SceneSettings.effects): "" the saved ones (loaded once, at
 /// launch), "builtin" none, otherwise a key of the registry the editor fills (each edit a catalog of its own, so a
 /// scene built in the background reads the one it was asked for).
-struct VFXCatalog: Equatable {
+package struct VFXCatalog: Equatable {
     var effects: [String: VFXEffect] = [:]
 
     static let launch = VFXStore.load()
@@ -79,7 +79,7 @@ struct VFXCatalog: Equatable {
     private static var order: [String] = []
 
     /// A key for `catalog` (its content's), kept among the last 64.
-    static func register(_ catalog: VFXCatalog) -> String {
+    package static func register(_ catalog: VFXCatalog) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys   // a block's parameters are a dictionary: the same catalog, the same key
         let data = (try? encoder.encode(catalog.effects.keys.sorted().map { catalog.effects[$0]! })) ?? Data()
@@ -103,5 +103,10 @@ struct VFXCatalog: Equatable {
             lock.lock(); defer { lock.unlock() }
             return registry[key] ?? launch
         }
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(effects: [String: VFXEffect] = [:]) {
+        self.effects = effects
     }
 }

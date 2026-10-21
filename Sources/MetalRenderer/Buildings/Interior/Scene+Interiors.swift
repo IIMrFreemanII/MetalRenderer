@@ -8,7 +8,7 @@ import simd
 ///
 /// A building with its interior drops its fill (the blinds, the dark and the room boxes behind its glass, its closed
 /// doors: Building.Slot.isFill) and has instead what the interior has (and, for the walker, its colliders).
-final class BuildingKit {
+package final class BuildingKit {
     unowned let scene: Scene
     /// The scene's doors, lights and lifts (made with the kit, shared by all its interiors).
     let controls: InteriorControls
@@ -22,11 +22,11 @@ final class BuildingKit {
     private var shared: [SurfaceMaterial: Int] = [:]
     /// Interior storeys' meshes made so far (by the storey's key and the building's style): one mesh for every copy.
     private var storeyMeshes: [String: (mesh: Int, first: Int)] = [:]
-    private(set) var triangles = 0
+    package private(set) var triangles = 0
     /// The interiors added: what the walker meets, in the scene's frame.
-    private(set) var colliders: [Interior.Collider] = []
+    package private(set) var colliders: [Interior.Collider] = []
 
-    init(_ scene: Scene, textures: Bool) {
+    package init(_ scene: Scene, textures: Bool) {
         self.scene = scene
         maps = textures ? ProceduralTextures.sources(SurfaceKind.allCases) : [:]
         controls = scene.interiorControls ?? InteriorControls()
@@ -34,7 +34,7 @@ final class BuildingKit {
     }
 
     /// ...with the scene's textures already added (the open world's: `index` by kind).
-    init(_ scene: Scene, mapIndex index: [SurfaceKind: SIMD4<UInt32>]) {
+    package init(_ scene: Scene, mapIndex index: [SurfaceKind: SIMD4<UInt32>]) {
         self.scene = scene
         maps = [:]
         mapIndex = index
@@ -47,7 +47,7 @@ final class BuildingKit {
     var still = false
 
     /// The walker's flashlight: a spot light at the eye, along the view (the renderer moves it), off until switched.
-    func addFlashlight() {
+    package func addFlashlight() {
         let c = controls
         scene.addLight(.spot(radius: 0.02, inner: 0.18, outer: 0.45), color: SIMD3(1, 0.93, 0.82) * 3.5, motion: .animated, proxy: false) { [unowned c] _ in
             Scene.LightPose(position: c.flashlight.position, direction: c.flashlight.direction, scale: SIMD3(repeating: c.flashlight.on ? 1 : 0))
@@ -66,7 +66,7 @@ final class BuildingKit {
         return index
     }
 
-    func gpuMaterial(_ m: SurfaceMaterial) -> GPUMaterial {
+    package func gpuMaterial(_ m: SurfaceMaterial) -> GPUMaterial {
         var gpu = GPUMaterial(albedo: SIMD4(m.color, m.metallic), emission: SIMD4(m.emission, m.roughness),
                               params: SIMD4(m.specular ? 1 : 0, 1, 0, 0))
         if let kind = m.surface, let index = textures(kind) { gpu.textures = index }
@@ -74,7 +74,7 @@ final class BuildingKit {
     }
 
     /// Glass and lights are instances of their own (their mask, a mesh light each): those materials are shared.
-    func sharedMaterial(_ m: SurfaceMaterial) -> Int {
+    package func sharedMaterial(_ m: SurfaceMaterial) -> Int {
         if let i = shared[m] { return i }
         let i = m.glass ? scene.addGlassMaterial(tint: m.color) : scene.addMaterial(gpuMaterial(m))
         shared[m] = i
@@ -85,7 +85,7 @@ final class BuildingKit {
     /// of several materials, so that a ray that meets the building walks one tree, not one per material; glass and
     /// lights each an instance of their own. Returns the instances.
     @discardableResult
-    func add(_ parts: [(material: SurfaceMaterial, mesh: MeshBuilder)], at transform: float4x4 = matrix_identity_float4x4,
+    package func add(_ parts: [(material: SurfaceMaterial, mesh: MeshBuilder)], at transform: float4x4 = matrix_identity_float4x4,
              name: String? = nil, label: String = "surfaces") -> [Int] {
         var merged = MeshBuilder(), offsets: [UInt8] = [], first = -1, made: [Int] = []
         for (k, (m, mesh)) in parts.enumerated() where !mesh.isEmpty {
@@ -109,7 +109,7 @@ final class BuildingKit {
 
     /// A building at `transform`: its shell, and its fill or (if it has one) its interior. `name`: what its meshes
     /// are made from, said in full (Scene.meshNames), if they are to be kept from scene to scene.
-    func addBuilding(_ b: Building, at transform: float4x4, name: String? = nil) {
+    package func addBuilding(_ b: Building, at transform: float4x4, name: String? = nil) {
         add(b.parts.filter { !$0.slot.isFill }.map { ($0.material, $0.mesh) }, at: transform, name: name.map { "\($0) shell" }, label: "shell")
         if let interior = b.interior {
             scene.object("Interior") { addInterior(interior, at: transform) }

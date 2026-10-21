@@ -6,12 +6,12 @@ import simd
 /// forest (Scene+Forest.swift) and the open world (World.swift) both place by these; the built-in species' values
 /// are the formulas those had, and give the same plants in the same places.
 extension Foliage {
-    struct Habitat: Codable, Equatable {
+    package struct Habitat: Codable, Equatable {
         /// Where its weight is reckoned among the others' (the built-in trees: 0...3), and where it is scattered among
         /// the covers: a place's pick runs through them in this order.
         var order = 100
         /// Of its weight wherever it is (a cover: of its density).
-        var frequency: Float = 1
+        package var frequency: Float = 1
 
         // A tree's weight: base + elevation + slope + stand + light, at least `floor`, times `frequency`.
         var base: Float = 0.5
@@ -27,7 +27,7 @@ extension Foliage {
         var ages = SIMD2<Float>(0.12, 0.4)
 
         /// A bush's or ground cover's spread (nil for a tree).
-        var cover: Cover? = nil
+        package var cover: Cover? = nil
 
         struct Ramp: Codable, Equatable {
             var gain: Float = 0
@@ -35,22 +35,22 @@ extension Foliage {
             var to: Float = 0.7
         }
 
-        struct Cover: Codable, Equatable {
+        package struct Cover: Codable, Equatable {
             /// The forest's candidates at undergrowth 100%.
-            var count: Float = 2000
+            package var count: Float = 2000
             /// The open world's: one candidate to a cell of this many metres.
             var cell: Double = 5
-            var patch: Float = 20               // the patches' size, metres
-            var salt: UInt32 = 0                // the patches' noise
+            package var patch: Float = 20               // the patches' size, metres
+            package var salt: UInt32 = 0                // the patches' noise
             var what: UInt64 = 0                // the open world's candidates' random numbers
-            var size: ClosedRange<Float> = 0.8...1.3
-            var sink: Float = 0.03              // into the ground
+            package var size: ClosedRange<Float> = 0.8...1.3
+            package var sink: Float = 0.03              // into the ground
             /// In the open (the clearing, meadows) rather than in patches under the trees.
-            var open = false
+            package var open = false
             /// The forest's: on a grid of this many metres, laid on the slope, scaled by `gridScale` (grass), instead
             /// of `count` scattered.
-            var grid: Int? = nil
-            var gridScale: Float = 1.12
+            package var grid: Int? = nil
+            package var gridScale: Float = 1.12
         }
 
         /// The weight at a place. `light`: the scene's terms for where light comes in, each a coefficient and a value
@@ -70,12 +70,12 @@ extension Foliage {
     }
 
     /// Picks a tree's species from the catalog's trees by their weights at a place.
-    struct TreePicker {
+    package struct TreePicker {
         private let weighted: [(species: Species, habitat: Habitat)]
         private let shared: [(species: Species, share: Float)]
         private let scale: Float
 
-        init(_ catalog: PlantCatalog) {
+        package init(_ catalog: PlantCatalog) {
             let trees = catalog.all.filter { catalog[$0].role == .tree }
                 .sorted { (catalog[$0].habitat.order, $0.rawValue) < (catalog[$1].habitat.order, $1.rawValue) }
             weighted = trees.filter { catalog[$0].habitat.share == nil }.map { ($0, catalog[$0].habitat) }
@@ -86,7 +86,7 @@ extension Foliage {
         var isEmpty: Bool { weighted.isEmpty && shared.isEmpty }
 
         /// `r`: a random 0...1.
-        func pick(_ r: Float, high: Float, slope: Float, stand: Float, light: [SIMD2<Float>]) -> Species? {
+        package func pick(_ r: Float, high: Float, slope: Float, stand: Float, light: [SIMD2<Float>]) -> Species? {
             var weights: [Float] = []
             weights.reserveCapacity(weighted.count)
             var total: Float = 0
@@ -108,6 +108,6 @@ extension Foliage {
         }
 
         /// The age of a tree of `species`, from a random 0...1.
-        static func age(_ u: Float, _ habitat: Habitat) -> Age { u < habitat.ages.x ? .sapling : u < habitat.ages.y ? .young : .mature }
+        package static func age(_ u: Float, _ habitat: Habitat) -> Age { u < habitat.ages.x ? .sapling : u < habitat.ages.y ? .young : .mature }
     }
 }

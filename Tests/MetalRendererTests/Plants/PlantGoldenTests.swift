@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The built-in plants as they were before the plant editor: the library's meshes, where the forest, the valley and

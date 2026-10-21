@@ -3,6 +3,7 @@ import AppKit
 import Metal
 import SwiftUI
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Project Graph: scenes' outlines (Scene+Outline.swift), their edits (SceneOverrides), the project's graph

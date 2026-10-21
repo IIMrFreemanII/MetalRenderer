@@ -116,19 +116,19 @@ enum TerrainStore {
 /// The terrains the scenes are made with, by name (each scene's own: "forest-7", "world-1"...): what the editor
 /// edits (in memory, its edits shown at once) and what is saved (TerrainStore). A terrain is opened the first time a
 /// scene asks for it, from its file if it has one. Any thread.
-final class TerrainDocuments {
+package final class TerrainDocuments {
     static let shared = TerrainDocuments()
 
-    final class Entry {
-        var document: TerrainDocument
-        let field: TerrainField
+    package final class Entry {
+        package var document: TerrainDocument
+        package let field: TerrainField
         /// Counts the document's edits (its layers', rules', water's...): the renderer takes them in place.
         var version = 0
         /// The field's revision and the document's version when it was last saved (or opened).
         var savedRevision = 0
         var savedVersion = 0
 
-        init(document: TerrainDocument, field: TerrainField) {
+        package init(document: TerrainDocument, field: TerrainField) {
             self.document = document
             self.field = field
             savedRevision = field.revision

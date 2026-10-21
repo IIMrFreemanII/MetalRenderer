@@ -6,28 +6,28 @@ import Foundation
 /// Macro sliders (sex, age, weight, muscle, height, proportions) drive many morphs and bone lengths at once (MacroRig);
 /// `morphs` and `bones` are the user's offsets on top of what the macros give, each -1...1. Saved as JSON
 /// (CharacterStore); decoding fills what a file doesn't have with defaults, so files of older builds still load.
-struct CharacterDNA: Codable, Equatable {
+package struct CharacterDNA: Codable, Equatable {
     static let currentFormat = 1
 
     var format = CharacterDNA.currentFormat
-    var id = "custom"
+    package var id = "custom"
     var name = "Custom"
     /// The built-in it was made from, if any.
     var basedOn: String?
     var seed: UInt64 = 0
-    var macro = Macro()
+    package var macro = Macro()
     /// Morph offsets by name (CharacterMorphs' targets), -1...1; absent = 0.
     var morphs: [String: Float] = [:]
     /// Bone group length offsets by name (CharacterParams.boneGroups), -1...1; absent = 0.
     var bones: [String: Float] = [:]
-    var look = Look()
-    var hair = Hair()
+    package var look = Look()
+    package var hair = Hair()
 
-    struct Macro: Codable, Equatable {
+    package struct Macro: Codable, Equatable {
         /// 0 = male ... 1 = female.
         var sex: Float = 0
         /// Years, 18...90.
-        var age: Float = 30
+        package var age: Float = 30
         /// -1 = thin ... 1 = heavy.
         var weight: Float = 0
         /// -1 = slight ... 1 = muscular.
@@ -38,7 +38,7 @@ struct CharacterDNA: Codable, Equatable {
         var proportions: Float = 0
     }
 
-    struct Look: Codable, Equatable {
+    package struct Look: Codable, Equatable {
         /// Skin: how dark (eumelanin, 0 = very fair ... 1 = very dark) and how red (blood, haemoglobin).
         var melanin: Float = 0.3
         var redness: Float = 0.35
@@ -46,24 +46,39 @@ struct CharacterDNA: Codable, Equatable {
         /// The irises: 0 = dark brown ... 0.4 hazel ... 0.65 green ... 1 = light blue.
         var eyes: Float = 0.2
         /// The skin's marks (SkinTextures), each 0...1: freckles; makeup on the cheeks, the eyelids and the lips.
-        var freckles: Float = 0
+        package var freckles: Float = 0
         var blush: Float = 0
         var eyeShadow: Float = 0
         var lipstick: Float = 0
         /// The hair's colour: how dark (eumelanin, 0 = platinum ... 1 = black), how red (pheomelanin), and how grey
         /// beyond what age greys it.
-        var hairMelanin: Float = 0.6
-        var hairRed: Float = 0.15
+        package var hairMelanin: Float = 0.6
+        package var hairRed: Float = 0.15
         var grey: Float = 0
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(melanin: Float = 0.3, redness: Float = 0.35, roughness: Float = 0.5, eyes: Float = 0.2, freckles: Float = 0, blush: Float = 0, eyeShadow: Float = 0, lipstick: Float = 0, hairMelanin: Float = 0.6, hairRed: Float = 0.15, grey: Float = 0) {
+            self.melanin = melanin
+            self.redness = redness
+            self.roughness = roughness
+            self.eyes = eyes
+            self.freckles = freckles
+            self.blush = blush
+            self.eyeShadow = eyeShadow
+            self.lipstick = lipstick
+            self.hairMelanin = hairMelanin
+            self.hairRed = hairRed
+            self.grey = grey
+        }
     }
 
     /// What grows (CharacterHair): the hair's style (CharacterHair.styles' ids, "bald" none), how much longer or
     /// shorter than the style's (-1...1), how curly (0...1); the beard (CharacterHair.beards' ids); the brows' density.
-    struct Hair: Codable, Equatable {
-        var style = "short"
+    package struct Hair: Codable, Equatable {
+        package var style = "short"
         var length: Float = 0
         var curl: Float = 0
-        var beard = "none"
+        package var beard = "none"
         var brows: Float = 0.6
     }
 
@@ -112,9 +127,9 @@ struct CharacterDNA: Codable, Equatable {
 
     private enum CodingKeys: String, CodingKey { case format, id, name, basedOn, seed, macro, morphs, bones, look, hair }
 
-    init() {}
+    package init() {}
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CharacterDNA()
         format = try c.decodeIfPresent(Int.self, forKey: .format) ?? d.format
@@ -133,7 +148,7 @@ struct CharacterDNA: Codable, Equatable {
 extension CharacterDNA.Macro {
     private enum CodingKeys: String, CodingKey { case sex, age, weight, muscle, height, proportions }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CharacterDNA.Macro()
         sex = try c.decodeIfPresent(Float.self, forKey: .sex) ?? d.sex
@@ -150,7 +165,7 @@ extension CharacterDNA.Look {
         case melanin, redness, roughness, eyes, freckles, blush, eyeShadow, lipstick, hairMelanin, hairRed, grey
     }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CharacterDNA.Look()
         melanin = try c.decodeIfPresent(Float.self, forKey: .melanin) ?? d.melanin
@@ -170,7 +185,7 @@ extension CharacterDNA.Look {
 extension CharacterDNA.Hair {
     private enum CodingKeys: String, CodingKey { case style, length, curl, beard, brows }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let d = CharacterDNA.Hair()
         style = try c.decodeIfPresent(String.self, forKey: .style) ?? d.style

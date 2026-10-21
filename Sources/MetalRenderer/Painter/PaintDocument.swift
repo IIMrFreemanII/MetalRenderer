@@ -3,9 +3,9 @@ import simd
 
 /// What a layer can write: the texture set's channels (the normal is the height's and the graphs' normals', never
 /// painted as such).
-enum PaintChannel: String, Codable, CaseIterable, Identifiable {
+package enum PaintChannel: String, Codable, CaseIterable, Identifiable {
     case color, roughness, metallic, height, emissive, opacity
-    var id: String { rawValue }
+    package var id: String { rawValue }
     var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     /// Its paint texture holds rgb + coverage (else value + coverage).
     var isColor: Bool { self == .color || self == .emissive }
@@ -14,9 +14,9 @@ enum PaintChannel: String, Codable, CaseIterable, Identifiable {
 }
 
 /// How a layer's colour goes over what is under it (Material Designer's blend modes, as MatBlendMode numbers them).
-enum PaintBlend: Int, Codable, CaseIterable, Identifiable {
+package enum PaintBlend: Int, Codable, CaseIterable, Identifiable {
     case normal, multiply, screen, overlay, add, subtract, darken, lighten, softLight
-    var id: Int { rawValue }
+    package var id: Int { rawValue }
     var title: String {
         switch self {
         case .softLight: return "Soft light"
@@ -26,28 +26,38 @@ enum PaintBlend: Int, Codable, CaseIterable, Identifiable {
 }
 
 /// How a layer's height goes over what is under it: replaced, raised by it (above 0.5), lowered by it.
-enum PaintHeightBlend: Int, Codable, CaseIterable, Identifiable {
+package enum PaintHeightBlend: Int, Codable, CaseIterable, Identifiable {
     case normal, add, subtract
-    var id: Int { rawValue }
+    package var id: Int { rawValue }
     var title: String { "\(self)".prefix(1).uppercased() + "\(self)".dropFirst() }
 }
 
 /// A layer's values where it has no texture (a fill's), and a brush's.
-struct PaintValues: Codable, Equatable {
-    var color = SIMD3<Float>(0.5, 0.5, 0.5)     // linear
-    var roughness: Float = 0.5
+package struct PaintValues: Codable, Equatable {
+    package var color = SIMD3<Float>(0.5, 0.5, 0.5)     // linear
+    package var roughness: Float = 0.5
     var metallic: Float = 0
-    var height: Float = 0.5                     // 0.5 = the surface; 0...1 is -depth...+depth (PaintDocument.heightDepth)
+    package var height: Float = 0.5                     // 0.5 = the surface; 0...1 is -depth...+depth (PaintDocument.heightDepth)
     var emissive = SIMD3<Float>(0, 0, 0)        // linear, x PaintDocument.emissiveIntensity
     var opacity: Float = 1
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(color: SIMD3<Float> = SIMD3<Float>(0.5, 0.5, 0.5), roughness: Float = 0.5, metallic: Float = 0, height: Float = 0.5, emissive: SIMD3<Float> = SIMD3<Float>(0, 0, 0), opacity: Float = 1) {
+        self.color = color
+        self.roughness = roughness
+        self.metallic = metallic
+        self.height = height
+        self.emissive = emissive
+        self.opacity = opacity
+    }
 }
 
 /// A mask's generated part: from the object's bakes (PaintBake: curvature, occlusion, thickness, position, normal),
 /// noise, or a Material Designer graph that reads them.
-struct PaintGenerator: Codable, Equatable {
-    enum Kind: String, Codable, CaseIterable, Identifiable {
+package struct PaintGenerator: Codable, Equatable {
+    package enum Kind: String, Codable, CaseIterable, Identifiable {
         case edgeWear, cavityDirt, dust, rustLeaks, curvature, occlusion, thickness, height, graph
-        var id: String { rawValue }
+        package var id: String { rawValue }
         var title: String {
             switch self {
             case .edgeWear: return "Edge wear"
@@ -73,51 +83,76 @@ struct PaintGenerator: Codable, Equatable {
 
 /// A layer's mask: `base` (white or black) where nothing is generated, or the generator; then what is painted on it
 /// (a paint channel of its own: the mask's value and coverage, over the base).
-struct PaintMask: Codable, Equatable {
+package struct PaintMask: Codable, Equatable {
     var base: Float = 1
     var generator: PaintGenerator? = nil
     var painted = false             // has a painted part (its texture: PaintLayerData.mask)
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(base: Float = 1, generator: PaintGenerator? = nil, painted: Bool = false) {
+        self.base = base
+        self.generator = generator
+        self.painted = painted
+    }
 }
 
 /// One layer of a painted object: a fill (values, or a Material Designer graph's bake projected onto it) or a paint
 /// layer (what the brush put there, channel by channel), through its mask, at its opacity, by its blend modes.
-struct PaintLayer: Codable, Equatable, Identifiable {
-    enum Kind: String, Codable { case fill, paint }
-    enum Projection: String, Codable, CaseIterable, Identifiable {
+package struct PaintLayer: Codable, Equatable, Identifiable {
+    package enum Kind: String, Codable { case fill, paint }
+    package enum Projection: String, Codable, CaseIterable, Identifiable {
         case triplanar, uv
-        var id: String { rawValue }
+        package var id: String { rawValue }
         var title: String { self == .uv ? "UV" : "Triplanar" }
     }
-    var id = UUID()
+    package var id = UUID()
     var name = "Layer"
     var kind = Kind.paint
     var visible = true
     var opacity: Float = 1
     var blend = PaintBlend.normal
     var heightBlend = PaintHeightBlend.normal
-    var channels: Set<PaintChannel> = [.color, .roughness, .metallic, .height]
+    package var channels: Set<PaintChannel> = [.color, .roughness, .metallic, .height]
     var values = PaintValues()
     /// A fill's graph (by name: MaterialCatalog's), its projection and its tiles per metre.
-    var graph: String? = nil
-    var projection = Projection.triplanar
-    var tiling: Float = 1
-    var mask: PaintMask? = nil
+    package var graph: String? = nil
+    package var projection = Projection.triplanar
+    package var tiling: Float = 1
+    package var mask: PaintMask? = nil
     /// "original": a paint layer filled, when it is first made, from the object as it was (its materials' textures at
     /// its own UVs); nil: empty.
     var source: String? = nil
 
-    static func fill(_ name: String, _ values: PaintValues, channels: Set<PaintChannel> = [.color, .roughness, .metallic]) -> PaintLayer {
+    package static func fill(_ name: String, _ values: PaintValues, channels: Set<PaintChannel> = [.color, .roughness, .metallic]) -> PaintLayer {
         PaintLayer(name: name, kind: .fill, channels: channels, values: values)
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(id: UUID = UUID(), name: String = "Layer", kind: Kind = Kind.paint, visible: Bool = true, opacity: Float = 1, blend: PaintBlend = PaintBlend.normal, heightBlend: PaintHeightBlend = PaintHeightBlend.normal, channels: Set<PaintChannel> = [.color, .roughness, .metallic, .height], values: PaintValues = PaintValues(), graph: String? = nil, projection: Projection = Projection.triplanar, tiling: Float = 1, mask: PaintMask? = nil, source: String? = nil) {
+        self.id = id
+        self.name = name
+        self.kind = kind
+        self.visible = visible
+        self.opacity = opacity
+        self.blend = blend
+        self.heightBlend = heightBlend
+        self.channels = channels
+        self.values = values
+        self.graph = graph
+        self.projection = projection
+        self.tiling = tiling
+        self.mask = mask
+        self.source = source
     }
 }
 
 /// A painted object's document: its layers, bottom first, and how its texture set is made (resolution, the height's
 /// depth, the emission's strength). Its pixels (paint layers and painted masks) are the renderer's while it is open
 /// (PainterSession) and PNGs in its package when saved (PainterStore).
-struct PaintDocument: Codable, Equatable {
-    var name: String
+package struct PaintDocument: Codable, Equatable {
+    package var name: String
     var resolution = 2048
-    var layers: [PaintLayer] = [PaintDocument.baseLayer]
+    package var layers: [PaintLayer] = [PaintDocument.baseLayer]
     /// How far height 0 and 1 are from the surface (metres): the normal the height gives, and parallax if any.
     var heightDepth: Float = 0.004
     var parallax = false
@@ -127,10 +162,10 @@ struct PaintDocument: Codable, Equatable {
     var alphaCutoff: Float = 0.5
 
     static let resolutions = [1024, 2048, 4096]
-    static let baseLayer = PaintLayer(name: "Base", kind: .fill, channels: [.color, .roughness, .metallic],
+    package static let baseLayer = PaintLayer(name: "Base", kind: .fill, channels: [.color, .roughness, .metallic],
                                       values: PaintValues(color: [0.5, 0.5, 0.5], roughness: 0.55))
 
-    init(name: String, resolution: Int = 2048) {
+    package init(name: String, resolution: Int = 2048) {
         self.name = name
         self.resolution = resolution
     }
@@ -147,7 +182,7 @@ struct PaintDocument: Codable, Equatable {
         return String(s).split(separator: "-").joined(separator: "-")
     }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         resolution = try c.decodeIfPresent(Int.self, forKey: .resolution) ?? 2048
@@ -164,8 +199,8 @@ struct PaintDocument: Codable, Equatable {
 /// The documents the scenes paint with, by name: what the painter edits (in memory, its edits shown at once), and
 /// what is saved (PainterStore) for the others. Any thread (the painter's window edits on the main thread, the scenes
 /// are made and the frames read on others).
-final class PaintDocuments {
-    static let shared = PaintDocuments()
+package final class PaintDocuments {
+    package static let shared = PaintDocuments()
     private let lock = NSLock()
     private var open: [String: PaintDocument] = [:]
     private var versions: [String: Int] = [:]
@@ -182,7 +217,7 @@ final class PaintDocuments {
     }
 
     /// An edit of a document's layers (the renderer's sessions composite it again).
-    func update(_ d: PaintDocument) {
+    package func update(_ d: PaintDocument) {
         lock.lock(); defer { lock.unlock() }
         open[d.name] = d
         versions[d.name, default: 0] += 1

@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// SDF shapes (SDFShapes.swift, SDFVolume.swift, SDFBuffers.swift): the distances the shaders march (Shaders/SDF.metal

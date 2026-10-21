@@ -10,9 +10,9 @@ import simd
 /// node's pins, its exposed inputs the node's parameters).
 ///
 /// The catalogue of nodes is MatNodes.swift; saved as Assets/Materials/<name>.mat.json (MaterialStore).
-struct MaterialGraph: Codable, Equatable {
+package struct MaterialGraph: Codable, Equatable {
     static let format = 1
-    var name: String
+    package var name: String
     /// The output size, log2 (8...12: 256 to 4096 pixels square): nodes inherit it, or a size relative to it.
     var size = 10
     /// The precision nodes inherit (auto: 16-bit grey, 8-bit colour).
@@ -20,13 +20,13 @@ struct MaterialGraph: Codable, Equatable {
     /// Mixed into every node's seed: a graph's variations.
     var seed = 0
     /// How the renderer uses the outputs (parallax depth, UV scale, cutoff...).
-    var surface = MatSurface()
-    var nodes: [MatNode] = []
+    package var surface = MatSurface()
+    package var nodes: [MatNode] = []
     var links: [MatLink] = []
     /// The parameters it exposes (a node's parameter bound to one of them: MatNode.exposed); a subgraph node's own.
     var inputs: [MatGraphInput] = []
 
-    init(_ name: String, size: Int = 10, nodes: [MatNode] = [], links: [MatLink] = [], inputs: [MatGraphInput] = []) {
+    package init(_ name: String, size: Int = 10, nodes: [MatNode] = [], links: [MatLink] = [], inputs: [MatGraphInput] = []) {
         self.name = name
         self.size = size
         self.nodes = nodes
@@ -53,7 +53,7 @@ struct MaterialGraph: Codable, Equatable {
     var allIDs: Set<String> { Set(nodes.map(\.id)) }
 
     /// The output nodes, by the channel they give the renderer.
-    var channels: [MatChannel: String] {
+    package var channels: [MatChannel: String] {
         var out: [MatChannel: String] = [:]
         for n in nodes where n.kind == .output {
             if let c = MatChannel(rawValue: n.choice("usage")), out[c] == nil { out[c] = n.id }
@@ -87,7 +87,7 @@ struct MaterialGraph: Codable, Equatable {
 }
 
 /// The renderer's channels a graph's output nodes name.
-enum MatChannel: String, Codable, CaseIterable {
+package enum MatChannel: String, Codable, CaseIterable {
     case baseColor, normal, roughness, metallic, ambientOcclusion, height, opacity, emissive
 
     var title: String {
@@ -121,7 +121,7 @@ enum MatChannel: String, Codable, CaseIterable {
 }
 
 /// How the renderer uses a graph's outputs.
-struct MatSurface: Codable, Equatable {
+package struct MatSurface: Codable, Equatable {
     /// Parallax depth of the height (black to white), in the texture's tile (0: no parallax).
     var heightDepth: Float = 0.04
     /// How many times the texture repeats over the mesh's UVs (the workshop's meshes: a UV unit a metre).
@@ -135,11 +135,11 @@ struct MatSurface: Codable, Equatable {
     /// The normal output's convention: OpenGL (+Y up, the renderer's) or DirectX (green flipped).
     var normalDirectX = false
     /// The renderer computes it in the shading (MatShaderCode) rather than sampling its bake, when it can.
-    var shaderMode = false
+    package var shaderMode = false
     /// Real displacement: the height moves the vertices of the meshes it is on (subdivided for it: Scene+Displacement),
     /// by this many metres from black to white (0: none; the height is then the parallax's). `displacementMid`: the
     /// height that stays where the surface is. `displacementDetail`: the longest edge left (metres).
-    var displacement: Float = 0
+    package var displacement: Float = 0
     var displacementMid: Float = 0.5
     var displacementDetail: Float = 0.02
 
@@ -151,12 +151,12 @@ struct MatSurface: Codable, Equatable {
     /// The detail's choices (metres).
     static let displacementDetails: [Float] = [0.005, 0.01, 0.02, 0.04, 0.08]
 
-    init() {}
+    package init() {}
 
     // Decoded field by field, each with its default: a file of an older version (fewer fields) still reads.
     private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX, shaderMode
         case displacement, displacementMid, displacementDetail }
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let d = MatSurface()
         heightDepth = try c.decodeIfPresent(Float.self, forKey: .heightDepth) ?? d.heightDepth
@@ -179,7 +179,7 @@ enum MatType: String, Codable, CaseIterable {
 }
 
 /// A node's precision: inherited (the graph's; auto: 16-bit grey, 8-bit colour), 8-bit, 16-bit float, 32-bit float.
-enum MatBits: String, Codable, CaseIterable {
+package enum MatBits: String, Codable, CaseIterable {
     case inherit, b8 = "8", b16 = "16", b32 = "32f"
 
     var title: String {
@@ -194,18 +194,18 @@ enum MatBits: String, Codable, CaseIterable {
 
 /// A node's size: inherited (its first input's, else the graph's), relative to that (log2 steps: -1 is half), or its
 /// own (log2).
-enum MatSize: Codable, Equatable, Hashable {
+package enum MatSize: Codable, Equatable, Hashable {
     case inherit
     case relative(Int)
     case absolute(Int)
 
     private enum Key: String, CodingKey { case relative, absolute }
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         if let s = try? decoder.singleValueContainer().decode(String.self), s == "inherit" { self = .inherit; return }
         let c = try decoder.container(keyedBy: Key.self)
         if let r = try c.decodeIfPresent(Int.self, forKey: .relative) { self = .relative(r) } else { self = .absolute(try c.decode(Int.self, forKey: .absolute)) }
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         switch self {
         case .inherit:
             var c = encoder.singleValueContainer()
@@ -222,10 +222,10 @@ enum MatSize: Codable, Equatable, Hashable {
 
 /// A node: its kind (MatOpKind), its parameters' values (the spec's defaults otherwise), where the editor draws it,
 /// its size and precision, the parameters bound to the graph's exposed inputs, and a pixel processor's function.
-struct MatNode: Codable, Equatable, Identifiable {
-    var id = ""
-    var kind: MatOpKind
-    var params: [String: MatParam] = [:]
+package struct MatNode: Codable, Equatable, Identifiable {
+    package var id = ""
+    package var kind: MatOpKind
+    package var params: [String: MatParam] = [:]
     var at = SIMD2<Float>.zero
     var size = MatSize.inherit
     var bits = MatBits.inherit
@@ -234,7 +234,7 @@ struct MatNode: Codable, Equatable, Identifiable {
     /// A pixel processor's per-pixel function (MatFunction).
     var function: MatFunction?
 
-    init(_ kind: MatOpKind, _ params: [String: MatParam] = [:], id: String = "", at: SIMD2<Float> = .zero) {
+    package init(_ kind: MatOpKind, _ params: [String: MatParam] = [:], id: String = "", at: SIMD2<Float> = .zero) {
         self.kind = kind
         self.params = params
         self.id = id
@@ -250,7 +250,7 @@ struct MatNode: Codable, Equatable, Identifiable {
     func text(_ name: String) -> String { param(name).text }
 
     private enum Key: String, CodingKey { case id, kind, params, at, size, bits, exposed, function }
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         id = try c.decodeIfPresent(String.self, forKey: .id) ?? ""
         kind = try c.decode(MatOpKind.self, forKey: .kind)
@@ -261,7 +261,7 @@ struct MatNode: Codable, Equatable, Identifiable {
         exposed = try c.decodeIfPresent([String: String].self, forKey: .exposed) ?? [:]
         function = try c.decodeIfPresent(MatFunction.self, forKey: .function)
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         try c.encode(id, forKey: .id)
         try c.encode(kind, forKey: .kind)
@@ -275,13 +275,13 @@ struct MatNode: Codable, Equatable, Identifiable {
 }
 
 /// A wire: node `from`'s output `output` into pin `input` of node `to`.
-struct MatLink: Codable, Equatable, Hashable {
+package struct MatLink: Codable, Equatable, Hashable {
     var from: String
     var output: String
     var to: String
     var input: String
 
-    init(_ from: String, _ output: String = "out", to: String, _ input: String) {
+    package init(_ from: String, _ output: String = "out", to: String, _ input: String) {
         self.from = from
         self.output = output
         self.to = to
@@ -291,13 +291,13 @@ struct MatLink: Codable, Equatable, Hashable {
 
 /// A parameter the graph exposes: its name (what nodes bind to, and a subgraph node's parameter), its title, default
 /// and a slider's span.
-struct MatGraphInput: Codable, Equatable {
+package struct MatGraphInput: Codable, Equatable {
     var name: String
     var title: String
     var value: MatParam
     var span: ClosedRange<Float>?
 
-    init(_ name: String, _ title: String? = nil, _ value: MatParam, span: ClosedRange<Float>? = nil) {
+    package init(_ name: String, _ title: String? = nil, _ value: MatParam, span: ClosedRange<Float>? = nil) {
         self.name = name
         self.title = title ?? name
         self.value = value
@@ -308,7 +308,7 @@ struct MatGraphInput: Codable, Equatable {
 // MARK: - Values
 
 /// A parameter's value.
-enum MatParam: Equatable, Hashable {
+package enum MatParam: Equatable, Hashable {
     case float(Float)
     case vec2(SIMD2<Float>)
     case color(SIMD4<Float>)
@@ -322,7 +322,7 @@ enum MatParam: Equatable, Hashable {
     /// Text: a file's path (Bitmap), Metal code (Code), a name.
     case text(String)
 
-    var float: Float {
+    package var float: Float {
         switch self {
         case .float(let f): return f
         case .int(let i): return Float(i)
@@ -356,7 +356,7 @@ enum MatParam: Equatable, Hashable {
         default: return false
         }
     }
-    var int: Int {
+    package var int: Int {
         switch self {
         case .int(let i): return i
         case .float(let f): return Int(f.rounded())
@@ -376,14 +376,14 @@ enum MatParam: Equatable, Hashable {
 }
 
 extension VFXCurve: Hashable {
-    func hash(into h: inout Hasher) {
+    package func hash(into h: inout Hasher) {
         for k in keys { h.combine(k.x); h.combine(k.y) }
         h.combine(smooth)
     }
 }
 
 extension VFXGradient: Hashable {
-    func hash(into h: inout Hasher) {
+    package func hash(into h: inout Hasher) {
         for k in keys { h.combine(k.t); h.combine(k.color.x); h.combine(k.color.y); h.combine(k.color.z); h.combine(k.color.w) }
     }
 }
@@ -392,7 +392,7 @@ extension VFXGradient: Hashable {
 extension MatParam: Codable {
     private enum Key: String, CodingKey { case float, vec2, color, bool, int, choice, curve, gradient, text }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         guard let key = c.allKeys.first else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "an empty value"))
@@ -410,7 +410,7 @@ extension MatParam: Codable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .float(let v): try c.encode(v, forKey: .float)
@@ -429,5 +429,5 @@ extension MatParam: Codable {
 /// A graph's error (a loop, a missing subgraph, a file of a newer format).
 struct MatError: Error, CustomStringConvertible {
     let description: String
-    init(_ d: String) { description = d }
+    package init(_ d: String) { description = d }
 }

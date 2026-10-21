@@ -22,7 +22,7 @@ struct DemolitionStatus: Equatable {
 }
 
 /// The player's state on the render thread.
-struct DemolitionPlayer {
+package struct DemolitionPlayer {
     var tool = DemolitionTool.machineGun
     /// The mouse turns the camera (RenderView.captured); the crosshair aims.
     var captured = false
@@ -42,7 +42,7 @@ struct DemolitionPlayer {
     /// and blast (m); TNT's blast (m, m/s at its middle), and how many charges stay stuck at once.
     static let fireRate: Float = 12, bulletImpulse: Float = 25, spread: Float = 0.007
     static let rocketSpeed: Float = 28, rocketBlast: Float = 2.5
-    static let tntRadius: Float = 1.8, tntPush: Float = 18
+    package static let tntRadius: Float = 1.8, tntPush: Float = 18
     /// The walker's speeds (m/s) and its eyes above its middle (m).
     static let walkSpeed: Float = 3, runSpeed: Float = 5.5, jumpSpeed: Float = 4.5, eyeHeight: Float = 0.78
 }
@@ -51,7 +51,7 @@ struct DemolitionPlayer {
 /// physics as commands (Scene.physicsCommand: with the next frame's steps, without waiting for those running), so a
 /// replay does them again; aiming reads the poses drawn this frame.
 extension Renderer {
-    var inDemolition: Bool { scene.settings.kind == .demolition && scene.demolitionRig != nil }
+    var inDemolition: Bool { scene.demolitionRig != nil }
 
     var demolitionStatus: DemolitionStatus? {
         guard inDemolition else { return nil }

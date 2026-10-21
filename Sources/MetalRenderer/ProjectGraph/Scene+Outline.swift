@@ -80,7 +80,7 @@ private struct OutlineBuilder {
     private var nodeOf: [Int32]
     private var memberOf: [Int32]
 
-    init(_ scene: Scene) {
+    package init(_ scene: Scene) {
         self.scene = scene
         nodeOf = [Int32](repeating: -1, count: scene.instances.count)
         memberOf = [Int32](repeating: 0, count: scene.instances.count)

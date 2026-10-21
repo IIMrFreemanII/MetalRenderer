@@ -96,7 +96,7 @@ final class MaterialEditorModel: GraphCanvasModel {
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
 
-    init(controller: MaterialEditorHost, saved: MaterialCatalog = MaterialCatalog.launch, folder: URL? = MaterialStore.folder,
+    package init(controller: MaterialEditorHost, saved: MaterialCatalog = MaterialCatalog.launch, folder: URL? = MaterialStore.folder,
          draft: Bool = true) {
         self.controller = controller
         self.saved = saved

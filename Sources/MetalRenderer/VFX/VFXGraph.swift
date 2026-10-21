@@ -10,22 +10,22 @@ import simd
 ///   (VFXProgram, compiled into a library of its own by VFXCompiler) for what the fixed one can't do.
 /// The catalogue of blocks and operators is VFXNodes.swift; saved as Assets/Effects/<name>.vfx.json (VFXStore), or
 /// as Swift (VFXBuilder.swift).
-struct VFXEffect: Codable, Equatable {
+package struct VFXEffect: Codable, Equatable {
     static let format = 1
     var name: String
     /// The point it is made about (a fire's, a wheel's rim): the VFX stage centres it there.
     var origin = SIMD3<Float>.zero
     var emitters: [VFXEmitter] = []
     /// Operator nodes, wired into blocks' pins and each other's by `links`.
-    var nodes: [VFXNode] = []
-    var links: [VFXLink] = []
+    package var nodes: [VFXNode] = []
+    package var links: [VFXLink] = []
     /// Vector fields its emitters move in (the Field block names one), in its own space.
     var fields: [VFXField] = []
     /// Shapes its particles bounce off (the Collide block names them), in its own space. The scene's own colliders
     /// (Scene.addParticleCollider: a floor, a crate, a bowl) are named the same way.
     var colliders: [VFXCollider] = []
 
-    init(_ name: String, origin: SIMD3<Float> = .zero, emitters: [VFXEmitter] = [], nodes: [VFXNode] = [], links: [VFXLink] = [],
+    package init(_ name: String, origin: SIMD3<Float> = .zero, emitters: [VFXEmitter] = [], nodes: [VFXNode] = [], links: [VFXLink] = [],
          fields: [VFXField] = [], colliders: [VFXCollider] = []) {
         self.name = name
         self.origin = origin
@@ -85,15 +85,15 @@ struct VFXEffect: Codable, Equatable {
     }
 
     /// A name as an id: lower case, words joined by "-".
-    static func slug(_ name: String) -> String {
+    package static func slug(_ name: String) -> String {
         let words = name.lowercased().split { !$0.isLetter && !$0.isNumber }
         return words.isEmpty ? "e" : words.joined(separator: "-")
     }
 }
 
 /// One of an effect's emitters: a pool of `capacity` particles, and what its four contexts do to them.
-struct VFXEmitter: Codable, Equatable, Identifiable {
-    var id = ""
+package struct VFXEmitter: Codable, Equatable, Identifiable {
+    package var id = ""
     var name: String
     var capacity: Int
     /// What its particles' random numbers start from (ParticleEmitter.seed); nil: a hash of the effect's and its name,
@@ -107,7 +107,7 @@ struct VFXEmitter: Codable, Equatable, Identifiable {
     /// Where the editor draws it.
     var canvas = SIMD2<Float>.zero
 
-    init(_ name: String, capacity: Int, seed: UInt32? = nil, spawn: [VFXBlock] = [], initialize: [VFXBlock] = [],
+    package init(_ name: String, capacity: Int, seed: UInt32? = nil, spawn: [VFXBlock] = [], initialize: [VFXBlock] = [],
          update: [VFXBlock] = [], output: [VFXBlock] = [], id: String = "") {
         self.id = id
         self.name = name
@@ -160,13 +160,13 @@ enum VFXContext: String, Codable, CaseIterable {
 
 /// A block in a context: a kind (VFXBlockKind) and its parameters, each a pin an operator can be wired into (if its
 /// kind says so) or a value. A missing parameter is its kind's default.
-struct VFXBlock: Codable, Equatable, Identifiable {
-    var id = ""
+package struct VFXBlock: Codable, Equatable, Identifiable {
+    package var id = ""
     var kind: VFXBlockKind
     var params: [String: VFXParam] = [:]
     var enabled = true
 
-    init(_ kind: VFXBlockKind, _ params: [String: VFXParam] = [:], id: String = "") {
+    package init(_ kind: VFXBlockKind, _ params: [String: VFXParam] = [:], id: String = "") {
         self.kind = kind
         self.params = params
         self.id = id
@@ -185,13 +185,13 @@ struct VFXBlock: Codable, Equatable, Identifiable {
 }
 
 /// An operator node: a kind (VFXOpKind), the values of its unwired inputs, and where the editor draws it.
-struct VFXNode: Codable, Equatable, Identifiable {
-    var id = ""
+package struct VFXNode: Codable, Equatable, Identifiable {
+    package var id = ""
     var kind: VFXOpKind
     var params: [String: VFXParam] = [:]
     var canvas = SIMD2<Float>.zero
 
-    init(_ kind: VFXOpKind, _ params: [String: VFXParam] = [:], id: String = "", at canvas: SIMD2<Float> = .zero) {
+    package init(_ kind: VFXOpKind, _ params: [String: VFXParam] = [:], id: String = "", at canvas: SIMD2<Float> = .zero) {
         self.kind = kind
         self.params = params
         self.id = id
@@ -202,13 +202,13 @@ struct VFXNode: Codable, Equatable, Identifiable {
 }
 
 /// A wire: node `from`'s output `output` into pin `input` of node or block `to`.
-struct VFXLink: Codable, Equatable, Hashable {
+package struct VFXLink: Codable, Equatable, Hashable {
     var from: String
     var output: String
     var to: String
     var input: String
 
-    init(_ from: String, _ output: String = "out", to: String, _ input: String) {
+    package init(_ from: String, _ output: String = "out", to: String, _ input: String) {
         self.from = from
         self.output = output
         self.to = to
@@ -217,7 +217,7 @@ struct VFXLink: Codable, Equatable, Hashable {
 }
 
 /// A vector field in an effect's space (ParticleField's presets): `vortex` a dust devil's whirl, `plume` a fire's hot air.
-struct VFXField: Codable, Equatable {
+package struct VFXField: Codable, Equatable {
     enum Kind: String, Codable, CaseIterable { case vortex, plume }
     var name: String
     var kind: Kind
@@ -238,7 +238,7 @@ struct VFXField: Codable, Equatable {
 }
 
 /// A collider in an effect's space.
-struct VFXCollider: Codable, Equatable {
+package struct VFXCollider: Codable, Equatable {
     enum Shape: Codable, Equatable {
         case plane(normal: SIMD3<Float>, point: SIMD3<Float>)
         case sphere(center: SIMD3<Float>, radius: Float)
@@ -258,7 +258,7 @@ struct VFXCollider: Codable, Equatable {
 
 /// Where a scene puts an effect: a translation (an effect isn't turned or scaled). Identity adds nothing, so an effect
 /// written in the scene's space (the built-in ones) keeps its numbers bit for bit.
-struct VFXPlacement: Codable, Equatable {
+package struct VFXPlacement: Codable, Equatable {
     var offset = SIMD3<Float>.zero
     static let identity = VFXPlacement()
     func point(_ p: SIMD3<Float>) -> SIMD3<Float> { offset == .zero ? p : offset + p }
@@ -267,7 +267,7 @@ struct VFXPlacement: Codable, Equatable {
 // MARK: - Values
 
 /// A parameter's value.
-enum VFXParam: Equatable {
+package enum VFXParam: Equatable {
     case float(Float)
     case vec3(SIMD3<Float>)
     case color(SIMD4<Float>)
@@ -282,7 +282,7 @@ enum VFXParam: Equatable {
     case curve(VFXCurve)
     case gradient(VFXGradient)
 
-    var float: Float {
+    package var float: Float {
         switch self {
         case .float(let f): return f
         case .int(let i): return Float(i)
@@ -340,18 +340,18 @@ enum VFXParam: Equatable {
 
 /// A curve over 0...1: keys (t, value), t rising, straight (or smooth: Hermite with flat ends at the keys) between;
 /// flat past its ends. Up to `maxKeys`.
-struct VFXCurve: Codable, Equatable {
+package struct VFXCurve: Codable, Equatable {
     static let maxKeys = 8
     var keys: [SIMD2<Float>]
     var smooth = false
 
-    init(_ keys: [SIMD2<Float>], smooth: Bool = false) {
+    package init(_ keys: [SIMD2<Float>], smooth: Bool = false) {
         self.keys = keys
         self.smooth = smooth
     }
-    init(constant v: Float) { keys = [SIMD2(0, v), SIMD2(1, v)] }
+    package init(constant v: Float) { keys = [SIMD2(0, v), SIMD2(1, v)] }
     /// From `a` at 0 to `b` at 1.
-    init(from a: Float, to b: Float) { keys = [SIMD2(0, a), SIMD2(1, b)] }
+    package init(from a: Float, to b: Float) { keys = [SIMD2(0, a), SIMD2(1, b)] }
 
     /// Its value at t (VFXCodegen's vfxCurve, line for line).
     func value(_ t: Float) -> Float {
@@ -370,19 +370,19 @@ struct VFXCurve: Codable, Equatable {
 }
 
 /// A gradient over 0...1: colour keys, t rising, straight between; flat past its ends. Up to `maxKeys`.
-struct VFXGradient: Codable, Equatable {
+package struct VFXGradient: Codable, Equatable {
     static let maxKeys = 8
-    struct Key: Codable, Equatable {
+    package struct Key: Codable, Equatable {
         var t: Float
         var color: SIMD4<Float>
-        init(_ t: Float, _ color: SIMD4<Float>) { self.t = t; self.color = color }
+        package init(_ t: Float, _ color: SIMD4<Float>) { self.t = t; self.color = color }
     }
     var keys: [Key]
 
-    init(_ keys: [Key]) { self.keys = keys }
-    init(constant c: SIMD4<Float>) { keys = [Key(0, c), Key(1, c)] }
+    package init(_ keys: [Key]) { self.keys = keys }
+    package init(constant c: SIMD4<Float>) { keys = [Key(0, c), Key(1, c)] }
     /// ParticleEmitter's three keys: at birth, at `midpoint` of its life, at death.
-    init(_ c0: SIMD4<Float>, _ c1: SIMD4<Float>, _ c2: SIMD4<Float>, midpoint: Float = 0.5) {
+    package init(_ c0: SIMD4<Float>, _ c1: SIMD4<Float>, _ c2: SIMD4<Float>, midpoint: Float = 0.5) {
         keys = [Key(0, c0), Key(midpoint, c1), Key(1, c2)]
     }
 
@@ -408,7 +408,7 @@ struct VFXGradient: Codable, Equatable {
 extension VFXParam: Codable {
     private enum Key: String, CodingKey { case float, vec3, color, bool, int, range, choice, names, curve, gradient }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         guard let key = c.allKeys.first else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "an empty value"))
@@ -430,7 +430,7 @@ extension VFXParam: Codable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .float(let v): try c.encode(v, forKey: .float)

@@ -11,14 +11,14 @@ struct ParticleKernels {
     let pose: MTLComputePipelineState
     let programs: Bool
 
-    init(_ p: Pipelines) {
+    package init(_ p: Pipelines) {
         begin = p[.particleBegin]
         emit = p[.particleEmit]
         simulate = p[.particleSimulate]
         pose = p[.particlePose]
         programs = false
     }
-    init(begin: MTLComputePipelineState, emit: MTLComputePipelineState, simulate: MTLComputePipelineState,
+    package init(begin: MTLComputePipelineState, emit: MTLComputePipelineState, simulate: MTLComputePipelineState,
          pose: MTLComputePipelineState) {
         self.begin = begin
         self.emit = emit

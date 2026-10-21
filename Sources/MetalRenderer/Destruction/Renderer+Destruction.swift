@@ -33,13 +33,13 @@ struct FractureObjectInfo: Equatable {
 extension Renderer {
     /// Keys 1, 2 and 3 in the destruction scene (elsewhere they are view modes).
     func destructionKey(_ key: String) -> Bool {
-        guard scene.settings.kind == .destruction, let n = Int(key), (1...3).contains(n) else { return false }
+        guard scene.destructionRig != nil, let n = Int(key), (1...3).contains(n) else { return false }
         destructionTool = DestructionTool(rawValue: n - 1)!
         return true
     }
 
     /// The tool isn't Grab: a press doesn't take a body (the click fires on release).
-    var destructionFires: Bool { scene.settings.kind == .destruction && destructionTool != .grab }
+    var destructionFires: Bool { scene.destructionRig != nil && destructionTool != .grab }
 
     /// A click with Shoot or Blast at `cursor`.
     func fireDestruction(at cursor: SIMD2<Float>) {

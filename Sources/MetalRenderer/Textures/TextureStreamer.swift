@@ -94,7 +94,7 @@ final class TextureStreamer {
 
     /// `placement`: placement-sparse textures on a placement heap, for Metal 4's queue (see `isSupported`).
     /// `load`: the load to report the cache files and textures to.
-    init(sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue, budgetMB: Int, slots: Int,
+    package init(sources: [Scene.TextureSource], device: MTLDevice, queue: MTLCommandQueue, budgetMB: Int, slots: Int,
          placement: Bool, load: LoadJob? = nil) throws {
         self.device = device
         let start = CFAbsoluteTimeGetCurrent()
@@ -606,7 +606,7 @@ struct TileAllocator {
     let count: Int
     private(set) var freeCount: Int
 
-    init(count: Int) {
+    package init(count: Int) {
         self.count = count
         freeCount = count
         used = [UInt64](repeating: 0, count: (count + 63) / 64)

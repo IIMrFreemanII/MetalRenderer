@@ -5,7 +5,7 @@ import simd
 /// rolling hills, the open world's), or flat. Edits are kept as heights added to it (TerrainField), so an unedited
 /// terrain is its base exactly, and the open world stays endless: only the tiles that were edited keep anything.
 /// Any thread.
-protocol TerrainBase: AnyObject {
+package protocol TerrainBase: AnyObject {
     var grid: TerrainGrid { get }
     /// What the base is made from, said in full: edits saved over another base aren't used (TerrainStore).
     var fingerprint: String { get }
@@ -26,10 +26,10 @@ protocol TerrainBase: AnyObject {
 }
 
 extension TerrainBase {
-    func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? { nil }
-    func protection(_ i: Int, _ j: Int) -> Float { 0 }
-    func storedHeights(_ tile: SIMD2<Int>, step: Int) -> Stored<Float>? { nil }
-    func kinds(_ tile: SIMD2<Int>, step: Int) -> [UInt8]? { nil }
+    package func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? { nil }
+    package func protection(_ i: Int, _ j: Int) -> Float { 0 }
+    package func storedHeights(_ tile: SIMD2<Int>, step: Int) -> Stored<Float>? { nil }
+    package func kinds(_ tile: SIMD2<Int>, step: Int) -> [UInt8]? { nil }
 
     /// The base's heights of a tile's samples (tileCells squared, rows along j), on every core.
     func tileHeights(_ tile: SIMD2<Int>) -> [Float] {
@@ -46,8 +46,8 @@ extension TerrainBase {
 
 /// Rolling ground from octaves of gradient noise, as `Terrain` makes it (the Forest's, Mireland's), level inside a
 /// clearing: the same heights at the same samples, bit for bit.
-final class NoiseTerrainBase: TerrainBase {
-    let grid: TerrainGrid
+package final class NoiseTerrainBase: TerrainBase {
+    package let grid: TerrainGrid
     let seed: UInt64
     let relief: Float
     let flat: (center: SIMD2<Float>, inner: Float, outer: Float)?
@@ -58,7 +58,7 @@ final class NoiseTerrainBase: TerrainBase {
     private let half: Float, step: Float
 
     /// `size` metres across, `cells` to a side, centred on the origin (as `Terrain`).
-    init(size: Float, cells: Int, seed: UInt64, relief: Float, flat: (center: SIMD2<Float>, inner: Float, outer: Float)? = nil,
+    package init(size: Float, cells: Int, seed: UInt64, relief: Float, flat: (center: SIMD2<Float>, inner: Float, outer: Float)? = nil,
          featureSize: Float = 120, octaves: Int = 5) {
         grid = .square(size: size, cells: cells)
         self.seed = seed
@@ -71,13 +71,13 @@ final class NoiseTerrainBase: TerrainBase {
         step = size / Float(cells)
     }
 
-    var fingerprint: String {
+    package var fingerprint: String {
         let f = flat.map { "flat \($0.center.x) \($0.center.y) \($0.inner) \($0.outer)" } ?? "no flat"
         let shape = featureSize == 120 && octaves == 5 ? "" : " features \(featureSize) octaves \(octaves)"
         return "noise seed \(seed) relief \(relief) cell \(grid.cell) \(grid.hi.map { "\($0.x)x\($0.y)" } ?? "") \(f)\(shape)"
     }
 
-    func height(_ i: Int, _ j: Int) -> Float {
+    package func height(_ i: Int, _ j: Int) -> Float {
         let p = SIMD2<Float>(Float(i) * step - half, Float(j) * step - half)
         var h = relief * 1.7 * Terrain.fbm(p / featureSize, octaves: octaves, seed: noiseSeed)
         if let flat {
@@ -91,21 +91,27 @@ final class NoiseTerrainBase: TerrainBase {
 /// Level ground at `level`, with hills on it (the valley's): each the top of an ellipsoid sunk into the ground, about
 /// `center` (the world's x, y, z) with radii `radii`. Where `protect` says, the brushes leave the ground as it is (the
 /// city's streets and blocks: TerrainSnapshot.protection).
-final class FlatTerrainBase: TerrainBase {
-    struct Hill: Equatable {
+package final class FlatTerrainBase: TerrainBase {
+    package struct Hill: Equatable {
         var center: SIMD3<Float>
         var radii: SIMD3<Float>
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(center: SIMD3<Float>, radii: SIMD3<Float>) {
+            self.center = center
+            self.radii = radii
+        }
     }
-    let grid: TerrainGrid
+    package let grid: TerrainGrid
     let level: Float
     let hills: [Hill]
     /// Kept level (x, z rectangles of the world, metres).
     let protect: [(lo: SIMD2<Float>, hi: SIMD2<Float>)]
 
     /// With `kinds`, a cell is kind 0 (level ground) or 1 (a hill's).
-    let kinds: Bool
+    package let kinds: Bool
 
-    init(grid: TerrainGrid, level: Float = 0, hills: [Hill] = [], kinds: Bool = false, protect: [(lo: SIMD2<Float>, hi: SIMD2<Float>)] = []) {
+    package init(grid: TerrainGrid, level: Float = 0, hills: [Hill] = [], kinds: Bool = false, protect: [(lo: SIMD2<Float>, hi: SIMD2<Float>)] = []) {
         self.grid = grid
         self.level = level
         self.hills = hills
@@ -113,17 +119,17 @@ final class FlatTerrainBase: TerrainBase {
         self.protect = protect
     }
 
-    func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? {
+    package func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? {
         guard kinds else { return nil }
         return height(i + step / 2, j + step / 2) > level + 0.05 || height(i, j) > level + 0.05 ? 1 : 0
     }
 
-    var fingerprint: String {
+    package var fingerprint: String {
         "flat \(level) cell \(grid.cell) \(grid.hi.map { "\($0.x)x\($0.y)" } ?? "")"
             + hills.map { " hill \($0.center) \($0.radii)" }.joined()
     }
 
-    func height(_ i: Int, _ j: Int) -> Float {
+    package func height(_ i: Int, _ j: Int) -> Float {
         guard !hills.isEmpty else { return level }
         let p = grid.place(i, j), q = SIMD2(Float(p.x), Float(p.y))
         var h = level
@@ -135,7 +141,7 @@ final class FlatTerrainBase: TerrainBase {
         return h
     }
 
-    func protection(_ i: Int, _ j: Int) -> Float {
+    package func protection(_ i: Int, _ j: Int) -> Float {
         guard !protect.isEmpty else { return 0 }
         let p = grid.place(i, j), q = SIMD2(Float(p.x), Float(p.y))
         return protect.contains { q.x >= $0.lo.x && q.x <= $0.hi.x && q.y >= $0.lo.y && q.y <= $0.hi.y } ? 1 : 0
@@ -153,7 +159,7 @@ final class WorldTerrainBase: TerrainBase {
     private var kinds: [SIMD3<Int>: Stored<UInt8>] = [:]   // (tile, level): a cell's kind, rows along z
     private var heights: [SIMD3<Int>: Stored<Float>] = [:] // (tile, level): its samples' heights
 
-    init(world: World) {
+    package init(world: World) {
         self.world = world
         grid = TerrainGrid(cell: 1, origin: .zero, tileCells: Int(World.tileSize), sectorCells: 64)
     }
@@ -184,13 +190,13 @@ final class WorldTerrainBase: TerrainBase {
         heights[SIMD3(tile.x, tile.y, level)] = h
     }
 
-    func storedHeights(_ tile: SIMD2<Int>, step: Int) -> Stored<Float>? {
+    package func storedHeights(_ tile: SIMD2<Int>, step: Int) -> Stored<Float>? {
         let level = step == 1 ? 0 : step == 4 ? 1 : 2, n = grid.tileCells / step
         lock.lock(); defer { lock.unlock() }
         return heights[SIMD3(tile.x, tile.y, level)].flatMap { $0.count == n * n ? $0 : nil }
     }
 
-    func kinds(_ tile: SIMD2<Int>, step: Int) -> [UInt8]? {
+    package func kinds(_ tile: SIMD2<Int>, step: Int) -> [UInt8]? {
         let level = step == 1 ? 0 : step == 4 ? 1 : 2, n = grid.tileCells / step
         lock.lock()
         let k = kinds[SIMD3(tile.x, tile.y, level)]

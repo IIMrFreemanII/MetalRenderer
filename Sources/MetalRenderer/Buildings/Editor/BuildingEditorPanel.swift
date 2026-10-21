@@ -15,7 +15,7 @@ final class BuildingEditorPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(controller: RendererController) {
+    package init(controller: RendererController) {
         model = BuildingEditorModel(controller: controller)
         func make(_ title: String, _ size: NSSize, _ name: String) -> NSPanel {
             let p = NSPanel(contentRect: NSRect(origin: .zero, size: size),

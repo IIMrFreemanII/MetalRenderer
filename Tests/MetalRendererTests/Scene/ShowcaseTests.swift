@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The showcase (Showcase.swift, Scene+Showcase.swift): every model of Assets/ has a look of its own, a setting names

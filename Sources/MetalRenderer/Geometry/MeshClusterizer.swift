@@ -25,7 +25,7 @@ enum MeshClusterizer {
     private struct LocalIds {
         var local: [Int32] = []           // per occurrence
         var count = 0
-        init(_ ids: [Int32], universe: Int) {
+        package init(_ ids: [Int32], universe: Int) {
             local = [Int32](repeating: 0, count: ids.count)
             if ids.count > universe / 8 {   // big lists: an array beats a dictionary
                 var map = [Int32](repeating: -1, count: universe)
