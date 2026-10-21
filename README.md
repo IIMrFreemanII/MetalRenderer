@@ -106,7 +106,7 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
-**Build times.** The code is one library target (`Sources/MetalRenderer`), and the app (`Sources/MetalRendererApp`) is only its entry point, so the app and the tests share one build of it. Release compiles the module whole: about 4.5 minutes after any Swift edit on an M1 Max, most of it the optimiser over the whole module on one core. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
+**Build times.** The code is two library targets: the engine (`Sources/MetalRenderer`) and the game, which holds the demo scenes (`Sources/Game`, README "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole. On an M1 Max that is about 4 minutes after an engine edit, most of it the optimiser over the whole module on one core, and 28 s after a game edit. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
 
 ```bash
 Tools/build.sh                                  # builds it and prints the binary's path
@@ -117,13 +117,16 @@ A debug build warns about any function that takes the type checker over 600 ms, 
 
 Where the time goes (M1 Max, October 2026):
 
-| Build | Clean | After a one-line edit |
-|---|---|---|
-| Dev (`Tools/build.sh`) | 74 s | 14 s |
-| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit |
-| Release | 281 s | 263 s |
-| Release with the tests | +50 s | 265 s; 46 s after a test edit |
+| Build | Clean | After an engine edit | After a game edit (a scene) |
+|---|---|---|---|
+| Dev (`Tools/build.sh`) | 75 s | 13 s | 3.6 s |
+| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit | |
+| Release | 290 s | 225 s; 252 s for an interface change | 28 s |
+| Release with the tests | +50 s | 265 s; 46 s after a test edit | |
 
+The split's own price is a clean build 6–7% longer: two modules, the engine's `package` interface written for the game.
+
+* **A game edit** (a scene's builder, its look, a benchmark mode) recompiles the game's file and its module interface. The engine isn't touched, and a release build optimises only the game's 9k lines. **An engine edit** whose interface doesn't change leaves the game as it was.
 * **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes the module's interface for the app and the tests to import: it type-checks every declaration of the 102k lines and optimises the accessors that `-enable-testing` exposes (12 s; 7 s without testing).
 * **A release edit** is about 200 s of SIL optimisation and 35 s of type checking, both on one core and spread over the whole module: the costliest file is 2% of it. Code generation already runs on every core.
 * **A new worktree** starts the dev build in the background when the session starts (`Tools/warmup.sh`, the SessionStart hook), so the first `render.sh` or `related.sh` finds it built or waits for it.
