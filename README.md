@@ -128,7 +128,7 @@ Where the time goes (M1 Max, October 2026):
 * **A release edit** is about 200 s of SIL optimisation and 35 s of type checking, both on one core and spread over the whole module: the costliest file is 2% of it. Code generation already runs on every core.
 * **A new worktree** starts the dev build in the background when the session starts (`Tools/warmup.sh`, the SessionStart hook), so the first `render.sh` or `related.sh` finds it built or waits for it.
 * `Tools/perf/buildtime.sh` measures all of this on a copy of the tree (clean, no-op and one-line edits; `--rev <commit>` for a commit, `--stats` for the compiler's phases). Run it before and after a change to the build.
-* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build, a C entry point (the link still waits for the module), module emission per file, and leaf modules (only 3.5% of the code depends on nothing else).
+* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build, a C entry point (the link still waits for the module), module emission per file, and leaf modules (only 3.5% of the code depends on nothing else). An app build without `-enable-testing` would make an edit about 4.5 s faster, but SwiftPM's debug builds always enable testability (`--disable-testable-imports` is an option of `swift test` only).
 
 ### Benchmark mode
 
