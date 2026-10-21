@@ -143,8 +143,8 @@ extension PhysicsWorld {
     // MARK: Building
 
     /// How a figure's flesh is made: its lattice's spacing, how heavy and how soft it is, how much its muscles do.
-    struct FleshOptions {
-        var spacing: Float = 0.035
+    package struct FleshOptions {
+        package var spacing: Float = 0.035
         var density: Float = 1050
         /// Its links' compliance, and the outer layer's (all of its links' particles near the surface): skin tension.
         var edge: Float = 2e-4
@@ -155,10 +155,24 @@ extension PhysicsWorld {
         var damping: Float = PhysicsWorld.softLinkDamping
         var friction: Float = 0.8
         /// The muscles' activations are scaled by this (0: none contract).
-        var muscleGain: Float = 1
+        package var muscleGain: Float = 1
         /// How far a muscle's middle shortens at full activation (a share of its length).
         var shortening: Float = 0.4
         var fibreCompliance: Float = 1e-6
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(spacing: Float = 0.035, density: Float = 1050, edge: Float = 2e-4, skinEdge: Float = 4e-5, volume: Float = 1e-11, damping: Float = PhysicsWorld.softLinkDamping, friction: Float = 0.8, muscleGain: Float = 1, shortening: Float = 0.4, fibreCompliance: Float = 1e-6) {
+            self.spacing = spacing
+            self.density = density
+            self.edge = edge
+            self.skinEdge = skinEdge
+            self.volume = volume
+            self.damping = damping
+            self.friction = friction
+            self.muscleGain = muscleGain
+            self.shortening = shortening
+            self.fibreCompliance = fibreCompliance
+        }
     }
 
     /// Depths (FleshFigure.depth) of the core, held where its bones put it, and of the free surface layer; between
@@ -169,8 +183,8 @@ extension PhysicsWorld {
     static let loosePin: Float = 1e-4
 
     /// What `addFlesh` made: its particles (`model`'s points from `first`) and its soft body.
-    struct Flesh {
-        var model: SoftModel
+    package struct Flesh {
+        package var model: SoftModel
         var first: Int
         var body: Int
         /// Per point, its pin's two bones (figure bones) and weights.
@@ -179,7 +193,7 @@ extension PhysicsWorld {
 
     /// A figure's flesh: `model`, a lattice in the figure's rest space (SoftModel(_:spacing:)), each point pinned by its
     /// depth to its two nearest bones and starting where they put it; its tets in `muscles`' bellies with fibres.
-    func addFlesh(_ lattice: SoftModel, figure: FleshFigure, muscles specs: [MuscleSpec], _ o: FleshOptions) -> Flesh {
+    package func addFlesh(_ lattice: SoftModel, figure: FleshFigure, muscles specs: [MuscleSpec], _ o: FleshOptions) -> Flesh {
         let first = particles.count, body = softBodies.count
         let bodies = figure.bodies
         // Each tet binds the bones its corners are nearest to only at their joint (FleshFigure.joins): a limb lying
@@ -333,7 +347,7 @@ extension PhysicsWorld {
 
 /// A muscle, by the parts of a figure it is on and crosses (FleshFigure.Role): its belly along a bone, to one side of
 /// it, and the angle between two bones' axes that activates it.
-struct MuscleSpec {
+package struct MuscleSpec {
     enum Side { case front, back, out }
     enum Axis { case along, up, front }
 
@@ -383,7 +397,7 @@ struct MuscleSpec {
 
     /// The muscles of a figure's arms and legs, each side's: biceps and triceps (the elbow), the deltoid (the arm
     /// raised from the side), quadriceps and hamstrings (the knee), and the calf (the ankle, where there is a foot).
-    static let limbs: [MuscleSpec] = [Float(-1), 1].flatMap { s -> [MuscleSpec] in
+    package static let limbs: [MuscleSpec] = [Float(-1), 1].flatMap { s -> [MuscleSpec] in
         [MuscleSpec(name: "biceps", on: .upperArm(s), span: 0.2...0.85, side: .front, offset: 0.4, radius: 0.65,
                     a: (.upperArm(s), .along), b: (.forearm(s), .along), angles: (0.35, 2.0), gain: 1),
          MuscleSpec(name: "triceps", on: .upperArm(s), span: 0.15...0.8, side: .back, offset: 0.4, radius: 0.6,

@@ -27,7 +27,7 @@ struct LightTree {
     /// Bytes in a frame's buffer: the nodes, then the paths.
     var byteCount: Int { nodes.count * MemoryLayout<GPULightTreeNode>.stride + paths.count * MemoryLayout<SIMD2<UInt32>>.stride }
 
-    init(lights: [GPULight]) {
+    package init(lights: [GPULight]) {
         paths = [SIMD2<UInt32>](repeating: SIMD2(0, LightTree.notInTree), count: lights.count)
         leafOf = [Int32](repeating: -1, count: lights.count)
         var members = lights.indices.filter { LightTree.type(lights[$0]) != GPULight.sun }

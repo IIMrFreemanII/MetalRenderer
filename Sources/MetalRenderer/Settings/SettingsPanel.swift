@@ -35,7 +35,7 @@ final class SettingsPanel: NSObject {
     private var collapsed = Set(UserDefaults.standard.stringArray(forKey: "panel.collapsed") ?? [])
     private var showAdvanced = UserDefaults.standard.bool(forKey: "panel.advanced")
 
-    init(renderer: RendererController) {
+    package init(renderer: RendererController) {
         self.renderer = renderer
         upscaleSteps = renderer.upscaleSteps
         panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 400),
@@ -169,8 +169,10 @@ final class SettingsPanel: NSObject {
         }
         switch row {
         case .scene:   // a new scene brings its own defaults and drops the models added to the old one
-            let kinds = popup(SceneKind.allCases.map(\.title)) { [unowned self] popup in
-                let kind = SceneKind(rawValue: popup.indexOfSelectedItem) ?? .cornell, defaults = self.renderer.defaultSettings
+            let all = SceneKind.allCases
+            let kinds = popup(all.map(\.title)) { [unowned self] popup in
+                let kind = all.indices.contains(popup.indexOfSelectedItem) ? all[popup.indexOfSelectedItem] : .cornell
+                let defaults = self.renderer.defaultSettings
                 guard kind != self.renderer.settings.scene.kind else { return }
                 self.renderer.update { s in
                     guard kind != s.scene.kind else { return }
@@ -179,7 +181,7 @@ final class SettingsPanel: NSObject {
                     s.applySceneDefaults(from: defaults)   // e.g. the night market's light count
                 }
             }
-            refreshers.append { kinds.selectItem(at: $0.scene.kind.rawValue) }
+            refreshers.append { kinds.selectItem(at: all.firstIndex(of: $0.scene.kind) ?? 0) }
             return [label(title), kinds]
         case .showcaseModel:   // a model brings its look: its fog and lens
             let files = Scene.galleryFiles()
@@ -465,7 +467,7 @@ final class SettingsPanel: NSObject {
         var onToggle: ((Bool) -> Void)?
         var expanded: Bool { disclosure.state == .on }
 
-        init(title: String, expanded: Bool) {
+        package init(title: String, expanded: Bool) {
             super.init(frame: .zero)
             disclosure.bezelStyle = .disclosure
             disclosure.setButtonType(.onOff)
@@ -481,7 +483,7 @@ final class SettingsPanel: NSObject {
             addArrangedSubview(disclosure)
             addArrangedSubview(label)
         }
-        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+        package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
         @objc private func clicked() { disclosure.state = expanded ? .off : .on; toggled() }
         @objc private func toggled() { onToggle?(expanded) }
@@ -495,7 +497,7 @@ final class SettingsPanel: NSObject {
     /// A control's target.
     private final class Action: NSObject {
         let run: () -> Void
-        init(_ run: @escaping () -> Void) { self.run = run }
+        package init(_ run: @escaping () -> Void) { self.run = run }
         @objc func fire() { run() }
     }
 

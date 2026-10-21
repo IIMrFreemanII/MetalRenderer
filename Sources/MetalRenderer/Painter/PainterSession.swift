@@ -162,7 +162,7 @@ final class PainterSession {
         var before: [MTLTexture] = []
         var after: [MTLTexture] = []
         var bytes = 0
-        init(layer: UUID, target: PaintTarget, tiles: [Int]) { self.layer = layer; self.target = target; self.tiles = tiles }
+        package init(layer: UUID, target: PaintTarget, tiles: [Int]) { self.layer = layer; self.target = target; self.tiles = tiles }
     }
     private(set) var undoRecords: [UndoRecord] = []
     static let undoBudget = 512 << 20
@@ -171,7 +171,7 @@ final class PainterSession {
     /// Called when a stroke's undo record is kept (the painter's model registers it with its undo manager).
     var onStrokeRecorded: ((UndoRecord) -> Void)?
 
-    init?(device: MTLDevice, object: PaintedObject, document: PaintDocument) {
+    package init?(device: MTLDevice, object: PaintedObject, document: PaintDocument) {
         self.device = device
         self.object = object
         self.size = object.resolution

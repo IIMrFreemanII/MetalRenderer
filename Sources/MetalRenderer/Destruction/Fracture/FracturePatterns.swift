@@ -4,12 +4,12 @@ import simd
 /// What a fractured object is made of: how it breaks (its pattern), how hard it is to break, what its broken faces
 /// and its dust look like. UE Chaos's damage thresholds per level and its connection graph's strength are these
 /// numbers (Fracture/FractureTree.swift, Physics+Fracture.swift).
-enum FractureMaterial: Int, Codable, CaseIterable {
+package enum FractureMaterial: Int, Codable, CaseIterable {
     case concrete, stone, brick, glass, wood
     /// The demolition scene's partitions (plasterboard on studs) and its steel furniture (cabinets, desks' frames).
     case plaster, metal
 
-    var title: String {
+    package var title: String {
         switch self {
         case .concrete: return "Concrete"
         case .stone: return "Stone"
@@ -61,7 +61,7 @@ enum FractureMaterial: Int, Codable, CaseIterable {
     }
 
     /// The force (N) per m^2 of shared face a weld between two pieces holds (the mortar's, the fibres').
-    var strength: Float {
+    package var strength: Float {
         switch self {
         case .concrete: return 4e6
         case .stone: return 4.5e6
@@ -77,7 +77,7 @@ enum FractureMaterial: Int, Codable, CaseIterable {
     var restitution: Float { self == .glass ? 0.15 : 0.08 }
 
     /// Its dust's colour (linear) and how much it makes; glass makes none, only glints.
-    var dust: (colour: SIMD3<Float>, amount: Float) {
+    package var dust: (colour: SIMD3<Float>, amount: Float) {
         switch self {
         case .concrete: return ([0.42, 0.41, 0.39], 1)
         case .stone: return ([0.5, 0.47, 0.42], 0.8)
@@ -101,7 +101,7 @@ enum FractureMaterial: Int, Codable, CaseIterable {
 }
 
 /// How an object is cut into pieces, level by level (a piece of one level is cut again into the next's).
-enum FracturePattern: String, Codable, CaseIterable {
+package enum FracturePattern: String, Codable, CaseIterable {
     /// Voronoi cells of random sites inside each piece (Chaos's uniform / clustered Voronoi).
     case voronoi
     /// Across the grain into planks' lengths, then along it into splinters (Voronoi stretched along the grain).
@@ -122,12 +122,12 @@ enum FracturePattern: String, Codable, CaseIterable {
 }
 
 /// How one object is fractured: what the Fracture Editor edits and saves (FractureStore), what a scene builds from.
-struct FractureRecipe: Codable, Equatable {
+package struct FractureRecipe: Codable, Equatable {
     var material: FractureMaterial
-    var pattern: FracturePattern
-    var seed: UInt64 = 1
+    package var pattern: FracturePattern
+    package var seed: UInt64 = 1
     /// Pieces per piece at each level (the first: the object's pieces). At most `maxLevels`.
-    var counts: [Int]
+    package var counts: [Int]
     /// Scales the material's toughness (breaking into children) and strength (welds).
     var toughness: Float = 1
     var strength: Float = 1
@@ -135,9 +135,9 @@ struct FractureRecipe: Codable, Equatable {
     var grain: SIMD3<Float> = [1, 0, 0]
     var stretch: Float = 4
     /// Bricks: a brick's size (along the wall, up, through it); the wall's length is along x and its height along y.
-    var brick: SIMD3<Float> = [0.24, 0.075, 0.115]
+    package var brick: SIMD3<Float> = [0.24, 0.075, 0.115]
     /// Radial: where the cracks start (shape space) and how many sectors and rings.
-    var centre: SIMD3<Float> = .zero
+    package var centre: SIMD3<Float> = .zero
     /// How much the sites crowd towards `centre` (0: evenly; 1: most near it), Chaos's clustered Voronoi.
     var clustering: Float = 0
     /// How rough a cell's faces are: each site is jittered by this share of its spacing.
@@ -145,7 +145,7 @@ struct FractureRecipe: Codable, Equatable {
 
     static let maxLevels = 3
 
-    static func defaults(_ material: FractureMaterial) -> FractureRecipe {
+    package static func defaults(_ material: FractureMaterial) -> FractureRecipe {
         switch material {
         case .concrete, .stone: return FractureRecipe(material: material, pattern: .voronoi, counts: [14, 6])
         case .brick: return FractureRecipe(material: material, pattern: .bricks, counts: [0, 2])
@@ -156,7 +156,7 @@ struct FractureRecipe: Codable, Equatable {
     }
 
     /// The same with every level's count times `scale` (the scene's Pieces setting), at least 2 where it cuts.
-    func scaled(_ scale: Float) -> FractureRecipe {
+    package func scaled(_ scale: Float) -> FractureRecipe {
         var r = self
         r.counts = counts.enumerated().map { level, n in
             n <= 0 ? n : max(2, Int((Float(n) * (level == 0 ? scale : scale.squareRoot())).rounded()))

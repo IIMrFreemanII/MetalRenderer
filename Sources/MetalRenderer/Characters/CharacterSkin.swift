@@ -124,7 +124,7 @@ enum SkinTextures {
         var redness: Float, melanin: Float, freckles: Float, blush: Float, eyeShadow: Float, lipstick: Float
         var age: Float, sex: Float, stubble: Float, seed: UInt64
 
-        init(_ dna: CharacterDNA) {
+        package init(_ dna: CharacterDNA) {
             let l = dna.look
             redness = l.redness; melanin = l.melanin; freckles = l.freckles; blush = l.blush; eyeShadow = l.eyeShadow
             lipstick = l.lipstick; age = dna.macro.age; sex = dna.macro.sex

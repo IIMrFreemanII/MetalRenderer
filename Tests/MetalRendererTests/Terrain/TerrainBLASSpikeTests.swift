@@ -1,5 +1,6 @@
 import Metal
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// M0's measurement: what a fast build of a ground grid's structure costs on this GPU, for a sector (64 cells a side)

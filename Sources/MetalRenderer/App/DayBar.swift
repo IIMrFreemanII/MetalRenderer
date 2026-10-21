@@ -30,7 +30,7 @@ final class DayBar: NSView {
     private var runningHour: Float?
     private var sceneKind: SceneKind?
 
-    init() {
+    package init() {
         super.init(frame: NSRect(x: 0, y: 0, width: DayBar.width, height: 64))
         wantsLayer = true
         appearance = NSAppearance(named: .darkAqua)
@@ -78,7 +78,7 @@ final class DayBar: NSView {
         ])
         isHidden = true
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Puts it at the bottom of `view`, in the middle.
     func attach(to view: NSView) {

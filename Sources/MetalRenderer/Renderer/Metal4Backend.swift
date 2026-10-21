@@ -69,7 +69,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     private var serial = true                                // a barrier ahead of every dispatch, as Metal 3's serial encoder
     private var encoded: MTLStages = []                      // stages encoded since the encoder's last barrier
 
-    init?(device: MTLDevice, streamQueue: MTLCommandQueue, framesInFlight: Int, layer: CAMetalLayer?) {
+    package init?(device: MTLDevice, streamQueue: MTLCommandQueue, framesInFlight: Int, layer: CAMetalLayer?) {
         guard let queue = device.makeMTL4CommandQueue(),
               let compiler = try? device.makeCompiler(descriptor: MTL4CompilerDescriptor()),
               let event = device.makeSharedEvent() else { return nil }
@@ -425,7 +425,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         private var times = FrameTimes(start: .infinity, end: 0)
         private let completed: (FrameTimes) -> Void
 
-        init(count: Int, completed: @escaping (FrameTimes) -> Void) {
+        package init(count: Int, completed: @escaping (FrameTimes) -> Void) {
             left = count
             self.completed = completed
         }

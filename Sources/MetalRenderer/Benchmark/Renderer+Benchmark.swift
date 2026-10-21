@@ -422,7 +422,7 @@ extension Renderer {
         case .accumulated where benchmark == nil: stats += " — reference: \(accumCount) frames"
         default: break
         }
-        var sceneName = s.scene.kind == .stress ? " — stress: \(s.scene.objects) objects, \(s.scene.lights) lights" : ""
+        var sceneName = s.scene.kind.definition.detail.map { " — \($0(s.scene))" } ?? ""
         if scene.lights.count > 4 { sceneName += " — direct: \(activeDirectMode.title)" }
         if let loading { sceneName += " — loading \(loading.scene.kind.title)…" }
         if let vg = virtualTracing?.clusters {
@@ -455,9 +455,8 @@ extension Renderer {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
-        status.demolition = demolitionStatus
-        status.destruction = scene.settings.kind == .destruction
-            ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
+        status.hud = scene.behaviour?.hud
+        status.destruction = scene.destructionRig.map { DestructionStatus(objects: $0.info) }
         status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)

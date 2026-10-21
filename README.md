@@ -106,7 +106,7 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
-**Build times.** The code is one library target (`Sources/MetalRenderer`), and the app (`Sources/MetalRendererApp`) is only its entry point, so the app and the tests share one build of it. Release compiles the module whole: about 4.5 minutes after any Swift edit on an M1 Max, most of it the optimiser over the whole module on one core. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
+**Build times.** The code is two library targets: the engine (`Sources/MetalRenderer`) and the game, which holds the demo scenes (`Sources/Game`, README "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole. On an M1 Max that is about 4 minutes after an engine edit, most of it the optimiser over the whole module on one core, and 28 s after a game edit. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
 
 ```bash
 Tools/build.sh                                  # builds it and prints the binary's path
@@ -117,13 +117,16 @@ A debug build warns about any function that takes the type checker over 600 ms, 
 
 Where the time goes (M1 Max, October 2026):
 
-| Build | Clean | After a one-line edit |
-|---|---|---|
-| Dev (`Tools/build.sh`) | 74 s | 14 s |
-| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit |
-| Release | 281 s | 263 s |
-| Release with the tests | +50 s | 265 s; 46 s after a test edit |
+| Build | Clean | After an engine edit | After a game edit (a scene) |
+|---|---|---|---|
+| Dev (`Tools/build.sh`) | 75 s | 13 s | 3.6 s |
+| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit | |
+| Release | 290 s | 225 s; 252 s for an interface change | 28 s |
+| Release with the tests | +50 s | 265 s; 46 s after a test edit | |
 
+The split's own price is a clean build 6–7% longer: two modules, the engine's `package` interface written for the game.
+
+* **A game edit** (a scene's builder, its look, a benchmark mode) recompiles the game's file and its module interface. The engine isn't touched, and a release build optimises only the game's 9k lines. **An engine edit** whose interface doesn't change leaves the game as it was.
 * **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes the module's interface for the app and the tests to import: it type-checks every declaration of the 102k lines and optimises the accessors that `-enable-testing` exposes (12 s; 7 s without testing).
 * **A release edit** is about 200 s of SIL optimisation and 35 s of type checking, both on one core and spread over the whole module: the costliest file is 2% of it. Code generation already runs on every core.
 * **A new worktree** starts the dev build in the background when the session starts (`Tools/warmup.sh`, the SessionStart hook), so the first `render.sh` or `related.sh` finds it built or waits for it.
@@ -2174,29 +2177,121 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 
 ## Source layout
 
-`Sources/MetalRenderer` is one module, in a folder per feature. A `Type+Feature.swift` extension (`Scene+Water`,
-`Renderer+Terrain`, `Benchmark+Demolition`) sits in its feature's folder, and an editor sits inside its feature
-(`Buildings/Editor`). The shaders stay at the top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`,
-`ShadersMaterial*.metal` and `MaterialShaders/`. Code finds them, the assets and the fixtures through `SourceTree`
-(`Util/SourceTree.swift`), not from its own path. The tests in `Tests/MetalRendererTests` use the same folders.
+Two modules, each in a folder per feature:
+
+* **`Sources/MetalRenderer`, the engine:** the renderer and its systems (physics, plants, buildings, terrain, water,
+  the open world, particles...), the editors and their workshops, the benchmark harness, and the Cornell room.
+* **`Sources/Game`, the game:** the demo scenes. It holds their builders, what suits each scene (fog, sky, lens,
+  camera, day: `GameScenes.swift`), their settings rows (`Settings/GameScenes+Rows.swift`) and the benchmark modes
+  that show them (`Benchmark/`).
+  * It reaches the engine through `package` declarations: the engine's API, marked where the game uses it. Nothing
+    is `public`.
+  * A change in it recompiles only the game target. A change in the engine recompiles the engine, and the game as
+    well when the engine's interface changed.
+
+**How a scene is found.** A scene is a `SceneKind`, which is a name (`Scene/SceneDefinition.swift`). Its
+`SceneDefinition`, registered in `SceneRegistry`, holds its builder, its traits (`simulates`, `isCity`, `hasPlants`…)
+and its presets. Everything the engine asks of a scene goes through it: what it is, how to build it, what suits it.
+The engine never names a game scene.
+
+* **Who registers what:** the engine registers its own scenes, the Cornell room and the workshops. The game registers
+  the rest from `GameScenes`, which the engine finds by its Objective-C name, so the engine needn't import the game.
+* **Editors:** an editor opens a game scene by its role (`SceneRole`: the city, the forest, the Fracture Editor's
+  courtyard), and by `SceneDefinition.effects` (the VFX editor's previews).
+* **Saved settings** from before the split hold the scene's old enum number. They read back by it
+  (`SceneKind.numbered`).
+
+**A scene's gameplay** is a `SceneBehaviour` (`Scene/SceneBehaviour.swift`), which its definition makes with the
+scene (`SceneDefinition.behaviour`); it lives on the scene and goes with it.
+
+* The renderer gives it, on the render thread:
+  * the frame (`update`, before the camera moves);
+  * the keys and clicks first;
+  * the right button and the captured mouse's moves;
+  * the physics' poses as drawn.
+* It describes what the view shows over the frame as a `SceneHUD`, which the engine's `SceneHUDView` draws: lines of
+  text in a corner, a crosshair, and whether a click captures the mouse.
+* The game's two are the demolition's player (`DemolitionPlayer`: weapons, the walker, the captured mouse) and the
+  destruction's tools (`DestructionPlayer`).
+* Their physics, which runs inside the step over many bodies, stays in the engine (`Physics+Demolition.swift`,
+  `Physics+Fracture.swift`). The behaviours drive it with commands (`Scene.physicsCommand`).
+
+### Scene files
+
+A scene's hand-placed content can be a binary file, `Assets/Scenes/<scene>.scene` (`IO/SceneFile.swift`). It holds:
+
+* objects: an asset each (`prefab:box`, `prefab:ball`, `prefab:quad`, a game's own prefabs, or `model:<path under
+  Assets>`), a position, rotation and scale, a parent, and a named material (`Scene.nameMaterial`);
+* lights;
+* generators with their seeds and parameters;
+* the camera.
+
+**How a scene is built with it.** The scene is built by its builder first, then gets what its file places
+(`Scene.place`), so the file is a layer on what the code generates.
+
+**The format.** It is a `SectionFile`: mapped, with each section an array of one fixed-size record, so nothing is parsed
+and a file of thousands of objects reads in milliseconds. A record layout change bumps `SceneFile.version`, and a file
+of another version reads as no file.
+
+**Editing it in the view.** Select a placed object (a click), then:
+
+| Action | Does |
+|---|---|
+| Drag an arrow | Moves the object along that axis |
+| Option-drag an arrow | Turns it about that axis |
+| Control-drag an arrow | Scales it along that axis |
+| End | Drops it onto the ground |
+| Delete | Takes it out |
+| Command-J | Copies it beside itself |
+| Command-N | Puts a box in front of the camera |
+
+Every change is written to the file at once, so placing needs no build.
+
+**Diffs.** git shows the files' diffs as text through `Tools/scene/scenedump.py` (`.gitattributes`), once per clone:
+
+```bash
+git config diff.scenedump.textconv "python3 Tools/scene/scenedump.py"
+```
+
+**Placing a new file:**
+
+* A new demo scene is a builder in the game's feature folder plus an entry in `GameScenes.scenes()`.
+* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder.
+* An editor sits inside its feature (`Buildings/Editor`).
+
+**Shaders, assets and tests:**
+
+* The shaders stay at the engine's top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`, `ShadersMaterial*.metal` and
+  `MaterialShaders/`.
+* Code finds the shaders, the assets and the fixtures through `SourceTree` (`Util/SourceTree.swift`), not from its own
+  path.
+* The tests in `Tests/MetalRendererTests` import both modules and use the same folders.
+
+The engine's folders:
 
 | Folder | What is in it |
 |---|---|
 | `App/` | The window, the view, the controller, panels and overlays, the day bar, the graph editors' canvas |
 | `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store, the panel |
 | `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), pipelines, the backends; `Lighting/` and `Post/` |
-| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`), its buffers, navigation, the walker; `Builders/` for the scenes with no feature of their own |
+| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation, the walker |
 | `Geometry/` | BVH, meshes, simplification; `VirtualGeometry/` (Nanite-like), `SDF/` |
-| `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids; `Scenes/` |
-| `Destruction/` | The courtyard; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` |
+| `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids |
+| `Destruction/` | The tools' rigs and the players; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` (its physics and player) |
 | `Buildings/` | The generator, plans, styles; `Interior/`, `City/`, `Editor/` |
 | `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/`; each with its `Editor/` |
 | `Terrain/`, `Water/`, `World/` | The terrain system and its editor, water, the open world |
 | `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer and its editor, the Material Painter, texture sets and streaming |
 | `Particles/`, `VFX/` | GPU particles; effects as graphs and their editor |
 | `ProjectGraph/` | Outlines, overrides, the Project Graph and its window |
-| `Benchmark/` | The modes (`Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`), the renderer's side |
+| `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
 | `IO/`, `Util/` | glTF, EXR, cache and section files, glTF models in scenes; maths, catalogs, `SourceTree` |
+
+The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland),
+`Physics/Scenes/`, `Buildings/City/`, `Destruction/` (the courtyard, `Demolition/`: the office and its blueprint),
+`Characters/Crowd/`, `Geometry/SDF/`, `Particles/`, `Plants/` (the forest), `IO/` (the gallery), `Settings/`, and
+`Benchmark/` (the modes: `Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`, `+Realism`), with each
+feature's own modes in its folder (`Water/`, `Terrain/`, `Buildings/`, `Destruction/`).
 
 ## How a frame works
 

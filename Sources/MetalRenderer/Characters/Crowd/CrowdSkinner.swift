@@ -8,7 +8,7 @@ import simd
 ///
 /// The key tables, joints and skin weights are uploaded once. Per frame the CPU writes 32 bytes per slot (what each
 /// plays, `Crowd.pose`); everything per joint and per vertex happens on the GPU.
-final class CrowdSkinner {
+package final class CrowdSkinner {
     /// MSL CrowdPoseParams: one character's slots.
     struct PoseParams {
         var jointBase: UInt32, jointCount: UInt32, firstSlot: UInt32, slotCount: UInt32
@@ -58,7 +58,7 @@ final class CrowdSkinner {
     private let stride: Int
 
     /// `curves`: per Crowd.Hair, its curve mesh's first control point and how far on last frame's are (the scene's).
-    init(device: MTLDevice, crowd: Crowd, frameSlots: Int, curves: [(first: UInt32, previous: UInt32)] = []) throws {
+    package init(device: MTLDevice, crowd: Crowd, frameSlots: Int, curves: [(first: UInt32, previous: UInt32)] = []) throws {
         self.crowd = crowd
         func buffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
             guard !array.isEmpty, let b = array.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) }) else {

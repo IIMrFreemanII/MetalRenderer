@@ -1,5 +1,6 @@
 import XCTest
 import ImageIO
+@testable import Game
 @testable import MetalRenderer
 
 /// The city's generated textures (ProceduralTextures.swift), at a small size and in a folder of their own.

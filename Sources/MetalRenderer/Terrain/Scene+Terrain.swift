@@ -4,7 +4,7 @@ import simd
 /// What a scene has of its terrain (Terrain/): the field it was made from, and each sector it meshes (a borrowed
 /// mesh of its own, named so the next scene of the same terrain takes the same buffer and structure, and an instance
 /// at its tile's corner). The renderer meshes the sectors again as the field's edits change them (Renderer+Terrain).
-final class SceneTerrain {
+package final class SceneTerrain {
     struct Part {
         var sector: TerrainSector
         var mesh: Int
@@ -53,7 +53,7 @@ final class SceneTerrain {
         return (SIMD2(Float(lo.x), Float(lo.y)), s.heights(from: p.sector.first, count: side, step: p.sector.step), side)
     }
 
-    init(name: String, field: TerrainField, style: TerrainMeshStyle, offset: SIMD2<Double>, material: Int) {
+    package init(name: String, field: TerrainField, style: TerrainMeshStyle, offset: SIMD2<Double>, material: Int) {
         (self.name, self.field, self.style, self.offset, self.material) = (name, field, style, offset, material)
         meshStyle = style
     }
@@ -101,7 +101,7 @@ final class SceneTerrain {
     func scene(_ p: SIMD3<Double>) -> SIMD3<Float> { SIMD3(Float(p.x - offset.x), Float(p.y), Float(p.z - offset.y)) }
 
     /// The ground's height under a scene's place, as the terrain is now.
-    func height(_ x: Float, _ z: Float) -> Float { field.snapshot().height(x: Double(x) + offset.x, z: Double(z) + offset.y) }
+    package func height(_ x: Float, _ z: Float) -> Float { field.snapshot().height(x: Double(x) + offset.x, z: Double(z) + offset.y) }
 
     /// The sector's instance transform: at its tile's corner, in the scene.
     static func transform(_ sector: TerrainSector, grid: TerrainGrid, offset: SIMD2<Double>) -> float4x4 {
@@ -113,7 +113,7 @@ final class SceneTerrain {
 extension Scene {
     /// The terrain of a scene of the Forest kind (and Mireland's): a square of rolling ground (`Terrain`'s), with the
     /// edits of its document. Opened in TerrainDocuments under `name`.
-    static func openTerrain(_ name: String, base: @autoclosure () -> TerrainBase, layers: [TerrainLayer] = TerrainDocument.defaultLayers)
+    package static func openTerrain(_ name: String, base: @autoclosure () -> TerrainBase, layers: [TerrainLayer] = TerrainDocument.defaultLayers)
         -> TerrainDocuments.Entry {
         TerrainDocuments.shared.open(name, base: base(), document: TerrainDocument(name: name, layers: layers))
     }
@@ -122,7 +122,7 @@ extension Scene {
     /// (which says the base: another base, another name), all its tiles at full detail, in `material`, with its own
     /// water. The Terrain Editor edits it like any other.
     @discardableResult
-    func addGroundTerrain(_ name: String, base: TerrainBase, material: Int, water: [WaterBody] = []) -> SceneTerrain {
+    package func addGroundTerrain(_ name: String, base: TerrainBase, material: Int, water: [WaterBody] = []) -> SceneTerrain {
         let entry = Scene.openTerrain(name, base: base, layers: TerrainDocument.sceneLayers())
         let grid = entry.field.grid
         return addTerrain(name: entry.document.name, field: entry.field, tiles: grid.tiles!.map { ($0, 0) },
@@ -146,7 +146,7 @@ extension Scene {
     /// is the scene's origin. Returns the scene's terrain (also `self.terrain`).
     /// `generatedWater`: the scene's own (its document's water comes first).
     @discardableResult
-    func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, tiles: [(tile: SIMD2<Int>, level: Int)],
+    package func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, tiles: [(tile: SIMD2<Int>, level: Int)],
                     style: TerrainMeshStyle, material: Int, offset: SIMD2<Double> = .zero, mask: UInt32 = Scene.maskGeometry,
                     generatedWater: [WaterBody] = [], builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
         let sectors = tiles.flatMap { TerrainSector.sectors(of: $0.tile, level: $0.level, grid: field.grid) }
@@ -157,7 +157,7 @@ extension Scene {
     /// The same for some sectors: added to the scene's terrain if it has this one already (a builder that adds its
     /// ground in two goes: Forest).
     @discardableResult
-    func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, sectors: [TerrainSector],
+    package func addTerrain(name: String, field: TerrainField, snapshot: TerrainSnapshot? = nil, sectors: [TerrainSector],
                     style: TerrainMeshStyle, material: Int, offset: SIMD2<Double> = .zero, mask: UInt32 = Scene.maskGeometry,
                     generatedWater: [WaterBody] = [], builtIn: (Int) -> GPUMaterial? = { _ in nil }) -> SceneTerrain {
         let s = snapshot ?? field.snapshot(), grid = field.grid
@@ -326,7 +326,7 @@ extension Scene {
 extension Terrain {
     /// The terrain as `snapshot` has it now (its edits on its base): a finite field's samples, as a `Terrain` (what
     /// the scenes place their plants with).
-    init(_ snapshot: TerrainSnapshot, relief: Float) {
+    package init(_ snapshot: TerrainSnapshot, relief: Float) {
         let grid = snapshot.grid, lo = grid.lo ?? .zero, hi = grid.hi ?? SIMD2(grid.tileCells, grid.tileCells)
         let cells = hi.x - lo.x, n = cells + 1
         var heights = [Float](repeating: 0, count: n * n)

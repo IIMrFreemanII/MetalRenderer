@@ -3,6 +3,7 @@ import AppKit
 import Metal
 import SwiftUI
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Material Designer without its window (MaterialEditorModel): its edits and undo, wiring, a pixel processor's

@@ -286,7 +286,7 @@ extension Renderer {
     }
 
     /// The scene's clock at `t` (s): the VFX editor's timeline (the particles replay from the start to go back).
-    func setTime(_ t: Float) {
+    package func setTime(_ t: Float) {
         animTime = max(t, 0)
         previousAnimTime = animTime
     }
@@ -341,7 +341,8 @@ extension Renderer {
 
     func encodeGizmos(_ outputs: [MTLTexture], slot: Int, passes: FrameEncoder) {
         guard let output = outputs.first else { return }
-        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments()   // the brushes, what the graph showed
+        // The brushes, what the graph showed, the placed object's arrows.
+        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments() + placementSegments()
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
             gizmoHandle = handle

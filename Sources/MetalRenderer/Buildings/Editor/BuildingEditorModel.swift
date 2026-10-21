@@ -58,7 +58,7 @@ final class BuildingEditorModel: ObservableObject {
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
 
-    init(controller: BuildingEditorHost, saved: BuildingCatalog = BuildingCatalog.launch, folder: URL? = BuildingStore.folder, draft: Bool = true) {
+    package init(controller: BuildingEditorHost, saved: BuildingCatalog = BuildingCatalog.launch, folder: URL? = BuildingStore.folder, draft: Bool = true) {
         self.controller = controller
         self.saved = saved
         self.folder = folder
@@ -200,7 +200,9 @@ final class BuildingEditorModel: ObservableObject {
     }
 
     func goToWorkshop() { go(to: .buildings) }
-    func goToCity() { go(to: .city) }
+    /// The city, if this build has one.
+    var city: SceneKind? { SceneRegistry.kind(for: .city) }
+    func goToCity() { city.map { go(to: $0) } }
 
     private func go(to kind: SceneKind) {
         let id = selected, key = self.key, defaults = controller.defaultSettings

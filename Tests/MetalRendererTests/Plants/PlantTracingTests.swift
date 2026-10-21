@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The plants in Metal's structures (PlantTracing.swift): each plant names its assembly's variant for its phase bucket

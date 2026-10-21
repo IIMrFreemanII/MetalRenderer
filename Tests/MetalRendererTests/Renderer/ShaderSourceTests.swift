@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+@testable import Game
 @testable import MetalRenderer
 
 /// ShaderSource.swift: Shaders.metal lists the pieces in Shaders/, and the loader splices them in.

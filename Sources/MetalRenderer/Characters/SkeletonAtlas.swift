@@ -10,7 +10,7 @@ import simd
 /// bone lies under the skin in life (the skull, a clavicle, the sternum, the spine's processes, the iliac crest, a
 /// kneecap, the shin, the ankles, an elbow's point) it is placed `MuscleAtlas.fat` under it, and the muscles, carved
 /// from it (`distance`), leave it bare.
-struct SkeletonAtlas {
+package struct SkeletonAtlas {
     /// A shape: its distance at a point (negative inside; near the true one near its surface) and the box it is in.
     struct Solid {
         var lo: SIMD3<Float>
@@ -21,7 +21,7 @@ struct SkeletonAtlas {
         func outside(_ p: SIMD3<Float>) -> Float { simd_length(simd_max(simd_max(lo - p, p - hi), .zero)) }
     }
 
-    struct Piece {
+    package struct Piece {
         var name: String
         /// -1 the figure's right, 1 its left, 0 the middle.
         var side: Float
@@ -113,7 +113,7 @@ struct SkeletonAtlas {
 
     // MARK: Built
 
-    let pieces: [Piece]
+    package let pieces: [Piece]
     /// Each piece's surface, whole.
     let meshes: [(positions: [SIMD3<Float>], indices: [UInt32])]
     /// Their distance (the nearest piece's) on a grid over the body: what the muscles are carved from.
@@ -121,7 +121,7 @@ struct SkeletonAtlas {
     private let counts: SIMD3<Int>
     private let values: [Float]
 
-    init(_ rig: CharacterRig, marks: BodyMarks) {
+    package init(_ rig: CharacterRig, marks: BodyMarks) {
         let pieces = SkeletonAtlas.pieces(rig, marks: marks)
         self.pieces = pieces
         // Each piece's surface.
@@ -166,7 +166,7 @@ struct SkeletonAtlas {
 
 
     /// The character's bones.
-    static func pieces(_ rig: CharacterRig, marks: BodyMarks) -> [Piece] {
+    package static func pieces(_ rig: CharacterRig, marks: BodyMarks) -> [Piece] {
         let body = marks.body
         let names = rig.character.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
         func joint(_ name: String) -> SIMD3<Float> { rig.bind[names.firstIndex(of: name)!].t }

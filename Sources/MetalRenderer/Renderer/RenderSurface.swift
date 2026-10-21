@@ -4,7 +4,7 @@ import QuartzCore
 
 /// Where a frame ends up: the window's layer, or offscreen textures (benchmarks, which run without a window unless
 /// `METALRENDERER_WINDOW=1`).
-protocol RenderSurface: AnyObject {
+package protocol RenderSurface: AnyObject {
     /// The size in points; the render resolution is this times the render scale.
     var pointSize: CGSize { get }
     /// Physical pixels per point: the upscaled output is capped at `pointSize * backingScale`.
@@ -22,7 +22,7 @@ protocol RenderSurface: AnyObject {
     var refreshInterval: CFTimeInterval? { get }
 }
 
-struct FrameOutput {
+package struct FrameOutput {
     let texture: MTLTexture
     let drawable: CAMetalDrawable?
 }
@@ -40,7 +40,7 @@ final class LayerSurface: RenderSurface {
     /// The window whose title `title` sets. Main thread.
     weak var window: NSWindow?
 
-    init(device: MTLDevice) {
+    package init(device: MTLDevice) {
         layer.device = device
         layer.pixelFormat = Renderer.drawableFormat
         layer.framebufferOnly = false   // the composite or the tone map kernel writes to the drawable
@@ -113,7 +113,7 @@ final class OffscreenSurface: RenderSurface {
     private var next = 0
     private let count: Int
 
-    init(device: MTLDevice, pointSize: CGSize = CGSize(width: 1280, height: 800), backingScale: CGFloat = 2, count: Int = 3) {
+    package init(device: MTLDevice, pointSize: CGSize = CGSize(width: 1280, height: 800), backingScale: CGFloat = 2, count: Int = 3) {
         self.device = device
         self.pointSize = pointSize
         self.backingScale = backingScale

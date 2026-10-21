@@ -1,4 +1,5 @@
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// The blue-noise tile's cache file (BlueNoise.swift, CacheFile.swift) and the generated scenes' section files

@@ -5,7 +5,7 @@ import simd
 /// A mesh's size is counted first and its arrays are filled by index; `build` checks the count was right.
 extension Foliage {
     /// Wood first, then leaves: the leaves' vertices and triangles are the tails of the arrays.
-    struct Mesh {
+    package struct Mesh {
         var positions: [SIMD3<Float>]
         var normals: [SIMD3<Float>]
         var uvs: [SIMD2<Float>]             // wood: around (mirrored, no seam) and along; leaves: 0...1 across, base to tip
@@ -23,8 +23,8 @@ extension Foliage {
         var vertices = 0
         var indices = 0
 
-        static func + (a: MeshSize, b: MeshSize) -> MeshSize { MeshSize(vertices: a.vertices + b.vertices, indices: a.indices + b.indices) }
-        static func * (a: MeshSize, n: Int) -> MeshSize { MeshSize(vertices: a.vertices * n, indices: a.indices * n) }
+        package static func + (a: MeshSize, b: MeshSize) -> MeshSize { MeshSize(vertices: a.vertices + b.vertices, indices: a.indices + b.indices) }
+        package static func * (a: MeshSize, n: Int) -> MeshSize { MeshSize(vertices: a.vertices * n, indices: a.indices * n) }
     }
 
     /// Writes a mesh's arrays in order. Nothing grows: the arrays have their final size.

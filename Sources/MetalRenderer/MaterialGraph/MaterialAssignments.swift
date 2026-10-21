@@ -7,13 +7,20 @@ import Foundation
 /// edits are a registry key (`SceneSettings.materialAssignments`), as the catalogs' are: "" the saved ones.
 /// A scene applies its own when it is made (Scene.applyMaterialAssignments): the material becomes a procedural one.
 /// Not the open world's tiles (their materials stream in with them).
-struct MaterialAssignments: Codable, Equatable {
-    struct Entry: Codable, Equatable {
+package struct MaterialAssignments: Codable, Equatable {
+    package struct Entry: Codable, Equatable {
         var material: Int
         var fingerprint: String
         var graph: String
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(material: Int, fingerprint: String, graph: String) {
+            self.material = material
+            self.fingerprint = fingerprint
+            self.graph = graph
+        }
     }
-    var scenes: [String: [Entry]] = [:]
+    package var scenes: [String: [Entry]] = [:]
 
     static let file = "assignments.json"
 
@@ -32,19 +39,10 @@ struct MaterialAssignments: Codable, Equatable {
     }
 
     /// The scene `s` is: its kind, and what its materials' order depends on.
-    static func scope(_ s: SceneSettings) -> String {
-        switch s.kind {
-        case .city, .cityNight: return "\(s.kind.envName),seed=\(s.seed),style=\(s.city.style.envName)"
-        case .forest, .valley, .mireland: return "\(s.kind.envName),seed=\(s.seed)"
-        case .showcase: return "showcase,model=\(s.showcase)"
-        case .materials: return "materials"
-        case .painter: return "painter,subject=\(s.painterWorkshop.subject.rawValue),model=\(s.painterWorkshop.model)"
-        default: return s.kind.envName
-        }
-    }
+    package static func scope(_ s: SceneSettings) -> String { s.kind.definition.scope?(s) ?? s.kind.envName }
 
     /// A material's fingerprint: its values as the scene made it.
-    static func fingerprint(_ m: GPUMaterial) -> String {
+    package static func fingerprint(_ m: GPUMaterial) -> String {
         var h = Hasher64()
         withUnsafeBytes(of: m) { h.add($0) }
         return String(h.value, radix: 36)
@@ -52,7 +50,7 @@ struct MaterialAssignments: Codable, Equatable {
 
     private static let registry = CatalogRegistry<MaterialAssignments>()
 
-    static func register(_ a: MaterialAssignments) -> String {
+    package static func register(_ a: MaterialAssignments) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         var h = Hasher64()
@@ -65,13 +63,18 @@ struct MaterialAssignments: Codable, Equatable {
     static func resolve(_ key: String) -> MaterialAssignments {
         key.isEmpty ? launch : registry.registered(key) ?? launch
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(scenes: [String: [Entry]] = [:]) {
+        self.scenes = scenes
+    }
 }
 
 extension Scene {
     /// The scene's assignments (SceneSettings.materialAssignments): each material whose fingerprint still matches
     /// becomes the procedural material of its graph. Warnings for the stale ones.
     func applyMaterialAssignments() {
-        guard settings.kind != .world else { return }
+        guard !settings.kind.isWorld else { return }
         let entries = MaterialAssignments.resolve(settings.materialAssignments).scenes[MaterialAssignments.scope(settings)] ?? []
         guard !entries.isEmpty else { return }
         let catalog = MaterialCatalog.resolve(settings.materials)

@@ -164,7 +164,7 @@ final class PhysicsGPU {
         copy(world.staticBounds.flatMap { [SIMD4($0.lo, 0), SIMD4($0.hi, 0)] }, into: staticBounds)
     }
 
-    init(device: MTLDevice, world: PhysicsWorld, sdfScene: MTLBuffer, sdfResources: [MTLBuffer], slots: Int, simulates: Bool = true,
+    package init(device: MTLDevice, world: PhysicsWorld, sdfScene: MTLBuffer, sdfResources: [MTLBuffer], slots: Int, simulates: Bool = true,
          clothPrevOffsets: [UInt32] = []) throws {
         self.world = world
         self.simulates = simulates

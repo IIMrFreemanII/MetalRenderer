@@ -167,7 +167,7 @@ final class ConeOrbit: ObservableObject {
 }
 
 extension float4x4 {
-    init(translationBy t: SIMD3<Float>) {
+    package init(translationBy t: SIMD3<Float>) {
         self = matrix_identity_float4x4
         columns.3 = SIMD4(t, 1)
     }
@@ -214,7 +214,7 @@ final class ConeTreeRenderer: NSObject, MTKViewDelegate {
             var positionRadius: SIMD4<Float>
             var color: SIMD4<Float>
             var ring: SIMD4<Float>
-            init(position: SIMD3<Float>, radius: Float, color: SIMD4<Float>, ring: SIMD4<Float>) {
+            package init(position: SIMD3<Float>, radius: Float, color: SIMD4<Float>, ring: SIMD4<Float>) {
                 positionRadius = SIMD4(position, radius)
                 self.color = color
                 self.ring = ring
@@ -224,7 +224,7 @@ final class ConeTreeRenderer: NSObject, MTKViewDelegate {
             var positionAlong: SIMD4<Float>
             var color: SIMD4<Float>
             var dash: SIMD4<Float>
-            init(position: SIMD3<Float>, along: Float, color: SIMD4<Float>, dash: SIMD2<Float>) {
+            package init(position: SIMD3<Float>, along: Float, color: SIMD4<Float>, dash: SIMD2<Float>) {
                 positionAlong = SIMD4(position, along)
                 self.color = color
                 self.dash = SIMD4(dash.x, dash.y, 0, 0)
@@ -236,11 +236,11 @@ final class ConeTreeRenderer: NSObject, MTKViewDelegate {
         var view = matrix_identity_float4x4
         var projection = matrix_identity_float4x4
 
-        init(discs: [Disc], lines: [Vertex], levels: [Disc], view: float4x4, projection: float4x4) {
+        package init(discs: [Disc], lines: [Vertex], levels: [Disc], view: float4x4, projection: float4x4) {
             (self.discs, self.lines, self.levels, self.view, self.projection) = (discs, lines, levels, view, projection)
         }
 
-        init(_ model: ProjectGraphModel, orbit: ConeOrbit, aspect: Float? = nil) {
+        package init(_ model: ProjectGraphModel, orbit: ConeOrbit, aspect: Float? = nil) {
             let v = model.visible, pos = model.cone, radii = model.radii
             guard pos.count == v.nodes.count, radii.count == v.nodes.count else { return }
             let cam = orbit.camera(model, aspect: aspect ?? Float(model.canvasSize.width / max(model.canvasSize.height, 1)))
@@ -302,7 +302,7 @@ final class ConeTreeRenderer: NSObject, MTKViewDelegate {
     private var depthRead: MTLDepthStencilState?
     var source: (() -> Scene?)?
 
-    init(device: MTLDevice) {
+    package init(device: MTLDevice) {
         self.device = device
         queue = device.makeCommandQueue()
         super.init()

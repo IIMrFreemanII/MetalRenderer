@@ -167,7 +167,7 @@ struct Mat2DView: NSViewRepresentable {
         var grey = false
         var settings = Mat2DSettings()
 
-        init(_ device: MTLDevice) {
+        package init(_ device: MTLDevice) {
             queue = device.makeCommandQueue()
             let d = MTLRenderPipelineDescriptor()
             let lib = MatPreviewShaders.library(device)
@@ -242,7 +242,7 @@ struct Mat3DView: NSViewRepresentable {
         private var meshes: [MatPreviewShape: (buffer: MTLBuffer, count: Int)] = [:]
         private let blank: MTLTexture?
 
-        init(_ device: MTLDevice) {
+        package init(_ device: MTLDevice) {
             self.device = device
             queue = device.makeCommandQueue()
             let lib = MatPreviewShaders.library(device)

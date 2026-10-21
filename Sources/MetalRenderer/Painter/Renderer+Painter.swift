@@ -5,9 +5,9 @@ import MetalKit
 import simd
 
 /// How a click paints in paint mode: a stroke of the brush, or a fill of the triangles it names.
-enum PaintTool: String, Codable, CaseIterable, Identifiable {
+package enum PaintTool: String, Codable, CaseIterable, Identifiable {
     case brush, fillObject, fillIsland, fillPolygon, fillMaterial
-    var id: String { rawValue }
+    package var id: String { rawValue }
     var title: String {
         switch self {
         case .brush: return "Brush"
@@ -597,7 +597,7 @@ extension Renderer {
 /// A step of a scripted painting (benchmarks: Benchmark.Config.Event.paint): paint mode on, the brush and what it
 /// paints (the document's layer by index, its mask or its channels), a stroke through points (0...1 across and down
 /// the view), a fill where a point meets the object, or nothing for a frame.
-enum PainterStep {
+package enum PainterStep {
     case mode(Int?)
     case brush(PaintBrush, layer: Int, mask: Bool, tool: PaintTool)
     case stroke([SIMD2<Float>])

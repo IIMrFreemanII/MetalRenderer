@@ -13,18 +13,18 @@ import simd
 ///
 /// All of it is the world's state, set by stamped commands: a replay does it again, on any number of cores. The GPU's
 /// step knows none of it (the scene steps on the CPU).
-struct DemolitionState {
+package struct DemolitionState {
     /// A rocket of the pool (bodies made at the scene's build, disabled until fired).
-    struct Rocket {
-        var body: Int32
+    package struct Rocket {
+        package var body: Int32
         /// In flight since `launched` (a step), at `speed` then; its blast's radius.
-        var armed = false
+        package var armed = false
         var launched: UInt32 = 0
         var speed: Float = 0
         var radius: Float = 0
     }
 
-    struct Walker {
+    package struct Walker {
         /// Its body (-1: no walker), enabled while walking.
         var body: Int32 = -1
         var on = false
@@ -42,7 +42,7 @@ struct DemolitionState {
         var stuck = 0
 
         /// Drive command flags (GPUFractureCommand.info.z).
-        static let enableFlag: UInt32 = 1, disableFlag: UInt32 = 2, placeFlag: UInt32 = 4
+        package static let enableFlag: UInt32 = 1, disableFlag: UInt32 = 2, placeFlag: UInt32 = 4
 
         /// Command `c` (a drive), at its step.
         mutating func take(_ c: GPUFractureCommand, clock: UInt32) {
@@ -55,12 +55,12 @@ struct DemolitionState {
         }
     }
 
-    var rockets: [Rocket] = []
+    package var rockets: [Rocket] = []
     /// Blasts rockets set off, going on (as blast commands: start step, steps).
     var blasts: [GPUFractureCommand] = []
     /// Where rockets went off (xyz, the blast's radius) and at which steps: the fireballs (the last `logLength`).
-    var detonations: [SIMD4<Float>] = []
-    var detonationSteps: [Int] = []
+    package var detonations: [SIMD4<Float>] = []
+    package var detonationSteps: [Int] = []
     var walker = Walker()
     /// The walker as built (`reset` puts it back).
     var startWalker = Walker()
@@ -91,7 +91,7 @@ extension PhysicsWorld {
     /// A rocket that has flown this long (steps) goes off where it is.
     static let rocketLife: UInt32 = 240
     /// The walker's capsule (m): half the length of its middle, its radius; its eyes above its centre.
-    static let walkerHalf: Float = 0.6, walkerRadius: Float = 0.3
+    package static let walkerHalf: Float = 0.6, walkerRadius: Float = 0.3
     /// How fast the walker gets to the speed asked for (m/s^2), standing and in the air.
     static let walkerGrip: Float = 25, walkerAir: Float = 4
     /// A bullet's impact on a piece: this many times what breaks (or frees) it.
@@ -102,13 +102,13 @@ extension PhysicsWorld {
     // MARK: Building
 
     /// Body `i` a rocket of the pool (disabled until fired).
-    func addRocket(_ i: Int) {
+    package func addRocket(_ i: Int) {
         bodies[i].info.y |= PhysicsWorld.fuseBit | PhysicsWorld.disabledBit
         demolition.rockets.append(DemolitionState.Rocket(body: Int32(i)))
     }
 
     /// Body `i` the walker: a capsule that doesn't turn, off until a drive switches it on.
-    func addWalker(_ i: Int) {
+    package func addWalker(_ i: Int) {
         bodies[i].info.y |= PhysicsWorld.walkerBit | PhysicsWorld.disabledBit
         bodies[i].invInertia = SIMD4(.zero, bodies[i].invInertia.w)
         demolition.walker = DemolitionState.Walker(body: Int32(i))
@@ -116,10 +116,10 @@ extension PhysicsWorld {
     }
 
     /// The commands the scene was built with (its demo's), and the player's after them: dropped by `dropPlayerCommands`.
-    func keepBuiltCommands() { demolition.builtCommands = fractureCommands.count }
+    package func keepBuiltCommands() { demolition.builtCommands = fractureCommands.count }
 
     /// The player's commands dropped (a restart: the world replays its build's alone from the start).
-    func dropPlayerCommands() {
+    package func dropPlayerCommands() {
         let n = demolition.builtCommands
         guard fractureCommands.count > n else { return }
         fractureCommands.removeLast(fractureCommands.count - n)
@@ -130,7 +130,7 @@ extension PhysicsWorld {
     /// The nearest body of `drawn` (a stepper's latest poses: any thread), but disabled ones, rockets and the walker,
     /// that the ray from `origin` along `direction` (unit) meets within `limit`: it, how far, and its surface's normal
     /// there (the world).
-    func pick(drawn: [GPUPhysicsBody], origin: SIMD3<Float>, direction: SIMD3<Float>, limit: Float = 500)
+    package func pick(drawn: [GPUPhysicsBody], origin: SIMD3<Float>, direction: SIMD3<Float>, limit: Float = 500)
         -> (body: Int, t: Float, normal: SIMD3<Float>)? {
         var best: (body: Int, t: Float)?
         let skip = PhysicsWorld.disabledBit | PhysicsWorld.fuseBit | PhysicsWorld.walkerBit

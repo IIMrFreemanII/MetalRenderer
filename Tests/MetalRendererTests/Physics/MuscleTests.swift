@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// PhysicsFlesh.swift, PhysicsRig.swift, PhysicsSkin.swift, MuscleAtlas.swift, SkeletonAtlas.swift and the muscles scene: kinematic bodies

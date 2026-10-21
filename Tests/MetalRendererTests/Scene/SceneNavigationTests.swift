@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The scene view's navigation (SceneNavigation.swift): the camera about its pivot, and the scene gizmo.

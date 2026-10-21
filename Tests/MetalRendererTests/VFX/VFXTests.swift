@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The effects as graphs (Sources/MetalRenderer/VFX): the built-in ones lower to the emitters the scenes had before

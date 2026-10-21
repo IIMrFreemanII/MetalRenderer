@@ -29,7 +29,7 @@ import simd
 /// same order: PhysicsCPU.step's `beginFractureStep`, the contacts' and welds' pushes, `endFractureStep`.
 extension PhysicsWorld {
     /// GPUFractureCommand.info.y.
-    enum FractureCommand: UInt32 {
+    package enum FractureCommand: UInt32 {
         /// Body `info.z` (a disabled ball) placed at `origin` and sent along `direction` at its speed.
         case shoot = 0
         /// Every enabled body within `origin.w` pushed away from `origin`, its speed change at the middle `direction.w`
@@ -193,7 +193,7 @@ extension PhysicsWorld {
 
     /// A weld between bodies `a` and `b` (pieces of two objects that touch: the demolition scene's slab's panels), of
     /// `area` (m^2) about `centre` (the world), holding `sigma` x that (N), as an object's own welds are. Before `finish`.
-    func addWeld(_ a: Int, _ b: Int, centre: SIMD3<Float>, area: Float, sigma: Float) {
+    package func addWeld(_ a: Int, _ b: Int, centre: SIMD3<Float>, area: Float, sigma: Float) {
         let x = bodies[a], y = bodies[b]
         var weld = GPUFractureWeld()
         weld.anchorA = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(x.rotation), centre - PhysicsMath.xyz(x.position)), sigma * area)
@@ -206,7 +206,7 @@ extension PhysicsWorld {
     /// The Fracture Editor's preview of fractured object `tree` (its root body `first`): its pieces at `level` (and
     /// leaves above it) enabled, held where they are moved apart from its middle by `explode` x their distance, asleep;
     /// the rest disabled. Before `finish`.
-    func preview(_ tree: FractureTree, first: Int, level: Int, explode: Float) {
+    package func preview(_ tree: FractureTree, first: Int, level: Int, explode: Float) {
         let centre = PhysicsWorld.xyz(bodies[first].position)
         for (k, node) in tree.nodes.enumerated() {
             let i = first + k
@@ -224,16 +224,16 @@ extension PhysicsWorld {
     }
 
     /// A ball for shots: disabled until a `shoot` command sends it.
-    func disable(_ i: Int) { bodies[i].info.y |= PhysicsWorld.disabledBit }
+    package func disable(_ i: Int) { bodies[i].info.y |= PhysicsWorld.disabledBit }
 
     /// Body `i` starts asleep (held where it is until something wakes it: a command, a touch).
-    func startAsleep(_ i: Int) { bodies[i].info.y |= PhysicsWorld.asleep }
+    package func startAsleep(_ i: Int) { bodies[i].info.y |= PhysicsWorld.asleep }
 
     // MARK: Commands
 
     /// A command from step `step` (the next one to run, if nil) for `steps` steps; returned for the GPU's copy.
     @discardableResult
-    func command(_ kind: FractureCommand, body: Int = 0, origin: SIMD3<Float> = .zero, radius: Float = 0, direction: SIMD3<Float> = .zero,
+    package func command(_ kind: FractureCommand, body: Int = 0, origin: SIMD3<Float> = .zero, radius: Float = 0, direction: SIMD3<Float> = .zero,
                  magnitude: Float = 0, at step: Int? = nil, steps: Int = 1) -> GPUFractureCommand {
         let c = GPUFractureCommand(info: SIMD4(UInt32(step ?? stepIndex), kind.rawValue, UInt32(body), UInt32(max(steps, 1))),
                                    origin: SIMD4(origin, radius), direction: SIMD4(direction, magnitude))

@@ -84,7 +84,7 @@ extension Foliage {
 extension Foliage.Curve: Codable {
     private enum Key: String, CodingKey { case linear, taper, crown, points }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         if let ab = try c.decodeIfPresent([Float].self, forKey: .linear), ab.count == 2 {
             self = .linear(ab[0], ab[1])

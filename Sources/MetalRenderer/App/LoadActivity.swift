@@ -185,7 +185,7 @@ final class LoadActivity: @unchecked Sendable {
 }
 
 /// One load's handle for its loaders (any thread). All of it does nothing once the job is cancelled or has ended.
-final class LoadJob: @unchecked Sendable {
+package final class LoadJob: @unchecked Sendable {
     private weak var activity: LoadActivity?
     let id: Int
 
@@ -214,21 +214,21 @@ final class LoadJob: @unchecked Sendable {
 }
 
 /// A step of a job (any thread; `advance` may be called from a concurrentPerform's iterations).
-struct LoadStep {
+package struct LoadStep {
     fileprivate let job: LoadJob
     fileprivate let index: Int
 
-    var isCancelled: Bool { job.isCancelled }
+    package var isCancelled: Bool { job.isCancelled }
 
     /// `n` more done; `detail`: what it is on now.
-    func advance(by n: Int = 1, detail: String? = nil) {
+    package func advance(by n: Int = 1, detail: String? = nil) {
         job.update(index) { s in
             s.done += n
             if let detail { s.detail = detail }
         }
     }
 
-    func set(done: Int? = nil, total: Int? = nil, detail: String? = nil) {
+    package func set(done: Int? = nil, total: Int? = nil, detail: String? = nil) {
         job.update(index) { s in
             if let done { s.done = done }
             if let total { s.total = max(total, 0) }

@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+@testable import Game
 @testable import MetalRenderer
 
 /// What the plant editor is built from without its UI: the parameter table (PlantParams.swift) and Mutate

@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The open world as a function of its seed and a place (World.swift), and its tiles (WorldTile.swift).

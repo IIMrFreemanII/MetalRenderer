@@ -41,12 +41,13 @@ For one test, use `--filter CityTests/testThePlanIsSeeded`.
 
 ## Map
 
-Rows name files (`Sources/MetalRenderer/<Feature>/…`, any folder) or folders. `related.sh` looks a Swift source up by its
+Rows name files (`Sources/MetalRenderer/<Feature>/…` or the game's `Sources/Game/<Feature>/…`, any folder) or folders. `related.sh` looks a Swift source up by its
 name first, then by its folder (`by_name`, `by_folder`).
 
 | Changed | Suites |
 |---|---|
 | `Settings*.swift`, `SceneSettings` | SettingsTableTests, BenchmarkModesTests |
+| `SceneDefinition`, `GameScenes*`, `Scene+Kit` | SceneRegistryTests, SettingsTableTests, BenchmarkModesTests |
 | `Benchmark*.swift` | BenchmarkModesTests, CapabilitiesTests |
 | `Capabilities`, `Upscaler`, `Metal4Backend` | CapabilitiesTests |
 | `ShaderSource`, `Pipelines`, `GPUTypes`, `Shaders.metal`, any `Shaders/*.metal` | ShaderSourceTests, KernelVariantsTests |

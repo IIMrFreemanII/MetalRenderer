@@ -5,12 +5,12 @@ import simd
 /// x along the wall it stands against (from 0 to its width), z out from that wall into the room (0 to its depth), y up
 /// from the floor. A piece names what each of its parts is made of by a role (`Role`), which a building's palette
 /// turns into a material (BuildingFurnish.swift), so the same piece is oak in one flat and walnut in the next.
-struct FurnitureItem {
-    enum Role: Int, CaseIterable {
+package struct FurnitureItem {
+    package enum Role: Int, CaseIterable {
         case wood, woodDark, fabric, cushion, linen, metal, chrome, ceramic, dark, screen, stone
         case book0, book1, book2, book3, leaf, pot, soil, carton, glass, shade, paper, rug
     }
-    enum Kind: String, CaseIterable, Codable {
+    package enum Kind: String, CaseIterable, Codable {
         case bed, single, nightstand, wardrobe, sofa, armchair, coffeeTable, tvUnit, rug, diningTable, chair, kitchen, fridge
         case bath, shower, wc, basin, desk, officeChair, bookcase, plant, tallPlant, frame, boxes, deskCluster, meetingTable
         case cubicle, counter, rack, pallet, bench, reception, coatRack
@@ -24,10 +24,10 @@ struct FurnitureItem {
     /// What the walker meets of it (its own frame), if not its bounds: a table's top it can't walk through, its legs.
     var colliders: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]?
     /// It can be pushed and knocked over (a chair, a box): a body of its own (Interior.Prop).
-    var pushable = false
+    package var pushable = false
     var mass: Float = 5
 
-    init(_ kind: Kind, _ size: SIMD3<Float>) {
+    package init(_ kind: Kind, _ size: SIMD3<Float>) {
         self.kind = kind
         self.size = size
     }

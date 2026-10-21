@@ -87,11 +87,11 @@ enum TerrainPaint {
 }
 
 extension SIMD16 where Scalar == Float {
-    init(_ bytes: SIMD16<UInt8>) {
+    package init(_ bytes: SIMD16<UInt8>) {
         self.init()
         for l in 0..<16 { self[l] = Float(bytes[l]) }
     }
-    init(_ values: [Float]) {
+    package init(_ values: [Float]) {
         self.init()
         for l in 0..<Swift.min(values.count, 16) { self[l] = values[l] }
     }

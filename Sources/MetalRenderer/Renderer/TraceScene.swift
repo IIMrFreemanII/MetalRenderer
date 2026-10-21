@@ -49,7 +49,7 @@ struct TraversalStats {
     static let count = counters * classes.count
     var counts = [UInt64](repeating: 0, count: TraversalStats.count)
 
-    static func + (a: TraversalStats, b: TraversalStats) -> TraversalStats {
+    package static func + (a: TraversalStats, b: TraversalStats) -> TraversalStats {
         TraversalStats(counts: zip(a.counts, b.counts).map { $0 + $1 })
     }
     /// Counter `i` over every class.
@@ -89,7 +89,7 @@ final class TraceSceneArgs {
     let stats: MTLBuffer
     private let dummy: MTLBuffer
 
-    init(device: MTLDevice, slots: Int) throws {
+    package init(device: MTLDevice, slots: Int) throws {
         var made: [MTLBuffer] = []
         for slot in 0..<slots {
             guard let b = device.makeBuffer(length: TraceSceneArgs.size, options: .storageModeShared) else {

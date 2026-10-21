@@ -42,6 +42,7 @@ by_name() {
     GraphCanvas.swift) add VFXEditorTests MaterialEditorTests ProjectGraphTests ;;   # the graph editors' shared canvas
     SourceTree.swift) add ShaderSourceTests EXRImageTests MaterialGraphTests ;;   # where the shaders and fixtures are found
     Settings*.swift|SceneSettings.swift) add SettingsTableTests BenchmarkModesTests ;;
+    SceneDefinition.swift|GameScenes*.swift|Scene+Kit.swift) add SceneRegistryTests SettingsTableTests BenchmarkModesTests ;;
     Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
     Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
     ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
@@ -146,7 +147,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
       Sources/MetalRenderer/MaterialShaders/*.metal|Sources/MetalRenderer/ShadersMaterial*.metal)
         add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
-      Sources/MetalRenderer/*.swift)
+      Sources/MetalRenderer/*.swift|Sources/Game/*.swift)
         # By the file's name first, then by its folder; in a bash case, * also matches /.
         by_name "$name" || by_folder "$f" || uncovered+=("$f") ;;
       Package.swift) add MetalRendererTests ;;

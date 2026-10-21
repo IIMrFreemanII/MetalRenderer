@@ -80,7 +80,7 @@ final class MatEngine {
 
     static let thumbnailSide = 96
 
-    init(device: MTLDevice) {
+    package init(device: MTLDevice) {
         self.device = device
         queue = device.makeCommandQueue()!
         queue.label = "Material graph"

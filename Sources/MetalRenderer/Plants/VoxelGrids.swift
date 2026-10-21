@@ -42,7 +42,7 @@ final class VoxelGrids {
     }
 
     /// Builds the boxes on `queue` and waits for them.
-    init(device: MTLDevice, queue: MTLCommandQueue, plants: [FoliageVoxels.Plant]) throws {
+    package init(device: MTLDevice, queue: MTLCommandQueue, plants: [FoliageVoxels.Plant]) throws {
         let start = CACurrentMediaTime()
         key = VoxelGrids.key(plants)
         let built = FoliageVoxels.cached(plants)

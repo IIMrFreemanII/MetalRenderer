@@ -8,7 +8,7 @@ import simd
 /// It meets the scene's colliders (Scene.walkColliders: axis-aligned boxes, the buildings' walls, floors, steps,
 /// furniture and glass, the ground) through a grid, and what moves: door leaves (thin boxes turned about their
 /// hinge) and lift cabs (`Walker.Moving`).
-struct Walker {
+package struct Walker {
     var feet: SIMD3<Float>
     var velocity = SIMD3<Float>.zero
     var grounded = false
@@ -45,7 +45,7 @@ struct Walker {
         var platform: Int?
     }
 
-    init(feet: SIMD3<Float>) { self.feet = feet }
+    package init(feet: SIMD3<Float>) { self.feet = feet }
 
     // MARK: - Stepping
 
@@ -211,7 +211,7 @@ struct ColliderGrid {
     private var large: [Int] = []
     static let cell: Float = 2
 
-    init(_ boxes: [Interior.Collider]) {
+    package init(_ boxes: [Interior.Collider]) {
         self.boxes = boxes
         for (i, b) in boxes.enumerated() {
             let lo = ColliderGrid.key(b.lo), hi = ColliderGrid.key(b.hi)

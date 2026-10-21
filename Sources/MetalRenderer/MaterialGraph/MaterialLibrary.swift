@@ -17,7 +17,7 @@ struct MatBuilder {
 
     private var g: MaterialGraph
 
-    init(_ name: String, size: Int = 10) { g = MaterialGraph(name, size: size) }
+    package init(_ name: String, size: Int = 10) { g = MaterialGraph(name, size: size) }
 
     @discardableResult
     mutating func node(_ kind: MatOpKind, _ params: [String: MatParam] = [:], _ inputs: [String: Ref] = [:], id: String? = nil) -> Ref {
@@ -38,11 +38,11 @@ struct MatBuilder {
 }
 
 /// The built-in graphs: the Material Designer's starters, and what a scene can name before anything is saved.
-enum MaterialLibrary {
-    static let all: [MaterialGraph] = [redBricks(), cobblestone(), rustedPaint(), brushedSteel(), scratchedCopper(), perforatedMetal(),
+package enum MaterialLibrary {
+    package static let all: [MaterialGraph] = [redBricks(), cobblestone(), rustedPaint(), brushedSteel(), scratchedCopper(), perforatedMetal(),
                                        oakPlanks(), barkAndMoss(), scifiPanels(), marble()] + mireland + scans
-    static var names: [String] { all.map(\.name) }
-    static func named(_ name: String) -> MaterialGraph? { all.first { $0.name == name } }
+    package static var names: [String] { all.map(\.name) }
+    package static func named(_ name: String) -> MaterialGraph? { all.first { $0.name == name } }
 
     /// Colours as sRGB values (what the graph works in), alpha 1.
     static func rgb(_ r: Float, _ g: Float, _ b: Float) -> MatParam { .color([r, g, b, 1]) }
@@ -103,7 +103,7 @@ extension MaterialLibrary {
 extension MaterialLibrary {
     /// Polished white marble with grey veins: waves warped by turbulence, a gradient; it runs as code in the shading
     /// (MatShaderCode: every node of it can), sharp however near the view comes.
-    static func marble() -> MaterialGraph {
+    package static func marble() -> MaterialGraph {
         var b = MatBuilder("Marble")
         let turbulence = b.node(.fractalSum, ["scale": .int(3), "octaves": .int(6), "roughness": .float(0.55), "mode": .choice("fbm")])
         let bands = b.node(.waves, ["frequency": .int(4), "angle": .float(0), "wave": .choice("sine")])
@@ -121,7 +121,7 @@ extension MaterialLibrary {
 
 extension MaterialLibrary {
     /// Rounded stones of many greys and browns, set in dirt.
-    static func cobblestone() -> MaterialGraph {
+    package static func cobblestone() -> MaterialGraph {
         var b = MatBuilder("Cobblestone")
         let near = b.node(.cells, ["scale": .int(7), "jitter": .float(0.85), "mode": .choice("f1")])
         let edges = b.node(.cells, ["scale": .int(7), "jitter": .float(0.85), "mode": .choice("borders")])

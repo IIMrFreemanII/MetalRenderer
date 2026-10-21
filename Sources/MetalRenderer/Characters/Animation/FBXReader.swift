@@ -17,7 +17,7 @@ final class MappedFile {
     let base: UnsafeRawPointer
     let count: Int
 
-    init(_ url: URL) throws {
+    package init(_ url: URL) throws {
         let fd = open(url.path, O_RDONLY)
         guard fd >= 0 else { throw FBXError.invalid("cannot open \(url.lastPathComponent)") }
         defer { close(fd) }
@@ -93,7 +93,7 @@ final class FBXFile {
     private let file: MappedFile
     private let base: UnsafeRawPointer
 
-    init(url: URL, contents: Contents) throws {
+    package init(url: URL, contents: Contents) throws {
         self.url = url
         file = try MappedFile(url)
         base = file.base
@@ -213,7 +213,7 @@ final class FBXFile {
 
     // MARK: - Nodes
 
-    struct Children: Sequence, IteratorProtocol {
+    package struct Children: Sequence, IteratorProtocol {
         fileprivate let nodes: [Node]
         fileprivate var next_: Int32
         mutating func next() -> Int? {

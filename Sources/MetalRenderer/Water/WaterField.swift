@@ -3,7 +3,7 @@ import simd
 
 /// The water at one place of the world: its surface's height, how it flows there (m/s, the world's x, z), its look
 /// (an index into the scene's looks) and how white it runs (0...1).
-struct WaterSample {
+package struct WaterSample {
     var level: Float
     var flow = SIMD2<Float>.zero
     var look: Int
@@ -13,7 +13,7 @@ struct WaterSample {
 /// Where a scene's water is, everywhere (the world's x, z): what the water map (WaterMap) is drawn from, around the
 /// camera. The ground's height comes with it, for the shore (how deep the water is) and the near patch. Read from a
 /// background queue.
-protocol WaterField: AnyObject {
+package protocol WaterField: AnyObject {
     func ground(_ x: Double, _ z: Double) -> Float
     func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample?
     /// Rows `rows` of a square of texels (`origin` the world's x, z of texel (0, 0)'s corner, `cell` metres a texel,
@@ -25,9 +25,9 @@ protocol WaterField: AnyObject {
 
 extension WaterField {
     /// Whether (x, z) is in the water or within `margin` metres of a river's (no plant there): by default, water there.
-    func wet(_ x: Double, _ z: Double, margin: Double) -> Bool { water(x, z, ground: ground(x, z)) != nil }
+    package func wet(_ x: Double, _ z: Double, margin: Double) -> Bool { water(x, z, ground: ground(x, z)) != nil }
 
-    func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
+    package func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
               info: UnsafeMutablePointer<UInt32>) {
         for j in rows {
             let z = origin.y + (Double(j) + 0.5) * cell
@@ -65,7 +65,7 @@ final class TerrainWaterField: WaterField {
     private var rivers: [River] = []
 
     /// `looks[k]`: body k's look's index in the scene's looks (nil: the body made nothing).
-    init(snapshot s: TerrainSnapshot, bodies: [WaterBody], looks: [Int?]) {
+    package init(snapshot s: TerrainSnapshot, bodies: [WaterBody], looks: [Int?]) {
         snapshot = s
         let grid = s.grid
         if let lo = grid.lo, let hi = grid.hi {
@@ -134,7 +134,7 @@ final class TerrainWaterField: WaterField {
         return a + (b - a) * v
     }
 
-    func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
+    package func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
               info: UnsafeMutablePointer<UInt32>) {
         // (Everything the texels read, in this band's own locals: many threads reading the field's arrays through
         // `self` would fight over their reference counts.)
@@ -246,14 +246,14 @@ final class TerrainWaterField: WaterField {
 }
 
 /// Water at one level over a square of the world (the swamp's): wherever the ground is under it, with one look.
-final class LevelWaterField: WaterField {
+package final class LevelWaterField: WaterField {
     let level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>
     private let height: (Double, Double) -> Float
-    init(level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>, ground: @escaping (Double, Double) -> Float) {
+    package init(level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>, ground: @escaping (Double, Double) -> Float) {
         (self.level, self.look, self.lo, self.hi, height) = (level, look, lo, hi, ground)
     }
-    func ground(_ x: Double, _ z: Double) -> Float { height(x, z) }
-    func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
+    package func ground(_ x: Double, _ z: Double) -> Float { height(x, z) }
+    package func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         guard x >= lo.x, z >= lo.y, x <= hi.x, z <= hi.y, ground < level + 0.05 else { return nil }
         return WaterSample(level: level, look: look)
     }

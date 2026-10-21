@@ -5,8 +5,8 @@ import simd
 /// place, by the same height lerp as the shader's (Shaders/Surface.metal terrainRealistic) over the same layers (the
 /// scene's own ground map's, rock on steep ground, the three strongest painted), so that the displaced mesh and its
 /// texture agree. Each layer's height (its scan's, 0...1) about its middle, times its relief in metres.
-final class GroundRelief {
-    struct Layer {
+package final class GroundRelief {
+    package struct Layer {
         var height: TextureSet.HeightField?
         var scale: Float          // UV per metre, as the shader's
         var contrast: Float
@@ -25,7 +25,7 @@ final class GroundRelief {
 
     static let blendDepth: Float = 0.12   // TERRAIN_BLEND_DEPTH
 
-    init(ground: [Layer], painted: [Layer?], maps: (FoliageTextures.Image, FoliageTextures.Image)?, lo: SIMD2<Float>, size: SIMD2<Float>,
+    package init(ground: [Layer], painted: [Layer?], maps: (FoliageTextures.Image, FoliageTextures.Image)?, lo: SIMD2<Float>, size: SIMD2<Float>,
          rock: Int, slope: SIMD2<Float>, offset: SIMD2<Double>) {
         (self.ground, self.painted, self.maps, self.lo, self.size, self.rock, self.slope, self.offset) =
             (ground, painted, maps, lo, size, rock, slope, offset)

@@ -11,7 +11,7 @@ import simd
 ///   folds the lid down over the eyeball instead of pushing it through.
 ///
 /// Everything is made from the base (CharacterBase) and FaceSculpt's landmarks, once, and kept in the kit's cache.
-final class FaceRig {
+package final class FaceRig {
     /// The expression targets, in the order a slot's weights are.
     static let targetNames = ["jawOpen", "smile", "frown", "browsUp", "browsDown", "pucker", "wide", "press", "lipTuck", "cheeks"]
 
@@ -21,7 +21,7 @@ final class FaceRig {
     }
     static let groupCount = Group.allCases.count
 
-    struct Target: Equatable {
+    package struct Target: Equatable {
         var name: String
         var vertices: [UInt32]
         var deltas: [SIMD3<Float>]
@@ -34,7 +34,7 @@ final class FaceRig {
     /// Per eye (left, right): the cornea's top and the back of the eyeball (base vertices), for its centre.
     let eyePoles: [SIMD2<UInt32>]
 
-    init(targets: [Target], groups: [UInt32], eyePoles: [SIMD2<UInt32>]) {
+    package init(targets: [Target], groups: [UInt32], eyePoles: [SIMD2<UInt32>]) {
         self.targets = targets
         self.groups = groups
         self.eyePoles = eyePoles
@@ -287,7 +287,7 @@ struct FaceState: Equatable {
 }
 
 /// What a workshop's faces do (CharacterSceneSettings.expression).
-enum FaceExpression: Int, Codable, CaseIterable {
+package enum FaceExpression: Int, Codable, CaseIterable {
     case neutral, smile, frown, surprise, talk, cycle
 
     var title: String {

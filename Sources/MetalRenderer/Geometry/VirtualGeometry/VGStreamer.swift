@@ -9,7 +9,7 @@ struct BuddyAllocator {
     private var free: [Set<Int>] = Array(repeating: [], count: maxOrder + 1)
     private(set) var usedBytes = 0
 
-    init(size: Int) {
+    package init(size: Int) {
         for offset in stride(from: 0, to: size - (BuddyAllocator.minBlock << BuddyAllocator.maxOrder) + 1,
                              by: BuddyAllocator.minBlock << BuddyAllocator.maxOrder) {
             free[BuddyAllocator.maxOrder].insert(offset)
@@ -110,7 +110,7 @@ final class VGStreamer {
     private(set) var rootBytes = 0
     var bytesPerFrame = 32 << 20
 
-    init(device: MTLDevice, meshes: [VirtualMesh], poolMB: Int, slots: Int, label: String = "vg") throws {
+    package init(device: MTLDevice, meshes: [VirtualMesh], poolMB: Int, slots: Int, label: String = "vg") throws {
         self.meshes = meshes
         func buffer(_ length: Int, _ name: String) throws -> MTLBuffer {
             guard let b = device.makeBuffer(length: max(length, 16), options: .storageModeShared) else {

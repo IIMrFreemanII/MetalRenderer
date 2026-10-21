@@ -8,9 +8,9 @@ import simd
 /// a node that breaks hands over to its children, which its welds hold to their neighbours until those break too.
 ///
 /// Built once (plain Swift: a scene's build, the Fracture Editor's preview); the cells are in the object's shape space.
-struct FractureTree {
-    struct Node {
-        var cell: ConvexCell
+package struct FractureTree {
+    package struct Node {
+        package var cell: ConvexCell
         var parent: Int
         /// Its children: contiguous (the tree is built a level at a time).
         var children: Range<Int>
@@ -20,7 +20,7 @@ struct FractureTree {
         var isLeaf: Bool { children.isEmpty }
     }
 
-    struct Weld {
+    package struct Weld {
         var a: Int
         var b: Int
         /// The shared faces' area inside the object (m^2), their middle and normal (out of a).
@@ -30,7 +30,7 @@ struct FractureTree {
     }
 
     let recipe: FractureRecipe
-    private(set) var nodes: [Node] = []
+    package private(set) var nodes: [Node] = []
     private(set) var welds: [Weld] = []
     /// The object's own shape is the cell (a box): no piece is part outside it.
     let convex: Bool
@@ -41,7 +41,7 @@ struct FractureTree {
     /// The object `cell` (its box, shape space) fractured by `recipe`. `inside`: the object's distance when it isn't
     /// the box (a pillar's cylinder, a statue's grid): cells with little of it inside are dropped, and welds count only
     /// the shared faces' part inside it.
-    init(recipe: FractureRecipe, cell: ConvexCell, inside: ((SIMD3<Float>) -> Float)? = nil) {
+    package init(recipe: FractureRecipe, cell: ConvexCell, inside: ((SIMD3<Float>) -> Float)? = nil) {
         self.recipe = recipe
         convex = inside == nil
         var random = SplitMix(seed: recipe.seed &* 0x9E37_79B9 &+ 17)

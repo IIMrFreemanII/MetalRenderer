@@ -9,7 +9,7 @@ import simd
 /// vertex is on, how far along it, at what angle round it): fat where men and women carry it, muscles where they bulge,
 /// sagging with age. One is measured: "sex", the X Bot's skin (Mixamo's female mannequin) less the Y Bot's, with the
 /// X Bot's skeleton as `sexOffsets`.
-struct CharacterMorphs {
+package struct CharacterMorphs {
     struct Target {
         var name: String
         var vertices: [UInt32]
@@ -36,7 +36,7 @@ struct CharacterMorphs {
         var u: [Float]
         var angle: [Float]
 
-        init(_ c: SkinnedCharacter) {
+        package init(_ c: SkinnedCharacter) {
             let bind = CharacterBase.bindPositions(c)
             func j(_ name: String) -> Int { CharacterBase.joint(name, in: c) ?? 0 }
             let names = c.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }

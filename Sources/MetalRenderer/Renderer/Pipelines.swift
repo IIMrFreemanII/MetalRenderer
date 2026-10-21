@@ -113,7 +113,7 @@ final class KernelVariants {
     // pipeline to run in the meantime.
     private static let queue = DispatchQueue(label: "MetalRenderer.variants", qos: .utility, attributes: .concurrent)
 
-    init(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32) {
+    package init(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32) {
         self.device = device
         self.library = library
         self.compiler = compiler
@@ -182,7 +182,7 @@ final class PipelineCache<Value> {
     private let lock = NSLock()
     private var sets: [(key: Key, pipelines: Value)] = []   // the most recently used last
 
-    init(capacity: Int = 6) { self.capacity = capacity }
+    package init(capacity: Int = 6) { self.capacity = capacity }
 
     var count: Int { lock.lock(); defer { lock.unlock() }; return sets.count }
 
@@ -232,7 +232,7 @@ struct Pipelines {
     /// Compiles `source` unless `library` already is that, then makes every pipeline, in parallel. Safe to call from
     /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
     /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`. `load`: the load to report the pipelines to.
-    init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
+    package init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
          lightTypes: UInt32, stats: Bool, procedural: String = "", reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
         let start = CACurrentMediaTime()
         let kernels = Kernel.allCases

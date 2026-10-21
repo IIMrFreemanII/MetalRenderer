@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import ImageIO
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The material graph's GPU engine (MatEngine, the kernels in MaterialShaders/): nodes' values against the CPU's

@@ -3,8 +3,8 @@ import simd
 
 /// The built-in building styles: one for each of the city's districts (CityStyle), what the generator made before
 /// styles were data. A file in Assets/Buildings/Styles with one of these ids replaces it (BuildingStore).
-enum BuiltInBuildings {
-    typealias D = BuildingStyleDef
+package enum BuiltInBuildings {
+    package typealias D = BuildingStyleDef
 
     static let all: [BuildingStyleDef] = [oldtown, residential, warehouse, office, modern]
 
@@ -36,7 +36,7 @@ enum BuiltInBuildings {
     }()
 
     /// Brick apartment blocks with balconies around courtyards.
-    static let residential: D = {
+    package static let residential: D = {
         var d = D(id: "residential", name: "Residential blocks", districts: ["residential": 1])
         d.programme = Programme(use: .apartments, liftFrom: 6)
         d.proportions = D.Proportions(groundHeight: Span(3.6, 4.2), floorHeight: Span(2.9, 3.2), bay: Span(2.8, 3.4), pier: Choice([0.6]))
@@ -83,7 +83,7 @@ enum BuiltInBuildings {
     }()
 
     /// Glass towers on podiums, with setbacks.
-    static let office: D = {
+    package static let office: D = {
         var d = D(id: "office", name: "Office towers", districts: ["office": 1])
         d.programme = Programme(use: .offices, stairWidth: 1.25, liftFrom: 3, corridor: 1.8)
         d.proportions = D.Proportions(groundHeight: Span(5.0, 6.0), floorHeight: Span(3.6, 3.9), bay: Span(1.5, 3.0), pier: Choice([0.3, 0.5, 1.2]))

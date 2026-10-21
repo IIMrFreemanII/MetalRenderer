@@ -4,16 +4,16 @@ import simd
 /// A square heightfield around the origin: rolling ground from a few octaves of gradient noise, flattened to y = 0
 /// around a clearing. One mesh (two triangles per cell), and the same surface as a function: `height` interpolates on
 /// the mesh's own triangles, so what is planted with it stands on the ground exactly.
-struct Terrain {
-    let size: Float                     // metres across
+package struct Terrain {
+    package let size: Float                     // metres across
     let cells: Int                      // per side
-    let relief: Float                   // about the height of the highest hills
-    private(set) var heights: [Float]   // (cells + 1) squared, rows along z
+    package let relief: Float                   // about the height of the highest hills
+    package private(set) var heights: [Float]   // (cells + 1) squared, rows along z
 
     private var cell: Float { size / Float(cells) }
 
     /// `flat`: the ground is level inside `inner` metres of `center` and rises to its own shape by `outer`.
-    init(size: Float, cells: Int, seed: UInt64, relief: Float, flat: (center: SIMD2<Float>, inner: Float, outer: Float)? = nil) {
+    package init(size: Float, cells: Int, seed: UInt64, relief: Float, flat: (center: SIMD2<Float>, inner: Float, outer: Float)? = nil) {
         self.size = size
         self.cells = cells
         self.relief = relief
@@ -37,7 +37,7 @@ struct Terrain {
     }
 
     /// Heights made elsewhere (a terrain field's: Scene+Terrain), `(cells + 1)` squared, rows along z.
-    init(size: Float, cells: Int, relief: Float, heights: [Float]) {
+    package init(size: Float, cells: Int, relief: Float, heights: [Float]) {
         precondition(heights.count == (cells + 1) * (cells + 1), "a height per sample")
         (self.size, self.cells, self.relief, self.heights) = (size, cells, relief, heights)
     }
@@ -51,7 +51,7 @@ struct Terrain {
     }
 
     /// 2D gradient noise (Perlin), about -0.7...0.7, one lattice cell per unit.
-    static func noise(_ p: SIMD2<Float>, seed: UInt32) -> Float {
+    package static func noise(_ p: SIMD2<Float>, seed: UInt32) -> Float {
         let base = SIMD2(floor(p.x), floor(p.y))
         let ix = Int32(base.x), iy = Int32(base.y)
         let f = p - base
@@ -78,7 +78,7 @@ struct Terrain {
 
     /// The same noise at a place given in doubles: the lattice cell is found exactly, however far out it is, and
     /// only the place inside the cell is a float (the open world, World.swift).
-    static func noise(_ x: Double, _ y: Double, seed: UInt32) -> Float {
+    package static func noise(_ x: Double, _ y: Double, seed: UInt32) -> Float {
         let bx = x.rounded(.down), by = y.rounded(.down)
         let ix = Int32(truncatingIfNeeded: Int(bx)), iy = Int32(truncatingIfNeeded: Int(by))
         let f = SIMD2(Float(x - bx), Float(y - by))
@@ -119,14 +119,14 @@ struct Terrain {
     }
 
     /// The ground's height: on the mesh's triangle under the point (a cell's diagonal runs from its low corner to its high one).
-    func height(_ x: Float, _ z: Float) -> Float {
+    package func height(_ x: Float, _ z: Float) -> Float {
         let (i, j, u, v) = locate(x, z)
         let (h00, h10, h01, h11) = corners(i, j)
         return u >= v ? h00 + (h10 - h00) * u + (h11 - h10) * v : h00 + (h11 - h01) * u + (h01 - h00) * v
     }
 
     /// The normal of that triangle.
-    func normal(_ x: Float, _ z: Float) -> SIMD3<Float> {
+    package func normal(_ x: Float, _ z: Float) -> SIMD3<Float> {
         let (i, j, u, v) = locate(x, z)
         let (h00, h10, h01, h11) = corners(i, j)
         let slope = u >= v ? SIMD2(h10 - h00, h11 - h10) : SIMD2(h11 - h01, h01 - h00)

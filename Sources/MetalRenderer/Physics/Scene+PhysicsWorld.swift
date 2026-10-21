@@ -5,7 +5,7 @@ import simd
 extension Scene {
     // MARK: - Physics
 
-    func physicsWorld() -> PhysicsWorld {
+    package func physicsWorld() -> PhysicsWorld {
         if let physics { return physics }
         let world = PhysicsWorld(substeps: settings.physics.substeps)
         physics = world
@@ -16,7 +16,7 @@ extension Scene {
     /// translation). `density` kg/m^3; `friction` and `restitution` are mixed with what it touches (the geometric
     /// mean and the larger).
     @discardableResult
-    func addBody(sdf: Int, _ material: Int, _ transform: float4x4, density: Float = 500, friction: Float = 0.5,
+    package func addBody(sdf: Int, _ material: Int, _ transform: float4x4, density: Float = 500, friction: Float = 0.5,
                  restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero,
                  mask: UInt32 = Scene.maskGeometry) -> Int {
         let i = addInstance(sdf: sdf, material, transform, mask: mask)
@@ -55,7 +55,7 @@ extension Scene {
     /// A kinematic body (PhysicsFlesh.swift): an instance of SDF shape `sdf` that its column of the physics' pose table
     /// moves, starting at `transform`; `mask` 0 to keep it out of sight (a bone under flesh). Returns its body.
     @discardableResult
-    func addKinematicBody(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry, friction: Float = 0.6) -> Int {
+    package func addKinematicBody(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry, friction: Float = 0.6) -> Int {
         let i = addInstance(sdf: sdf, material, transform, mask: mask)
         instances[i].simulated = true
         let world = physicsWorld()
@@ -66,7 +66,7 @@ extension Scene {
     /// A figure's flesh drawn (PhysicsFlesh.swift): `mesh`, in the figure's rest space, embedded in `flesh`'s lattice
     /// (each vertex in the tet `own` gives it, or on figure bone `rigid[v]` where that is -1), as a deforming mesh the
     /// GPU writes every frame, starting where the flesh is. `weld`: its vertices at one place share their normal.
-    func addFleshMesh(_ flesh: PhysicsWorld.Flesh, figure: FleshFigure, mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil,
+    package func addFleshMesh(_ flesh: PhysicsWorld.Flesh, figure: FleshFigure, mesh: MeshGeometry, uvs: [SIMD2<Float>]? = nil,
                       materials: [UInt8]? = nil, own: [Int], rigid: [Int], weld: Bool, material: Int, bounds: AABB, skin: SkinShell? = nil) {
         var drawn = flesh
         drawn.model.embed(mesh, in: own, weld: weld)
@@ -81,7 +81,7 @@ extension Scene {
 
     /// A cloth: `columns` x `rows` vertices from `origin` along `across` and `down` (its whole width and height),
     /// `pinned` ones (row-major) held where they are; the physics moves the rest, the GPU writes the mesh every frame.
-    func addCloth(_ material: Int, origin: SIMD3<Float>, across: SIMD3<Float>, down: SIMD3<Float>, columns: Int, rows: Int,
+    package func addCloth(_ material: Int, origin: SIMD3<Float>, across: SIMD3<Float>, down: SIMD3<Float>, columns: Int, rows: Int,
                   pinned: Set<Int>, thickness: Float = 0.008, friction: Float = 0.6) {
         var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
         let normal = normalize(cross(down, across))
@@ -117,7 +117,7 @@ extension Scene {
     /// A soft body made of `model` (PhysicsSoft.swift), placed by `transform` (a rotation and a translation): the
     /// physics moves its lattice, the GPU writes its surface every frame. `edge` and `volume`: its links' and tets'
     /// compliance; `bounds`: where it can get to (the mesh's box whatever it does).
-    func addSoftBody(_ model: SoftModel, _ material: Int, _ transform: float4x4, bounds: AABB, velocity: SIMD3<Float> = .zero,
+    package func addSoftBody(_ model: SoftModel, _ material: Int, _ transform: float4x4, bounds: AABB, velocity: SIMD3<Float> = .zero,
                      density: Float = 1000, edge: Float = 1e-3, volume: Float = 1e-9, damping: Float = PhysicsWorld.softLinkDamping,
                      friction: Float = 0.6) {
         let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
@@ -140,7 +140,7 @@ extension Scene {
     }
 
     /// Particles: balls of `radius` at `positions` that the physics moves (each an instance of one sphere shape).
-    func addParticles(_ material: Int, radius: Float, positions: [SIMD3<Float>], density: Float = 1500, friction: Float = 0.5) {
+    package func addParticles(_ material: Int, radius: Float, positions: [SIMD3<Float>], density: Float = 1500, friction: Float = 0.5) {
         guard !positions.isEmpty else { return }
         let sphere = addSDFShape(SDFShape(.sphere(radius: radius)))
         let world = physicsWorld()
@@ -156,7 +156,7 @@ extension Scene {
     /// Its surface is a mesh the GPU makes again every frame (FluidSurface.swift), whose structure is built again every
     /// frame (`rebuiltMeshes`): it holds a fixed number of vertices (one spare) and triangles. It is drawn as the
     /// liquid it is (`addLiquidMaterial`), or with `material` as an opaque surface.
-    func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>, capacity: Int,
+    package func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>, capacity: Int,
                    material: Int? = nil) {
         let world = physicsWorld()
         world.addLiquid(kind, solver: solver, domain: domain, nozzle: nozzle, capacity: capacity)
@@ -176,7 +176,7 @@ extension Scene {
     }
 
     /// The last body added held where it is until `time` (s), then dropped (PhysicsWorld.hold).
-    func holdBody(until time: Float) {
+    package func holdBody(until time: Float) {
         let world = physicsWorld()
         world.hold(body: world.bodies.count - 1, until: time)
     }
@@ -194,14 +194,14 @@ extension Scene {
     }
 
     /// Something bodies bounce off that never moves: SDF shape `sdf` at `transform` (draw it, or not, apart).
-    func addStaticCollider(sdf: Int, _ transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
+    package func addStaticCollider(sdf: Int, _ transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
         let world = physicsWorld()
         world.setVolumes(sdfVolumes)
         world.addStatic(sdf: sdf, sdfShapes[sdf], transform: transform, friction: friction, restitution: restitution)
     }
 
     /// An endless static plane bodies rest on.
-    func addStaticPlane(point: SIMD3<Float>, normal: SIMD3<Float>, friction: Float = 0.6, restitution: Float = 0.2) {
+    package func addStaticPlane(point: SIMD3<Float>, normal: SIMD3<Float>, friction: Float = 0.6, restitution: Float = 0.2) {
         physicsWorld().addPlane(point: point, normal: normal, friction: friction, restitution: restitution)
     }
 
@@ -214,7 +214,7 @@ extension Scene {
     /// the whole frame, about 3 ms at 1920 x 1200 on an M1 Max, for eyes a few pixels across). `maps`: the skin's
     /// textures (colour, roughness, normals: `addSkinTextures`), for its skin's materials; `hair`: a hair cap's colour
     /// (CharacterHair.colour); `strandBrows`: brows of strands, not painted.
-    func addCharacterMaterials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, glossy: Bool = true, maps: SIMD3<UInt32>? = nil,
+    package func addCharacterMaterials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, glossy: Bool = true, maps: SIMD3<UInt32>? = nil,
                                hair: SIMD3<Float> = [0.08, 0.05, 0.03], strandBrows: Bool = false) -> Int {
         let run = CharacterBuilder.materials(look, skin: skin, hair: hair, strandBrows: strandBrows).map { m in
             var material = GPUMaterial(albedo: SIMD4(m.color, 0), emission: SIMD4(.zero, glossy ? m.roughness : 1),
@@ -249,7 +249,7 @@ extension Scene {
         return SIMD3(colour, roughness, normals)
     }
 
-    func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
+    package func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(baseColor, metallic), emission: SIMD4<Float>(.zero, roughness),
                                      params: SIMD4(1, 1, 0, 0)))
         return materials.count - 1
@@ -263,20 +263,20 @@ extension Scene {
     }
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.
-    func addGlassMaterial(tint: SIMD3<Float>) -> Int {
+    package func addGlassMaterial(tint: SIMD3<Float>) -> Int {
         hasGlass = true
         return addMaterial(GPUMaterial(albedo: SIMD4(tint, 0), emission: SIMD4(.zero, 0), params: SIMD4(0, 1, 0, 0)))
     }
 
     /// Any material, as it is.
-    func addMaterial(_ material: GPUMaterial) -> Int {
+    package func addMaterial(_ material: GPUMaterial) -> Int {
         materials.append(material)
         if material.params.w < 0 { hasSkin = true }
         return materials.count - 1
     }
 
     /// An image for materials to sample: its index for `GPUMaterial.textures`.
-    func addTexture(_ source: TextureSource) -> UInt32 {
+    package func addTexture(_ source: TextureSource) -> UInt32 {
         textures.append(source)
         return UInt32(textures.count - 1)
     }
@@ -296,7 +296,7 @@ extension Scene {
     /// A diffuse material (metallic 0, roughness 1, no specular: how every generated object has always looked).
     /// `translucency`: a leaf's, the share of its light that comes through from the far side.
     /// `texture`: its base colour's detail (the colour is multiplied by it), from `addGeneratedTexture`.
-    func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero, translucency: Float = 0, texture: UInt32 = .max) -> Int {
+    package func addMaterial(albedo: SIMD3<Float>, emission: SIMD3<Float> = .zero, translucency: Float = 0, texture: UInt32 = .max) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(albedo, 0), emission: SIMD4<Float>(emission, 1), params: SIMD4(0, 1, 0, translucency),
                                      textures: SIMD4(texture, .max, .max, .max)))
         return materials.count - 1
@@ -304,7 +304,7 @@ extension Scene {
 
     /// A strand's (Hair.metal): its colour, the one it is seen to have (the pigment's absorption is fitted to it).
     /// Marked by params.z < 0 (an emissive-mesh light's is > 0).
-    func addHairMaterial(color: SIMD3<Float>) -> Int {
+    package func addHairMaterial(color: SIMD3<Float>) -> Int {
         materials.append(GPUMaterial(albedo: SIMD4<Float>(color, 0), emission: SIMD4<Float>(.zero, 1), params: SIMD4(0, 1, -1, 0)))
         return materials.count - 1
     }
@@ -314,7 +314,7 @@ extension Scene {
     /// A texture made here rather than read from a model (FoliageTextures): the index a material names it by. The
     /// streamer keeps one cache file for all of a scene kind's, named by their pixels, so a change remakes it.
     /// `srgb`: its pixels are colours (false: data, such as a normal map's).
-    func addGeneratedTexture(_ image: FoliageTextures.Image, name: String, srgb: Bool = true) -> UInt32 {
+    package func addGeneratedTexture(_ image: FoliageTextures.Image, name: String, srgb: Bool = true) -> UInt32 {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         for byte in image.pixels { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 }
         // (With the cache off, a file of its own: the mip chains named by parameters stay as they are.)
@@ -328,7 +328,7 @@ extension Scene {
     /// A generated texture that `draw` draws only if no cache holds it: the caches name it by `key`, which says
     /// everything its pixels depend on (the generator's version, a seed). With the cache off it is drawn here and
     /// named by its pixels, as above.
-    func addGeneratedTexture(name: String, width: Int, height: Int, key: String, srgb: Bool = true,
+    package func addGeneratedTexture(name: String, width: Int, height: Int, key: String, srgb: Bool = true,
                              _ draw: @escaping () -> FoliageTextures.Image) -> UInt32 {
         guard GeneratedCache.enabled else { return addGeneratedTexture(draw(), name: name, srgb: srgb) }
         textures.append(TextureSource(data: Data(), srgb: srgb, name: "generated/\(name)",
@@ -428,7 +428,7 @@ extension Scene {
     }
 
     @discardableResult
-    func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
+    package func addInstance(_ mesh: Int, _ material: Int, _ transform: float4x4,
                              mask: UInt32 = Scene.maskGeometry,
                              animation: ((Float) -> float4x4)? = nil) -> Int {
         instances.append(Instance(mesh: mesh, material: material, mask: mask,
@@ -438,7 +438,7 @@ extension Scene {
     }
 
     /// A moving sphere light (the original scenes' lights), drawn with `sphereMesh`.
-    func addLight(color: SIMD3<Float>, radius: Float, sphereMesh: Int, path: @escaping (Float) -> SIMD3<Float>) {
+    package func addLight(color: SIMD3<Float>, radius: Float, sphereMesh: Int, path: @escaping (Float) -> SIMD3<Float>) {
         addLight(.sphere(radius: radius), color: color, proxyMesh: sphereMesh) { LightPose(position: path($0)) }
     }
 
@@ -448,7 +448,7 @@ extension Scene {
     /// the radiance itself for a rect, 2 I / (pi r length) for a tube (a cylinder whose broadside intensity per unit
     /// length, radiance x 2r, is the 4 I / (pi length) the shaders give it).
     @discardableResult
-    func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, proxyEmission: SIMD3<Float>? = nil,
+    package func addLight(_ kind: LightKind, color: SIMD3<Float>, proxyMesh: Int? = nil, proxyEmission: SIMD3<Float>? = nil,
                   reach: Float = 0, motion: LightMotion = .animated, proxy: Bool = true, pose: @escaping (Float) -> LightPose) -> Int {
         var light = Light(kind: kind, color: color, pose: pose, motion: motion, order: lights.count)
         light.reach = reach

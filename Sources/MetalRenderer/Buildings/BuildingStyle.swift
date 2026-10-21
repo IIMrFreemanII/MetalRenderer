@@ -23,7 +23,7 @@ struct WindowStyle {
 enum Balustrade: CaseIterable { case bars, glass, solid }
 
 /// What closes a building's top.
-enum RoofKind: CaseIterable {
+package enum RoofKind: CaseIterable {
     case flat           // a parapet around it and things on it
     case gabled         // two slopes and a gable at each end (rectangles and L shapes)
     case hipped         // four slopes
@@ -31,12 +31,12 @@ enum RoofKind: CaseIterable {
 }
 
 /// The shapes a building's plan can take (Footprint).
-enum PlanShape: CaseIterable { case rect, l, u, t, courtyard }
+package enum PlanShape: CaseIterable { case rect, l, u, t, courtyard }
 
 /// A building's style, drawn for one building from its style's definition (BuildingStyle.draw, BuildingStyleDef):
 /// the proportions its facades are divided by, which pieces they are made of, what its plan and rooms are, and its
 /// materials.
-struct BuildingStyle {
+package struct BuildingStyle {
     /// What it was drawn from.
     var def = BuiltInBuildings.residential
     var programme = Programme()

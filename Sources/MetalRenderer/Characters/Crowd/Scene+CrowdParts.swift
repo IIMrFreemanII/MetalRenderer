@@ -6,7 +6,7 @@ extension Scene {
     // MARK: - Crowd
 
     /// Takes `crowd` as this scene's: its characters' bind-pose meshes and a mesh per pose slot.
-    func adopt(_ crowd: Crowd) {
+    package func adopt(_ crowd: Crowd) {
         self.crowd = crowd
         for p in crowd.parts.indices {
             let geometry = crowd.geometry(part: p)
@@ -55,7 +55,7 @@ extension Scene {
     func localBounds(mesh m: Int) -> AABB { AABB(lo: meshBounds[m].0, hi: meshBounds[m].1) }
 
     /// Marks instance `i` as a member of the crowd (its mesh is a pose slot's).
-    func setSkinned(_ i: Int, travels: Bool) {
+    package func setSkinned(_ i: Int, travels: Bool) {
         instances[i].deforms = true
         instances[i].travels = travels
         hasSkinned = true
@@ -89,7 +89,7 @@ extension Scene {
 
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).
     @discardableResult
-    func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
+    package func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
         let i = addInstance(mesh, material, transform)
         instances[i].deforms = true
         return i
@@ -108,7 +108,7 @@ extension Scene {
     /// PhysicsGPU), within `bounds` whatever they do; `finishDeforming` puts last frame's after everything else. The
     /// mesh's vertices start at its `vertexOffset`; its indices, from `firstIndex`, are each segment's first point
     /// counted from there (`indexCount` stays 0: it has no triangles).
-    func addCurves(points: [SIMD3<Float>], perStrand: Int, radii: [Float], bounds: AABB) -> Int {
+    package func addCurves(points: [SIMD3<Float>], perStrand: Int, radii: [Float], bounds: AABB) -> Int {
         precondition(perStrand >= 4 && points.count % perStrand == 0 && radii.count == points.count, "whole strands of 4 points or more")
         let first = positions.count
         let firstIndex = indices.count
@@ -194,7 +194,7 @@ extension Scene {
     /// cover standing along +y, which leans in the wind (every instance of it: its transform, PlantTracing).
     /// `cutout`: the alpha layer (`addCutout`) that cuts out its leaves, if they are cards.
     /// `name`: see `meshNames`.
-    func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil, name: String? = nil) -> Int {
+    package func addMesh(_ mesh: Foliage.Mesh, sways: Bool = false, cutout: Int? = nil, name: String? = nil) -> Int {
         if let name { meshNames[meshes.count] = name }
         let baseVertex = UInt32(positions.count)
         let firstIndex = UInt32(indices.count)
@@ -217,7 +217,7 @@ extension Scene {
         return cutouts.count - 1
     }
 
-    func addAssembly(_ assembly: Assembly) -> Int {
+    package func addAssembly(_ assembly: Assembly) -> Int {
         assemblies.append(assembly)
         return assemblies.count - 1
     }
@@ -235,7 +235,7 @@ extension Scene {
 
     /// An instance of an assembly: `material` is its wood's, and the next material its leaves'.
     @discardableResult
-    func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
+    package func addInstance(assembly: Int, _ material: Int, _ transform: float4x4) -> Int {
         instances.append(Instance(mesh: -1, material: material, mask: Scene.maskGeometry,
                                   transform: transform, prevTransform: transform,
                                   animation: nil, assembly: assembly, normalMatrix: transform.inverse.transpose))
@@ -243,7 +243,7 @@ extension Scene {
     }
 
     /// An SDF shape for instances to place (`addInstance(sdf:)`).
-    func addSDFShape(_ shape: SDFShape) -> Int {
+    package func addSDFShape(_ shape: SDFShape) -> Int {
         sdfLabels[sdfShapes.count] = shape.kindName   // (a builder's own name replaces it: `label(sdf:)`)
         sdfShapes.append(shape)
         sdfBounds.append(shape.bounds(volumes: sdfVolumes))
@@ -251,14 +251,14 @@ extension Scene {
     }
 
     /// A baked distance grid for SDF shapes' `.volume` nodes (added before the shapes that use it).
-    func addSDFVolume(_ volume: SDFVolume) -> Int {
+    package func addSDFVolume(_ volume: SDFVolume) -> Int {
         sdfVolumes.append(volume)
         return sdfVolumes.count - 1
     }
 
     /// An instance of SDF shape `sdf`: `material` is its nodes' with offset 0, the others' after it.
     @discardableResult
-    func addInstance(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry,
+    package func addInstance(sdf: Int, _ material: Int, _ transform: float4x4, mask: UInt32 = Scene.maskGeometry,
                      animation: ((Float) -> float4x4)? = nil) -> Int {
         instances.append(Instance(mesh: -1, material: material, mask: mask,
                                   transform: transform, prevTransform: transform, animation: animation,

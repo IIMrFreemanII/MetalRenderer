@@ -50,7 +50,7 @@ extension Camera {
     /// The pitch the scene view goes up to: Top and Bottom are a hair off straight, so `right` stays defined.
     static let pitchLimit: Float = .pi / 2 - 1e-3
     /// Radians a drag turns per point.
-    static let turnRate: Float = 0.004
+    package static let turnRate: Float = 0.004
     /// How near and far a dolly goes (as the workshops' scroll did).
     static let pivotDistances: ClosedRange<Float> = 0.3...1000
     /// The pivot's distance where nothing has set one (Unity's starts in front of the camera too).

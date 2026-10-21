@@ -8,7 +8,7 @@ import simd
 ///
 /// Nothing is laid flat on anything else: a partition runs into the wall it meets (never along one in line with it),
 /// floors and ceilings meet the walls edge on.
-struct Interior {
+package struct Interior {
     struct Part {
         var material: SurfaceMaterial
         var mesh: MeshBuilder
@@ -26,7 +26,7 @@ struct Interior {
     var colliders: [Collider] = []
     var lights: [Light] = []
     var switches: [Switch] = []
-    var props: [Prop] = []
+    package var props: [Prop] = []
     var doors: [Door] = []
     var lifts: [LiftShaft] = []
     /// The glTF props (PropLibrary): which, where in its storey's frame (fitted into a piece's box of `size`), on
@@ -34,13 +34,13 @@ struct Interior {
     var models: [(entry: Int, frame: float4x4, size: SIMD3<Float>, storey: Int)] = []
     /// Every piece of furniture as boxes (the demolition scene's, which fractures them): its kind, its frame in the lot
     /// (on its storey's floor), its collision boxes in that frame, what most of it is made of, its storey.
-    var furniture: [Furniture] = []
-    struct Furniture {
-        var kind: FurnitureItem.Kind
-        var frame: float4x4
-        var boxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]
-        var role: FurnitureItem.Role
-        var storey: Int
+    package var furniture: [Furniture] = []
+    package struct Furniture {
+        package var kind: FurnitureItem.Kind
+        package var frame: float4x4
+        package var boxes: [(lo: SIMD3<Float>, hi: SIMD3<Float>)]
+        package var role: FurnitureItem.Role
+        package var storey: Int
     }
     /// It is night: every room's lights are there to switch (by day only the lit ones'; a light that is off still
     /// costs its sampling).
@@ -68,10 +68,17 @@ struct Interior {
     var triangles = 0
 
     /// An axis-aligned box the walker can't pass (glass is one too).
-    struct Collider: Equatable {
-        enum Kind: UInt8 { case solid, glass, stair, furniture }
+    package struct Collider: Equatable {
+        package enum Kind: UInt8 { case solid, glass, stair, furniture }
         var lo: SIMD3<Float>, hi: SIMD3<Float>
         var kind = Kind.solid
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(lo: SIMD3<Float>, hi: SIMD3<Float>, kind: Kind = Kind.solid) {
+            self.lo = lo
+            self.hi = hi
+            self.kind = kind
+        }
     }
 }
 
@@ -112,7 +119,7 @@ enum InteriorBuilder {
         let step: SurfaceMaterial
         let frame: SurfaceMaterial
 
-        init(_ style: BuildingStyle, seed: UInt64) {
+        package init(_ style: BuildingStyle, seed: UInt64) {
             let i = style.def.interior, d = StyleDraw(seed: seed ^ 0x1A7E_810F)
             paints = i.paints.isEmpty ? [[0.82, 0.8, 0.76]] : i.paints
             wood = i.woods.isEmpty ? [0.42, 0.3, 0.2] : d.pick(i.woods, "wood")
@@ -159,7 +166,7 @@ enum InteriorBuilder {
         var m = MaterialMeshes()
         var colliders: [Interior.Collider] = []
 
-        init(_ a: BuildingAssembler) {
+        package init(_ a: BuildingAssembler) {
             self.a = a
             plan = a.plan
             finishes = Finishes(a.style, seed: a.spec.seed)

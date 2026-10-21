@@ -4,7 +4,7 @@ import simd
 /// A distance field baked into a grid (`bake`), a node of SDF shapes can be (`.volume`): its samples at the grid's
 /// points, trilinear in between; outside the grid a bound (the distance to the grid plus the least of its samples on
 /// its faces, which nothing outside can be nearer to the surface than). MSL `sdfVolume` in Shaders/SDF.metal.
-struct SDFVolume {
+package struct SDFVolume {
     /// The first sample's place, and the samples' spacing.
     var lo: SIMD3<Float>
     var cell: Float
@@ -43,7 +43,7 @@ struct SDFVolume {
     static let version = 1
 
     /// `bake`, from the cache or into it (GeneratedCache): the file is named by the mesh and the resolution.
-    static func cached(_ mesh: MeshGeometry, resolution: Int = 64) -> SDFVolume {
+    package static func cached(_ mesh: MeshGeometry, resolution: Int = 64) -> SDFVolume {
         var hasher = GeneratedCache.Hasher()
         hasher.add(mesh.positions)
         hasher.add(mesh.indices)

@@ -12,40 +12,40 @@ import simd
 ///
 /// Everything is a pure function of the recipe and the seed: sizes are counted before meshing, meshes are filled by
 /// index into exactly sized arrays, and the variants are built in parallel, one slot each (FoliageMesh.swift).
-enum Foliage {
+package enum Foliage {
     /// Of the library: which plants there are, in what order. The open world's tiles name a plant by its place in
     /// its species' set (World.Placement), so a change of the sets makes other tile files.
     static let version = 1
 
     /// A species: its place in a catalog (PlantCatalog), where its definition (SpeciesDef) says how it grows. The
     /// first seven are the built-in ones, in this order; a catalog's own species follow them.
-    struct Species: Hashable, RawRepresentable, Codable, CustomStringConvertible {
-        let rawValue: Int
-        init(rawValue: Int) { self.rawValue = rawValue }
+    package struct Species: Hashable, RawRepresentable, Codable, CustomStringConvertible {
+        package let rawValue: Int
+        package init(rawValue: Int) { self.rawValue = rawValue }
 
-        static let oak = Species(rawValue: 0), birch = Species(rawValue: 1), conifer = Species(rawValue: 2)
-        static let dead = Species(rawValue: 3), bush = Species(rawValue: 4), fern = Species(rawValue: 5), grass = Species(rawValue: 6)
+        package static let oak = Species(rawValue: 0), birch = Species(rawValue: 1), conifer = Species(rawValue: 2)
+        package static let dead = Species(rawValue: 3), bush = Species(rawValue: 4), fern = Species(rawValue: 5), grass = Species(rawValue: 6)
         /// The built-in species.
         static let allCases = (0..<7).map(Species.init(rawValue:))
         private static let names = ["oak", "birch", "conifer", "dead", "bush", "fern", "grass"]
 
-        var description: String { rawValue < Species.names.count ? Species.names[rawValue] : "species \(rawValue)" }
+        package var description: String { rawValue < Species.names.count ? Species.names[rawValue] : "species \(rawValue)" }
         /// (Of the built-in species.) Has a palette of boughs, so its plants are assemblies.
         var hasBoughs: Bool { PlantCatalog.builtIn.species.indices.contains(rawValue) && PlantCatalog.builtIn[self].paletteSize > 0 }
         var isTree: Bool { PlantCatalog.builtIn.species.indices.contains(rawValue) && PlantCatalog.builtIn[self].role == .tree }
     }
 
     /// Growth stage: the same recipe at a fraction of its height, with fewer limbs and levels (SpeciesDef.Ages).
-    enum Age: Int, CaseIterable, Codable { case sapling, young, mature }
+    package enum Age: Int, CaseIterable, Codable { case sapling, young, mature }
 
     /// How long a limb is by its place along the trunk (`crownRatio`): the presets of a crown's curve.
-    enum Crown: String, CaseIterable, Codable { case conical, spherical, hemispherical, cylindrical, flame }
-    enum Phyllotaxis: Equatable {
+    package enum Crown: String, CaseIterable, Codable { case conical, spherical, hemispherical, cylindrical, flame }
+    package enum Phyllotaxis: Equatable {
         case spiral            // each leaf 137.5 degrees round from the last
         case distichous        // alternating sides, in the plane across `up`
         case whorled(Int)      // rings of n
     }
-    enum LeafShape: String, CaseIterable, Codable {
+    package enum LeafShape: String, CaseIterable, Codable {
         case kite              // 2 triangles, folded along the midrib
         case blade             // 4 triangles, rounder
         case needle            // 1 triangle
@@ -54,7 +54,7 @@ enum Foliage {
     static let goldenAngle: Float = 2.39996
 
     /// One level of stems: how many grow from each stem of the level before, and how they run.
-    struct Level: Codable, Equatable {
+    package struct Level: Codable, Equatable {
         var count = 1                       // per parent stem (level 0: stems from the ground)
         var length: Float = 1               // of the parent's length (level 0: metres)
         var lengthV: Float = 0.1            // relative variation
@@ -64,9 +64,9 @@ enum Foliage {
         var rotate: Float = Foliage.goldenAngle   // around the parent, from one child to the next
         var rotateV: Float = 0.3
         var start: Float = 0.2              // the first child sits this far along the parent
-        var curve: Float = 0                // total bend toward `up` (+) or away from it (-), radians
+        package var curve: Float = 0                // total bend toward `up` (+) or away from it (-), radians
         var curveV: Float = 0.3             // random wander
-        var tropism: Float = 0              // steady pull toward `up` (+: light) or away (-: weight)
+        package var tropism: Float = 0              // steady pull toward `up` (+: light) or away (-: weight)
         var segments = 5
         var radial = 5                      // sides of the tube; 1 = a flat ribbon
         /// The radius along the stem, of its radius at its foot (a taper of 0 = a cylinder, 1 = to a point).
@@ -74,7 +74,7 @@ enum Foliage {
         /// How long the stems are by where along the parent they grow, of `length` (level 1's: the crown's shape).
         var along: Curve = .taper(0.5)
 
-        init(count: Int = 1, length: Float = 1, lengthV: Float = 0.1, downAngle: Float = 0.8, downAngleEnd: Float? = nil,
+        package init(count: Int = 1, length: Float = 1, lengthV: Float = 0.1, downAngle: Float = 0.8, downAngleEnd: Float? = nil,
              downAngleV: Float = 0.15, rotate: Float = Foliage.goldenAngle, rotateV: Float = 0.3, start: Float = 0.2, curve: Float = 0,
              curveV: Float = 0.3, tropism: Float = 0, segments: Int = 5, radial: Int = 5, taper: Float = 0.9) {
             self.count = count
@@ -94,7 +94,7 @@ enum Foliage {
         }
     }
 
-    struct LeafRecipe: Codable, Equatable {
+    package struct LeafRecipe: Codable, Equatable {
         var shape = LeafShape.kite
         var length: Float = 0.1
         var width: Float = 0.06
@@ -110,7 +110,7 @@ enum Foliage {
         var flutter: Float = 0.4            // how far the faces turn away from `up`, at random
         var fromLevel = 0                   // leaves only on stems of this level and deeper
 
-        init(shape: LeafShape = .kite, length: Float = 0.1, width: Float = 0.06, sizeV: Float = 0.25, perMetre: Float = 30,
+        package init(shape: LeafShape = .kite, length: Float = 0.1, width: Float = 0.06, sizeV: Float = 0.25, perMetre: Float = 30,
              start: Float = 0.1, angle: Float = 0.9, angleV: Float = 0.3, phyllotaxis: Phyllotaxis = .spiral, fold: Float = 0.15,
              tipScale: Float = 1, flutter: Float = 0.4, fromLevel: Int = 0) {
             self.shape = shape
@@ -130,7 +130,7 @@ enum Foliage {
     }
 
     /// Where boughs hang on the scaffold.
-    struct Graft: Codable, Equatable {
+    package struct Graft: Codable, Equatable {
         var spacing: Float = 0.45           // metres between boughs along a stem
         var fromLevel = 1                   // stems of this level and deeper carry boughs ...
         var start: Float = 0.5              // ... from this far along (the last level: from `lastStart`)
@@ -143,14 +143,14 @@ enum Foliage {
     }
 
     /// Stems end where they leave this ellipsoid (pruning to a shape).
-    struct Carve: Codable, Equatable {
+    package struct Carve: Codable, Equatable {
         var center: SIMD3<Float>
         var radii: SIMD3<Float>
         var fromLevel = 1
     }
 
-    struct Recipe: Codable, Equatable {
-        var levels: [Level]
+    package struct Recipe: Codable, Equatable {
+        package var levels: [Level]
         var ratio: Float = 0.03             // the first stem's radius over its length
         var ratioPower: Float = 1.2         // child radius = parent radius x (length ratio)^power
         var flare: Float = 0.5              // widening at the foot
@@ -162,7 +162,7 @@ enum Foliage {
         var graft: Graft? = nil
 
         /// `crown`: level 1's lengths along the trunk (its `along` curve).
-        init(levels: [Level], ratio: Float = 0.03, ratioPower: Float = 1.2, flare: Float = 0.5, crown: Crown = .spherical,
+        package init(levels: [Level], ratio: Float = 0.03, ratioPower: Float = 1.2, flare: Float = 0.5, crown: Crown = .spherical,
              spread: Float = 0, carve: Carve? = nil, axis: SIMD3<Float> = [0, 1, 0], up: SIMD3<Float> = [0, 1, 0],
              leaf: LeafRecipe? = nil, graft: Graft? = nil) {
             self.levels = levels
@@ -273,7 +273,7 @@ enum Foliage {
         /// Each level's length when nothing varies: what a stem's child count is scaled against.
         let nominal: [Float]
 
-        init(_ recipe: Recipe, seed: UInt64) {
+        package init(_ recipe: Recipe, seed: UInt64) {
             self.recipe = recipe
             rng = SplitMix64(seed: seed)
             var lengths: [Float] = []
@@ -450,7 +450,7 @@ enum Foliage {
     struct Bone {
         var pivot: SIMD3<Float>             // plant space, at rest
         var axis: SIMD3<Float>              // the stem's direction there
-        var parent: Int32                   // -1: the root (the whole plant about its foot)
+        package var parent: Int32                   // -1: the root (the whole plant about its foot)
         var length: Float                   // of what it carries: longer and thinner sways more
         var radius: Float
         var phase: Float                    // 0...1, so that no two move together
@@ -474,7 +474,7 @@ enum Foliage {
         var height: Float { bounds.hi.y }
     }
 
-    struct SpeciesSet {
+    package struct SpeciesSet {
         let species: Species
         var palette: [Mesh]
         var plants: [Plant]

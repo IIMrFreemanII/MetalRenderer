@@ -32,7 +32,7 @@ extension Scene {
     /// A material that `graph` (by name, in `catalog`) bakes: until its bake comes, a neutral grey of its own (the
     /// renderer fills its textures and values as the graph says). Its index.
     @discardableResult
-    func addProceduralMaterial(graph name: String, catalog: MaterialCatalog) -> Int {
+    package func addProceduralMaterial(graph name: String, catalog: MaterialCatalog) -> Int {
         let index = addMaterial(GPUMaterial(albedo: SIMD4(0.5, 0.5, 0.5, 0), emission: SIMD4(0, 0, 0, 0.6), params: SIMD4(1, 1, 0, 0)))
         makeProcedural(index, graph: name, catalog: catalog)
         return index

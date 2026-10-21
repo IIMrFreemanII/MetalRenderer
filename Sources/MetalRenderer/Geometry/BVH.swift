@@ -34,13 +34,13 @@ struct BVHNode {
     }
 }
 
-struct AABB {
-    var lo = SIMD3<Float>(repeating: .infinity)
-    var hi = SIMD3<Float>(repeating: -.infinity)
+package struct AABB {
+    package var lo = SIMD3<Float>(repeating: .infinity)
+    package var hi = SIMD3<Float>(repeating: -.infinity)
 
-    mutating func grow(_ p: SIMD3<Float>) { lo = simd_min(lo, p); hi = simd_max(hi, p) }
-    mutating func grow(_ b: AABB) { lo = simd_min(lo, b.lo); hi = simd_max(hi, b.hi) }
-    var isEmpty: Bool { lo.x > hi.x }
+    package mutating func grow(_ p: SIMD3<Float>) { lo = simd_min(lo, p); hi = simd_max(hi, p) }
+    package mutating func grow(_ b: AABB) { lo = simd_min(lo, b.lo); hi = simd_max(hi, b.hi) }
+    package var isEmpty: Bool { lo.x > hi.x }
     var centroid: SIMD3<Float> { (lo + hi) * 0.5 }
     var area: Float {
         if isEmpty { return 0 }
@@ -48,7 +48,7 @@ struct AABB {
         return 2 * (d.x * d.y + d.y * d.z + d.z * d.x)
     }
     /// Bounds of this box after `m` (all 8 corners).
-    func transformed(_ m: float4x4) -> AABB {
+    package func transformed(_ m: float4x4) -> AABB {
         var out = AABB()
         for c in 0..<8 {
             let p = SIMD3<Float>(c & 1 == 0 ? lo.x : hi.x, c & 2 == 0 ? lo.y : hi.y, c & 4 == 0 ? lo.z : hi.z)
@@ -56,6 +56,12 @@ struct AABB {
             out.grow(SIMD3(q.x, q.y, q.z))
         }
         return out
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(lo: SIMD3<Float> = SIMD3<Float>(repeating: .infinity), hi: SIMD3<Float> = SIMD3<Float>(repeating: -.infinity)) {
+        self.lo = lo
+        self.hi = hi
     }
 }
 

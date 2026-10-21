@@ -39,7 +39,7 @@ extension PhysicsWorld {
     /// substeps. (A share of the way a substep, as TressFX has it, would make 1% hold against gravity to a millimetre
     /// at 16 substeps.) `across`: a direction across it at the root (the drawn strands' frame). Returns its index.
     @discardableResult
-    func addStrand(body: Int?, points: [SIMD3<Float>], radius: Float, globalRoot: Float, globalTip: Float, local: Float,
+    package func addStrand(body: Int?, points: [SIMD3<Float>], radius: Float, globalRoot: Float, globalTip: Float, local: Float,
                    damping: Float = 0.5, friction: Float = 0.3, across: SIMD3<Float>) -> Int {
         precondition(points.count >= 2 && points.count <= PhysicsWorld.maxHairVertices, "2 to \(PhysicsWorld.maxHairVertices) vertices")
         let pose = body.map { Pose(bodies[$0]) }
@@ -65,7 +65,7 @@ extension PhysicsWorld {
     /// Strands drawn around guides `guides` (`perGuide` each, the guide one of them), up to `spread` from it at the root
     /// and drawn `clump` of the way in toward it by the tip, curling `curl` about it. `mesh`: its curve mesh, whose first
     /// control point and last frame's offset Scene.setHairMeshes fills in once the meshes are done.
-    func addHairGroup(guides: Range<Int>, perGuide: Int, spread: Float, clump: Float, curl: Float, seed: UInt32) -> Int {
+    package func addHairGroup(guides: Range<Int>, perGuide: Int, spread: Float, clump: Float, curl: Float, seed: UInt32) -> Int {
         let n = hairStrands[guides.lowerBound].info.z
         precondition(guides.allSatisfy { hairStrands[$0].info.z == n }, "a group's guides have as many vertices")
         hairGroups.append(GPUHairGroup(counts: SIMD4(UInt32(guides.lowerBound), UInt32(guides.count), UInt32(perGuide), n),
@@ -267,7 +267,7 @@ extension PhysicsWorld {
     /// Drawn strand `r` of group `g`: its control points (a phantom before the root and after the tip, so the
     /// Catmull-Rom curve runs through every vertex), from the guides' vertices `vertices` and the bodies' poses as
     /// they are. Physics.metal's physicsHairCurvesKernel writes the same every frame.
-    func drawnStrand(group g: GPUHairGroup, _ r: Int) -> [SIMD3<Float>] {
+    package func drawnStrand(group g: GPUHairGroup, _ r: Int) -> [SIMD3<Float>] {
         let perGuide = Int(g.counts.z), n = Int(g.counts.w)
         let strand = hairStrands[Int(g.counts.x) + r / perGuide]
         let first = Int(strand.info.y)

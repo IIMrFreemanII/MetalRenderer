@@ -17,18 +17,18 @@ enum PhysicsShapeKind: UInt32 {
 /// against the other's distance (exact for a sphere or a capsule against anything), and for two flat-sided shapes two
 /// more points found by descending one's field along the other's surface (edge against edge, face against face): one
 /// path for every pair, which the GPU takes without branching on the pair's kinds.
-enum PhysicsMath {
-    @inline(__always) static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
+package enum PhysicsMath {
+    @inline(__always) package static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
     @inline(__always) static func qmul(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> SIMD4<Float> {
         let av = xyz(a), bv = xyz(b)
         return SIMD4(a.w * bv + b.w * av + cross(av, bv), a.w * b.w - dot(av, bv))
     }
-    @inline(__always) static func qrot(_ q: SIMD4<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
+    @inline(__always) package static func qrot(_ q: SIMD4<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
         let u = xyz(q)
         let t = 2 * cross(u, v)
         return v + q.w * t + cross(u, t)
     }
-    @inline(__always) static func qconj(_ q: SIMD4<Float>) -> SIMD4<Float> { SIMD4(-q.x, -q.y, -q.z, q.w) }
+    @inline(__always) package static func qconj(_ q: SIMD4<Float>) -> SIMD4<Float> { SIMD4(-q.x, -q.y, -q.z, q.w) }
     @inline(__always) static func qnormalize(_ q: SIMD4<Float>) -> SIMD4<Float> {
         let l = length(q)
         return l > 0 ? q / l : SIMD4(0, 0, 0, 1)
@@ -199,7 +199,7 @@ struct PhysicsSDFNode {
     /// 23 ns each.
     var plain: Bool
 
-    init(_ node: SDFShape.Node, planes: inout [SIMD4<Float>]) {
+    package init(_ node: SDFShape.Node, planes: inout [SIMD4<Float>]) {
         op = node.op
         position = node.position
         inverse = node.rotation.inverse
@@ -236,7 +236,7 @@ final class PhysicsShapeTable {
     let planes: UnsafeMutableBufferPointer<SIMD4<Float>>
     let volumes: UnsafeMutableBufferPointer<SDFVolume>
 
-    init(shapes: [GPUPhysicsShape], samples: [SIMD4<Float>], sdfShapes: [SDFShape], volumes: [SDFVolume]) {
+    package init(shapes: [GPUPhysicsShape], samples: [SIMD4<Float>], sdfShapes: [SDFShape], volumes: [SDFVolume]) {
         func copy<T>(_ a: [T]) -> UnsafeMutableBufferPointer<T> {
             let b = UnsafeMutableBufferPointer<T>.allocate(capacity: max(a.count, 1))
             _ = b.initialize(from: a)
@@ -501,13 +501,13 @@ struct PhysicsShapes {
 
 extension PhysicsWorld {
     /// A body's pose: its centre of mass and rotation (`b` is a body, or a static collider's record).
-    struct Pose {
+    package struct Pose {
         var position: SIMD3<Float>
-        var rotation: SIMD4<Float>
-        init(_ b: GPUPhysicsBody) { position = PhysicsMath.xyz(b.position); rotation = b.rotation }
+        package var rotation: SIMD4<Float>
+        package init(_ b: GPUPhysicsBody) { position = PhysicsMath.xyz(b.position); rotation = b.rotation }
         func toBody(_ p: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(PhysicsMath.qconj(rotation), p - position) }
-        func toWorld(_ p: SIMD3<Float>) -> SIMD3<Float> { position + PhysicsMath.qrot(rotation, p) }
-        func direction(_ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(rotation, v) }
+        package func toWorld(_ p: SIMD3<Float>) -> SIMD3<Float> { position + PhysicsMath.qrot(rotation, p) }
+        package func direction(_ v: SIMD3<Float>) -> SIMD3<Float> { PhysicsMath.qrot(rotation, v) }
     }
 
     /// The shapes as the steps read them (PhysicsShapes, on PhysicsShapeTable's buffers, made again after the shapes
@@ -522,8 +522,8 @@ extension PhysicsWorld {
     }
 
     func heightfieldHeight(_ shape: GPUPhysicsShape, _ x: Float, _ z: Float) -> Float { shapeData.heightfieldHeight(shape, x, z) }
-    func distance(shape s: Int, _ p: SIMD3<Float>) -> Float { shapeData.distance(shape: s, p) }
-    func gradient(shape s: Int, _ p: SIMD3<Float>) -> SIMD3<Float> { shapeData.gradient(shape: s, p) }
+    package func distance(shape s: Int, _ p: SIMD3<Float>) -> Float { shapeData.distance(shape: s, p) }
+    package func gradient(shape s: Int, _ p: SIMD3<Float>) -> SIMD3<Float> { shapeData.gradient(shape: s, p) }
     func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold { shapeData.collide(a, b, margin: margin) }
 
     static let refineSteps = 6

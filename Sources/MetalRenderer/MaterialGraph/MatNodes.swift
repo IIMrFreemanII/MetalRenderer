@@ -15,7 +15,7 @@ struct MatInputSpec {
     let type: MatPinType
     var optional = false
 
-    init(_ name: String, _ title: String? = nil, _ type: MatPinType = .any, optional: Bool = false) {
+    package init(_ name: String, _ title: String? = nil, _ type: MatPinType = .any, optional: Bool = false) {
         self.name = name
         self.title = title ?? name.capitalized
         self.type = type
@@ -32,7 +32,7 @@ struct MatParamSpec {
     var span: ClosedRange<Float>?
     var choices: [String] = []
 
-    init(_ name: String, _ title: String, _ value: MatParam, span: ClosedRange<Float>? = nil, choices: [String] = []) {
+    package init(_ name: String, _ title: String, _ value: MatParam, span: ClosedRange<Float>? = nil, choices: [String] = []) {
         self.name = name
         self.title = title
         self.value = value
@@ -91,7 +91,7 @@ enum MatBlendMode: String, CaseIterable {
 }
 
 /// The nodes. Their kernels are MaterialShaders/*.metal, `mat_<kind>`, reading their parameters in the spec's order.
-enum MatOpKind: String, Codable, CaseIterable {
+package enum MatOpKind: String, Codable, CaseIterable {
     // Graph
     case input, output, subgraph, uniform, uniformColor, bitmap, meshMap
     // Noises

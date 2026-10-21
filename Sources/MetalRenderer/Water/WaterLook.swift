@@ -4,20 +4,20 @@ import simd
 /// How a body of water looks (Shaders/Water.metal): what it absorbs and scatters per metre (Beer-Lambert: clear sea
 /// water lets blue through and takes red; a swamp's tannins take blue), its index of refraction and roughness, how
 /// much of the wind's sea it has (the FFT ocean's waves, 1 = all of it), its ripples, foam and flow.
-struct WaterLook: Codable, Equatable {
-    enum Preset: String, Codable, CaseIterable, Identifiable {
+package struct WaterLook: Codable, Equatable {
+    package enum Preset: String, Codable, CaseIterable, Identifiable {
         case ocean, lake, river, swamp, pool
-        var id: String { rawValue }
+        package var id: String { rawValue }
         var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
     /// Per metre, red green blue.
-    var absorption: SIMD3<Float>
+    package var absorption: SIMD3<Float>
     var scattering: SIMD3<Float>
     var ior: Float = 1.333
     var roughness: Float = 0.02
     /// The share of the wind's sea it has (0: still, a mirror but for its ripples), the waves' sideways push (choppy
     /// crests), the small ripples' strength.
-    var waves: Float
+    package var waves: Float
     var chop: Float
     var ripples: Float
     /// Foam where the waves break (0...1), the foam line along the shore (as deep as the water it lies on, m), white water where a river
@@ -29,7 +29,7 @@ struct WaterLook: Codable, Equatable {
     /// How forward the light it scatters goes (Henyey-Greenstein g).
     var phase: Float = 0.7
 
-    static func preset(_ p: Preset) -> WaterLook {
+    package static func preset(_ p: Preset) -> WaterLook {
         switch p {
         case .ocean:
             return WaterLook(absorption: [0.5, 0.09, 0.06], scattering: [0.05, 0.07, 0.09], roughness: 0.02, waves: 1, chop: 0.9, ripples: 1,

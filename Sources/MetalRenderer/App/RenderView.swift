@@ -50,7 +50,7 @@ final class RenderView: NSView {
     static let openableExtensions = ["glb", "gltf", "hdr", "exr"]
     static let modelTypes: [UTType] = openableExtensions.compactMap { UTType(filenameExtension: $0) }
 
-    init(frame: CGRect, device: MTLDevice) {
+    package init(frame: CGRect, device: MTLDevice) {
         self.device = device
         surface = LayerSurface(device: device)
         super.init(frame: frame)
@@ -58,7 +58,7 @@ final class RenderView: NSView {
         layerContentsRedrawPolicy = .duringViewResize
         registerForDraggedTypes([.fileURL])
     }
-    required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override func makeBackingLayer() -> CALayer { surface.layer }
 

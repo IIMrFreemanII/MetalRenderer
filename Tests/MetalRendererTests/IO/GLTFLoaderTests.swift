@@ -1,4 +1,5 @@
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// The glTF loader (GLTFLoader.swift).

@@ -24,7 +24,7 @@ final class VirtualTracing {
     /// Instances the top-level structure has after the scene's own.
     var extraInstances: Int { clusters == nil ? 0 : 1 }
 
-    init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, poolMB: Int, slots: Int) throws {
+    package init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, poolMB: Int, slots: Int) throws {
         let virtual = scene.instances.indices.filter { scene.instances[$0].virtualMesh >= 0 }
         let pairs = virtual.map { ($0, scene.instances[$0].virtualMesh) }
         virtualInstances = virtual

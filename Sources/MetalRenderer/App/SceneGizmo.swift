@@ -52,11 +52,11 @@ final class SceneGizmo: NSView {
         return ViewAxis.snapped(c.forward)?.title ?? "Persp"
     }
 
-    init() {
+    package init() {
         super.init(frame: NSRect(x: 0, y: 0, width: SceneGizmo.width, height: SceneGizmo.width + SceneGizmo.labelHeight))
         translatesAutoresizingMaskIntoConstraints = false
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Puts it in `view`'s top-right corner.
     func attach(to view: NSView) {

@@ -43,7 +43,7 @@ extension Scene {
     /// size range it gives), sized by a power law (many small, a few large), sunk a third, set to the slope. Eight
     /// shapes shared. With the realistic look only. How many.
     @discardableResult
-    func addRocks(count: Int, lo: SIMD2<Float>, hi: SIMD2<Float>, seed: UInt64,
+    package func addRocks(count: Int, lo: SIMD2<Float>, hi: SIMD2<Float>, seed: UInt64,
                   where keep: (Float, Float) -> (chance: Float, size: ClosedRange<Float>)) -> Int {
         guard settings.realism != .off, let t = terrain else { return 0 }
         beginObject("Rocks")

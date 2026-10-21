@@ -9,7 +9,7 @@ final class CatalogRegistry<T> {
     private var order: [String] = []          // oldest first
     private let limit: Int
 
-    init(limit: Int = 64) { self.limit = limit }
+    package init(limit: Int = 64) { self.limit = limit }
 
     /// Keeps `value` under `key` (its fingerprint), unless it is kept already.
     func register(_ value: T, key: String) {

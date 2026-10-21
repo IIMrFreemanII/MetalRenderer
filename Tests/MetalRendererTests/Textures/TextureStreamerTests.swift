@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+@testable import Game
 @testable import MetalRenderer
 
 /// The texture streamer's bookkeeping (TextureStreamer.swift), on the GPU's device but without running a frame: the

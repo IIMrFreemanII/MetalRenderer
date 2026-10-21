@@ -98,14 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             gizmo.onStep = { [weak self] yaw, pitch in self?.controller.stepView(yawSteps: yaw, pitchSteps: pitch) }
             controller.onCameraTurned = { [weak gizmo] yaw, pitch in gizmo?.show(yaw: yaw, pitch: pitch) }
             sceneGizmo = gizmo
-            // The destruction scene's tools (keys 1, 2, 3).
-            let tools = DestructionOverlay()
-            tools.attach(to: view)
-            controller.observeTick { [weak self, weak tools] in tools?.show(self?.controller.status?.destruction) }
-            // The demolition scene's crosshair and tools.
-            let hud = DemolitionHUD()
+            // The scene's HUD: the destruction's tools (keys 1, 2, 3), the demolition's crosshair and tools.
+            let hud = SceneHUDView()
             hud.attach(to: view)
-            controller.observeTick { [weak self, weak hud] in hud?.show(self?.controller.status?.demolition) }
+            controller.observeTick { [weak self, weak hud] in hud?.show(self?.controller.status?.hud) }
             // The day bar: the time of day, and the day's times to switch to (held there until play).
             let bar = DayBar()
             bar.attach(to: view)

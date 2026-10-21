@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Virtual geometry's cut as the rays meet it: the per-instance BLAS over the CPU's cut (VirtualBLAS.selection).

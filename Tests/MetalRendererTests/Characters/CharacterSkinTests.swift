@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The skin's UVs (SkinAtlas), the base's head in them (SkinChart) and the textures drawn over it (SkinTextures).

@@ -5,7 +5,7 @@ import simd
 
 /// Makes the frames, on its own thread (`RenderThread`): once that runs, everything here belongs to it. The main thread
 /// talks to it through `RendererController`, which posts work with `perform` and gets values back.
-final class Renderer: NSObject {
+package final class Renderer: NSObject {
     static let maxFramesInFlight = 3
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
     /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
@@ -17,7 +17,7 @@ final class Renderer: NSObject {
     var metalDevice: MTLDevice { device }
     let queue: MTLCommandQueue
     weak var surface: RenderSurface?
-    var scene = Scene()
+    package var scene = Scene()
     /// The shaders' entry file: at the top of the sources (`SourceTree.target`), or
     /// `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which lets one binary run another copy of the shaders (an A/B
     /// of a shader change without a second build).
@@ -134,6 +134,8 @@ final class Renderer: NSObject {
         return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
     }
     var gizmoHandle: SIMD3<Float>?
+    /// The placed object's arrow dragged (Renderer+Placement.swift).
+    var placementDrag: PlacementDrag?
     var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
     var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
     var gizmoViewSize = SIMD2<Float>(1280, 800)
@@ -211,7 +213,7 @@ final class Renderer: NSObject {
     var skyImageLoading = false         // one is being decoded in the background
     var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
     var skyActive = false               // this frame uses the sky texture
-    var skyRefreshed: (sky: SkySettings, scene: Int)?   // what the sky texture was fully drawn for
+    package var skyRefreshed: (sky: SkySettings, scene: Int)?   // what the sky texture was fully drawn for
     var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
     /// (16-byte aligned), then the extras', the programs' parameters' and the water's addresses.
@@ -251,7 +253,7 @@ final class Renderer: NSObject {
     var targets: RenderTargets?
 
     // State
-    var camera = Camera()
+    package var camera = Camera()
     var prevCamera = Camera()
     var frameIndex: UInt32 = 0
     var animTime: Float = 0
@@ -377,12 +379,12 @@ final class Renderer: NSObject {
     /// This project's denoisers (SVGF, the shadow denoiser) are on.
     var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
-    var heldKeys = Set<String>()
+    package var heldKeys = Set<String>()
     /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
     static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
     /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).
     static let arrowTurnSpeed: Float = 400
-    var shiftHeld = false
+    package var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
     var holding: (cursor: SIMD2<Float>, depth: Float)?
     /// What the camera turns about (the scene view's pivot, `pivot`): the point it looks at, and how far it is from it.
@@ -398,7 +400,7 @@ final class Renderer: NSObject {
     /// The left button looks around: pressed on nothing that took the press (a stroke, a handle, a body).
     var leftLook = false
     /// A button that looks around is held: W A S D Q E fly, the scroll wheel sets their speed.
-    var lookHeld: Bool { rightHeld || leftLook || demolition.captured }
+    var lookHeld: Bool { rightHeld || leftLook || scene.behaviour?.captured == true }
     var commandHeld = false
     /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
     var walker: Walker?
@@ -414,10 +416,6 @@ final class Renderer: NSObject {
     /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
     /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
     var pickArmed = false
-    /// The destruction scene's tool (Renderer+Destruction.swift).
-    var destructionTool = DestructionTool.grab
-    /// The demolition scene's player: its tool, its captured look, its walking (Renderer+Demolition.swift).
-    var demolition = DemolitionPlayer()
     var pickRequest: SIMD2<Float>?
     var pickPending: Int?
     var pickBuffer: MTLBuffer?
@@ -458,7 +456,7 @@ final class Renderer: NSObject {
     var traversal: (stats: TraversalStats, frames: Int)?
 
     /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
-    init(device: MTLDevice, surface: RenderSurface) throws {
+    package init(device: MTLDevice, surface: RenderSurface) throws {
         validateGPULayouts()
         // Every ray is traced through Metal's acceleration structures: there is nothing to fall back to.
         guard Capabilities.current.metalRayTracing else { throw RendererError.unsupported("Metal ray tracing") }
@@ -519,7 +517,7 @@ final class Renderer: NSObject {
     var renderTargetsForPainter: RenderTargets? { targets }
     var materialTexturesForPainter: [MTLTexture] { materialTextures }
     func resetReferenceForPainting() { resetReference() }
-    func cursorRayForPainter(_ cursor: SIMD2<Float>) -> SIMD3<Float> { cursorRay(cursor) }
+    package func cursorRayForPainter(_ cursor: SIMD2<Float>) -> SIMD3<Float> { cursorRay(cursor) }
     /// The render's size in pixels, and its pixels per point of the view (a brush's size is in points).
     var renderSizeForPainter: SIMD2<Float> {
         guard let t = targets else { return SIMD2(1280, 800) }

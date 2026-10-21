@@ -26,7 +26,7 @@ final class MaterialBake {
     private var asked: Set<String> = []
     private var failures: [String: String] = [:]
 
-    init(device: MTLDevice) { engine = MatEngine(device: device) }
+    package init(device: MTLDevice) { engine = MatEngine(device: device) }
 
     /// A graph's key: what its bake depends on (the graph, and its subgraphs as `catalog` has them).
     static func key(_ graph: MaterialGraph, catalog: MaterialCatalog) -> String {

@@ -3,47 +3,47 @@ import Foundation
 import simd
 
 /// A value that can be written into a `METALRENDERER_*` variable and read back from one.
-protocol EnvValue: Equatable {
+package protocol EnvValue: Equatable {
     var envText: String { get }
     init?(envText: String)
 }
 
 extension Float: EnvValue {
     /// The shortest text that reads back as the same Float.
-    var envText: String {
+    package var envText: String {
         let text = "\(self)"
         return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
     }
-    init?(envText: String) { self.init(envText) }
+    package init?(envText: String) { self.init(envText) }
 }
 extension CGFloat: EnvValue {
-    var envText: String { Float(self).envText }
-    init?(envText: String) {
+    package var envText: String { Float(self).envText }
+    package init?(envText: String) {
         guard let v = Float(envText) else { return nil }
         self.init(v)
     }
 }
 extension Int: EnvValue {
-    var envText: String { "\(self)" }
-    init?(envText: String) {   // "2.7" reads as 2, as it always has
+    package var envText: String { "\(self)" }
+    package init?(envText: String) {   // "2.7" reads as 2, as it always has
         guard let v = Float(envText), v.isFinite, abs(v) < 1e9 else { return nil }
         self.init(v)
     }
 }
 extension Bool: EnvValue {
-    var envText: String { self ? "1" : "0" }
-    init?(envText: String) {
+    package var envText: String { self ? "1" : "0" }
+    package init?(envText: String) {
         guard let v = Float(envText) else { return nil }
         self.init(v != 0)
     }
 }
 extension String: EnvValue {   // a word or a name: no commas (they part a list's items)
-    var envText: String { self }
-    init?(envText: String) { self = envText }
+    package var envText: String { self }
+    package init?(envText: String) { self = envText }
 }
 extension SIMD3: EnvValue where Scalar == Float {
-    var envText: String { "\(x.envText):\(y.envText):\(z.envText)" }
-    init?(envText: String) {
+    package var envText: String { "\(x.envText):\(y.envText):\(z.envText)" }
+    package init?(envText: String) {
         let v = envText.split(separator: ":").compactMap { Float($0) }
         guard v.count == 3 else { return nil }
         self.init(v[0], v[1], v[2])
@@ -51,19 +51,19 @@ extension SIMD3: EnvValue where Scalar == Float {
 }
 
 /// An enum written by name: its case name unless `envName` says otherwise. Read back without regard to case.
-protocol EnvNamed: EnvValue, CaseIterable {
+package protocol EnvNamed: EnvValue, CaseIterable {
     var envName: String { get }
 }
 extension EnvNamed {
-    var envName: String { "\(self)" }
-    var envText: String { envName }
-    init?(envText: String) {
+    package var envName: String { "\(self)" }
+    package var envText: String { envName }
+    package init?(envText: String) {
         guard let match = Self.allCases.first(where: { $0.envName == envText.lowercased() }) else { return nil }
         self = match
     }
 }
 extension GIMode: EnvNamed {
-    var envName: String { ["pt", "cascades", "restir"][rawValue] }
+    package var envName: String { ["pt", "cascades", "restir"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
@@ -71,8 +71,10 @@ extension DirectLightMode: EnvNamed {}
 extension RenderAPI: EnvNamed {}
 extension FrameInterpolation: EnvNamed {}
 extension SceneKind: EnvNamed {
+    /// The scenes this build has (SceneRegistry).
+    package static var allCases: [SceneKind] { SceneRegistry.kinds }
     // cityNight is read back without regard to case; the character workshop is `people` (`characters=` is the crowd's count).
-    var envName: String { self == .characters ? "people" : "\(self)".lowercased() }
+    package var envName: String { definition.envName }
 }
 extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
@@ -84,26 +86,26 @@ extension PhysicsSettings.Solvers: EnvNamed {}
 extension Foliage.Age: EnvNamed {}
 extension PlantSceneSettings.Layout: EnvNamed {}
 extension PlantSceneSettings.View: EnvNamed {}
-extension BuildingSceneSettings.Sides: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension BuildingSceneSettings.Sides: EnvNamed { package var envName: String { "\(self)".lowercased() } }
 extension BuildingSceneSettings.Layout: EnvNamed {}
 extension BuildingSceneSettings.View: EnvNamed {}
 extension CharacterSceneSettings.Layout: EnvNamed {}
 extension CrowdBodies: EnvNamed {}
-extension CharacterSceneSettings.Pose: EnvNamed { var envName: String { "\(self)".lowercased() } }
+extension CharacterSceneSettings.Pose: EnvNamed { package var envName: String { "\(self)".lowercased() } }
 extension CharacterSceneSettings.View: EnvNamed {}
 extension MaterialWorkshopSettings.Layout: EnvNamed {}
 extension MaterialWorkshopSettings.Backdrop: EnvNamed {}
 extension PainterWorkshopSettings.Subject: EnvNamed {}
 extension TerrainWorkshopSettings.Base: EnvNamed {}
-extension TerrainWorkshopSettings.Size: EnvNamed { var envName: String { "\(metres)" } }
+extension TerrainWorkshopSettings.Size: EnvNamed { package var envName: String { "\(metres)" } }
 extension FaceExpression: EnvNamed {}
 extension CharacterSceneSettings.HairMode: EnvNamed {}
 extension ReferenceMode: EnvNamed {
-    var envName: String { ["off", "accumulated", "pt"][rawValue] }
+    package var envName: String { ["off", "accumulated", "pt"][rawValue] }
 }
 
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
-enum EnvVariable: String, CaseIterable {
+package enum EnvVariable: String, CaseIterable {
     // One value each.
     case direct = "METALRENDERER_DIRECT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
@@ -122,7 +124,7 @@ enum EnvVariable: String, CaseIterable {
 /// One setting, described once: where it lives in `RenderSettings`, its name in the `METALRENDERER_*` variables, and
 /// the panel row that edits it. Copy as Env, the env parser and the settings panel are all built from these
 /// (`SettingsTable.sections`); a new setting is one line there.
-struct SettingSpec {
+package struct SettingSpec {
     /// The panel's control for it.
     enum Control {
         case slider(Slider)
@@ -139,11 +141,11 @@ struct SettingSpec {
         let text: (RenderSettings) -> String                // the value shown next to the slider
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
-    enum Custom {
+    package enum Custom {
         case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
     }
     /// The setting as text in an environment variable.
-    struct Env {
+    package struct Env {
         var variable = EnvVariable.gi
         var key: String?                // in a key=value list; nil: the variable's whole value
         var interactiveOnly = false     // read only outside benchmarks, whose settings choose it themselves
@@ -159,7 +161,7 @@ struct SettingSpec {
     var visible: ((RenderSettings) -> Bool)?        // nil: always
     var enabled: ((RenderSettings) -> Bool)?        // nil: always
     var available: ((Int) -> Bool)?                 // a popup's items this GPU can run (Capabilities); nil: all
-    var env: Env?                                   // its `variable` is meaningful once `env(_:_:)` named it
+    package var env: Env?                                   // its `variable` is meaningful once `env(_:_:)` named it
     private var named = false
 
     /// The spec's env name, if it has one.
@@ -167,7 +169,7 @@ struct SettingSpec {
 
     // MARK: Modifiers
 
-    func env(_ variable: EnvVariable, _ key: String? = nil, interactiveOnly: Bool = false, exported: Bool = true) -> SettingSpec {
+    package func env(_ variable: EnvVariable, _ key: String? = nil, interactiveOnly: Bool = false, exported: Bool = true) -> SettingSpec {
         var s = self
         precondition(s.env != nil, "\(title): this row has no single value to name")
         precondition(variable.isList == (key != nil), "\(variable.rawValue): a list needs a key, a single value none")
@@ -179,7 +181,7 @@ struct SettingSpec {
         return s
     }
     func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
-    func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
+    package func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
     func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
     /// A slider's value shown as `text` says, from all the settings.
     func text(_ text: @escaping (RenderSettings) -> String) -> SettingSpec {
@@ -210,7 +212,7 @@ struct SettingSpec {
 
     /// A slider for a Float (or CGFloat) setting, rounded to `step` (or to `digits` significant digits). `log` spaces
     /// it logarithmically; `ticks` makes it snap to the steps.
-    static func slider<F: BinaryFloatingPoint & EnvValue>(_ title: String, _ path: WritableKeyPath<RenderSettings, F>,
+    package static func slider<F: BinaryFloatingPoint & EnvValue>(_ title: String, _ path: WritableKeyPath<RenderSettings, F>,
                                                           _ range: ClosedRange<F>, step: Double = 0, digits: Int = 0,
                                                           log: Bool = false, ticks: Bool = false, live: Bool = true,
                                                           _ format: @escaping (F) -> String) -> SettingSpec {
@@ -236,7 +238,7 @@ struct SettingSpec {
     }
 
     /// A slider for an Int setting, with tick marks for short ranges. `log`: powers of two.
-    static func slider(_ title: String, _ path: WritableKeyPath<RenderSettings, Int>, _ range: ClosedRange<Int>,
+    package static func slider(_ title: String, _ path: WritableKeyPath<RenderSettings, Int>, _ range: ClosedRange<Int>,
                        step: Int = 1, log: Bool = false, live: Bool = true,
                        _ format: @escaping (Int) -> String = { "\($0)" }) -> SettingSpec {
         let top = log ? log2(Double(range.upperBound)) : Double(range.upperBound)
@@ -253,13 +255,13 @@ struct SettingSpec {
         return SettingSpec(title: title, control: .slider(slider), env: codec(path))
     }
 
-    static func check(_ title: String, _ path: WritableKeyPath<RenderSettings, Bool>) -> SettingSpec {
+    package static func check(_ title: String, _ path: WritableKeyPath<RenderSettings, Bool>) -> SettingSpec {
         SettingSpec(title: title, control: .checkbox(get: { $0[keyPath: path] }, set: { $0[keyPath: path] = $1 }),
                     env: codec(path))
     }
 
     /// A popup choosing among `options` (title, value). A value that is none of them selects nothing.
-    static func popup<T: EnvValue>(_ title: String, _ path: WritableKeyPath<RenderSettings, T>,
+    package static func popup<T: EnvValue>(_ title: String, _ path: WritableKeyPath<RenderSettings, T>,
                                    _ options: [(String, T)]) -> SettingSpec {
         let control = Control.popup(titles: options.map(\.0),
                                     selected: { s in options.firstIndex { $0.1 == s[keyPath: path] } ?? -1 },
@@ -268,7 +270,7 @@ struct SettingSpec {
     }
 
     /// A popup over a few counts. A count in between shows as the next one up.
-    static func popup(_ title: String, _ path: WritableKeyPath<RenderSettings, Int>, counts: [Int],
+    package static func popup(_ title: String, _ path: WritableKeyPath<RenderSettings, Int>, counts: [Int],
                       _ name: @escaping (Int) -> String) -> SettingSpec {
         let control = Control.popup(titles: counts.map(name),
                                     selected: { s in counts.firstIndex { $0 >= s[keyPath: path] } ?? counts.count - 1 },
@@ -276,7 +278,7 @@ struct SettingSpec {
         return SettingSpec(title: title, control: control, env: codec(path))
     }
 
-    static func custom(_ row: Custom, _ title: String = "") -> SettingSpec {
+    package static func custom(_ row: Custom, _ title: String = "") -> SettingSpec {
         SettingSpec(title: title, control: .custom(row))
     }
 }
@@ -301,7 +303,7 @@ extension SkySettings {
 }
 
 /// Every setting, in the panel's order. See `SettingSpec`.
-enum SettingsTable {
+package enum SettingsTable {
     struct Section {
         let title: String
         var advanced = false
@@ -315,7 +317,7 @@ enum SettingsTable {
     private typealias When = (RenderSettings) -> Bool
 
     private static func fmt<T: CVarArg>(_ format: String) -> (T) -> String { { String(format: format, $0) } }
-    private static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
+    package static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
 
     static let sections: [Section] = [scene, camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
 
@@ -338,7 +340,12 @@ enum SettingsTable {
         ])
     }()
 
+    /// The game's scenes' own rows (their counts, their physics, the destruction's and the demolition's), in the panel
+    /// after the workshops' (SceneProvider registers them).
+    package static var sceneRows: [SettingSpec] = []
+
     private static let scene: Section = {
+        _ = SceneRegistry.kinds   // (the game's rows are registered with its scenes)
         let assemblies: When = { !$0.scene.bakedPlants }
         let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
@@ -348,20 +355,10 @@ enum SettingsTable {
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
-            S.custom(.showcaseModel, "Model").when { $0.scene.kind == .showcase },   // the model brings its look
             S.value(\.scene.showcase).env(.scene, "showcase"),
             // Scene sizes rebuild the scene, so they apply when the slider is released.
-            S.slider("Objects", \.scene.objects, SceneSettings.objectRange, step: 50, live: false)
-                .env(.scene, "objects").when { $0.scene.kind == .stress },
             S.slider("Lights", \.scene.lights, SceneSettings.lightRange, log: true, live: false)
                 .env(.scene, "lights").when { $0.scene.kind.hasLightCount },
-            S.slider("Characters", \.scene.characters, SceneSettings.characterRange, log: true, live: false)
-                .env(.scene, "characters").when { $0.scene.kind == .crowd },
-            S.slider("Poses", \.scene.poses, SceneSettings.poseRange, log: true, live: false)
-                .env(.scene, "poses").when { $0.scene.kind == .crowd },
-            S.slider("Detail level", \.scene.detail, SceneSettings.detailRange, live: false)
-                .env(.scene, "detail").when { $0.scene.kind == .crowd },
-            S.popup("Characters", \.scene.crowdBodies, titled(\.title)).env(.scene, "cast").when { $0.scene.kind == .crowd },
             S.slider("City seed", \.scene.seed, SceneSettings.seedRange, live: false).when(city),   // `seed`, as the plants'
             S.slider("City blocks", \.scene.city.blocks, CitySettings.blockRange, live: false) { "\($0) x \($0)" }
                 .env(.scene, "blocks").when(city),
@@ -412,96 +409,29 @@ enum SettingsTable {
             S.popup("Face", \.scene.characterWorkshop.expression, titled(\.title)).env(.scene, "expr").when(characters),
             S.check("Eyes on the camera", \.scene.characterWorkshop.lookAt).env(.scene, "gaze").when(characters),
             S.popup("Hair", \.scene.characterWorkshop.hair, titled(\.title)).env(.scene, "hairs").when(characters),
-            S.slider("Bodies", \.scene.physics.bodies, PhysicsSettings.bodyRange, step: 16, live: false)
-                .env(.scene, "bodies").when { $0.scene.kind == .physics },
-            S.slider("Particles", \.scene.physics.particles, PhysicsSettings.particleRange, log: true, live: false)
-                .env(.scene, "particles").when { $0.scene.kind == .physics },
-            S.slider("Cloth vertices", \.scene.physics.cloth, PhysicsSettings.clothRange, step: 4, live: false) { $0 == 0 ? "none" : "\($0) x \($0)" }
-                .env(.scene, "cloth").when { $0.scene.kind == .physics },
-            S.slider("Ragdolls", \.scene.physics.ragdolls, PhysicsSettings.ragdollRange, live: false)
-                .env(.scene, "ragdolls").when { $0.scene.kind == .ragdolls },
-            S.slider("Strands per guide", \.scene.physics.hair, PhysicsSettings.hairRange, live: false)
-                .env(.scene, "hair").when { $0.scene.kind == .hair },
-            S.slider("Furry bodies", \.scene.physics.furBodies, PhysicsSettings.furBodyRange, live: false)
-                .env(.scene, "fur").when { $0.scene.kind == .hair },
-            S.slider("Soft bodies", \.scene.physics.softBodies, PhysicsSettings.softBodyRange, live: false)
-                .env(.scene, "soft").when { $0.scene.kind == .softBodies },
-            S.slider("Lattice cells", \.scene.physics.softCells, PhysicsSettings.softCellRange, live: false)
-                .env(.scene, "cells").when { $0.scene.kind == .softBodies },
-            S.check("Character", \.scene.physics.muscleCharacter).env(.scene, "character").when { $0.scene.kind == .muscles },
-            S.slider("Ragdolls with flesh", \.scene.physics.muscleRagdolls, PhysicsSettings.muscleRagdollRange, live: false)
-                .env(.scene, "fleshragdolls").when { $0.scene.kind == .muscles },
-            S.slider("Flesh lattice", \.scene.physics.fleshCell, PhysicsSettings.fleshCellRange, step: 0.5, live: false) { String(format: "%.1f cm", $0) }
-                .env(.scene, "flesh").when { $0.scene.kind == .muscles },
-            S.popup("Body", \.scene.physics.body, titled(\.title)).env(.scene, "body").when { $0.scene.kind == .muscles },
-            S.popup("Skin", \.scene.physics.skin, titled(\.title)).env(.scene, "skin")
-                .when { $0.scene.kind == .muscles && $0.scene.physics.body == .skin },
-            S.slider("Muscle strength", \.scene.physics.muscleGain, PhysicsSettings.muscleGainRange, step: 0.05, live: false) { String(format: "%.2f", $0) }
-                .env(.scene, "muscle").when { $0.scene.kind == .muscles },
-            S.popup("Liquids", \.scene.physics.liquids, titled(\.title)).env(.scene, "liquid").when { $0.scene.kind == .fluids },
-            S.popup("Solver", \.scene.physics.solver, titled(\.title)).env(.scene, "solver").when { $0.scene.kind == .fluids },
-            S.popup("Water", \.scene.physics.waterSolver, titled(\.title)).env(.scene, "water")
-                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
-            S.popup("Blood", \.scene.physics.bloodSolver, titled(\.title)).env(.scene, "blood")
-                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
-            S.popup("Honey", \.scene.physics.honeySolver, titled(\.title)).env(.scene, "honey")
-                .when { $0.scene.kind == .fluids && $0.scene.physics.solver == .auto },
-            S.slider("Particles per liquid", \.scene.physics.fluidParticles, PhysicsSettings.fluidRange, log: true, live: false)
-                .env(.scene, "fluid").when { $0.scene.kind == .fluids },
-            S.slider("Pieces", \.scene.destruction.pieces, DestructionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "pieces").when { $0.scene.kind == .destruction },
-            S.slider("Toughness", \.scene.destruction.toughness, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "toughness").when { $0.scene.kind == .destruction },
-            S.slider("Weld strength", \.scene.destruction.strength, DestructionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "strength").when { $0.scene.kind == .destruction },
-            S.check("Dust and debris", \.scene.destruction.dust).env(.scene, "dust").when { $0.scene.kind == .destruction },
-            S.check("Small pieces fade", \.scene.destruction.fade).env(.scene, "fade").when { $0.scene.kind == .destruction },
-            S.check("Scripted demo", \.scene.destruction.demo).env(.scene, "demo").when { $0.scene.kind == .destruction },
-            S.check("Statues (cut meshes)", \.scene.destruction.statues).env(.scene, "statues").when { $0.scene.kind == .destruction },
-            S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
-            S.slider("Buildings", \.scene.destruction.buildings, DestructionSettings.buildingRange, live: false).env(.scene, "buildings")
-                .when { $0.scene.kind == .destruction && $0.scene.destruction.massive },
-            S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
-                .when { $0.scene.kind == .demolition },
-            S.slider("Office seed", \.scene.demolition.seed, DemolitionSettings.seedRange, live: false).env(.scene, "demseed")
-                .when { $0.scene.kind == .demolition },
-            S.slider("Width", \.scene.demolition.width, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
-                .env(.scene, "demwidth").when { $0.scene.kind == .demolition },
-            S.slider("Depth", \.scene.demolition.depth, DemolitionSettings.sizeRange, step: 1, live: false) { String(format: "%.0f m", $0) }
-                .env(.scene, "demdepth").when { $0.scene.kind == .demolition },
-            S.slider("Pieces", \.scene.demolition.pieces, DemolitionSettings.pieceRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "dempieces").when { $0.scene.kind == .demolition },
-            S.slider("Toughness", \.scene.demolition.toughness, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "demtough").when { $0.scene.kind == .demolition },
-            S.slider("Weld strength", \.scene.demolition.strength, DemolitionSettings.toughnessRange, digits: 2, log: true, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "demstrength").when { $0.scene.kind == .demolition },
-            S.check("Furniture", \.scene.demolition.furniture).env(.scene, "demfurniture").when { $0.scene.kind == .demolition },
-            S.check("Window glass", \.scene.demolition.glass).env(.scene, "demglass").when { $0.scene.kind == .demolition },
-            S.check("Dust and debris", \.scene.demolition.dust).env(.scene, "demdust").when { $0.scene.kind == .demolition },
-            S.check("Small pieces fade", \.scene.demolition.fade).env(.scene, "demfade").when { $0.scene.kind == .demolition },
-            S.check("Scripted demo", \.scene.demolition.demo).env(.scene, "demdemo").when { $0.scene.kind == .demolition },
+        ] + sceneRows + [
             S.slider("Substeps", \.scene.physics.substeps, PhysicsSettings.substepRange, live: false)
                 .env(.scene, "substeps").when { $0.scene.kind.simulates },
             S.popup("Physics on", \.scene.physics.backend, titled(\.title)).env(.scene, "physics")
-                .when { $0.scene.kind.simulates && $0.scene.kind != .demolition },
+                .when { $0.scene.kind.simulates && !$0.scene.kind.definition.cpuPhysics },
             S.check("CPU physics behind the frame", \.scene.physics.asynchronous).env(.scene, "physicsasync")
                 .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.check("CPU physics on every core", \.scene.physics.everyCore).env(.scene, "physicscores")
                 .when { $0.scene.kind.simulates && $0.scene.physics.backend != .gpu },
             S.slider("Particle budget", \.scene.particles.budget, ParticleSettings.budgetRange, step: 0.25, live: false) { String(format: "%.2fx", $0) }
-                .env(.scene, "budget").when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
+                .env(.scene, "budget").when { $0.scene.kind.definition.hasParticles },
             S.check("Particle shadows", \.scene.particles.shadows).env(.scene, "particleshadows")
-                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+                .when { $0.scene.kind.definition.particleShadows },
             S.check("Particles in reflections", \.scene.particles.reflections).env(.scene, "particlereflections")
-                .when { $0.scene.kind == .particles || $0.scene.kind == .vfxStage },
+                .when { $0.scene.kind.definition.particleShadows },
             S.popup("Particle layer", \.particleScale, [("Full size", Float(1)), ("Half size", Float(0.5))]).env(.view, "particlescale")
-                .when { $0.scene.kind == .particles || $0.scene.kind == .showcase || $0.scene.kind == .vfxStage },
+                .when { $0.scene.kind.definition.hasParticles },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
                 .env(.scene, "undergrowth").when { $0.scene.kind.hasForest },
             S.slider("Plant seed", \.scene.seed, SceneSettings.seedRange, live: false)
-                .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind == .mireland },
+                .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind.definition.seeded },
             S.value(\.scene.plants.species).env(.scene, "species"),
             S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
             S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),

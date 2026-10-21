@@ -45,7 +45,7 @@ final class VoxelLOD {
     private(set) var last: (pickMs: Double, buildMs: Double, changed: Int) = (0, 0, 0)
 
     /// `descriptors`: the still scene's, all its instances at their meshes; `current`: the structure built from them.
-    init(device: MTLDevice, grids: VoxelGrids, entries: [Entry], descriptors: MTLBuffer, stride: Int, indirect: Bool,
+    package init(device: MTLDevice, grids: VoxelGrids, entries: [Entry], descriptors: MTLBuffer, stride: Int, indirect: Bool,
          primitives: [MTLAccelerationStructure], meshCount: Int, instanceCount: Int, usage: MTLAccelerationStructureUsage,
          current: MTLAccelerationStructure, scratch: MTLBuffer) throws {
         (self.grids, self.entries, self.descriptors, self.stride, self.indirect) = (grids, entries, descriptors, stride, indirect)

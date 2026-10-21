@@ -1,4 +1,5 @@
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// The loading overlay's model (LoadActivity): jobs, their steps, cancellation, streams and when it is idle.

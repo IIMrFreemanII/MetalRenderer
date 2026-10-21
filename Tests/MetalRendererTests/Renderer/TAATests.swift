@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Temporal AA without upscaling (RenderSettings.taa, Post.metal taaResolveKernel): when it runs, its jitter, and the

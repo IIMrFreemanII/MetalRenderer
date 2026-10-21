@@ -18,7 +18,7 @@ struct MeshSubdivider {
     /// The cap was reached before every edge was short enough.
     private(set) var capped = false
 
-    init(positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32]) {
+    package init(positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32]) {
         precondition(normals.count == positions.count && uvs.count == positions.count && indices.count % 3 == 0, "a vertex's arrays, whole triangles")
         (self.positions, self.normals, self.uvs, self.indices) = (positions, normals, uvs, indices)
     }

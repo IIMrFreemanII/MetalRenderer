@@ -7,47 +7,55 @@ import simd
 ///
 /// Each value is drawn from its own stream (the building's seed and the value's name): changing one range in the
 /// editor changes that value alone, not every value drawn after it.
-struct BuildingStyleDef: Codable, Equatable {
-    var id: String
-    var name: String
+package struct BuildingStyleDef: Codable, Equatable {
+    package var id: String
+    package var name: String
     /// The style it was made from (a custom style's), for the editor to say.
     var basedOn: String? = nil
     /// Where the city builds it: how likely it is on a lot of each district (CityStyle's names), against the
     /// district's own built-in style (whose weight is 1 in its own district). A built-in style has its own.
     var districts: [String: Float] = [:]
     var programme = Programme()
-    var proportions = Proportions()
-    var window = WindowDef()
+    package var proportions = Proportions()
+    package var window = WindowDef()
     /// The ground floor's windows, if they differ from the upper ones.
-    var groundWindow: WindowDef? = nil
-    var facade = FacadeDef()
-    var massing = MassingDef()
+    package var groundWindow: WindowDef? = nil
+    package var facade = FacadeDef()
+    package var massing = MassingDef()
     var palette = Palette()
-    var interior = InteriorDef()
+    package var interior = InteriorDef()
 
-    struct Proportions: Codable, Equatable {
+    package struct Proportions: Codable, Equatable {
         var groundHeight = Span(3.6, 4.2)
         var floorHeight = Span(2.9, 3.2)
         var bay = Span(2.8, 3.4)                    // the width a facade's bays aim for
         var pier = Choice<Float>([0.6])             // plain wall at each end of a facade
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(groundHeight: Span = Span(3.6, 4.2), floorHeight: Span = Span(2.9, 3.2), bay: Span = Span(2.8, 3.4), pier: Choice<Float> = Choice<Float>([0.6])) {
+            self.groundHeight = groundHeight
+            self.floorHeight = floorHeight
+            self.bay = bay
+            self.pier = pier
+        }
     }
 
-    struct WindowDef: Codable, Equatable {
-        var share = Choice<Float>([0.45])           // the opening's width as a share of its bay...
+    package struct WindowDef: Codable, Equatable {
+        package var share = Choice<Float>([0.45])           // the opening's width as a share of its bay...
         var minWidth: Float = 1.0, maxWidth: Float = 1.5   // ...and its limits, in metres
-        var sill = Choice<Float>([0.9])
-        var height = Span(1.5, 1.8)
+        package var sill = Choice<Float>([0.9])
+        package var height = Span(1.5, 1.8)
         var recess = Choice<Float>([0.2])          // how far the glass sits behind the wall's face
         var frame: Float = 0.08
-        var mullions = Choice<Int>([1])
+        package var mullions = Choice<Int>([1])
         var transom: Float = 0                      // chances
         var sillTrim: Float = 1
         var lintel: Float = 0
         var shutters: Float = 0
     }
 
-    struct FacadeDef: Codable, Equatable {
-        var shops: Float = 0                        // how likely a street front's ground floor is shops
+    package struct FacadeDef: Codable, Equatable {
+        package var shops: Float = 0                        // how likely a street front's ground floor is shops
         var awnings: Float = 0.5                    // ...with awnings over them
         var loadingDoors = false                    // warehouses: big doors on the ground floor
         var balconies = Choice<Float>([0])          // the share of a facade's bay columns with balconies
@@ -55,13 +63,13 @@ struct BuildingStyleDef: Codable, Equatable {
         var ledge: Float = 1                        // chances: a string course over the ground floor...
         var floorLedges: Float = 0                  // ...and a thinner one at every floor
         var cornice = Span(0.25, 0.4)               // how far the cornice projects (0: none)
-        var pilasters: Float = 0
+        package var pilasters: Float = 0
         var plinth = true
         /// Without the building's interior: how deep the room boxes behind some windows are.
         var roomDepth: Float = 4.2
     }
 
-    struct MassingDef: Codable, Equatable {
+    package struct MassingDef: Codable, Equatable {
         var shapes: [PlanShape] = [.rect]
         /// Its own number of floors, if it has one (otherwise the lot's: its district's).
         var floors: Span? = nil
@@ -76,10 +84,27 @@ struct BuildingStyleDef: Codable, Equatable {
         var chimneys: Float = 0                     // chances
         var waterTank: Float = 0
         var mast: Float = 0
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(shapes: [PlanShape] = [.rect], floors: Span? = nil, setback: Span = Span(0, 0), tower: Int = 0, podium: Float = 0, setbacks: Choice<Int> = Choice<Int>([0]), penthouse: Float = 0, roof: Choice<RoofKind> = Choice<RoofKind>([.flat]), roofPitch: Span = Span(0.6, 0.95), parapet: Choice<Float> = Choice<Float>([0.9]), chimneys: Float = 0, waterTank: Float = 0, mast: Float = 0) {
+            self.shapes = shapes
+            self.floors = floors
+            self.setback = setback
+            self.tower = tower
+            self.podium = podium
+            self.setbacks = setbacks
+            self.penthouse = penthouse
+            self.roof = roof
+            self.roofPitch = roofPitch
+            self.parapet = parapet
+            self.chimneys = chimneys
+            self.waterTank = waterTank
+            self.mast = mast
+        }
     }
 
     /// The outside's materials, a choice for each.
-    struct Palette: Codable, Equatable {
+    package struct Palette: Codable, Equatable {
         var wall = MaterialDef([[0.7, 0.68, 0.62]], .plaster)
         var base = MaterialDef([[0.55, 0.54, 0.52]], .concrete)
         var trim = MaterialDef([[0.82, 0.8, 0.76]], .plaster)
@@ -98,7 +123,7 @@ struct BuildingStyleDef: Codable, Equatable {
     }
 
     /// The inside: its finishes, furniture and lights.
-    struct InteriorDef: Codable, Equatable {
+    package struct InteriorDef: Codable, Equatable {
         var paints: [SIMD3<Float>] = [[0.82, 0.79, 0.72], [0.78, 0.8, 0.78], [0.84, 0.8, 0.7], [0.74, 0.76, 0.8], [0.86, 0.85, 0.82]]
         var woods: [SIMD3<Float>] = [[0.42, 0.3, 0.2], [0.5, 0.4, 0.28], [0.3, 0.22, 0.16], [0.62, 0.5, 0.36]]
         var tiles: [SIMD3<Float>] = [[0.85, 0.86, 0.86], [0.72, 0.76, 0.78], [0.5, 0.52, 0.54]]
@@ -109,17 +134,17 @@ struct BuildingStyleDef: Codable, Equatable {
         var lightColor: SIMD3<Float> = [1.0, 0.86, 0.7]
         var lightPower: Float = 12
         /// How much stands on shelves and tables (0...1), and how likely a room has a plant.
-        var clutter: Float = 0.6
-        var plants: Float = 0.4
+        package var clutter: Float = 0.6
+        package var plants: Float = 0.4
         /// Doors' leaves and frames.
         var doors: [SIMD3<Float>] = [[0.9, 0.89, 0.86], [0.45, 0.32, 0.22]]
         /// The glTF props of Assets/Props/props.json in place of the generated pieces they name (PropLibrary).
-        var models = true
+        package var models = true
     }
 }
 
 /// What a building is for: how its storeys are divided (BuildingPlanner.swift).
-enum BuildingUse: String, Codable, CaseIterable {
+package enum BuildingUse: String, Codable, CaseIterable {
     case house          // one home over all its storeys, a stair up through it (a shop under it, maybe)
     case apartments     // flats off a stair (and a lift) on every floor
     case offices        // open floors around a core of stairs, lifts and toilets
@@ -163,11 +188,11 @@ struct Programme: Codable, Equatable {
 }
 
 /// A value drawn for each building: anywhere from `lo` to `hi` (the same: always that).
-struct Span: Codable, Equatable {
+package struct Span: Codable, Equatable {
     var lo: Float
     var hi: Float
 
-    init(_ lo: Float, _ hi: Float? = nil) {
+    package init(_ lo: Float, _ hi: Float? = nil) {
         self.lo = lo
         self.hi = hi ?? lo
     }
@@ -175,7 +200,7 @@ struct Span: Codable, Equatable {
     func draw(_ u: Float) -> Float { lo + (hi - lo) * u }
 
     // A constant is written as a number.
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         if let v = try? decoder.singleValueContainer().decode(Float.self) {
             (lo, hi) = (v, v)
         } else {
@@ -184,7 +209,7 @@ struct Span: Codable, Equatable {
             hi = try c.decode(Float.self, forKey: .hi)
         }
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         if lo == hi {
             var c = encoder.singleValueContainer()
             try c.encode(lo)
@@ -198,14 +223,14 @@ struct Span: Codable, Equatable {
 }
 
 /// One of `options`, each as likely (an option listed twice is twice as likely).
-struct Choice<T: Codable & Equatable>: Codable, Equatable {
+package struct Choice<T: Codable & Equatable>: Codable, Equatable {
     var options: [T]
 
-    init(_ options: [T]) { self.options = options }
+    package init(_ options: [T]) { self.options = options }
 
     func draw(_ u: Float) -> T { options[min(Int(u * Float(options.count)), options.count - 1)] }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         if let one = try? decoder.singleValueContainer().decode(T.self) {
             options = [one]
         } else {
@@ -213,7 +238,7 @@ struct Choice<T: Codable & Equatable>: Codable, Equatable {
         }
         if options.isEmpty { throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no options")) }
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         if options.count == 1 { try c.encode(options[0]) } else { try c.encode(options) }
     }
@@ -236,7 +261,7 @@ struct MaterialDef: Codable, Equatable {
         var specular = false
     }
 
-    init(_ colors: [SIMD3<Float>], _ surface: SurfaceKind?, roughness: Float = 1, metallic: Float = 0, specular: Bool = false,
+    package init(_ colors: [SIMD3<Float>], _ surface: SurfaceKind?, roughness: Float = 1, metallic: Float = 0, specular: Bool = false,
          shade: Float = 0.08) {
         self.colors = colors
         self.shade = shade
@@ -247,18 +272,18 @@ struct MaterialDef: Codable, Equatable {
 // MARK: - Codable for the generator's enums (by name, so the files read)
 
 /// An enum written by its case's name.
-protocol NamedCase: CaseIterable, Codable {}
+package protocol NamedCase: CaseIterable, Codable {}
 
 extension NamedCase {
-    var caseName: String { String(describing: self) }
-    init(from decoder: Decoder) throws {
+    package var caseName: String { String(describing: self) }
+    package init(from decoder: Decoder) throws {
         let name = try decoder.singleValueContainer().decode(String.self)
         guard let found = Self.allCases.first(where: { "\($0)" == name }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "no case \(name)"))
         }
         self = found
     }
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         try c.encode(caseName)
     }
@@ -271,7 +296,7 @@ extension Balustrade: NamedCase {}
 extension CityStyle {
     /// Its name in files (BuildingStyleDef.districts) and a built-in style's id.
     var name: String { String(describing: self) }
-    init?(name: String) {
+    package init?(name: String) {
         guard let found = CityStyle.allCases.first(where: { $0.name == name }) else { return nil }
         self = found
     }

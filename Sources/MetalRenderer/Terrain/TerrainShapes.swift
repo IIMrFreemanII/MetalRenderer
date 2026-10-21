@@ -6,41 +6,51 @@ import simd
 /// round them) and channels (a river's bed along its line). A scene's generated water is shaped into its base
 /// (ShapedTerrainBase) rather than carved into its edits, so the user's edits keep only what the user did, and a
 /// scene made again shapes no deeper.
-struct TerrainShapes {
+package struct TerrainShapes {
     /// A rounded rectangle of the world's x, z made level at `level`, blending back into the ground over `blend`
     /// metres beyond its edge. `protect`: the brushes leave it as it is.
-    struct Flat {
+    package struct Flat {
         var lo: SIMD2<Float>, hi: SIMD2<Float>
         var corner: Float = 0
         var level: Float
         var blend: Float
         var protect = false
+
+        /// (As the memberwise initializer, for the game: Sources/Game.)
+        package init(lo: SIMD2<Float>, hi: SIMD2<Float>, corner: Float = 0, level: Float, blend: Float, protect: Bool = false) {
+            self.lo = lo
+            self.hi = hi
+            self.corner = corner
+            self.level = level
+            self.blend = blend
+            self.protect = protect
+        }
     }
     /// A pond or lake: an ellipse's bowl `depth` under its water's `level` in the middle, a rim a little over the water
     /// round it (out to 1.6 radii), blending back into the ground.
-    struct Bowl {
-        var center: SIMD2<Float>
-        var radii: SIMD2<Float>
-        var level: Float
+    package struct Bowl {
+        package var center: SIMD2<Float>
+        package var radii: SIMD2<Float>
+        package var level: Float
         var depth: Float
     }
     /// A river's bed along its line (the world's x, z), its height at each point (kept: TerrainWater.bed), within half
     /// its width a rounded channel, then a bank back to the ground over another half width.
-    struct Channel {
+    package struct Channel {
         var points: [SIMD2<Double>]
         var beds: [Float]
         var half: Float
         var depth: Float
     }
 
-    var flats: [Flat] = []
-    var bowls: [Bowl] = []
+    package var flats: [Flat] = []
+    package var bowls: [Bowl] = []
     var channels: [Channel] = []
 
     var isEmpty: Bool { flats.isEmpty && bowls.isEmpty && channels.isEmpty }
 
     /// What the shapes are, in a few characters (part of the base's fingerprint, and of a terrain's name).
-    var fingerprint: String {
+    package var fingerprint: String {
         var h: UInt64 = 0xCBF2_9CE4_8422_2325
         func mix(_ f: Float) { h = (h ^ UInt64(f.bitPattern)) &* 0x100_0000_01B3 }
         for f in flats { [f.lo.x, f.lo.y, f.hi.x, f.hi.y, f.corner, f.level, f.blend, f.protect ? 1 : 0].forEach(mix) }
@@ -110,32 +120,39 @@ struct TerrainShapes {
     func protects(_ x: Double, _ z: Double) -> Bool {
         flats.contains { $0.protect && Float(x) >= $0.lo.x && Float(x) <= $0.hi.x && Float(z) >= $0.lo.y && Float(z) <= $0.hi.y }
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(flats: [Flat] = [], bowls: [Bowl] = [], channels: [Channel] = []) {
+        self.flats = flats
+        self.bowls = bowls
+        self.channels = channels
+    }
 }
 
 /// A base with shapes over it (TerrainShapes): its heights shaped, its kinds and protection its own (and the
 /// protected flats'). The fingerprint says both, so edits saved over the plain base aren't taken for edits of this.
-final class ShapedTerrainBase: TerrainBase {
+package final class ShapedTerrainBase: TerrainBase {
     let inner: TerrainBase
     let shapes: TerrainShapes
-    var grid: TerrainGrid { inner.grid }
+    package var grid: TerrainGrid { inner.grid }
 
-    init(_ inner: TerrainBase, shapes: TerrainShapes) {
+    package init(_ inner: TerrainBase, shapes: TerrainShapes) {
         self.inner = inner
         self.shapes = shapes
     }
 
-    var fingerprint: String { shapes.isEmpty ? inner.fingerprint : inner.fingerprint + " shaped \(shapes.fingerprint)" }
+    package var fingerprint: String { shapes.isEmpty ? inner.fingerprint : inner.fingerprint + " shaped \(shapes.fingerprint)" }
 
-    func height(_ i: Int, _ j: Int) -> Float {
+    package func height(_ i: Int, _ j: Int) -> Float {
         let h = inner.height(i, j)
         guard !shapes.isEmpty else { return h }
         let p = grid.place(i, j)
         return shapes.shape(p.x, p.y, h)
     }
 
-    func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? { inner.kind(i, j, step: step) }
+    package func kind(_ i: Int, _ j: Int, step: Int) -> UInt8? { inner.kind(i, j, step: step) }
 
-    func protection(_ i: Int, _ j: Int) -> Float {
+    package func protection(_ i: Int, _ j: Int) -> Float {
         let p = grid.place(i, j)
         return shapes.protects(p.x, p.y) ? 1 : inner.protection(i, j)
     }
@@ -143,9 +160,9 @@ final class ShapedTerrainBase: TerrainBase {
 
 /// A scene's generated water (made from its seed, shaped into its base): rivers and ponds as water bodies (the same
 /// as the Terrain Editor's, TerrainWater makes their surfaces) and the shapes that hold them.
-enum SceneWaterMaker {
+package enum SceneWaterMaker {
     /// The base's height at the world's (x, z), between its samples.
-    static func height(_ base: TerrainBase, _ x: Double, _ z: Double) -> Float {
+    package static func height(_ base: TerrainBase, _ x: Double, _ z: Double) -> Float {
         let g = base.grid.coordinates(x, z)
         let i = Int(g.x.rounded(.down)), j = Int(g.y.rounded(.down))
         let u = Float(g.x - Double(i)), v = Float(g.y - Double(j))
@@ -157,7 +174,7 @@ enum SceneWaterMaker {
     /// A river from `from` to `to` (the world's x, z), wandering `meander` metres to either side of the straight way
     /// (the seed's), a point every 6 m: its bed `depth` under the lowest ground on the way so far (it never runs
     /// uphill), the water at most of its depth over it.
-    static func river(name: String, base: TerrainBase, from: SIMD2<Double>, to: SIMD2<Double>, width: Float, depth: Float,
+    package static func river(name: String, base: TerrainBase, from: SIMD2<Double>, to: SIMD2<Double>, width: Float, depth: Float,
                       meander: Double, seed: UInt64, look: WaterLook = .preset(.river)) -> (body: WaterBody, channel: TerrainShapes.Channel) {
         let length = simd_distance(from, to), count = max(Int(length / 6), 2)
         let along = (to - from) / max(length, 1e-6), side = SIMD2(-along.y, along.x)
@@ -181,7 +198,7 @@ enum SceneWaterMaker {
     }
 
     /// A pond at `center` (radii in x and z): its water at `level`, a bowl `depth` deep under it.
-    static func pond(name: String, center: SIMD2<Float>, radii: SIMD2<Float>, level: Float, depth: Float,
+    package static func pond(name: String, center: SIMD2<Float>, radii: SIMD2<Float>, level: Float, depth: Float,
                      look: WaterLook = .preset(.lake)) -> (body: WaterBody, bowl: TerrainShapes.Bowl) {
         var body = WaterBody(name: name, kind: .lake, level: level, seed: SIMD2(Double(center.x), Double(center.y)))
         body.look = look
@@ -189,5 +206,5 @@ enum SceneWaterMaker {
     }
 
     /// Where a river's water surface is at its last point (to fill the pond it runs into to that height).
-    static func endLevel(_ river: WaterBody) -> Float { (river.bed?.last ?? 0) + river.depth * 0.8 }
+    package static func endLevel(_ river: WaterBody) -> Float { (river.bed?.last ?? 0) + river.depth * 0.8 }
 }

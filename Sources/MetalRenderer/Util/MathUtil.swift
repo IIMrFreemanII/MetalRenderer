@@ -1,35 +1,35 @@
 import Darwin
 import simd
 
-func translate(_ t: SIMD3<Float>) -> float4x4 {
+package func translate(_ t: SIMD3<Float>) -> float4x4 {
     var m = matrix_identity_float4x4
     m.columns.3 = SIMD4<Float>(t, 1)
     return m
 }
 
-func scale(_ s: SIMD3<Float>) -> float4x4 {
+package func scale(_ s: SIMD3<Float>) -> float4x4 {
     float4x4(diagonal: SIMD4<Float>(s, 1))
 }
 
-func scale(_ s: Float) -> float4x4 {
+package func scale(_ s: Float) -> float4x4 {
     scale(SIMD3<Float>(repeating: s))
 }
 
-func rotate(_ angle: Float, _ axis: SIMD3<Float>) -> float4x4 {
+package func rotate(_ angle: Float, _ axis: SIMD3<Float>) -> float4x4 {
     float4x4(simd_quatf(angle: angle, axis: normalize(axis)))
 }
 
-struct Camera {
-    var position = SIMD3<Float>(0, 2.4, 4.6)
-    var yaw: Float = 0          // radians, 0 looks down -Z
-    var pitch: Float = -0.06    // radians
-    var fovY: Float = 60 * .pi / 180
+package struct Camera {
+    package var position = SIMD3<Float>(0, 2.4, 4.6)
+    package var yaw: Float = 0          // radians, 0 looks down -Z
+    package var pitch: Float = -0.06    // radians
+    package var fovY: Float = 60 * .pi / 180
 
-    var forward: SIMD3<Float> {
+    package var forward: SIMD3<Float> {
         SIMD3<Float>(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw))
     }
-    var right: SIMD3<Float> { normalize(cross(forward, SIMD3<Float>(0, 1, 0))) }
-    var up: SIMD3<Float> { cross(right, forward) }
+    package var right: SIMD3<Float> { normalize(cross(forward, SIMD3<Float>(0, 1, 0))) }
+    package var up: SIMD3<Float> { cross(right, forward) }
 
     /// The depth of the near plane in the reversed-Z depth the upscalers read (Shaders.metal's NEAR_PLANE).
     static let nearPlane: Float = 0.05
@@ -48,5 +48,13 @@ struct Camera {
         let tanY = tan(fovY / 2)
         return float4x4(columns: (SIMD4(1 / (tanY * aspect), 0, 0, 0), SIMD4(0, 1 / tanY, 0, 0),
                                   SIMD4(0, 0, 0, -1), SIMD4(0, 0, Camera.nearPlane, 0)))
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(position: SIMD3<Float> = SIMD3<Float>(0, 2.4, 4.6), yaw: Float = 0, pitch: Float = -0.06, fovY: Float = 60 * .pi / 180) {
+        self.position = position
+        self.yaw = yaw
+        self.pitch = pitch
+        self.fovY = fovY
     }
 }

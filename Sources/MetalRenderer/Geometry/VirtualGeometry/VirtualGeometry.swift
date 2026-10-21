@@ -48,7 +48,7 @@ final class VirtualGeometry {
     private let lock = NSLock()
 
     /// `instances`: (scene instance index, virtual mesh index) for every virtual instance.
-    init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], poolMB: Int, slots: Int) throws {
+    package init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], poolMB: Int, slots: Int) throws {
         func buffer(_ length: Int, _ label: String, shared: Bool = false) throws -> MTLBuffer {
             guard let b = device.makeBuffer(length: max(length, 16), options: shared ? .storageModeShared : .storageModePrivate) else {
                 throw RendererError.resourceCreation("buffer \(label)")

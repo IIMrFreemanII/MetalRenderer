@@ -80,20 +80,20 @@ extension Foliage {
         var evergreen = false               // keeps its leaves: no leaf fall
     }
 
-    struct SpeciesDef: Codable, Equatable {
-        var id: String                      // the JSON file's name; the caches' and meshes' names
-        var name: String
+    package struct SpeciesDef: Codable, Equatable {
+        package var id: String                      // the JSON file's name; the caches' and meshes' names
+        package var name: String
         /// What the library's seeds are made from: the built-ins' places in the catalog, a custom species' own number
         /// (from 100, fixed when it is made), so that no species' plants change when another is added or deleted.
-        var seedIndex: Int
+        package var seedIndex: Int
         var role: Role
         var grass: GrassPatch? = nil
-        var recipe: Recipe                  // the mature plant
-        var bough: Recipe? = nil            // nil: no palette (its plants are one mesh)
+        package var recipe: Recipe                  // the mature plant
+        package var bough: Recipe? = nil            // nil: no palette (its plants are one mesh)
         var palette = Palette()
         var ages = Ages()
         var look: Look
-        var habitat = Habitat()
+        package var habitat = Habitat()
         var stemsAreLeaves = false          // the stems are leaf material (fern fronds)
         var basedOn: String? = nil          // a custom species: the one it was copied from
 
@@ -101,7 +101,7 @@ extension Foliage {
         func variants(_ age: Age) -> Int { ages.variants.indices.contains(age.rawValue) ? ages.variants[age.rawValue] : 0 }
 
         /// The recipe of its plants of an age.
-        func recipe(_ age: Age) -> Recipe {
+        package func recipe(_ age: Age) -> Recipe {
             var r = recipe
             switch age {
             case .mature: break
@@ -125,7 +125,7 @@ extension Foliage {
 extension Foliage.Phyllotaxis: Codable {
     private enum Key: String, CodingKey { case whorled }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         if let name = try? decoder.singleValueContainer().decode(String.self) {
             switch name {
             case "spiral": self = .spiral
@@ -137,7 +137,7 @@ extension Foliage.Phyllotaxis: Codable {
         self = .whorled(try decoder.container(keyedBy: Key.self).decode(Int.self, forKey: .whorled))
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         switch self {
         case .spiral: var c = encoder.singleValueContainer(); try c.encode("spiral")
         case .distichous: var c = encoder.singleValueContainer(); try c.encode("distichous")
@@ -148,7 +148,7 @@ extension Foliage.Phyllotaxis: Codable {
 
 /// By name in JSON.
 extension FoliageTextures.Kind: Codable {
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let name = try decoder.singleValueContainer().decode(String.self)
         guard let kind = Self.allCases.first(where: { $0.name == name }) else {
             throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "texture \(name)"))
@@ -164,19 +164,19 @@ extension FoliageTextures.Kind: Codable {
 
 /// The species plants are grown from, in order: a species is its place here (Foliage.Species). The built-in ones
 /// come first, in their order, whatever replaces them.
-struct PlantCatalog: Equatable {
+package struct PlantCatalog: Equatable {
     var species: [Foliage.SpeciesDef]
 
-    subscript(_ s: Foliage.Species) -> Foliage.SpeciesDef { species[s.rawValue] }
-    var all: [Foliage.Species] { species.indices.map(Foliage.Species.init(rawValue:)) }
-    var count: Int { species.count }
+    package subscript(_ s: Foliage.Species) -> Foliage.SpeciesDef { species[s.rawValue] }
+    package var all: [Foliage.Species] { species.indices.map(Foliage.Species.init(rawValue:)) }
+    package var count: Int { species.count }
     func species(id: String) -> Foliage.Species? { species.firstIndex { $0.id == id }.map(Foliage.Species.init(rawValue:)) }
 
     /// The bushes and ground cover, in the order they are scattered (Habitat.order).
-    var covers: [Foliage.Species] {
+    package var covers: [Foliage.Species] {
         all.filter { self[$0].role != .tree && self[$0].habitat.cover != nil }
             .sorted { (self[$0].habitat.order, $0.rawValue) < (self[$1].habitat.order, $1.rawValue) }
     }
 
-    static let builtIn = PlantCatalog(species: Foliage.builtInSpecies)
+    package static let builtIn = PlantCatalog(species: Foliage.builtInSpecies)
 }

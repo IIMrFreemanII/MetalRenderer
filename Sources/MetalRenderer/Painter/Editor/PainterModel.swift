@@ -47,7 +47,7 @@ final class PainterModel: ObservableObject {
     @Published var exportFormat = MatExport.Format.png8
     private var dragging = false
 
-    init(host: PainterHost) {
+    package init(host: PainterHost) {
         self.host = host
         undo.groupsByEvent = false
         host.observePainter { [weak self] s in self?.received(s) }

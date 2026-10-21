@@ -34,7 +34,7 @@ extension Renderer {
     /// A scene that has been replaced and what it was drawn with, on their way out (`install`).
     final class Replaced {
         var parts: PreparedScene?
-        init(_ parts: PreparedScene) { self.parts = parts }
+        package init(_ parts: PreparedScene) { self.parts = parts }
     }
 
     /// What the open world's streaming cost while a benchmark measured: each scene made around another tile (in the
@@ -56,7 +56,7 @@ extension Renderer {
 
     /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
     var virtualGeometryChanged: Bool {
-        let hasModels = scene.settings.kind == .gallery || !scene.settings.extraModels.isEmpty
+        let hasModels = scene.settings.kind.definition.loadsModels || !scene.settings.extraModels.isEmpty
         let poolChanged = virtualTracing?.clusters.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
         return hasModels && (scene.usesVirtualGeometry != settings.virtualGeometry.enabled || poolChanged)
     }
@@ -296,7 +296,7 @@ extension Renderer {
             let liquid = physics.fluid?.systems.reduce(0) { $0 + $1.capacity } ?? 0
             // (An interior's loose furniture is stepped on the CPU: a few dozen bodies, asleep most of the time.)
             // (The demolition scene's rockets and walker are the CPU's step's alone: Physics+Demolition.swift.)
-            let onGPU = scene.settings.kind.simulates && scene.settings.kind != .demolition
+            let onGPU = scene.settings.kind.simulates && !scene.settings.kind.definition.cpuPhysics
                 && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
                                                     fractures: physics.fractures)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {

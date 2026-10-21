@@ -10,7 +10,7 @@ final class PainterPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(host: PainterHost) {
+    package init(host: PainterHost) {
         model = PainterModel(host: host)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 800),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)

@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import QuartzCore
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The base body (CharacterBase), its morphs (CharacterMorphs) and characters made from DNA (CharacterBuilder).

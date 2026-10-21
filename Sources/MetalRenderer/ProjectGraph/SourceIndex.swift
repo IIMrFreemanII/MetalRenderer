@@ -7,26 +7,17 @@ struct SourceIndex: Equatable {
     struct File: Hashable, Comparable {
         var path: String            // repository-relative
         var line: Int?
-        static func < (a: File, b: File) -> Bool { (a.path, a.line ?? 0) < (b.path, b.line ?? 0) }
+        package static func < (a: File, b: File) -> Bool { (a.path, a.line ?? 0) < (b.path, b.line ?? 0) }
     }
     /// By SceneKind.envName.
     var scenes: [String: [File]] = [:]
     /// By the outline's system names (Physics, Plants, ...).
     var systems: [String: [File]] = [:]
 
-    /// Each scene's builder, as Scene.init calls it.
-    static let builders: [SceneKind: String] = [
-        .cornell: "buildCornell", .stress: "buildStress", .gallery: "buildGallery", .spots: "buildSpots", .sun: "buildSun",
-        .area: "buildArea", .tubes: "buildTubes", .emissive: "buildEmissive", .mixed: "buildMixed", .fog: "buildFogHall",
-        .valley: "buildValley", .market: "buildMarket", .forest: "buildForest", .crowd: "buildCrowd", .city: "buildCity",
-        .cityNight: "buildCity", .world: "buildWorld", .showcase: "buildShowcase", .shapes: "buildShapes", .physics: "buildPhysics",
-        .ragdolls: "buildRagdolls", .hair: "buildHair", .softBodies: "buildSoftBodies", .muscles: "buildMuscles",
-        .fluids: "buildFluids", .particles: "buildParticles", .plants: "buildPlantWorkshop", .vfxStage: "buildVFXStage",
-        .buildings: "buildBuildingWorkshop", .characters: "buildCharacterWorkshop", .materials: "buildMaterialWorkshop",
-        .mireland: "buildMireland", .painter: "buildPainterWorkshop", .terrain: "buildTerrainWorkshop",
-        .destruction: "buildDestruction",
-        .demolition: "buildDemolition",
-    ]
+    /// Each scene's builder, as its definition calls it.
+    static var builders: [SceneKind: String] {
+        Dictionary(uniqueKeysWithValues: SceneRegistry.kinds.map { ($0, $0.definition.builder) })
+    }
 
     /// The types each system is.
     static let systemTypes: [String: [String]] = [
@@ -50,7 +41,7 @@ struct SourceIndex: Equatable {
     }
 
     /// From graphify's nodes ({id, label, source_file, source_location}) and links ({source, target, relation}).
-    init(nodes: [[String: Any]], links: [[String: Any]]) {
+    package init(nodes: [[String: Any]], links: [[String: Any]]) {
         var file: [String: File] = [:], byLabel: [String: [String]] = [:]
         for n in nodes {
             guard let id = n["id"] as? String, let path = n["source_file"] as? String, path.hasPrefix("Sources/") else { continue }
@@ -76,5 +67,5 @@ struct SourceIndex: Equatable {
         }
     }
 
-    init() {}
+    package init() {}
 }

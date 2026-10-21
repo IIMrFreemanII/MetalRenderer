@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import QuartzCore
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Scene+Plants.swift: the plant workshop shows the library's own plants, in its layouts and views, and is quick to

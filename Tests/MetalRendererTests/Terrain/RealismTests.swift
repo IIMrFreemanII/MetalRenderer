@@ -1,6 +1,7 @@
 import Metal
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The realistic look (SceneSettings.realism): its ground maps, the terrain's table, the scans' names, and that the

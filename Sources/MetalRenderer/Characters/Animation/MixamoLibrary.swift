@@ -28,7 +28,7 @@ struct MixamoLibrary {
         return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("MixamoAnimations")
     }
 
-    init(_ directory: URL = MixamoLibrary.directory) {
+    package init(_ directory: URL = MixamoLibrary.directory) {
         let all = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
         let names = all.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }.map(\.lastPathComponent).sorted()
         let folders = (names.filter { $0 == "Y Bot" } + names.filter { $0 != "Y Bot" }).map { directory.appendingPathComponent($0) }

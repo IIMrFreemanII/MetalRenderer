@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+@testable import Game
 @testable import MetalRenderer
 
 /// Kernel variants (Pipelines.swift): a kernel with a configuration's flags compiled in. The flag words are made

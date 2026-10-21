@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Material Painter past the unwrap: the painted scene (its materials, its corners' UVs, its assignments), the

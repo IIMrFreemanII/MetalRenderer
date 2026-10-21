@@ -6,21 +6,21 @@ import simd
 /// facade's: x along the wall, y up, z out of it), and every face gets texture coordinates in metres x `uvScale`,
 /// u along the face's horizontal direction and v down it, so a tiled texture keeps its real size and its courses
 /// stay level on every wall. No face is left without them: a triangle of zero UV area can't take a normal map.
-struct MeshBuilder {
+package struct MeshBuilder {
     private(set) var positions: [SIMD3<Float>] = []
     private(set) var normals: [SIMD3<Float>] = []
-    private(set) var uvs: [SIMD2<Float>] = []
+    package private(set) var uvs: [SIMD2<Float>] = []
     private(set) var indices: [UInt32] = []
 
     /// Texture repeats per metre.
     var uvScale: Float = 1
     /// Where the next shapes go: a rotation and a translation (no scale: normals are transformed as directions).
-    var frame = matrix_identity_float4x4
+    package var frame = matrix_identity_float4x4
     /// Where the texture coordinates count from, before `frame` (a building's module: its own corner, so that its
     /// copies are the same mesh wherever they are; Building.beginModule).
     var uvOrigin = SIMD3<Float>.zero
 
-    init(uvScale: Float = 1) { self.uvScale = uvScale }
+    package init(uvScale: Float = 1) { self.uvScale = uvScale }
 
     /// Its positions and texture coordinates on a grid of `step`: what the same shapes made at two places come to
     /// once moved back by different offsets (float rounding), the same numbers.
@@ -29,30 +29,31 @@ struct MeshBuilder {
         for i in uvs.indices { uvs[i] = (uvs[i] / step).rounded(.toNearestOrEven) * step }
     }
 
-    var triangleCount: Int { indices.count / 3 }
-    var isEmpty: Bool { indices.isEmpty }
-    var geometry: MeshGeometry { (positions, normals, indices) }
+    package var triangleCount: Int { indices.count / 3 }
+    package var isEmpty: Bool { indices.isEmpty }
+    package var geometry: MeshGeometry { (positions, normals, indices) }
 
     /// The faces of a box: `.all` but the ones that would be hidden or coplanar with something else.
-    struct Faces: OptionSet {
-        let rawValue: Int
+    package struct Faces: OptionSet {
+        package let rawValue: Int
+        package init(rawValue: Int) { self.rawValue = rawValue }
         static let left = Faces(rawValue: 1), right = Faces(rawValue: 2)        // -x, +x
-        static let bottom = Faces(rawValue: 4), top = Faces(rawValue: 8)        // -y, +y
+        package static let bottom = Faces(rawValue: 4), top = Faces(rawValue: 8)        // -y, +y
         static let back = Faces(rawValue: 16), front = Faces(rawValue: 32)      // -z, +z
         static let all: Faces = [.left, .right, .bottom, .top, .back, .front]
-        static let sides: Faces = [.left, .right, .back, .front]
+        package static let sides: Faces = [.left, .right, .back, .front]
     }
 
     // MARK: Flat faces
 
     /// A quad through four corners in order around it, facing cross(b - a, d - a).
-    mutating func quad(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
+    package mutating func quad(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ d: SIMD3<Float>) {
         let n = cross(b - a, d - a)
         guard length_squared(n) > 1e-12 else { return }
         polygon([a, b, c, d], normal: normalize(n))
     }
 
-    mutating func triangle(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) {
+    package mutating func triangle(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) {
         let n = cross(b - a, c - a)
         guard length_squared(n) > 1e-12 else { return }
         polygon([a, b, c], normal: normalize(n))
@@ -75,7 +76,7 @@ struct MeshBuilder {
     }
 
     /// An axis-aligned box (in the frame) from its min and max corners.
-    mutating func box(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, faces: Faces = .all) {
+    package mutating func box(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, faces: Faces = .all) {
         guard hi.x > lo.x, hi.y > lo.y, hi.z > lo.z else { return }
         let (a, b) = (lo, hi)
         if faces.contains(.left) { quad([a.x, a.y, a.z], [a.x, a.y, b.z], [a.x, b.y, b.z], [a.x, b.y, a.z]) }
@@ -93,7 +94,7 @@ struct MeshBuilder {
     }
 
     /// A horizontal rectangle at height `y`, facing up (or down).
-    mutating func floor(x0: Float, x1: Float, z0: Float, z1: Float, y: Float, up: Bool = true) {
+    package mutating func floor(x0: Float, x1: Float, z0: Float, z1: Float, y: Float, up: Bool = true) {
         guard x1 > x0, z1 > z0 else { return }
         if up { quad([x0, y, z1], [x1, y, z1], [x1, y, z0], [x0, y, z0]) }
         else { quad([x0, y, z0], [x1, y, z0], [x1, y, z1], [x0, y, z1]) }
@@ -101,7 +102,7 @@ struct MeshBuilder {
 
     /// A convex polygon of ground: facing up whichever way its corners go round, with a floor's texture coordinates
     /// (x and z), so that the pieces of a road that climbs are one surface.
-    mutating func ground(_ corners: [SIMD3<Float>]) {
+    package mutating func ground(_ corners: [SIMD3<Float>]) {
         guard corners.count >= 3 else { return }
         var n = SIMD3<Float>.zero   // twice its area, along its normal (Newell's sum: its first corners may be in line)
         for i in corners.indices {
@@ -131,7 +132,7 @@ struct MeshBuilder {
 
     /// A cylinder, or with two radii a cone's frustum, around the vertical through `center` (its bottom), `segments`
     /// sides; `cap`: closed at the top.
-    mutating func cylinder(_ center: SIMD3<Float>, radius: Float, topRadius: Float? = nil, height: Float, segments: Int = 12,
+    package mutating func cylinder(_ center: SIMD3<Float>, radius: Float, topRadius: Float? = nil, height: Float, segments: Int = 12,
                            cap: Bool = true) {
         let r1 = topRadius ?? radius
         let base = UInt32(positions.count)
@@ -161,7 +162,7 @@ struct MeshBuilder {
 
     /// A round rim: a ring from `inner` to `outer` radius round the vertical through `center` (its bottom), `height`
     /// tall, `segments` sides: its top, and its walls outside and in (a pool's, a planter's).
-    mutating func ring(_ center: SIMD3<Float>, inner: Float, outer: Float, height: Float, segments: Int = 32) {
+    package mutating func ring(_ center: SIMD3<Float>, inner: Float, outer: Float, height: Float, segments: Int = 32) {
         let up = SIMD3<Float>(0, height, 0)
         for s in 0..<segments {
             let a = 2 * Float.pi * Float(s) / Float(segments), b = 2 * Float.pi * Float(s + 1) / Float(segments)
@@ -174,7 +175,7 @@ struct MeshBuilder {
     }
 
     /// A ball of `radius` around `center`: an icosphere (the trees' crowns).
-    mutating func ball(_ center: SIMD3<Float>, radius: SIMD3<Float>, subdivisions: Int = 1) {
+    package mutating func ball(_ center: SIMD3<Float>, radius: SIMD3<Float>, subdivisions: Int = 1) {
         let sphere = Scene.icosphere(subdivisions: subdivisions)
         let base = UInt32(positions.count)
         for p in sphere.positions {
@@ -188,7 +189,7 @@ struct MeshBuilder {
     // MARK: Putting meshes together
 
     /// Adds `other`'s triangles as they are (its frame was applied when they were made).
-    mutating func append(_ other: MeshBuilder) {
+    package mutating func append(_ other: MeshBuilder) {
         let base = UInt32(positions.count)
         positions += other.positions
         normals += other.normals
@@ -197,7 +198,7 @@ struct MeshBuilder {
     }
 
     /// The same, moved by `transform` (rigid).
-    mutating func append(_ other: MeshBuilder, transform: float4x4) {
+    package mutating func append(_ other: MeshBuilder, transform: float4x4) {
         let base = UInt32(positions.count)
         for i in other.positions.indices {
             let p = transform * SIMD4(other.positions[i], 1), n = transform * SIMD4(other.normals[i], 0)
@@ -216,7 +217,7 @@ struct MeshBuilder {
     }
 
     /// The mesh's bounds (empty: lo > hi).
-    var bounds: (lo: SIMD3<Float>, hi: SIMD3<Float>) {
+    package var bounds: (lo: SIMD3<Float>, hi: SIMD3<Float>) {
         (positions.reduce(SIMD3(repeating: .infinity), simd_min), positions.reduce(SIMD3(repeating: -.infinity), simd_max))
     }
 

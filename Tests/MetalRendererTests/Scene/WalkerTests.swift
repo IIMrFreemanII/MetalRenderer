@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The walker (Walker.swift) among a generated building's colliders (Building+Interior.swift) and the ground: it

@@ -14,7 +14,7 @@ struct ProjectGraph {
         /// The assets' and the sources' branches, a kind of asset's folder, an asset, a source file.
         case assets, assetKind, asset, sources, source
 
-        init(_ k: SceneOutline.Kind) {
+        package init(_ k: SceneOutline.Kind) {
             switch k {
             case .scene: self = .scene
             case .folder: self = .folder

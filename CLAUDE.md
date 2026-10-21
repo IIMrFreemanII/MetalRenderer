@@ -4,8 +4,10 @@ Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`
 
 ## Source layout
 
-`Sources/MetalRenderer` is in a folder per feature (README, "Source layout"): a new `Type+Feature.swift` goes in its
-feature's folder, an editor inside its feature, a test in the matching folder of `Tests/MetalRendererTests`. Find the
+`Sources/MetalRenderer` (the engine) and `Sources/Game` (the demo scenes, their looks and benchmark modes) are in a
+folder per feature (README, "Source layout"): a new `Type+Feature.swift` goes in its feature's folder, an editor inside
+its feature, a demo scene's builder in the game (registered in `GameScenes.scenes()`), a test in the matching folder of
+`Tests/MetalRendererTests`. The engine never names a game scene: it asks the scene's `SceneDefinition`. Find the
 package's files with `SourceTree`, never by counting folders up from `#filePath`.
 
 ## New features

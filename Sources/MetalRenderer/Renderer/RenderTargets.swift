@@ -53,7 +53,7 @@ final class RenderTargets {
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
     let roughness: MTLTexture
 
-    init(device: MTLDevice, width: Int, height: Int) throws {
+    package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
         self.height = height
         func make(_ format: MTLPixelFormat, _ label: String) throws -> MTLTexture {
@@ -98,7 +98,7 @@ final class DenoiseTargets {
     let pingB: MTLTexture
     let moments: [MTLTexture]   // [2], ping-ponged. x = fast mean luminance, y = fast mean luminance^2, z = history length, w = slow mean luminance (anti-lag)
 
-    init(_ make: (MTLPixelFormat, String) throws -> MTLTexture, _ name: String) throws {
+    package init(_ make: (MTLPixelFormat, String) throws -> MTLTexture, _ name: String) throws {
         // Half precision halves the a-trous filter's memory traffic. Alpha stores the standard deviation,
         // not the variance: variance (~luminance^2) overflows half (65504) near the lights.
         history = try make(.rgba16Float, "\(name) history")
@@ -130,7 +130,7 @@ final class ShadowTargets {
     let reservoir: [MTLTexture]         // [2] rgba32Uint: light index | confidence M << 16
     let reservoirWeight: [MTLTexture]   // [2] rgba32Float: the pick's contribution weight W
 
-    init(device: MTLDevice, width: Int, height: Int, _ make: (MTLPixelFormat, String) throws -> MTLTexture) throws {
+    package init(device: MTLDevice, width: Int, height: Int, _ make: (MTLPixelFormat, String) throws -> MTLTexture) throws {
         history = try make(.rgba16Float, "shadow history")
         pingA = try make(.rgba16Float, "shadow pingA")
         pingB = try make(.rgba16Float, "shadow pingB")
@@ -155,7 +155,7 @@ final class FogTargets {
     let scatter: [MTLTexture]     // [2], ping-ponged: rgb = in-scattered light per metre, a = extinction (fogInjectKernel)
     let integrated: MTLTexture    // rgb = in-scatter from the camera to each slice's far side, a = transmittance
 
-    init(device: MTLDevice, renderWidth: Int, renderHeight: Int, slices: Int) throws {
+    package init(device: MTLDevice, renderWidth: Int, renderHeight: Int, slices: Int) throws {
         self.renderWidth = renderWidth
         self.renderHeight = renderHeight
         let columns = (renderWidth + 7) / 8, rows = (renderHeight + 7) / 8
@@ -185,7 +185,7 @@ final class TAATargets {
     let input: MTLTexture
     let history: [MTLTexture]
 
-    init(device: MTLDevice, width: Int, height: Int) throws {
+    package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
         self.height = height
         func make(_ label: String) throws -> MTLTexture {
@@ -210,7 +210,7 @@ final class PostTargets {
     let up: [MTLTexture]        // ...and the way back up: up[i] = down[i] + up[i + 1] filtered (one fewer)
     let focus: MTLBuffer        // the autofocus distance, eased from frame to frame (0 = none yet)
 
-    init(device: MTLDevice, width: Int, height: Int) throws {
+    package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
         self.height = height
         func make(_ label: String, _ w: Int, _ h: Int) throws -> MTLTexture {
@@ -244,7 +244,7 @@ final class RestirTargets {
     let spatial: MTLTexture       // between two spatial passes
     let specular: MTLTexture      // direct specular light (rgba16F), which the reflection pass adds
 
-    init(device: MTLDevice, width: Int, height: Int, chains: Int) throws {
+    package init(device: MTLDevice, width: Int, height: Int, chains: Int) throws {
         self.width = width
         self.height = height
         self.chains = chains
@@ -274,7 +274,7 @@ final class RestirGITargets {
     let feedback: [MTLTexture]                        // [2] rgba16F, ping-ponged: the raw indirect light (multi-bounce)
     let ambient: [MTLBuffer]                          // [2], ping-ponged: the mean indirect light (rgb sums, count)
 
-    init(device: MTLDevice, width: Int, height: Int) throws {
+    package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
         self.height = height
         func make(_ label: String, _ format: MTLPixelFormat) throws -> MTLTexture {

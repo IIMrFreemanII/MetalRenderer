@@ -5,10 +5,10 @@ import simd
 /// model, Mei, Decaudin and Hu 2007), and slopes steeper than they can stand crumbling down (thermal). On a grid of
 /// heights (a region of a terrain, rows along z), every pass on every core. Material is conserved: what is taken from
 /// one cell is left on another (thermal exactly; hydraulic up to the sediment still carried when it stops).
-enum TerrainErosion {
-    enum Kind: String, CaseIterable, Identifiable {
+package enum TerrainErosion {
+    package enum Kind: String, CaseIterable, Identifiable {
         case hydraulic, thermal, both
-        var id: String { rawValue }
+        package var id: String { rawValue }
         var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
     }
 

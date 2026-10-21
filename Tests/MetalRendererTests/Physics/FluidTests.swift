@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// PhysicsFluid.swift, PhysicsFluidCPU.swift and Shaders/Fluid.metal: the pour, PBF and MLS-MPM against each other

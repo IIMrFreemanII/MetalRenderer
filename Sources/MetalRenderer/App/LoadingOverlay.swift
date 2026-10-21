@@ -26,7 +26,7 @@ final class LoadingOverlay: NSView {
         set { UserDefaults.standard.set(newValue, forKey: "LoadingOverlay.enabled") }
     }
 
-    init(activity: LoadActivity) {
+    package init(activity: LoadActivity) {
         self.activity = activity
         super.init(frame: .zero)
         wantsLayer = true
@@ -52,7 +52,7 @@ final class LoadingOverlay: NSView {
             DispatchQueue.main.async { self?.wake() }
         }
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     /// Mouse and keys go to the render view underneath.
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -196,7 +196,7 @@ private final class Row: NSStackView {
         return label
     }
 
-    init() {
+    package init() {
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
@@ -226,7 +226,7 @@ private final class Row: NSStackView {
         for v in [line, indented] { v.widthAnchor.constraint(equalTo: widthAnchor).isActive = true }
         bar.widthAnchor.constraint(equalTo: indented.widthAnchor, constant: -18).isActive = true
     }
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+    package required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     func show(_ model: Model) {
         switch model {

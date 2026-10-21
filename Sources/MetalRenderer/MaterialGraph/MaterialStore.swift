@@ -69,7 +69,7 @@ enum MaterialStore {
 /// Material graphs by name that the built-in ones (MaterialLibrary) give way to: the saved files', or the Material
 /// Designer's as it edits them. A scene's settings name one (SceneSettings.materials): "" the saved ones (loaded once,
 /// at launch), "builtin" none, otherwise a key of the registry the editor fills.
-struct MaterialCatalog: Equatable {
+package struct MaterialCatalog: Equatable {
     var graphs: [String: MaterialGraph] = [:]
 
     static let launch = MaterialStore.load()
@@ -83,7 +83,7 @@ struct MaterialCatalog: Equatable {
     private static let registry = CatalogRegistry<MaterialCatalog>()
 
     /// A key for `catalog` (its content's), kept among the last 64.
-    static func register(_ catalog: MaterialCatalog) -> String {
+    package static func register(_ catalog: MaterialCatalog) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         let data = (try? encoder.encode(catalog.graphs.keys.sorted().map { catalog.graphs[$0]! })) ?? Data()
@@ -94,11 +94,16 @@ struct MaterialCatalog: Equatable {
         return key
     }
 
-    static func resolve(_ key: String) -> MaterialCatalog {
+    package static func resolve(_ key: String) -> MaterialCatalog {
         switch key {
         case "": return launch
         case "builtin": return MaterialCatalog()
         default: return registry.registered(key) ?? launch
         }
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(graphs: [String: MaterialGraph] = [:]) {
+        self.graphs = graphs
     }
 }

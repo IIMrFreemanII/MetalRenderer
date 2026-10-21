@@ -10,7 +10,7 @@ final class TerrainEditorPanel: NSObject, NSWindowDelegate {
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
-    init(host: TerrainHost) {
+    package init(host: TerrainHost) {
         model = TerrainModel(host: host)
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1320, height: 820),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)

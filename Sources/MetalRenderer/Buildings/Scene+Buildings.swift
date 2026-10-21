@@ -122,7 +122,7 @@ extension Scene {
     }
 
     /// The workshop's building: its spec (with its own plan's edits), and which building it is.
-    static func workshopSpec(_ p: BuildingSceneSettings, catalog: BuildingCatalog) -> (spec: BuildingSpec, ref: LotRef) {
+    package static func workshopSpec(_ p: BuildingSceneSettings, catalog: BuildingCatalog) -> (spec: BuildingSpec, ref: LotRef) {
         var spec = BuildingSpec(size: p.lot)
         spec.edges = p.sides.edges
         spec.def = catalog.style(id: p.style) ?? BuiltInBuildings.residential
@@ -163,12 +163,19 @@ extension Scene {
 }
 
 /// Where a scene's buildings can be walked in: a building and where it stands (its lot's frame into the scene's).
-struct WalkArea {
+package struct WalkArea {
     var rect: CityPlan.Rect
     var building: Building
     var at: float4x4
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(rect: CityPlan.Rect, building: Building, at: float4x4) {
+        self.rect = rect
+        self.building = building
+        self.at = at
+    }
 }
 
 extension float4x4 {
-    static let identity = matrix_identity_float4x4
+    package static let identity = matrix_identity_float4x4
 }

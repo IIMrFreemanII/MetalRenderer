@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import ImageIO
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Scanned materials from downloads (ScanMaterial): which file is which map, the name a download suggests, an import

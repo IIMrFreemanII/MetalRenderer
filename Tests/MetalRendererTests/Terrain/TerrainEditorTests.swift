@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Terrain Editor's model (with a stand-in for the renderer) and its window, drawn offscreen.

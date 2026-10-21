@@ -11,7 +11,7 @@ import simd
 /// forward, out from the crown), leaning into its fall as they lengthen and kept off the head (and the neck and
 /// shoulders) as they go; every drawn strand follows its nearest guide, drawn toward it toward the tip (clumps), curled
 /// and frizzed by its own hash. Crowds draw none of it: their hair is a cap (CharacterHairCap).
-enum CharacterHair {
+package enum CharacterHair {
     /// How a style's hair lies at its root: away from a parting at x, combed back, forward, or out from the crown.
     enum Flow: Equatable { case part(Float), back, forward, crown }
 
@@ -102,7 +102,7 @@ enum CharacterHair {
 
     /// The hair's colour (the colour it is seen to have, Hair.metal fits its pigment to it): dark (eumelanin) to
     /// platinum, reddened by pheomelanin, greyed by age and `grey`.
-    static func colour(_ look: CharacterDNA.Look, age: Float) -> SIMD3<Float> {
+    package static func colour(_ look: CharacterDNA.Look, age: Float) -> SIMD3<Float> {
         let platinum = SIMD3<Float>(0.62, 0.52, 0.36), black = SIMD3<Float>(0.012, 0.009, 0.007)
         var c = platinum * pow(black / platinum, SIMD3(repeating: pow(look.hairMelanin, 0.8)))
         let ginger = SIMD3<Float>(0.42, 0.12, 0.035) * (1.2 - look.hairMelanin)
@@ -200,7 +200,7 @@ private struct Groomer {
     let local: [SIMD3<Float>]
     let seed: UInt64
 
-    init(_ base: CharacterBase, seed: UInt64) {
+    package init(_ base: CharacterBase, seed: UInt64) {
         self.base = base
         let sculpt = FaceSculpt(base.character) ?? FaceSculpt()
         self.sculpt = sculpt
@@ -634,7 +634,7 @@ private struct SpatialGrid {
     let cell: Float
     var cells: [SIMD3<Int32>: [Int]] = [:]
 
-    init(_ points: [SIMD3<Float>], cell: Float) {
+    package init(_ points: [SIMD3<Float>], cell: Float) {
         self.points = points
         self.cell = cell
         for (i, p) in points.enumerated() { cells[key(p), default: []].append(i) }

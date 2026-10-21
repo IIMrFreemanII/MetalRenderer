@@ -1,6 +1,7 @@
 import XCTest
 import AppKit
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The building editor without its UI (BuildingEditorModel, BuildingParams, BuildingMutate), the styles as data

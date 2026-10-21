@@ -5,35 +5,35 @@ import simd
 /// The Material Painter's brush: how big, hard and strong its dabs are, how far apart along a stroke, what tip they
 /// have (round, or a stamp: built-in, or a Material Designer graph's), how they jitter, what a pen's pressure does,
 /// and what it paints with (its values, or a stencil's colour). `PaintStrokeDabs` turns a stroke's points into dabs.
-struct PaintBrush: Codable, Equatable {
-    var size: Float = 40               // radius, in the view's points
+package struct PaintBrush: Codable, Equatable {
+    package var size: Float = 40               // radius, in the view's points
     var hardness: Float = 0.6          // 0: soft all the way in, 1: a hard edge
     var opacity: Float = 1             // the most a stroke lays down
-    var flow: Float = 0.6              // what each dab adds of what is left to that
-    var spacing: Float = 0.15          // between dabs, a share of the diameter
-    var stamp = -1                     // PaintStamps' layer; -1 round
+    package var flow: Float = 0.6              // what each dab adds of what is left to that
+    package var spacing: Float = 0.15          // between dabs, a share of the diameter
+    package var stamp = -1                     // PaintStamps' layer; -1 round
     var angle: Float = 0               // the stamp's turn (degrees)
     var followStroke = false           // ...along the stroke's direction
-    var angleJitter: Float = 0         // degrees either way
+    package var angleJitter: Float = 0         // degrees either way
     var sizeJitter: Float = 0          // a share of the size, less
-    var scatter: Float = 0             // dabs moved off the stroke by up to this share of the diameter
+    package var scatter: Float = 0             // dabs moved off the stroke by up to this share of the diameter
     var aspect: Float = 1              // the tip squashed (1 round)
     var pressureSize = true
     var pressureOpacity = false
-    var symmetry = Symmetry.none
-    var values = PaintValues()
-    var channels: Set<PaintChannel> = [.color, .roughness, .metallic]
-    var eraser = false
+    package var symmetry = Symmetry.none
+    package var values = PaintValues()
+    package var channels: Set<PaintChannel> = [.color, .roughness, .metallic]
+    package var eraser = false
     /// A stencil laid over the view: its colour is what is painted (and its alpha masks it).
     var stencil = Stencil()
 
-    enum Symmetry: Int, Codable, CaseIterable, Identifiable {
+    package enum Symmetry: Int, Codable, CaseIterable, Identifiable {
         case none, x, y, z
-        var id: Int { rawValue }
+        package var id: Int { rawValue }
         var title: String { self == .none ? "Off" : "\(self)".uppercased() }
     }
 
-    struct Stencil: Codable, Equatable {
+    package struct Stencil: Codable, Equatable {
         var enabled = false
         var image = ""                 // a file's path, or "graph:<name>" (its base colour)
         var offset = SIMD2<Float>(0, 0)   // the view's share
@@ -53,6 +53,29 @@ struct PaintBrush: Codable, Equatable {
             return h * r * t
         }
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(size: Float = 40, hardness: Float = 0.6, opacity: Float = 1, flow: Float = 0.6, spacing: Float = 0.15, stamp: Int = -1, angle: Float = 0, followStroke: Bool = false, angleJitter: Float = 0, sizeJitter: Float = 0, scatter: Float = 0, aspect: Float = 1, pressureSize: Bool = true, pressureOpacity: Bool = false, symmetry: Symmetry = Symmetry.none, values: PaintValues = PaintValues(), channels: Set<PaintChannel> = [.color, .roughness, .metallic], eraser: Bool = false, stencil: Stencil = Stencil()) {
+        self.size = size
+        self.hardness = hardness
+        self.opacity = opacity
+        self.flow = flow
+        self.spacing = spacing
+        self.stamp = stamp
+        self.angle = angle
+        self.followStroke = followStroke
+        self.angleJitter = angleJitter
+        self.sizeJitter = sizeJitter
+        self.scatter = scatter
+        self.aspect = aspect
+        self.pressureSize = pressureSize
+        self.pressureOpacity = pressureOpacity
+        self.symmetry = symmetry
+        self.values = values
+        self.channels = channels
+        self.eraser = eraser
+        self.stencil = stencil
+    }
 }
 
 /// A stroke's dabs: each point the pointer reaches (screen pixels, its pressure) gives the dabs between it and the
@@ -66,7 +89,7 @@ struct PaintStrokeDabs {
     private var rng: UInt64
     private var direction: Float = 0
 
-    init(brush: PaintBrush, scale: Float, seed: UInt64 = 0x9E37_79B9_7F4A_7C15) {
+    package init(brush: PaintBrush, scale: Float, seed: UInt64 = 0x9E37_79B9_7F4A_7C15) {
         self.brush = brush
         self.scale = scale
         rng = seed
@@ -128,7 +151,7 @@ final class PaintStamps {
     private(set) var texture: MTLTexture?
     private var version = 0, made = -1
 
-    init() { pixels = PaintStamps.builtIn.indices.map { PaintStamps.make($0) } }
+    package init() { pixels = PaintStamps.builtIn.indices.map { PaintStamps.make($0) } }
 
     /// A stamp from a picture (a graph's bake read back: its luminance), as the next layer; its index.
     @discardableResult

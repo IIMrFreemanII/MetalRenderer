@@ -1,9 +1,9 @@
 import Foundation
 
 /// Small seeded RNG for deterministic scene generation.
-struct SplitMix64 {
+package struct SplitMix64 {
     private var state: UInt64
-    init(seed: UInt64) { state = seed }
+    package init(seed: UInt64) { state = seed }
 
     mutating func nextUInt64() -> UInt64 {
         state &+= 0x9E37_79B9_7F4A_7C15
@@ -13,7 +13,7 @@ struct SplitMix64 {
         return z ^ (z >> 31)
     }
     /// Uniform in [0, 1).
-    mutating func next() -> Float { Float(nextUInt64() >> 40) / Float(1 << 24) }
-    mutating func range(_ lo: Float, _ hi: Float) -> Float { lo + (hi - lo) * next() }
-    mutating func int(_ n: Int) -> Int { Int(nextUInt64() % UInt64(n)) }
+    package mutating func next() -> Float { Float(nextUInt64() >> 40) / Float(1 << 24) }
+    package mutating func range(_ lo: Float, _ hi: Float) -> Float { lo + (hi - lo) * next() }
+    package mutating func int(_ n: Int) -> Int { Int(nextUInt64() % UInt64(n)) }
 }

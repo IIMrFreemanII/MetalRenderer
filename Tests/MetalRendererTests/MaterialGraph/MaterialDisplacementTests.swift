@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Displacement (MatSurface.displacement): meshes subdivided to a material's detail (MeshSubdivider), their vertices

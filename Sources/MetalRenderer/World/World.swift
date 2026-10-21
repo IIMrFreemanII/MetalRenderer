@@ -17,7 +17,7 @@ import simd
 ///            back into the hills beyond.
 ///   Forest   one candidate tree to a cell of a grid over the whole world, each from its cell's own random numbers;
 ///            wooded and open country alternate over half a kilometre; none in a city.
-struct World {
+package struct World {
     let seed: UInt64
     /// Trees to a hectare of full forest (the Forest scene's 2500 on its 320 m).
     var treeDensity: Float = 244
@@ -42,14 +42,14 @@ struct World {
     /// its cells' kinds, not a mesh of them). 9: water (World+Water.swift): the sea, rivers carved into the ground,
     /// lakes; sand on the shore; no city under the sea, no tree in the water.
     static let version = 9
-    static let tileSize: Float = 256
+    package static let tileSize: Float = 256
     static let cityCell = 4096.0
     /// A tile's levels of detail: 0 next to the viewer, 2 at the edge of what is seen.
     static let levels = 3
     /// The side of a ground cell at a level, metres.
     static func cellSize(_ level: Int) -> Float { level == 0 ? 1 : level == 1 ? 4 : 16 }
     /// Kerb to kerb, and from one block's corner to the next's: the roads between are 12 m.
-    static let blockSize = SIMD2<Float>(72, 56), blockPitch = SIMD2<Float>(84, 68)
+    package static let blockSize = SIMD2<Float>(72, 56), blockPitch = SIMD2<Float>(84, 68)
     static let roadWidth: Float = 12
     /// What the underside of a street lamp's head emits at night.
     static let lampEmission = SIMD3<Float>(1.0, 0.78, 0.5) * 140
@@ -64,7 +64,7 @@ struct World {
     /// every copy of the world of this seed.
     let water: WorldWater
 
-    init(seed: UInt64) {
+    package init(seed: UInt64) {
         self.seed = seed
         let s = UInt32(truncatingIfNeeded: seed &* 0x9E37_79B9 &+ 17)
         (broadSeed, rollingSeed, coverSeed, standSeed) = (s &+ 400, s, s &+ 500, s &+ 101)
@@ -98,18 +98,18 @@ struct World {
 
     // MARK: - Cities
 
-    struct City: Equatable {
+    package struct City: Equatable {
         var cell: SIMD2<Int>
-        var center: SIMD2<Double>       // a multiple of 16 m, so its streets lie on the ground's cells
-        var radius: Float               // of what is built
-        var level: Float                // its ground's height
+        package var center: SIMD2<Double>       // a multiple of 16 m, so its streets lie on the ground's cells
+        package var radius: Float               // of what is built
+        package var level: Float                // its ground's height
         var seed: UInt64
         /// Its roads to the cities of the cells east, west, south and north of its own: those of them that have one.
-        var highways: [Highway] = []
+        package var highways: [Highway] = []
     }
 
     /// The city of a 4 km cell, if it has one. It and the ground it levels stay 88 m inside the cell.
-    func city(cell: SIMD2<Int>) -> City? {
+    package func city(cell: SIMD2<Int>) -> City? {
         guard var city = site(cell: cell) else { return nil }
         for axis in 0..<2 {
             let next = axis == 0 ? SIMD2(1, 0) : SIMD2(0, 1)
@@ -133,7 +133,7 @@ struct World {
         SIMD2(Int((x / World.cityCell).rounded(.down)), Int((z / World.cityCell).rounded(.down)))
     }
 
-    func city(near x: Double, _ z: Double) -> City? { city(cell: World.cell(x, z)) }
+    package func city(near x: Double, _ z: Double) -> City? { city(cell: World.cell(x, z)) }
 
     /// 1 on a city's level ground, 0 where the hills are their own again.
     func cityMask(_ city: City?, _ x: Double, _ z: Double) -> Float {
@@ -170,7 +170,7 @@ struct World {
 
     /// The ground's height. `city`: the one of the place's 4 km cell (`city(near:)`), found once for many places.
     /// The hills, the rivers' beds carved into them (World+Water.swift), the city's level ground, the roads' beds.
-    func height(_ x: Double, _ z: Double, city: City?) -> Float {
+    package func height(_ x: Double, _ z: Double, city: City?) -> Float {
         let natural = water.carve(x, z, water.natural(x, z))
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
@@ -185,13 +185,13 @@ struct World {
         return h
     }
 
-    func height(_ x: Double, _ z: Double) -> Float { height(x, z, city: city(near: x, z)) }
+    package func height(_ x: Double, _ z: Double) -> Float { height(x, z, city: city(near: x, z)) }
 
     /// The ground's height as it is without the roads between cities: what a road is cut into or banked over.
-    func country(_ x: Double, _ z: Double) -> Float { height(x, z, city: site(cell: World.cell(x, z))) }
+    package func country(_ x: Double, _ z: Double) -> Float { height(x, z, city: site(cell: World.cell(x, z))) }
 
     /// 1 in the woods, 0 in open country.
-    func woods(_ x: Double, _ z: Double) -> Float { World.smoothstep(-0.12, 0.1, Terrain.fbm(x / 420, z / 420, octaves: 3, seed: coverSeed)) }
+    package func woods(_ x: Double, _ z: Double) -> Float { World.smoothstep(-0.12, 0.1, Terrain.fbm(x / 420, z / 420, octaves: 3, seed: coverSeed)) }
 
     /// What the ground is made of at a place: an index into `groundMaterials`. `up`: its normal's y. (A city's roads
     /// and blocks lie on it: on the fields that are all around the city.)
@@ -254,13 +254,13 @@ struct World {
     }
 
     /// The library's plants by species and age, as their indices: all the placing needs to know of it.
-    struct Flora {
+    package struct Flora {
         private var byAge: [[[Int]]]    // species, age, plants
         /// The species, where they grow.
-        let catalog: PlantCatalog
+        package let catalog: PlantCatalog
         let trees: Foliage.TreePicker
 
-        init(_ sets: [Foliage.SpeciesSet], catalog: PlantCatalog = .builtIn) {
+        package init(_ sets: [Foliage.SpeciesSet], catalog: PlantCatalog = .builtIn) {
             self.catalog = catalog
             trees = Foliage.TreePicker(catalog)
             let species = (sets.map(\.species.rawValue).max() ?? -1) + 1
@@ -271,7 +271,7 @@ struct World {
         }
 
         /// The species' plants of an age; the mature ones if it has none that young.
-        func plants(_ species: Foliage.Species, _ age: Foliage.Age) -> [Int] {
+        package func plants(_ species: Foliage.Species, _ age: Foliage.Age) -> [Int] {
             let some = byAge[species.rawValue][age.rawValue]
             return some.isEmpty ? byAge[species.rawValue][Foliage.Age.mature.rawValue] : some
         }
@@ -369,11 +369,11 @@ struct World {
     /// the same way: straight on at both ends, swinging over from the one's line to the other's between them. So it
     /// is a graph over its axis, one place across (`across`) for each place along; and it stays between its two
     /// cities, in their two cells, where no other road of theirs comes.
-    struct Highway: Equatable {
-        var axis: Int
+    package struct Highway: Equatable {
+        package var axis: Int
         /// Along the axis, where its curve begins and ends (`stub` beyond each city's last crossing); across it,
         /// where it is there: the cities' middles.
-        var u0: Double, u1: Double, v0: Double, v1: Double
+        package var u0: Double, u1: Double, v0: Double, v1: Double
         /// Its bed at each knot along its axis, from knot `first` (which is at `first * knot` metres) to beyond its
         /// end: the road's height there, and how wide the bank beside it is.
         var first = 0
@@ -388,13 +388,13 @@ struct World {
         /// Its first metres from a city's last crossing are a street's: straight, and on the city's level ground.
         /// It stays on that level for `level` metres more, then comes down (or up) to its own over `ease`, or over
         /// half its length.
-        static let stub: Float = 12, level = 32.0, ease = 700.0
+        package static let stub: Float = 12, level = 32.0, ease = 700.0
         /// Its height is given every `knot` metres along its axis, and straight between: the side of the coarsest
         /// ground's cells, so that the ground under it is the same planes at every level.
         static let knot = 16.0
 
         /// Where it is across its axis `u` along it, and how fast that changes.
-        func across(_ u: Double) -> (v: Double, slope: Double) {
+        package func across(_ u: Double) -> (v: Double, slope: Double) {
             let t = min(max((u - u0) / (u1 - u0), 0), 1)
             return (v0 + (v1 - v0) * t * t * t * (t * (6 * t - 15) + 10), (v1 - v0) / (u1 - u0) * 30 * t * t * (1 - t) * (1 - t))
         }
@@ -404,10 +404,10 @@ struct World {
             (Highway.width + (World.roadWidth - Highway.width) * (1 - World.smoothstep(0, 24, Float(min(u - u0, u1 - u))))) / 2
         }
 
-        func place(_ u: Double, _ v: Double) -> SIMD2<Double> { axis == 0 ? SIMD2(u, v) : SIMD2(v, u) }
+        package func place(_ u: Double, _ v: Double) -> SIMD2<Double> { axis == 0 ? SIMD2(u, v) : SIMD2(v, u) }
 
         /// Its height `u` along its axis, and how wide its bank is there: straight between its knots.
-        func bed(_ u: Double) -> (level: Float, bank: Float) {
+        package func bed(_ u: Double) -> (level: Float, bank: Float) {
             let at = u / Highway.knot, k = at.rounded(.down), i = min(max(Int(k) - first, 0), knots.count - 2)
             let a = knots[i], b = knots[i + 1], both = a + (b - a) * Float(min(max(at - Double(first + i), 0), 1))
             return (both.x, both.y)
@@ -499,9 +499,9 @@ struct World {
     // MARK: - City blocks
 
     /// A block of a city: its plan (CityPlan, in metres from the city's middle) and how far out it is.
-    struct Block {
+    package struct Block {
         var index: SIMD2<Int>
-        var plan: CityPlan
+        package var plan: CityPlan
         /// From the square's corner to the city's middle: add it to the plan's (x, z).
         var origin: SIMD2<Float>
     }
@@ -517,7 +517,7 @@ struct World {
     }
 
     /// Whether block (i, j) of the city's grid is built: only where all of it is inside the city's radius.
-    func built(_ city: City, _ i: Int, _ j: Int) -> Bool {
+    package func built(_ city: City, _ i: Int, _ j: Int) -> Bool {
         let corner = SIMD2(Float(i), Float(j)) * World.blockPitch + (World.blockPitch - World.blockSize) / 2
         return length(simd_max(abs(corner), abs(corner + World.blockSize))) < city.radius
     }
@@ -554,7 +554,7 @@ struct World {
 
     /// The blocks whose middle is in the square from (x0, z0), `side` across, in the order of their rows.
     /// A block's lot's name (LotRef): the city's cell, the block's place in its grid, the lot's in the block.
-    func lotRef(_ city: City, _ block: Block, _ k: Int) -> LotRef {
+    package func lotRef(_ city: City, _ block: Block, _ k: Int) -> LotRef {
         let lot = block.plan.lots[k]
         return LotRef(context: "world \(seed) city \(city.cell.x),\(city.cell.y) block \(block.index.x),\(block.index.y)", lot: k, seed: lot.seed,
                       size: lot.size)
@@ -572,7 +572,7 @@ struct World {
         return city.center + SIMD2(Double(middle.x), Double(middle.y))
     }
 
-    func blocks(x0: Double, z0: Double, side: Double) -> (city: City, blocks: [Block])? {
+    package func blocks(x0: Double, z0: Double, side: Double) -> (city: City, blocks: [Block])? {
         guard let city = city(near: x0 + side / 2, z0 + side / 2) else { return nil }
         let pitch = World.blockPitch, size = World.blockSize
         let lo = SIMD2(x0 - city.center.x, z0 - city.center.y)
@@ -657,7 +657,7 @@ struct World {
 /// The sun goes round as it does at a latitude of 48 degrees in late spring: up for six tenths of the day, 60 degrees
 /// high at noon, 24 under the horizon at midnight; it rises in the east (+x) and passes over -z. The moon is across
 /// the sky from it, up from before the sun sets until after it rises, 37 degrees high at midnight.
-struct Heavens: Equatable {
+package struct Heavens: Equatable {
     /// Toward the sun and toward the moon (unit), wherever they are.
     var sun: SIMD3<Float>, moon: SIMD3<Float>
     /// How much of the sun's disc is over the horizon, and of the moon's.
@@ -686,7 +686,7 @@ struct Heavens: Equatable {
 
     /// The world's day in seconds, and the part of it that has gone by at time 0 (midnight is 0, noon 0.5): the
     /// clock starts in the middle of the morning.
-    static let day: Float = 240, start: Float = 0.4
+    package static let day: Float = 240, start: Float = 0.4
     /// The moon's irradiance above the atmosphere, in the renderer's units: about a twentieth of the sun's (the eye
     /// has adapted), and bluer.
     static let moonIrradiance = SIMD3<Float>(0.1, 0.14, 0.26)
@@ -703,7 +703,7 @@ struct Heavens: Equatable {
         return p - p.rounded(.down)
     }
 
-    init(at time: Float) {
+    package init(at time: Float) {
         let latitude = Float(48) * .pi / 180
         /// A body `declination` north of the sky's equator, `hour` past its highest.
         func body(_ hour: Float, _ declination: Float) -> SIMD3<Float> {

@@ -307,7 +307,7 @@ final class Metal3Frame: FrameEncoder {
     private var openPass = ""
     private var openConcurrent = false
 
-    init?(queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
+    package init?(queue: MTLCommandQueue, profile: GPUProfiler.Frame?, split: Bool, overlap: Bool) {
         guard let cmd = queue.makeCommandBuffer() else { return nil }
         (self.cmd, self.queue, self.profile, self.split, self.overlap) = (cmd, queue, profile, split, overlap)
     }

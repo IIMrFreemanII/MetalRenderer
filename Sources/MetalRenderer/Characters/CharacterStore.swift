@@ -3,8 +3,8 @@ import Foundation
 /// The characters scenes are made with: the built-in ones (BuiltInCharacters), any of them replaced by a saved file
 /// of its id, then the saved ones of other ids. Kept by fingerprint in a registry, as the plants' and buildings'
 /// catalogs are: a scene's settings carry only the key (SceneSettings.characterCatalog).
-struct CharacterCatalog: Equatable, Codable {
-    var characters: [CharacterDNA]
+package struct CharacterCatalog: Equatable, Codable {
+    package var characters: [CharacterDNA]
 
     static let builtIn = CharacterCatalog(characters: BuiltInCharacters.all)
 
@@ -64,7 +64,7 @@ struct CharacterCatalog: Equatable, Codable {
     }
 
     @discardableResult
-    static func register(_ catalog: CharacterCatalog) -> String {
+    package static func register(_ catalog: CharacterCatalog) -> String {
         let key = catalog.fingerprint
         registry.register(catalog, key: key)
         return key
@@ -74,7 +74,7 @@ struct CharacterCatalog: Equatable, Codable {
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in characters, otherwise a
     /// registered one (the launch one if it is no longer kept).
-    static func resolve(_ key: String) -> CharacterCatalog {
+    package static func resolve(_ key: String) -> CharacterCatalog {
         switch key {
         case "": return launch
         case "builtin": return .builtIn
@@ -83,6 +83,11 @@ struct CharacterCatalog: Equatable, Codable {
             print("Characters: catalog \(key) is not kept; the saved one instead")
             return launch
         }
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(characters: [CharacterDNA]) {
+        self.characters = characters
     }
 }
 
@@ -159,8 +164,8 @@ enum CharacterStore {
 }
 
 /// The characters that come with the app: a few people far enough apart to show what the sliders reach.
-enum BuiltInCharacters {
-    static let all: [CharacterDNA] = [
+package enum BuiltInCharacters {
+    package static let all: [CharacterDNA] = [
         make("man", "Man", sex: 0, age: 32, hair: "short", hairColour: 0.62),
         make("woman", "Woman", sex: 1, age: 30, melanin: 0.25, hair: "bob", hairColour: 0.45) { $0.look.lipstick = 0.2; $0.hair.brows = 0.45 },
         make("athlete", "Athlete", sex: 0, age: 26, weight: -0.3, muscle: 0.9, height: 0.4, melanin: 0.55, hair: "buzz", hairColour: 0.95),

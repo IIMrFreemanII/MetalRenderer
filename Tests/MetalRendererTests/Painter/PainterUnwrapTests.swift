@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The Material Painter's UV check and unwrap (Painter/UVCheck, UVUnwrap, UVPack): every texel at one place of the

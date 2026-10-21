@@ -23,7 +23,7 @@ import simd
 ///
 /// Its meshes are chunks: a chunk's triangles name their materials by a byte, an index into the chunk's own list
 /// (a city tile has more than 256 materials: it is several chunks). Window glass is in chunks of its own.
-struct WorldTile {
+package struct WorldTile {
     struct Chunk {
         var positions: Stored<SIMD3<Float>>
         var normals: Stored<SIMD3<Float>>
@@ -72,7 +72,7 @@ struct WorldTile {
     var emissive: Stored<GPUEmissiveTriangle> = .made([])
 
     /// From the world's origin to the tile's corner.
-    static func origin(_ x: Int, _ z: Int) -> SIMD2<Double> { SIMD2(Double(x), Double(z)) * Double(World.tileSize) }
+    package static func origin(_ x: Int, _ z: Int) -> SIMD2<Double> { SIMD2(Double(x), Double(z)) * Double(World.tileSize) }
     var triangles: Int { chunks.reduce(0) { $0 + $1.triangles } }
 
     // MARK: - Putting meshes together
@@ -84,7 +84,7 @@ struct WorldTile {
         private var open = Draft()
         private var slots: [Data: UInt8] = [:]
 
-        init(glass: Bool) { self.glass = glass }
+        package init(glass: Bool) { self.glass = glass }
 
         /// The open chunk's index for `material`, starting another chunk if this one's list is full.
         mutating func slot(_ material: GPUMaterial) -> UInt8 {
@@ -581,13 +581,13 @@ struct WorldTile {
         try writer.write(to: url, key: key)
     }
 
-    init(x: Int, z: Int, level: Int) {
+    package init(x: Int, z: Int, level: Int) {
         (self.x, self.z, self.level) = (x, z, level)
     }
 
     /// The tile in the file at `url`, if it is there, whole, and was written for `key`. Its chunks' arrays are the
     /// file's, mapped. (Files written for the custom tracer, which is gone, have trees too: nothing reads them.)
-    init?(url: URL, key: String, x: Int, z: Int, level: Int) {
+    package init?(url: URL, key: String, x: Int, z: Int, level: Int) {
         guard let file = SectionFile(url: url, key: key),
               let records: [ChunkRecord] = file.array(Section.chunks), let positions = file.mapped(Section.positions, of: SIMD3<Float>.self),
               let normals = file.mapped(Section.normals, of: SIMD3<Float>.self), let uvs = file.mapped(Section.uvs, of: SIMD2<Float>.self),

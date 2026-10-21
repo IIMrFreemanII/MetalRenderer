@@ -50,7 +50,7 @@ final class TerrainModel: ObservableObject {
     private var dragStart: TerrainDocument?
     private var dragName = ""
 
-    init(host: TerrainHost) {
+    package init(host: TerrainHost) {
         self.host = host
         undo.groupsByEvent = false
         host.observeTerrain { [weak self] s in self?.received(s) }

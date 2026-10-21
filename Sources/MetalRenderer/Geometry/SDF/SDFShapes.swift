@@ -8,8 +8,8 @@ import simd
 ///
 /// A node's transform is a rotation, a translation and a uniform scale only: the distance stays a distance (a
 /// non-uniform scale would make it neither exact nor a bound). The instance's transform may be anything.
-struct SDFShape {
-    enum Primitive {
+package struct SDFShape {
+    package enum Primitive {
         case sphere(radius: Float)
         /// `rounding`: its edges' radius, within the half extents.
         case box(halfExtents: SIMD3<Float>, rounding: Float = 0)
@@ -28,12 +28,12 @@ struct SDFShape {
         case cell(planes: [SIMD4<Float>], lo: SIMD3<Float>, hi: SIMD3<Float>)
     }
 
-    enum Op: UInt32 {
+    package enum Op: UInt32 {
         case union = 0, subtract = 1, intersect = 2
     }
 
-    struct Node {
-        var primitive: Primitive
+    package struct Node {
+        package var primitive: Primitive
         var op: Op = .union
         /// The blend's radius (0 = a sharp join): how far from where they meet the two surfaces flow into each other.
         var smooth: Float = 0
@@ -44,7 +44,7 @@ struct SDFShape {
         /// instance's material + this.
         var material = 0
 
-        init(_ primitive: Primitive, _ op: Op = .union, smooth: Float = 0, at position: SIMD3<Float> = .zero,
+        package init(_ primitive: Primitive, _ op: Op = .union, smooth: Float = 0, at position: SIMD3<Float> = .zero,
              rotation: simd_quatf = simd_quatf(ix: 0, iy: 0, iz: 0, r: 1), scale: Float = 1, material: Int = 0) {
             self.primitive = primitive
             self.op = op
@@ -66,7 +66,7 @@ struct SDFShape {
     /// The most nodes a shape may have (each costs every step of every ray through its box).
     static let maxNodes = 32
 
-    var nodes: [Node]
+    package var nodes: [Node]
 
     /// What it is, for the outline: its first primitive ("box"), or a blend of it and others.
     var kindName: String {
@@ -85,11 +85,11 @@ struct SDFShape {
         return nodes.count > 1 ? "\(name) blend" : name
     }
 
-    init(_ nodes: [Node]) {
+    package init(_ nodes: [Node]) {
         precondition(!nodes.isEmpty && nodes.count <= SDFShape.maxNodes, "an SDF shape has 1...\(SDFShape.maxNodes) nodes")
         self.nodes = nodes
     }
-    init(_ primitive: Primitive, material: Int = 0) { self.init([Node(primitive, material: material)]) }
+    package init(_ primitive: Primitive, material: Int = 0) { self.init([Node(primitive, material: material)]) }
 
     /// It has blends or baked grids: their distances are only about right, so the march steps short of them.
     var stepScale: Float {
@@ -106,7 +106,7 @@ struct SDFShape {
 
     /// The distance from `p` (shape space) to the shape, negative inside, and the material offset of the surface
     /// nearest there. `volumes`: the scene's baked grids.
-    func distance(_ p: SIMD3<Float>, volumes: [SDFVolume] = []) -> (d: Float, material: Int) {
+    package func distance(_ p: SIMD3<Float>, volumes: [SDFVolume] = []) -> (d: Float, material: Int) {
         var d = Float.infinity, material = 0
         for (i, node) in nodes.enumerated() {
             let b = node.scale * SDFShape.primitive(node.primitive, node.local(p), volumes: volumes)
@@ -166,7 +166,7 @@ struct SDFShape {
     }
 
     /// The field's gradient at `p` (central differences, step `h`): the outward normal there, unnormalised.
-    func gradient(_ p: SIMD3<Float>, h: Float = 1e-3, volumes: [SDFVolume] = []) -> SIMD3<Float> {
+    package func gradient(_ p: SIMD3<Float>, h: Float = 1e-3, volumes: [SDFVolume] = []) -> SIMD3<Float> {
         func f(_ q: SIMD3<Float>) -> Float { distance(q, volumes: volumes).d }
         return SIMD3(f(p + SIMD3(h, 0, 0)) - f(p - SIMD3(h, 0, 0)),
                      f(p + SIMD3(0, h, 0)) - f(p - SIMD3(0, h, 0)),
@@ -193,7 +193,7 @@ struct SDFShape {
 
     /// A box the whole shape is inside (shape space), with a little room: a union's by both its terms' (and the
     /// blend, which reaches k/4 past them), a cut's by what is cut, an intersection's by the overlap.
-    func bounds(volumes: [SDFVolume] = []) -> AABB {
+    package func bounds(volumes: [SDFVolume] = []) -> AABB {
         var box = AABB()
         for (i, node) in nodes.enumerated() {
             let b = SDFShape.primitiveBounds(node.primitive, volumes: volumes).transformed(node.transform)
@@ -256,7 +256,7 @@ struct SDFShape {
     /// vertex moved onto the surface and then `push` x a cell out along the normal, so that for push > 0 the triangles
     /// lie just outside the true surface (an emissive shape's light: a shadow ray to a point on them never meets the
     /// shape first). `materials`: per triangle, the material offset there.
-    func triangles(cells: Int = 48, push: Float = 0.15, volumes: [SDFVolume] = [])
+    package func triangles(cells: Int = 48, push: Float = 0.15, volumes: [SDFVolume] = [])
         -> (positions: [SIMD3<Float>], indices: [UInt32], materials: [Int]) {
         let box = bounds(volumes: volumes)
         guard !box.isEmpty else { return ([], [], []) }

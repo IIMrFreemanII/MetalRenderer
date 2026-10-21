@@ -9,9 +9,9 @@ import simd
 ///
 /// A tile owns its samples i in tx * T ..< (tx + 1) * T (and the same along j): a sample on a tile's side is the
 /// next tile's, so no sample is kept twice.
-struct TerrainGrid: Codable, Equatable {
+package struct TerrainGrid: Codable, Equatable {
     var cell: Float
-    var origin: SIMD2<Double>
+    package var origin: SIMD2<Double>
     var tileCells = 256
     var sectorCells = 64
     var lo: SIMD2<Int>? = nil
@@ -20,7 +20,7 @@ struct TerrainGrid: Codable, Equatable {
     var isFinite: Bool { lo != nil && hi != nil }
 
     /// A square of `size` metres centred on `center`, `cells` to a side.
-    static func square(size: Float, cells: Int, center: SIMD2<Double> = .zero) -> TerrainGrid {
+    package static func square(size: Float, cells: Int, center: SIMD2<Double> = .zero) -> TerrainGrid {
         TerrainGrid(cell: size / Float(cells), origin: center - SIMD2(repeating: Double(size) / 2), lo: SIMD2(0, 0), hi: SIMD2(cells, cells))
     }
 
@@ -52,7 +52,7 @@ struct TerrainGrid: Codable, Equatable {
     }
 
     /// The tiles that hold any of the terrain's samples (nil: it has no edge).
-    var tiles: [SIMD2<Int>]? {
+    package var tiles: [SIMD2<Int>]? {
         guard let lo, let hi else { return nil }
         let a = tile(lo.x, lo.y), b = tile(hi.x, hi.y)
         var out: [SIMD2<Int>] = []
@@ -61,7 +61,7 @@ struct TerrainGrid: Codable, Equatable {
     }
 
     /// The tiles any sample of the rectangle of samples `a`...`b` is in.
-    func tiles(from a: SIMD2<Int>, to b: SIMD2<Int>) -> [SIMD2<Int>] {
+    package func tiles(from a: SIMD2<Int>, to b: SIMD2<Int>) -> [SIMD2<Int>] {
         let ta = tile(a.x, a.y), tb = tile(b.x, b.y)
         guard ta.x <= tb.x, ta.y <= tb.y else { return [] }
         var out: [SIMD2<Int>] = []
@@ -76,7 +76,7 @@ struct TerrainGrid: Codable, Equatable {
 /// A piece of ground a scene meshes as one: `cells` cells (each `step` samples across) from sample `first`, inside
 /// tile `tile` at level of detail `level` (`step` = 4^level: the open world's 1, 4 and 16 m cells at a metre a sample).
 /// At level 0 a tile is cut into sectors of `sectorCells`; a coarser tile is one sector.
-struct TerrainSector: Hashable {
+package struct TerrainSector: Hashable {
     var tile: SIMD2<Int>
     var index: SIMD2<Int>           // its place among its tile's sectors
     var level: Int
@@ -109,7 +109,7 @@ struct TerrainSector: Hashable {
     var last: SIMD2<Int> { first &+ cells &* step }
 
     /// The sectors of a tile at a level, cut to the terrain's samples. Empty if the tile has none.
-    static func sectors(of tile: SIMD2<Int>, level: Int, grid: TerrainGrid) -> [TerrainSector] {
+    package static func sectors(of tile: SIMD2<Int>, level: Int, grid: TerrainGrid) -> [TerrainSector] {
         let step = level == 0 ? 1 : level == 1 ? 4 : 16
         let span = min(grid.sectorCells * step, grid.tileCells)   // samples a sector covers
         var lo = grid.firstSample(tile), hi = lo &+ grid.tileCells

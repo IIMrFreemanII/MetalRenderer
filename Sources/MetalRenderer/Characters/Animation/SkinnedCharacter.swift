@@ -4,11 +4,11 @@ import simd
 /// A character that deforms with a skeleton: its mesh in the bind pose, each vertex's joints and weights, the
 /// skeleton, and the animation clips, already retargeted to this skeleton. Metres, Y up, facing +Z.
 /// The crowd skins it on the GPU (Crowd, Shaders/Crowd.metal); `palette` and `skin` are the same math on the CPU.
-struct SkinnedCharacter: Equatable {
+package struct SkinnedCharacter: Equatable {
     /// A looping animation: every joint's rotation in its parent's space and the root's translation, at `rate` keys
     /// per second. The last key repeats the first, so a loop is `keyCount - 1` keys long.
-    struct Clip: Equatable {
-        var name: String
+    package struct Clip: Equatable {
+        package var name: String
         var keyCount: Int
         var rate: Float
         var rotations: [SIMD4<Float>]      // keyCount x joints, quaternions (xyzw)
@@ -20,21 +20,21 @@ struct SkinnedCharacter: Equatable {
     }
 
     /// The mesh at one level of detail: bind-pose vertices, triangles, and each vertex's joints and weights.
-    struct Level: Equatable {
-        var positions: [SIMD3<Float>]
-        var normals: [SIMD3<Float>]
-        var uvs: [SIMD2<Float>]
-        var indices: [UInt32]
-        var skin: [GPUSkinVertex]
+    package struct Level: Equatable {
+        package var positions: [SIMD3<Float>]
+        package var normals: [SIMD3<Float>]
+        package var uvs: [SIMD2<Float>]
+        package var indices: [UInt32]
+        package var skin: [GPUSkinVertex]
         /// Each vertex's at full detail (`coarser`'s levels keep some of its vertices): a generated character's levels
         /// are gathered from its full mesh through it (CharacterBuilder).
         var source: [UInt32] = []
         /// Each triangle's material, as an offset from its instance's (Scene.addMesh); empty: one material.
         var materials: [UInt8] = []
-        var triangleCount: Int { indices.count / 3 }
+        package var triangleCount: Int { indices.count / 3 }
     }
 
-    var name: String
+    package var name: String
     var positions: [SIMD3<Float>]      // the mesh at full detail (level 0)
     var normals: [SIMD3<Float>]
     var uvs: [SIMD2<Float>]
@@ -47,16 +47,16 @@ struct SkinnedCharacter: Equatable {
     var coarser: [Level] = []
     var joints: [GPUJoint]             // parents first
     var jointNames: [String]
-    var color: SIMD3<Float>            // its largest mesh's diffuse colour
+    package var color: SIMD3<Float>            // its largest mesh's diffuse colour
     /// Bounds of every pose of every clip (the joints' positions, widened by how far a vertex is from its joints).
     var boundsMin: SIMD3<Float>
     var boundsMax: SIMD3<Float>
-    var clips: [Clip]
+    package var clips: [Clip]
 
     var triangleCount: Int { indices.count / 3 }
     func clip(named name: String) -> Int? { clips.firstIndex { $0.name == name } }
     /// Level `i` of detail (0 = full), or the coarsest there is.
-    func level(_ i: Int) -> Level {
+    package func level(_ i: Int) -> Level {
         i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin, materials: materials)
                                   : coarser[min(i, coarser.count) - 1]
     }
@@ -821,8 +821,8 @@ private extension SIMD4 where Scalar == Double {
 /// The characters in `Assets/Characters` (each `.fbx` there) with the clips in `Assets/Characters/Animations`, and
 /// the Mixamo clips a run asks for (MixamoLibrary). Read from the FBX files once, then from one cache file per set
 /// of files that holds everything the crowd needs.
-struct CharacterLibrary {
-    var characters: [SkinnedCharacter] = []
+package struct CharacterLibrary {
+    package var characters: [SkinnedCharacter] = []
 
     static var directory: URL { Scene.assetsDirectory.appendingPathComponent("Characters") }
 
@@ -834,7 +834,7 @@ struct CharacterLibrary {
 
     /// The library of `directory`; empty (with a message) if it has no characters or they can't be read.
     /// `cache: false` reads the FBX files and leaves the cache file alone.
-    static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true) -> CharacterLibrary {
+    package static func load(_ directory: URL = CharacterLibrary.directory, cache: Bool = true) -> CharacterLibrary {
         let characterFiles = fbxFiles(directory)
         var clipFiles = fbxFiles(directory.appendingPathComponent("Animations"))
         clipFiles += MixamoLibrary.requested(have: Set(clipFiles.map(MixamoLibrary.clipName)))
@@ -985,6 +985,11 @@ struct CharacterLibrary {
         }
         return library
     }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(characters: [SkinnedCharacter] = []) {
+        self.characters = characters
+    }
 }
 
 /// Values and arrays of plain values, back to back (a cache file's contents).
@@ -1004,7 +1009,7 @@ struct BlobWriter {
 struct BlobReader {
     private let data: Data
     private var offset = 0
-    init(_ data: Data) { self.data = data }
+    package init(_ data: Data) { self.data = data }
 
     mutating func get<T>(_ type: T.Type = T.self) throws -> T {
         let size = MemoryLayout<T>.size

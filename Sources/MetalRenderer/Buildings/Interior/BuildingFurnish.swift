@@ -29,10 +29,10 @@ extension Interior {
         var room: Int
     }
     /// A loose piece of furniture (a chair, a box): its own instance, in the storey's frame (its floor at y = 0).
-    struct Prop {
-        var item: FurnitureItem
-        var frame: float4x4
-        var storey: Int
+    package struct Prop {
+        package var item: FurnitureItem
+        package var frame: float4x4
+        package var storey: Int
         /// Its parts' materials, by role.
         var materials: [SurfaceMaterial]
     }
@@ -58,7 +58,7 @@ struct FurnishPalette {
     static let shade = SurfaceMaterial(color: [0.92, 0.88, 0.78])
     static let paper = SurfaceMaterial(color: [0.94, 0.94, 0.92])
 
-    init(_ finishes: InteriorBuilder.Finishes, style: BuildingStyle) {
+    package init(_ finishes: InteriorBuilder.Finishes, style: BuildingStyle) {
         wood = SurfaceMaterial(color: finishes.wood, roughness: 0.5, specular: true)
         woodDark = SurfaceMaterial(color: finishes.wood * 0.55, roughness: 0.5, specular: true)
         fabrics = style.def.interior.fabrics.isEmpty ? [[0.4, 0.4, 0.42]] : style.def.interior.fabrics
@@ -132,7 +132,7 @@ struct Furnisher {
         var outer: Bool
     }
 
-    init(floor: FloorPlan, plan: BuildingPlan, openings: [Building.WallOpening], palette: FurnishPalette, style: BuildingStyle, seed: UInt64) {
+    package init(floor: FloorPlan, plan: BuildingPlan, openings: [Building.WallOpening], palette: FurnishPalette, style: BuildingStyle, seed: UInt64) {
         self.floor = floor
         self.plan = plan
         self.openings = openings

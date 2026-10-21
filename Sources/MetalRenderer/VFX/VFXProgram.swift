@@ -9,9 +9,10 @@ import simd
 /// a value reads it from the descriptor as the fixed code does, so editing it is a descriptor's rewrite. What only
 /// generated code has (an operator's inputs, a curve's keys, a Force's value) is in `params`, a float4 a value: the
 /// code reads them from the buffer, never as literals, so a value's edit needs no compile (`slots`).
-final class VFXProgram {
-    struct Hooks: OptionSet {
-        let rawValue: UInt32
+package final class VFXProgram {
+    package struct Hooks: OptionSet {
+        package let rawValue: UInt32
+        package init(rawValue: UInt32) { self.rawValue = rawValue }
         static let spawn = Hooks(rawValue: 1)    // MSL VFX_SPAWN: its newborns
         static let step = Hooks(rawValue: 2)     // VFX_STEP: its steps
         static let output = Hooks(rawValue: 4)   // VFX_OUTPUT: its size and colour in the pose
@@ -32,7 +33,7 @@ final class VFXProgram {
     let stepPlan: VFXStepPlan
     let outputPlan: VFXOutputPlan
 
-    init(number: Int, hooks: Hooks, metal: String, params: [SIMD4<Float>], slots: [String: Int], rate: Int?, attributes: Int,
+    package init(number: Int, hooks: Hooks, metal: String, params: [SIMD4<Float>], slots: [String: Int], rate: Int?, attributes: Int,
          initPlan: VFXInitPlan, stepPlan: VFXStepPlan, outputPlan: VFXOutputPlan) {
         self.number = number
         self.hooks = hooks
@@ -79,14 +80,14 @@ final class VFXEnv {
 }
 
 /// What Initialize does past the fixed emitter's birth, in its blocks' order.
-struct VFXInitPlan {
+package struct VFXInitPlan {
     enum Op { case lifetime, position, velocity, attribute(Int) }
     var ops: [(op: Op, expr: VFXExpr)] = []
 }
 
 /// What Update does past the fixed emitter's step: wired shares of its forces (nil: the descriptor's), forces,
 /// velocities, attributes, kills and triggers of its own.
-struct VFXStepPlan {
+package struct VFXStepPlan {
     var gravity: VFXExpr?
     var drag: VFXExpr?
     var wind: VFXExpr?
@@ -106,14 +107,14 @@ struct VFXStepPlan {
 }
 
 /// The size (before its random shrink) and colour (before emission) over its life, if not the fixed emitter's.
-struct VFXOutputPlan {
+package struct VFXOutputPlan {
     var size: VFXExpr?
     var color: VFXExpr?
 }
 
 struct VFXError: Error, CustomStringConvertible {
     let description: String
-    init(_ d: String) { description = d }
+    package init(_ d: String) { description = d }
 }
 
 // MARK: - Building a program
@@ -128,7 +129,7 @@ final class VFXProgramBuilder {
     private(set) var slots: [String: Int] = [:]
     private(set) var attributes = 0
 
-    init(effect: VFXEffect, emitter: VFXEmitter, fieldIndex: [String: Int]) {
+    package init(effect: VFXEffect, emitter: VFXEmitter, fieldIndex: [String: Int]) {
         self.effect = effect
         self.emitter = emitter
         self.fieldIndex = fieldIndex

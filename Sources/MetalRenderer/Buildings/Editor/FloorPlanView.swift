@@ -108,7 +108,7 @@ struct FloorPlanView: View {
     /// The plan's metres (x, z) to the view's points: the whole storey fitted, its front (+z) at the bottom.
     struct Mapping {
         var lo: SIMD2<Float>, scale: Float, offset: CGPoint
-        init(_ f: FloorPlan, size: CGSize) {
+        package init(_ f: FloorPlan, size: CGSize) {
             var lo = SIMD2<Float>(repeating: .infinity), hi = SIMD2<Float>(repeating: -.infinity)
             for r in f.usable { lo = simd_min(lo, r.lo); hi = simd_max(hi, r.hi) }
             if lo.x > hi.x { lo = [-5, -5]; hi = [5, 5] }

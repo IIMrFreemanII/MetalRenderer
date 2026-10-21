@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The water's data: its looks, the FFT ocean's spectrum, the water map, the terrain's rivers, the open world's

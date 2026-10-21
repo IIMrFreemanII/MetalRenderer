@@ -29,7 +29,7 @@ struct Lift {
     private var progress: Float = 0
     private var waited: Float = 0
 
-    init(shaft: CityPlan.Rect, floors: [Float], doorSide: SIMD2<Float>) {
+    package init(shaft: CityPlan.Rect, floors: [Float], doorSide: SIMD2<Float>) {
         self.shaft = shaft
         self.floors = floors
         self.doorSide = doorSide

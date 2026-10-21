@@ -72,7 +72,7 @@ final class VFXEditorModel: GraphCanvasModel {
     struct Search: Equatable {
         var at: SIMD2<Float>
         var context: (emitter: String, context: VFXContext)?
-        static func == (a: Search, b: Search) -> Bool {
+        package static func == (a: Search, b: Search) -> Bool {
             a.at == b.at && a.context?.emitter == b.context?.emitter && a.context?.context == b.context?.context
         }
     }
@@ -83,7 +83,7 @@ final class VFXEditorModel: GraphCanvasModel {
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
 
-    init(controller: VFXEditorHost, saved: VFXCatalog = VFXCatalog.launch, folder: URL? = VFXStore.folder, draft: Bool = true) {
+    package init(controller: VFXEditorHost, saved: VFXCatalog = VFXCatalog.launch, folder: URL? = VFXStore.folder, draft: Bool = true) {
         self.controller = controller
         self.saved = saved
         self.folder = folder
@@ -243,14 +243,9 @@ final class VFXEditorModel: GraphCanvasModel {
         if onStage, scene.stage.effects != [name] { showOnStage() }
     }
 
-    /// The scenes that place a built-in effect (the particles scene's five, the showcase's four), to preview it there.
-    var placingScene: SceneKind? {
-        switch selectedEffect {
-        case "campfire", "grinder", "magic", "rain", "rubble": return .particles
-        case "embers", "bubbles", "dust", "runes": return .showcase
-        default: return nil
-        }
-    }
+    /// The scene that places the selected built-in effect (SceneDefinition.effects: the particles scene's five, the
+    /// showcase's four), to preview it there.
+    var placingScene: SceneKind? { SceneRegistry.kinds.first { $0.definition.effects.contains(selectedEffect) } }
 
     /// To the scene that places the selected effect.
     func showInScene() {
@@ -695,7 +690,7 @@ extension VFXEffect {
         links.removeAll { gone.contains($0.from) || gone.contains($0.to) }
     }
 
-    mutating func setParam(_ owner: String, _ name: String, _ value: VFXParam) {
+    package mutating func setParam(_ owner: String, _ name: String, _ value: VFXParam) {
         if let k = nodes.firstIndex(where: { $0.id == owner }) {
             nodes[k].params[name] = value
             return

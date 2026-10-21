@@ -12,7 +12,7 @@ import simd
 /// vertex at fixed weights of the four corners of the tet it is in and of those its ring's vertices are in, averaged
 /// (a little outside the lattice's hull, the weights go past 0 and 1, and one tet's alone creases the surface where
 /// two tets bend apart); its normal across the triangles around it (`rings`).
-struct SoftModel {
+package struct SoftModel {
     var spacing: Float
     var points: [SIMD3<Float>] = []
     /// Each particle's share of the volume (a quarter of each of its tets').
@@ -41,7 +41,7 @@ struct SoftModel {
 
     /// `cells` cubes along the shape's longest side (and at least two thirds as many along its shortest); the drawn
     /// surface from `surfaceCells` along its longest.
-    init(_ shape: SDFShape, cells: Int, surfaceCells: Int = 20, volumes: [SDFVolume] = []) {
+    package init(_ shape: SDFShape, cells: Int, surfaceCells: Int = 20, volumes: [SDFVolume] = []) {
         let box = shape.bounds(volumes: volumes)
         let cells = Float(max(cells, 1))
         let s = min(simd_reduce_max(box.hi - box.lo) / cells, simd_reduce_min(box.hi - box.lo) / (cells * 2 / 3))
@@ -60,7 +60,7 @@ struct SoftModel {
     }
 
     /// The lattice alone, of `spacing` (no drawn surface yet: `embed`).
-    init(_ shape: SDFShape, spacing s: Float, volumes: [SDFVolume] = []) {
+    package init(_ shape: SDFShape, spacing s: Float, volumes: [SDFVolume] = []) {
         spacing = s
         let r = s * SoftModel.radiusShare
         func eroded(_ p: SIMD3<Float>) -> Float { shape.distance(p, volumes: volumes).d + r }
@@ -186,7 +186,7 @@ struct SoftModel {
 
     /// The tet `p` is most inside of among those within `reach` cubes of it (the nearest, if it is outside them all),
     /// and its weights there; nil if there are none.
-    func locate(_ p: SIMD3<Float>, reach: Int32 = 4) -> (tet: Int, bary: SIMD3<Float>)? {
+    package func locate(_ p: SIMD3<Float>, reach: Int32 = 4) -> (tet: Int, bary: SIMD3<Float>)? {
         if near.isEmpty {
             var cubes: [SIMD3<Int32>: [Int]] = [:]
             for (t, c) in tetCells.enumerated() { cubes[c, default: []].append(t) }

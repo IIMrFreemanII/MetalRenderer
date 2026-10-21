@@ -24,12 +24,12 @@ struct FaceSculpt {
     let origin: SIMD3<Float>
     let scale: Float
 
-    init(origin: SIMD3<Float> = FaceSculpt.reference, scale: Float = 1) {
+    package init(origin: SIMD3<Float> = FaceSculpt.reference, scale: Float = 1) {
         self.origin = origin
         self.scale = scale
     }
 
-    init?(_ c: SkinnedCharacter) {
+    package init?(_ c: SkinnedCharacter) {
         let bind = CharacterBase.bindPositions(c)
         guard let head = CharacterBase.joint("Head", in: c), let top = CharacterBase.joint("HeadTop_End", in: c) else { return nil }
         origin = bind[head]

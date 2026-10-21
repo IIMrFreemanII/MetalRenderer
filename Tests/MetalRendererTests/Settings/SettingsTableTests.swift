@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// The settings table (SettingsTable.swift) drives Copy as Env, the env parser and the panel. These check that the
@@ -286,7 +287,7 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_API": "metal4",
         ])
         XCTAssertEqual(s.scene.kind, .market)
-        XCTAssertEqual(s.scene.lights, SceneSettings.marketLights)
+        XCTAssertEqual(s.scene.lights, GameScenes.marketLights)
         XCTAssertEqual(s.scene.extraModels.map(\.path), ["/tmp/a.glb"])
         XCTAssertEqual(s.giMode, .restirGI)
         XCTAssertEqual(s.bounces, 3)

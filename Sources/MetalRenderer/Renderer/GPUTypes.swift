@@ -179,8 +179,8 @@ struct GPUMesh {
 }
 
 /// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
-struct GPUSkinVertex: Equatable {
-    var joints: UInt32 = 0     // four joint indices, a byte each (the first in the low byte)
+package struct GPUSkinVertex: Equatable {
+    package var joints: UInt32 = 0     // four joint indices, a byte each (the first in the low byte)
     var w0: Float = 1          // the first three joints' weights; the fourth's is what is left of 1
     var w1: Float = 0
     var w2: Float = 0
@@ -233,15 +233,23 @@ struct GPUInstanceData {
     var pad1: UInt32 = 0
 }
 
-struct GPUMaterial {
+package struct GPUMaterial {
     var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
     var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
                                             // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
                                             // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
                                             // where it is thin (Hair.metal skinUnshadowed)
-    var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
+    package var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures
                                                     // index, or ~0 = none
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(albedo: SIMD4<Float>, emission: SIMD4<Float>, params: SIMD4<Float> = SIMD4<Float>(0, 1, 0, 0), textures: SIMD4<UInt32> = SIMD4<UInt32>(repeating: .max)) {
+        self.albedo = albedo
+        self.emission = emission
+        self.params = params
+        self.textures = textures
+    }
 }
 
 /// What a procedural material (a Material Designer graph's: MaterialBake) has past GPUMaterial, one per material of
@@ -269,7 +277,7 @@ struct GPULight {
 }
 
 /// One triangle of an emissive-mesh light, object space (MSL EmissiveTriangle).
-struct GPUEmissiveTriangle {
+package struct GPUEmissiveTriangle {
     var v0: SIMD4<Float>     // w = cumulative selection probability within its light
     var e1: SIMD4<Float>     // w = uv0.x
     var e2: SIMD4<Float>     // w = uv0.y
@@ -352,15 +360,15 @@ struct GPUFogParams {
 
 /// A rigid body's state: MSL PhysicsBody. Rotations are quaternions, xyz then the real part in w. A body's space is
 /// its principal axes about its centre of mass (its shape's `comPosition` / `comRotation` place it in shape space).
-struct GPUPhysicsBody {
-    var position = SIMD4<Float>()            // centre of mass, world; w = inverse mass (0: it never moves)
-    var rotation = SIMD4<Float>(0, 0, 0, 1)  // body -> world
+package struct GPUPhysicsBody {
+    package var position = SIMD4<Float>()            // centre of mass, world; w = inverse mass (0: it never moves)
+    package var rotation = SIMD4<Float>(0, 0, 0, 1)  // body -> world
     var velocity = SIMD4<Float>()            // w = friction
     var angular = SIMD4<Float>()             // angular velocity, world; w = restitution
-    var prevPosition = SIMD4<Float>()        // at the substep's start; w = how long it has been still (s)
-    var prevRotation = SIMD4<Float>(0, 0, 0, 1)
-    var invInertia = SIMD4<Float>()          // inverse principal moments; w = bounding radius about the centre of mass
-    var info = SIMD4<UInt32>()               // x = shape, y = flags (PhysicsWorld.asleep), z = the instance it moves,
+    package var prevPosition = SIMD4<Float>()        // at the substep's start; w = how long it has been still (s)
+    package var prevRotation = SIMD4<Float>(0, 0, 0, 1)
+    package var invInertia = SIMD4<Float>()          // inverse principal moments; w = bounding radius about the centre of mass
+    package var info = SIMD4<UInt32>()               // x = shape, y = flags (PhysicsWorld.asleep), z = the instance it moves,
                                              // w = the body a joint hangs it from + 1 (0: none): the two never collide
 }
 
@@ -416,8 +424,8 @@ struct GPUPhysicsJoint {
 /// A fractured object's node as the body it is (FractureTree.Node, Physics+Fracture.swift): MSL PhysicsFractureNode.
 /// Every node of a fractured object is a body from the start, its children's bodies one after another; all but the
 /// root are disabled (PhysicsWorld.disabledBit) until their parent breaks.
-struct GPUFractureNode {
-    var info = SIMD4<UInt32>(~0, 0, 0, 0)   // x = its parent's body (none: a root), y = its first child's body, z = how
+package struct GPUFractureNode {
+    package var info = SIMD4<UInt32>(~0, 0, 0, 0)   // x = its parent's body (none: a root), y = its first child's body, z = how
                                              // many children, w = flags (PhysicsWorld.anchoredNode ...)
     var offset = SIMD4<Float>()              // its centre of mass in its parent's body space at rest; w = the impact (N s)
                                              // that breaks it into its children (0: it has none)
@@ -461,11 +469,18 @@ struct GPUFractureState {
 
 /// Something done to the fractured bodies at a step (a shot, a blast, a release): kept for replays. MSL
 /// PhysicsFractureCommand.
-struct GPUFractureCommand {
+package struct GPUFractureCommand {
     var info = SIMD4<UInt32>()               // x = its first step, y = kind (PhysicsWorld.FractureCommand), z = its body
                                              // (a shot's ball, a body woken), w = how many steps it lasts
     var origin = SIMD4<Float>()              // world; w = a blast's radius
     var direction = SIMD4<Float>()           // a shot's way (unit); w = its speed (m/s), or a blast's speed at its middle
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(info: SIMD4<UInt32> = SIMD4<UInt32>(), origin: SIMD4<Float> = SIMD4<Float>(), direction: SIMD4<Float> = SIMD4<Float>()) {
+        self.info = info
+        self.origin = origin
+        self.direction = direction
+    }
 }
 
 /// Where a piece broke, for the dust (PhysicsGPU.breakRing): MSL PhysicsBreakEvent.
@@ -484,7 +499,7 @@ struct GPUFractureParams {
 
 /// A guide strand of hair (PhysicsHair.swift): a chain of vertices from a root held by a body (or the world). MSL
 /// PhysicsStrand.
-struct GPUHairStrand {
+package struct GPUHairStrand {
     var info = SIMD4<UInt32>()               // x = its body (PhysicsWorld.none: the world's), y = first vertex, z = vertices,
                                              // w = 1 while it lies still on a sleeping body
     var stiffness = SIMD4<Float>()           // x = global shape at the root, y = at the tip, z = local shape (each a substep's
@@ -511,7 +526,7 @@ struct GPUHairParams {
 }
 
 /// A group of drawn strands around their guides (PhysicsWorld.HairGroup): MSL PhysicsHairGroup.
-struct GPUHairGroup {
+package struct GPUHairGroup {
     var counts = SIMD4<UInt32>()             // x = first guide, y = guides, z = drawn per guide, w = a guide's vertices
     var mesh = SIMD4<UInt32>()               // x = its curve mesh's first control point, y = last frame's offset, z = seed
     var shape = SIMD4<Float>()               // x = spread (m: how far from its guide a drawn strand's root may be),
@@ -521,7 +536,7 @@ struct GPUHairGroup {
 
 /// A particle (Physics.swift): a small ball that the bodies and the static colliders push about, and that piles up
 /// against the others. MSL PhysicsParticle.
-struct GPUPhysicsParticle {
+package struct GPUPhysicsParticle {
     var position = SIMD4<Float>()            // w = radius
     var velocity = SIMD4<Float>()            // w = friction
     var prevPosition = SIMD4<Float>()        // at the substep's start; w = inverse mass

@@ -1,4 +1,5 @@
 import XCTest
+@testable import Game
 @testable import MetalRenderer
 
 /// What a GPU can't run (Capabilities.swift): the settings fall back, and the benchmark skips the settings that need it.

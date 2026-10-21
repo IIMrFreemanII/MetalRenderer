@@ -58,7 +58,7 @@ final class FluidGPU {
         let surfaceSize: MTLBuffer
         let stats: MTLBuffer
 
-        init(_ s: FluidSystem, buffer: (Int, String) throws -> MTLBuffer) throws {
+        package init(_ s: FluidSystem, buffer: (Int, String) throws -> MTLBuffer) throws {
             system = s
             let n = s.capacity, cellCount = Int(s.params.dims.w), name = s.kind.name
             params = try buffer(MemoryLayout<GPUFluidParams>.stride, "fluidParams.\(name)")
@@ -116,7 +116,7 @@ final class FluidGPU {
     /// The groups encoded since the start (the GPU's clock as the CPU counts it): what is poured by each.
     private var clock: UInt32 = 0
 
-    init(device: MTLDevice, fluid: FluidWorld, bodies: Int, world: World) throws {
+    package init(device: MTLDevice, fluid: FluidWorld, bodies: Int, world: World) throws {
         func buffer(_ length: Int, _ label: String) throws -> MTLBuffer {
             guard let b = device.makeBuffer(length: max(length, 256), options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer \(label)")

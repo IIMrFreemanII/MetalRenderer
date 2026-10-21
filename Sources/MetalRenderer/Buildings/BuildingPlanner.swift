@@ -272,7 +272,7 @@ struct StoreyPlanner {
     private var nextID = 0
     private var t: Float = 0.3
 
-    init(assembler: BuildingAssembler, plan: BuildingPlan, core: BuildingAssembler.Core, rng: SplitMix64) {
+    package init(assembler: BuildingAssembler, plan: BuildingPlan, core: BuildingAssembler.Core, rng: SplitMix64) {
         self.assembler = assembler
         self.plan = plan
         self.core = core

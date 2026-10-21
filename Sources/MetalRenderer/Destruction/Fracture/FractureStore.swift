@@ -3,7 +3,7 @@ import Foundation
 /// The Fracture Editor's saved recipes (FractureRecipe), by object name, in `Assets/Fracture/recipes.json`: what the
 /// destruction scene builds its objects from in place of their defaults. `METALRENDERER_FRACTURE=builtin` leaves them
 /// out (comparisons between builds), `=<file>` reads another file.
-enum FractureStore {
+package enum FractureStore {
     static let format = 1
 
     struct File: Codable {
@@ -19,7 +19,7 @@ enum FractureStore {
         }
     }
 
-    static func load(from url: URL? = FractureStore.url) -> [String: FractureRecipe] {
+    package static func load(from url: URL? = FractureStore.url) -> [String: FractureRecipe] {
         guard let url, let data = try? Data(contentsOf: url) else { return [:] }
         do {
             return try JSONDecoder().decode(File.self, from: data).recipes

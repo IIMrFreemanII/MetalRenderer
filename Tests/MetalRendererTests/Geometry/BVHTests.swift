@@ -1,5 +1,6 @@
 import XCTest
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// BVH.swift: the binned-SAH builder splits big ranges in parallel. A node's split depends only on its own range, so

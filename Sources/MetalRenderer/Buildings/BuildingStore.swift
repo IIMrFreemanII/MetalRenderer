@@ -2,11 +2,11 @@ import Foundation
 
 /// The building styles that scenes are built with: the built-in ones (one per district, BuiltInBuildings) with any
 /// saved over them, then the custom ones; and single buildings' own plans (LotOverride, BuildingOverrides.swift).
-struct BuildingCatalog: Equatable {
+package struct BuildingCatalog: Equatable {
     var styles: [BuildingStyleDef]
-    var overrides: [LotOverride] = []
+    package var overrides: [LotOverride] = []
 
-    static let builtIn = BuildingCatalog(styles: BuiltInBuildings.all)
+    package static let builtIn = BuildingCatalog(styles: BuiltInBuildings.all)
 
     func style(id: String) -> BuildingStyleDef? { styles.first { $0.id == id } }
     func isBuiltIn(_ id: String) -> Bool { BuiltInBuildings.all.contains { $0.id == id } }
@@ -53,7 +53,7 @@ struct BuildingCatalog: Equatable {
     // MARK: - Fingerprints and the registry
 
     /// Names the catalog's every detail.
-    var fingerprint: String { BuildingCatalog.hash(Fingerprinted(styles: styles, overrides: overrides)) }
+    package var fingerprint: String { BuildingCatalog.hash(Fingerprinted(styles: styles, overrides: overrides)) }
     private struct Fingerprinted: Encodable {
         var styles: [BuildingStyleDef]
         var overrides: [LotOverride]
@@ -89,7 +89,7 @@ struct BuildingCatalog: Equatable {
 
     /// Keeps the catalog for scenes to build with, by the key returned (SceneSettings.buildingCatalog).
     @discardableResult
-    static func register(_ catalog: BuildingCatalog) -> String {
+    package static func register(_ catalog: BuildingCatalog) -> String {
         let key = catalog.fingerprint
         registry.register(catalog, key: key)
         return key
@@ -99,7 +99,7 @@ struct BuildingCatalog: Equatable {
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in styles, otherwise a registered
     /// one (the launch one if it is no longer kept).
-    static func resolve(_ key: String) -> BuildingCatalog {
+    package static func resolve(_ key: String) -> BuildingCatalog {
         switch key {
         case "": return launch
         case "builtin": return .builtIn
@@ -108,6 +108,12 @@ struct BuildingCatalog: Equatable {
             print("Buildings: catalog \(key) is not kept; the saved one instead")
             return launch
         }
+    }
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(styles: [BuildingStyleDef], overrides: [LotOverride] = []) {
+        self.styles = styles
+        self.overrides = overrides
     }
 }
 

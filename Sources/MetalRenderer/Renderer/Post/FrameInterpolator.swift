@@ -37,7 +37,7 @@ final class FrameInterpolator {
     var color: MTLTexture { colors[current] }
 
     /// `upscaler`: the frame's denoising scaler, whose depth and motion this reads; made again with it.
-    init(device: MTLDevice, upscaler: Upscaler, slots: Int) throws {
+    package init(device: MTLDevice, upscaler: Upscaler, slots: Int) throws {
         inputWidth = upscaler.inputWidth
         inputHeight = upscaler.inputHeight
         outputWidth = upscaler.outputWidth
@@ -128,7 +128,7 @@ final class FrameInterpolator {
         private let layer: CAMetalLayer
         private let thread = DispatchQueue(label: "frame interpolation presenter")
 
-        init?(device: MTLDevice, layer: CAMetalLayer) {
+        package init?(device: MTLDevice, layer: CAMetalLayer) {
             guard let queue = device.makeCommandQueue() else { return nil }
             queue.label = "frame interpolation presenter"
             self.queue = queue
@@ -169,7 +169,7 @@ struct InterpolateInputs {
 }
 
 /// When the frame interpolator runs (RenderSettings.frameInterpolation).
-enum FrameInterpolation: Int, CaseIterable, Codable {
+package enum FrameInterpolation: Int, CaseIterable, Codable {
     case off
     case on        // every frame
     case auto      // while a frame's GPU work takes over three of the display's refreshes

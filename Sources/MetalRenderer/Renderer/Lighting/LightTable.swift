@@ -34,9 +34,9 @@ struct LightTable {
         entries.count * MemoryLayout<GPULightTableEntry>.stride + triangles.count * MemoryLayout<GPUTriangleInfo>.stride
     }
 
-    init() {}
+    package init() {}
 
-    init(scene: Scene) {
+    package init(scene: Scene) {
         let lum = SIMD3<Float>(0.2126, 0.7152, 0.0722)
         var elements: [UInt32] = [], weights: [Float] = []
         for (i, l) in scene.lights.enumerated() {

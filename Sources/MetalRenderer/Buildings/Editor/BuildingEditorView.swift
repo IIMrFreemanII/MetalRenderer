@@ -110,7 +110,7 @@ struct BuildingEditorView: View {
                     .disabled(!model.undo.canRedo).help("Redo (Shift-Cmd-Z)")
                 Button { showPlan() } label: { Image(systemName: "square.split.2x2") }.help("The Floor Plan window")
                 Spacer()
-                if model.inWorkshop { Button("City") { model.goToCity() }.help("The city, with these styles") }
+                if model.inWorkshop && model.city != nil { Button("City") { model.goToCity() }.help("The city, with these styles") }
                 Button("Revert") { model.revert() }.disabled(model.savedDef == model.def || model.savedDef == nil)
                     .help("This style as it is saved")
                 Button("Revert All") { model.revertAll() }.disabled(!model.isDirty)

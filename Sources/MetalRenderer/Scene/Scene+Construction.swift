@@ -97,7 +97,7 @@ extension Scene {
     /// instance names (which is then the first of a run of materials added one after the other).
     /// `name`: see `meshNames`.
     /// `label`: what the outline calls it (`label(mesh:)`).
-    func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil,
+    package func addMesh(_ mesh: MeshGeometry, uvs meshUVs: [SIMD2<Float>]? = nil, materials offsets: [UInt8]? = nil, name: String? = nil,
                  label: String? = nil) -> Int {
         if let name { meshNames[meshes.count] = name }
         if let label { meshLabels[meshes.count] = (label, false, nil) }
@@ -122,7 +122,7 @@ extension Scene {
     /// into the scene's. On the GPU it is in a buffer of its own, which the scenes that have a mesh of its name share
     /// (MeshBlock in SceneBuffers.swift): the renderer copies it from here into that buffer the first time, and
     /// whoever needs its triangles after that reads them there.
-    struct BorrowedMesh {
+    package struct BorrowedMesh {
         var positions: Stored<SIMD3<Float>>
         var normals: Stored<SIMD3<Float>>
         var uvs: Stored<SIMD2<Float>>
@@ -135,7 +135,7 @@ extension Scene {
 
     /// Adds a borrowed mesh, with its bounds as they are known. `sways`, `cutout`: as `addMesh(_: Foliage.Mesh)`'s,
     /// the cutout as the table has it.
-    func addMesh(borrowing mesh: BorrowedMesh, bounds: AABB, name: String, sways: Bool = false, cutout: UInt32 = 0) -> Int {
+    package func addMesh(borrowing mesh: BorrowedMesh, bounds: AABB, name: String, sways: Bool = false, cutout: UInt32 = 0) -> Int {
         precondition(mesh.normals.count == mesh.positions.count && mesh.uvs.count == mesh.positions.count
                      && (mesh.materials.map { $0.count * 3 == mesh.indices.count } ?? true), "a vertex's arrays, and a material per triangle")
         var mesh = mesh

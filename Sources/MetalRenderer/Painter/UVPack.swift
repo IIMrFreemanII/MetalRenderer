@@ -86,10 +86,10 @@ enum UVPack {
         var turned: [[SIMD2<Float>]]      // per turn: its corners, from (0, 0)
         var lows: [SIMD2<Float>]          // per turn: what was taken off to bring it to 0
         var area: Float
-        var box: Float
+        package var box: Float
         var extent: Float
 
-        init(_ corners: [SIMD2<Float>]) {
+        package init(_ corners: [SIMD2<Float>]) {
             turned = []
             lows = []
             var a: Float = 0

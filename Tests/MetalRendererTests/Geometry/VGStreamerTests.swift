@@ -1,6 +1,7 @@
 import XCTest
 import Metal
 import simd
+@testable import Game
 @testable import MetalRenderer
 
 /// Virtual geometry's streaming (VGStreamer) and what the cuts assume of the DAG.

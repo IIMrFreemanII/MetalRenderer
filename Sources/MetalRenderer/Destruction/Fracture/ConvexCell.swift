@@ -4,22 +4,22 @@ import simd
 /// A convex polytope: the intersection of half-spaces, kept as its faces (each a plane and the polygon of the polytope
 /// on it). What a fracture's pieces are cut by (FracturePatterns.swift): a box clipped by Voronoi bisectors, a glass
 /// pane's wedges and rings, a brick. A plane is (n, d) with n unit and the inside where n . p <= d.
-struct ConvexCell {
-    struct Face {
-        var plane: SIMD4<Float>
+package struct ConvexCell {
+    package struct Face {
+        package var plane: SIMD4<Float>
         /// Where the face came from: `ConvexCell.outer` for the box the cell started as, otherwise the cut's own tag
         /// (a pattern's: the neighbouring site's, a ring's...).
-        var tag: Int32
+        package var tag: Int32
         /// Counter-clockwise seen from outside (along the normal).
-        var polygon: [SIMD3<Float>]
+        package var polygon: [SIMD3<Float>]
     }
 
-    static let outer: Int32 = -1
+    package static let outer: Int32 = -1
 
-    private(set) var faces: [Face]
+    package private(set) var faces: [Face]
 
     /// The box from `lo` to `hi`, its faces tagged `outer`.
-    init(box lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
+    package init(box lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
         let c = (0..<8).map { k in SIMD3<Float>(k & 1 == 0 ? lo.x : hi.x, k & 2 == 0 ? lo.y : hi.y, k & 4 == 0 ? lo.z : hi.z) }
         // Corner k: bit 0 x, bit 1 y, bit 2 z. Each face counter-clockwise seen from outside.
         let quads: [(SIMD3<Float>, Float, [Int])] = [
@@ -30,7 +30,7 @@ struct ConvexCell {
         faces = quads.map { n, d, k in Face(plane: SIMD4(n, d), tag: ConvexCell.outer, polygon: k.map { c[$0] }) }
     }
 
-    init(faces: [Face]) { self.faces = faces }
+    package init(faces: [Face]) { self.faces = faces }
 
     var isEmpty: Bool { faces.count < 4 }
 

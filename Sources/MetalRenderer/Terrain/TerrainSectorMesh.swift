@@ -3,7 +3,7 @@ import simd
 
 /// How a terrain's ground is meshed in a scene: where its UVs come from, how deep the skirts under tile sides hang,
 /// and which ground material steep cells take.
-struct TerrainMeshStyle {
+package struct TerrainMeshStyle {
     /// UVs: the vertex's place from `uvOrigin` (the world's) times `uvScale`, or with `tileLocal` its place from its
     /// tile's corner times `uvScale` (the open world's ground, whose detail repeats every 5 m from each tile's corner).
     var uvOrigin = SIMD2<Double>.zero
@@ -20,6 +20,17 @@ struct TerrainMeshStyle {
     var rules: Bool { layers.contains { $0.rule.enabled } }
     /// The realistic look's relief (realism high): what raises a fine sector's ground (TerrainSector.subdiv).
     var relief: GroundRelief? = nil
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(uvOrigin: SIMD2<Double> = SIMD2<Double>.zero, uvScale: Float = 1, tileLocal: Bool = false, skirts: Bool = false, rock: UInt8 = 3, layers: [TerrainLayer] = [], relief: GroundRelief? = nil) {
+        self.uvOrigin = uvOrigin
+        self.uvScale = uvScale
+        self.tileLocal = tileLocal
+        self.skirts = skirts
+        self.rock = rock
+        self.layers = layers
+        self.relief = relief
+    }
 }
 
 /// A terrain sector's mesh (TerrainSector), from a snapshot of the terrain: its vertices in metres from its tile's
@@ -43,7 +54,7 @@ struct TerrainSectorMesh {
             (sector, positions, normals, uvs, indices, materials, weights, bounds)
     }
 
-    init(_ s: TerrainSnapshot, sector: TerrainSector, style: TerrainMeshStyle) {
+    package init(_ s: TerrainSnapshot, sector: TerrainSector, style: TerrainMeshStyle) {
         if sector.subdiv > 1 {
             self = TerrainSectorMesh.fine(s, sector: sector, style: style)
             return

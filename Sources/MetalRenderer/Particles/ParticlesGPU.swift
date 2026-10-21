@@ -135,7 +135,7 @@ final class ParticlesGPU {
                 try buffer(device, programs.table, "vfxPrograms"), try buffer(device, programs.params, "vfxParams"))
     }
 
-    init(device: MTLDevice, system: ParticleSystem, slots: Int, atlas: MTLTexture? = nil) throws {
+    package init(device: MTLDevice, system: ParticleSystem, slots: Int, atlas: MTLTexture? = nil) throws {
         func buffer(_ length: Int, _ label: String) throws -> MTLBuffer { try ParticlesGPU.buffer(device, length, label) }
         self.system = system
         let n = system.capacity
