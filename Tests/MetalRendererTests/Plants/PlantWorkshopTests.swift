@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Scene+Plants.swift: the plant workshop shows the library's own plants, in its layouts and views, and is quick to

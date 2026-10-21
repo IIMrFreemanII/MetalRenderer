@@ -13,16 +13,16 @@ import Plants
 /// chunks. Between steps the workers sleep, and within one a worker that has had nothing to do for a while (a serial
 /// stage: the colouring, a liquid's sort) parks until the next stage wakes it: spinning on every core slowed the
 /// stepping thread's own serial work, and starved anything else that wanted the cores.
-final class PhysicsPool {
-    static let shared = PhysicsPool()
+package final class PhysicsPool {
+    package static let shared = PhysicsPool()
 
     /// Threads besides the stepping one: one fewer than the performance cores (METALRENDERER_PHYSICS_THREADS: all of
     /// them, the stepping one included; 1: none, every stage on the stepping thread). Not the efficiency cores: a
     /// stage waits for its slowest chunk, and theirs are slow (three buildings settling, on the M1 Max's 8 + 2: the
     /// same broad and narrow phases with 8 threads as with 10, the contacts' colours faster, 27.5 → 26.4 ms a step).
-    let workers: Int
+    package let workers: Int
     /// While false (tests, A/Bs), every stage runs on the calling thread, in chunk order.
-    var enabled = true
+    package var enabled = true
 
     /// Words the threads share: the ticket (a stage's generation << 48 | its chunks << 24 | the next chunk), the
     /// chunks done, whether the workers spin (a step is running), whether a stage is out (a stage's items that hand
@@ -71,7 +71,7 @@ final class PhysicsPool {
 
     /// Runs `body` (a step, or several) with the workers spinning, ready for its stages. Nested calls, or a second
     /// thread's while one holds the pool, run as they would without it (their stages inline).
-    func run<R>(_ body: () throws -> R) rethrows -> R {
+    package func run<R>(_ body: () throws -> R) rethrows -> R {
         guard workers > 0, enabled, cpa_cas(held, 0, 1) else {
             return try body()
         }
@@ -89,7 +89,7 @@ final class PhysicsPool {
     /// thread, back when all are done. Inline (in chunk order) when there are no workers, outside `run`, for a
     /// stage within a stage, or when it is a chunk or two. `single`: each claim is one chunk (the chunks are claimed
     /// in order either way, and each thread runs a claim's in order: PhysicsWorld.eachColour's wait on those before).
-    func parallel(_ count: Int, grain: Int, single: Bool = false, _ body: (Range<Int>) -> Void) {
+    package func parallel(_ count: Int, grain: Int, single: Bool = false, _ body: (Range<Int>) -> Void) {
         guard count > 0 else { return }
         let chunks = (count + grain - 1) / grain
         guard chunks > 1, workers > 0, cpa_load(awake) != 0, cpa_cas(busy, 0, 1) else {
@@ -189,7 +189,7 @@ final class PhysicsPool {
 /// The step's arrays as the stages' loops on the workers read and write them: raw buffers, taken once around a stage
 /// (PhysicsWorld.withStepBuffers). An item writes only its own elements (or, in a colour, its pair's two bodies);
 /// nothing reads the world's arrays through the world inside (Swift moves an array out while its buffer is lent).
-struct StepBuffers {
+package struct StepBuffers {
     let bodies: UnsafeMutableBufferPointer<GPUPhysicsBody>
     let pairs: UnsafeMutableBufferPointer<GPUPhysicsPair>
     let pairCounts: UnsafeMutableBufferPointer<UInt32>
@@ -208,7 +208,7 @@ struct StepBuffers {
 
 extension PhysicsWorld {
     /// `body` with the step's arrays lent as raw buffers (StepBuffers).
-    func withStepBuffers<R>(_ body: (StepBuffers) throws -> R) rethrows -> R {
+    package func withStepBuffers<R>(_ body: (StepBuffers) throws -> R) rethrows -> R {
         try bodies.withUnsafeMutableBufferPointer { bodies in
             try pairs.withUnsafeMutableBufferPointer { pairs in
                 try pairCounts.withUnsafeMutableBufferPointer { pairCounts in
@@ -237,7 +237,7 @@ extension PhysicsWorld {
 /// two bodies are as they were at the last step's start (each of their bits the narrow phase reads: pose, speeds,
 /// radius, shape, flags) are what `collide` found then, so they are kept, not found again. A body's entries are its
 /// own to write, `changed` is written in a stage before.
-struct NarrowMemo {
+package struct NarrowMemo {
     let partners: UnsafeMutableBufferPointer<UInt32>
     let counts: UnsafeMutableBufferPointer<UInt32>
     let seen: UnsafeMutableBufferPointer<SIMD16<UInt32>>
@@ -255,7 +255,7 @@ struct NarrowMemo {
 
 /// A body's box in the world, as PhysicsWorld.boxGap works it out: its axes, and its centre (`box`: the shape's box's
 /// centre, in the body's space).
-struct PhysicsBoxFrame {
+package struct PhysicsBoxFrame {
     var x = SIMD3<Float>(), y = SIMD3<Float>(), z = SIMD3<Float>(), centre = SIMD3<Float>()
 
     package init() {}
@@ -272,7 +272,7 @@ struct PhysicsBoxFrame {
 /// thread to want them (one wanting them meanwhile waits): a body is in a few pairs, and each pair worked them out
 /// again, the same points. (Three buildings settling: 2.3 million samples a step, a third of them near enough the
 /// other body to ask its distance.)
-struct SampleCache {
+package struct SampleCache {
     let starts: UnsafeBufferPointer<Int32>
     let world: UnsafeMutablePointer<SIMD3<Float>>
     let states: UnsafeMutablePointer<Int>
@@ -296,7 +296,7 @@ struct SampleCache {
 
 extension PhysicsWorld {
     /// `body` with the samples' world points lent (SampleCache), for a narrow phase.
-    func withSampleCache<R>(_ body: (SampleCache) throws -> R) rethrows -> R {
+    package func withSampleCache<R>(_ body: (SampleCache) throws -> R) rethrows -> R {
         try sampleStarts.withUnsafeBufferPointer { starts in
             try sampleWorld.withUnsafeMutableBufferPointer { world in
                 try sampleStates.withUnsafeMutableBufferPointer { states in
@@ -312,7 +312,7 @@ extension PhysicsWorld {
 /// (`changed`, in a grid of their own: `cells`, `bodies`, `bigs`) reaches it now. Its partners are the nearest
 /// `maxPairs` of those within reach by a total order: one that changed and kept none of its places among them, and
 /// doesn't reach it now, can't make it keep others; one now within reach can.
-struct BroadMemo {
+package struct BroadMemo {
     let changed: UnsafeBufferPointer<UInt8>
     let cells: PhysicsCellGrid.View
     let used: UInt32        // (the levels the changed bodies are in)
@@ -330,7 +330,7 @@ struct BroadMemo {
 
 extension PhysicsWorld {
     /// `body` with the narrow phase's memo lent as raw buffers (NarrowMemo).
-    func withNarrowMemo<R>(_ body: (NarrowMemo) throws -> R) rethrows -> R {
+    package func withNarrowMemo<R>(_ body: (NarrowMemo) throws -> R) rethrows -> R {
         try narrowPartners.withUnsafeMutableBufferPointer { partners in
             try narrowCounts.withUnsafeMutableBufferPointer { counts in
                 try narrowSeen.withUnsafeMutableBufferPointer { seen in
@@ -345,7 +345,7 @@ extension PhysicsWorld {
 
 /// The particles' arrays as their stages' loops read and write them (PhysicsWorld.withParticleBuffers): a particle
 /// writes only its own entries (a colour's links and tets share no particle); the bodies are read only.
-struct ParticleBuffers {
+package struct ParticleBuffers {
     let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>
     /// The particles as the substep's Jacobi pass found them (solveParticles reads these, writes `particles`).
     let before: UnsafeMutableBufferPointer<GPUPhysicsParticle>
@@ -364,7 +364,7 @@ struct ParticleBuffers {
 
 extension PhysicsWorld {
     /// `body` with the particles' arrays lent as raw buffers (ParticleBuffers).
-    func withParticleBuffers<R>(_ body: (ParticleBuffers) throws -> R) rethrows -> R {
+    package func withParticleBuffers<R>(_ body: (ParticleBuffers) throws -> R) rethrows -> R {
         if particleSnapshot.count != particles.count {
             particleSnapshot = particles
         }
@@ -392,7 +392,7 @@ extension PhysicsWorld {
 
 /// What the hair's strands read and write as they step on the workers (PhysicsWorld.stepHair): a strand writes only
 /// its own vertices; the bodies (and their poses when the step began) are read only.
-struct HairBuffers {
+package struct HairBuffers {
     let vertices: UnsafeMutablePointer<GPUHairVertex>
     let start: UnsafeBufferPointer<SIMD8<Float>>
     let bodies: UnsafeBufferPointer<GPUPhysicsBody>
@@ -410,7 +410,7 @@ struct HairBuffers {
 /// The levels of the bodies' grid (PhysicsWorld.broadPhase): level l's cells are `first` x 2^l a side, and a body is
 /// in the first level whose cells are twice the reach it can have in a step (its radius, the most it travels, the
 /// margin) or more. `used`: a bit a level with bodies in it.
-struct PhysicsLevels {
+package struct PhysicsLevels {
     static let most = 12
     let first: Float
     var used: UInt32
@@ -432,7 +432,7 @@ struct PhysicsLevels {
 /// The cells the broad phases' things are in (broadPhase, particleBroadPhase; the bodies' in levels of cells of
 /// sizes doubling), as their queries on the workers read them: each cell's items in the order they were added (as a dictionary of arrays held them), flat, found through an
 /// open-addressed table, so a lookup counts no references. Kept between steps, its arrays reused.
-struct PhysicsCellGrid {
+package struct PhysicsCellGrid {
     private var keys: [SIMD4<Int32>] = []
     private var slots: [Int32] = []
     private var starts: [Int32] = []
@@ -499,7 +499,7 @@ struct PhysicsCellGrid {
         }
     }
 
-    struct View {
+    package struct View {
         package let keys: UnsafeBufferPointer<SIMD4<Int32>>
         package let slots: UnsafeBufferPointer<Int32>
         package let starts: UnsafeBufferPointer<Int32>
@@ -541,16 +541,16 @@ package final class PhysicsStepper {
     /// What a frame draws: the world's poses as a frame's steps left them (copies on write: the steps after copy).
     package struct Drawn {
         package var bodies: [GPUPhysicsBody]
-        var particles: [GPUPhysicsParticle]
-        var hairVertices: [GPUHairVertex]
-        var fractureState: [GPUFractureState]
+        package var particles: [GPUPhysicsParticle]
+        package var hairVertices: [GPUHairVertex]
+        package var fractureState: [GPUFractureState]
         /// Where pieces broke (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust.
-        var breakLog: [GPUBreakEvent]
-        var breakSteps: [Int]
-        var breakTotal: Int
+        package var breakLog: [GPUBreakEvent]
+        package var breakSteps: [Int]
+        package var breakTotal: Int
         /// The rockets, the fireballs, the walker (PhysicsWorld.demolition), and the step these are before.
         package var demolition: DemolitionState
-        var stepIndex: Int
+        package var stepIndex: Int
 
         package init(_ w: PhysicsWorld) {
             bodies = w.bodies
@@ -565,10 +565,10 @@ package final class PhysicsStepper {
         }
     }
 
-    let world: PhysicsWorld
+    package let world: PhysicsWorld
     /// The body the mouse holds (the render thread's, sent with each frame's steps: the world's own `grab` is the
     /// stepper's).
-    var grab: GPUPhysicsGrab
+    package var grab: GPUPhysicsGrab
 
     private let condition = NSCondition()
     private var times: [(time: Float, grab: GPUPhysicsGrab, commands: [GPUFractureCommand])] = []   // asked for, not begun
@@ -581,7 +581,7 @@ package final class PhysicsStepper {
     private let finished = DispatchSemaphore(value: 0)
     /// How many frames' steps may wait their turn before a frame waits for them (the frame then runs at the steps'
     /// pace, a frame behind).
-    static let queued = 2
+    package static let queued = 2
 
     package init(world: PhysicsWorld) {
         self.world = world
@@ -596,7 +596,7 @@ package final class PhysicsStepper {
 
     /// The steps to `time`, with this frame's grab, after those asked before (waiting while `queued` frames' are
     /// still to run).
-    func request(to time: Float) {
+    package func request(to time: Float) {
         condition.lock()
         while times.count >= PhysicsStepper.queued && !stopping { condition.wait() }
         times.append((time, grab, commands))
@@ -606,21 +606,21 @@ package final class PhysicsStepper {
     }
 
     /// Command `c` (its start step PhysicsWorld.none: the step its frame's steps begin at) sent with the next frame's.
-    func command(_ c: GPUFractureCommand) {
+    package func command(_ c: GPUFractureCommand) {
         condition.lock()
         commands.append(c)
         condition.unlock()
     }
 
     /// Waits for every step asked for.
-    func waitIdle() {
+    package func waitIdle() {
         condition.lock()
         while (!times.isEmpty || busy) && !stopping { condition.wait() }
         condition.unlock()
     }
 
     /// `body` with the world, on this thread, once every step asked for is done (and none starts until it returns).
-    func sync<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R {
+    package func sync<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R {
         condition.lock()
         defer { condition.unlock() }
         while (!times.isEmpty || busy) && !stopping { condition.wait() }
@@ -628,14 +628,14 @@ package final class PhysicsStepper {
     }
 
     /// The poses the latest steps left.
-    var latest: Drawn {
+    package var latest: Drawn {
         condition.lock()
         defer { condition.unlock() }
         return drawn
     }
 
     /// Ends the thread (after the step it is on); the world is the caller's again.
-    func stop() {
+    package func stop() {
         condition.lock()
         stopping = true
         condition.broadcast()

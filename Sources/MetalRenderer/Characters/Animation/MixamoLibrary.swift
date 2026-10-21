@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The Mixamo motions Tools/mixamo/download.py fetched: `METALRENDERER_MIXAMO`, or ~/MixamoAnimations, one folder per

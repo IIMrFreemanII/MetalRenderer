@@ -8,9 +8,9 @@ import simd
 /// where the mesh's inside is: marching squares of the mesh's distance on each face's plane, the squares clipped to
 /// the face. Distances, not loops of cut edges: a generated model is rarely closed (open patches, shells inside
 /// shells), and a cap made from its distance doesn't care.
-struct MeshCutter {
+package struct MeshCutter {
     /// A mesh in one space: per vertex its place, normal and texture coordinate; per triangle its material offset.
-    struct Mesh {
+    package struct Mesh {
         package var positions: [SIMD3<Float>] = []
         package var normals: [SIMD3<Float>] = []
         package var uvs: [SIMD2<Float>] = []
@@ -31,11 +31,20 @@ struct MeshCutter {
             uvs.append(uv)
             return UInt32(positions.count - 1)
         }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = [], materials: [UInt8] = []) {
+            self.positions = positions
+            self.normals = normals
+            self.uvs = uvs
+            self.indices = indices
+            self.materials = materials
+        }
     }
 
-    let mesh: Mesh
+    package let mesh: Mesh
     /// The mesh's distance (negative inside): its baked grid's.
-    let inside: (SIMD3<Float>) -> Float
+    package let inside: (SIMD3<Float>) -> Float
     /// Each triangle's box, for the cells to skip what they don't meet.
     private let boxes: [AABB]
 
@@ -50,10 +59,10 @@ struct MeshCutter {
     }
 
     private struct Corner {
-        var p: SIMD3<Float>
-        var n: SIMD3<Float>
-        var uv: SIMD2<Float>
-        func lerp(_ o: Corner, _ t: Float) -> Corner {
+        package var p: SIMD3<Float>
+        package var n: SIMD3<Float>
+        package var uv: SIMD2<Float>
+        package func lerp(_ o: Corner, _ t: Float) -> Corner {
             Corner(p: p + (o.p - p) * t, n: n + (o.n - n) * t, uv: uv + (o.uv - uv) * t)
         }
     }
@@ -61,7 +70,7 @@ struct MeshCutter {
     /// The piece inside `cell`: the mesh's triangles there, and caps on the faces whose tag `capped` says, with
     /// material offset `interior` and texture coordinates `uvScale` per metre across them. `cellSize`: the caps'
     /// squares' size (m).
-    func piece(_ cell: ConvexCell, capped: (Int32) -> Bool, interior: UInt8, uvScale: Float = 1, cellSize: Float) -> Mesh {
+    package func piece(_ cell: ConvexCell, capped: (Int32) -> Bool, interior: UInt8, uvScale: Float = 1, cellSize: Float) -> Mesh {
         var out = Mesh()
         let box = cell.bounds
         let planes = cell.faces.map(\.plane)

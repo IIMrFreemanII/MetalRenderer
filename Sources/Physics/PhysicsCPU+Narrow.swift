@@ -8,7 +8,7 @@ extension PhysicsWorld {
     // MARK: Narrow phase
 
     /// The partner's record: a body, or a static collider.
-    @inline(__always) func partner(_ code: UInt32) -> GPUPhysicsBody {
+    @inline(__always) package func partner(_ code: UInt32) -> GPUPhysicsBody {
         code & PhysicsWorld.staticBit != 0 ? statics[Int(code & ~PhysicsWorld.staticBit)] : bodies[Int(code)]
     }
 
@@ -18,7 +18,7 @@ extension PhysicsWorld {
     /// Every owned pair's contacts (`refresh`: again, mid-step, those of pairs with contacts of which a body moves).
     /// At the step's start a pair whose bodies are as they were at the last one's keeps the contacts found then
     /// (NarrowMemo: the same bits `collide` would give again); one found again in a refresh isn't kept.
-    func narrowPhase(_ p: GPUPhysicsParams, refresh: Bool) {
+    package func narrowPhase(_ p: GPUPhysicsParams, refresh: Bool) {
         let shapes = shapeData, n = bodies.count, entries = pairs.count
         if !refresh {
             let valid = narrowEpoch == shapeEpoch && narrowPartners.count == entries && narrowSeen.count == n
@@ -82,7 +82,7 @@ extension PhysicsWorld {
     }
 
     /// Body i's owned entries' contacts (narrowPhase).
-    @inline(__always) static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool,
+    @inline(__always) package static func narrow(_ i: Int, _ s: StepBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams, refresh: Bool,
                                          memo m: NarrowMemo, samples: SampleCache) {
         let k = PhysicsWorld.maxPairs
         let a = s.bodies[i], count = Int(s.pairCounts[i])
@@ -91,7 +91,7 @@ extension PhysicsWorld {
 
     /// Entry e's contacts (narrow; a refresh's on their own): `a` its body, body i; `listed`, whether it is one of i's
     /// entries this step.
-    @inline(__always) static func narrowEntry(_ e: Int, _ i: Int, _ a: GPUPhysicsBody, _ listed: Bool, _ s: StepBuffers, _ shapes: PhysicsShapes,
+    @inline(__always) package static func narrowEntry(_ e: Int, _ i: Int, _ a: GPUPhysicsBody, _ listed: Bool, _ s: StepBuffers, _ shapes: PhysicsShapes,
                                               _ p: GPUPhysicsParams, refresh: Bool, memo m: NarrowMemo, samples: SampleCache) {
         let mc = PhysicsWorld.maxContacts
         guard listed && s.pairs[e].link == UInt32(e) else {

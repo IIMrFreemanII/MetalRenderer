@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// One number of a character's DNA as the character editor shows it: PlantParam's row (title, range, how far a

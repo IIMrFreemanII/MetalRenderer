@@ -28,19 +28,19 @@ import simd
 package enum LiquidKind: Int, CaseIterable {
     case water, blood, honey
 
-    var name: String { ["water", "blood", "honey"][rawValue] }
+    package var name: String { ["water", "blood", "honey"][rawValue] }
 
     /// How it moves.
     package struct Physics {
-        var density: Float                   // kg/m^3
-        var viscosity: SIMD4<Float>          // Carreau: mu0, mu infinity (Pa s), lambda (s), n (Newtonian: mu0 = mu inf)
-        var bulk: Float                      // MPM: Tait's bulk modulus (Pa)
-        var friction: Float                  // against walls and colliders
-        var stickiness: Float                // 0...1: how much of its slide along a wall it keeps off (1: no slip)
-        var xsph: Float                      // PBF: XSPH viscosity
-        var vorticity: Float                 // PBF: vorticity confinement (m/s)
+        package var density: Float                   // kg/m^3
+        package var viscosity: SIMD4<Float>          // Carreau: mu0, mu infinity (Pa s), lambda (s), n (Newtonian: mu0 = mu inf)
+        package var bulk: Float                      // MPM: Tait's bulk modulus (Pa)
+        package var friction: Float                  // against walls and colliders
+        package var stickiness: Float                // 0...1: how much of its slide along a wall it keeps off (1: no slip)
+        package var xsph: Float                      // PBF: XSPH viscosity
+        package var vorticity: Float                 // PBF: vorticity confinement (m/s)
         package var nozzleRadius: Float              // m
-        var speed: Float                     // m/s out of the nozzle
+        package var speed: Float                     // m/s out of the nozzle
     }
 
     /// How it looks (Shaders/Liquid.metal): a dielectric that absorbs (Beer-Lambert) on the way through.
@@ -64,7 +64,7 @@ package enum LiquidKind: Int, CaseIterable {
         }
     }
 
-    var look: Look {
+    package var look: Look {
         switch self {
         case .water: return Look(absorption: SIMD3(2.0, 0.35, 0.12), ior: 1.333, roughness: 0.02)
         case .blood: return Look(absorption: SIMD3(35, 600, 800), ior: 1.36, roughness: 0.04)
@@ -73,14 +73,14 @@ package enum LiquidKind: Int, CaseIterable {
     }
 
     /// The Carreau viscosity at shear rate `shear` (1/s).
-    static func viscosity(_ k: SIMD4<Float>, shear: Float) -> Float {
+    package static func viscosity(_ k: SIMD4<Float>, shear: Float) -> Float {
         k.x == k.y ? k.x : k.y + (k.x - k.y) * pow(1 + k.z * k.z * shear * shear, (k.w - 1) / 2)
     }
 }
 
 /// A liquid in the world (PhysicsWorld.addLiquid): what its kernels are told, its nozzle's layer of particles, the
 /// static colliders inside its domain, and (the CPU's) its state.
-struct FluidSystem {
+package struct FluidSystem {
     var kind: LiquidKind
     var solver: PhysicsSettings.Solver
     var params: GPUFluidParams
@@ -92,9 +92,9 @@ struct FluidSystem {
     var particles: [GPUFluidParticle] = []
     var clock: UInt32 = 0
     /// Its drawn surface's grid and mesh (FluidSurface.swift; the scene fills in where the mesh is).
-    var surface = GPUFluidSurface()
+    package var surface = GPUFluidSurface()
 
-    var capacity: Int { Int(params.counts.x) }
+    package var capacity: Int { Int(params.counts.x) }
     var domain: AABB { AABB(lo: PhysicsMath.xyz(params.lo), hi: PhysicsMath.xyz(params.hi)) }
     var cell: Float { params.lo.w }
     var dims: SIMD3<Int> { SIMD3(Int(params.dims.x), Int(params.dims.y), Int(params.dims.z)) }
@@ -118,8 +118,8 @@ struct FluidSystem {
 }
 
 /// The world's liquids and what they push the bodies by.
-struct FluidWorld {
-    var systems: [FluidSystem] = []
+package struct FluidWorld {
+    package var systems: [FluidSystem] = []
     /// Per dynamic body, the impulse the liquids gave it this group (fixed point: `GPUFluidParams.fixed.z` per N s):
     /// linear then angular (about its centre of mass), as the GPU's int4 pairs.
     var impulses: [SIMD4<Int32>] = []
@@ -161,7 +161,7 @@ struct FluidWorld {
 extension PhysicsWorld {
     /// A liquid of `kind`, stepped by `solver`, held in `domain` (its walls), poured from `nozzle` along `direction`
     /// from `start` (s) until it has `capacity` particles.
-    func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>,
+    package func addLiquid(_ kind: LiquidKind, solver: PhysicsSettings.Solver, domain: AABB, nozzle: SIMD3<Float>,
                    direction: SIMD3<Float> = SIMD3(0, -1, 0), start: Float = 0.3, capacity: Int) {
         let k = kind.physics
         // MPM: 1 cm cells, a particle a cell; PBF: 1.2 cm apart, h twice that. (MPM's quadratic kernel spans three
@@ -249,17 +249,17 @@ extension PhysicsWorld {
 
     /// Body `body` held where it is (asleep) until `time` (s), then dropped: a box let go into a liquid already poured
     /// (resting on the floor as the liquid rises round it, nothing gets under it to lift it). Before `addLiquid`.
-    func hold(body: Int, until time: Float) {
+    package func hold(body: Int, until time: Float) {
         if fluid == nil { fluid = FluidWorld() }
         bodies[body].info.y |= PhysicsWorld.asleep
         fluid!.drops.append(SIMD2(UInt32(body), UInt32((time / (PhysicsWorld.stepLength / Float(fluidGroups))).rounded())))
     }
 
     /// The groups of substeps a step runs in: the liquids step once before each.
-    var fluidGroups: Int { (substeps + PhysicsWorld.contactRefresh - 1) / PhysicsWorld.contactRefresh }
+    package var fluidGroups: Int { (substeps + PhysicsWorld.contactRefresh - 1) / PhysicsWorld.contactRefresh }
 
     /// The liquids at their start (none poured), and the bodies' impulses cleared: `finish` and `reset`.
-    func resetFluids() {
+    package func resetFluids() {
         guard fluid != nil else { return }
         for s in fluid!.systems.indices {
             fluid!.systems[s].particles = []
@@ -270,7 +270,7 @@ extension PhysicsWorld {
 
     /// The bodies a liquid in `domain` may meet this group: dynamic ones whose sphere reaches into it (a kinematic body
     /// too: it pushes, but takes nothing back), the lowest `FluidWorld.maxBodies`.
-    func fluidBodies(_ p: GPUFluidParams) -> [UInt32] {
+    package func fluidBodies(_ p: GPUFluidParams) -> [UInt32] {
         var near: [UInt32] = []
         for (i, b) in bodies.enumerated() where near.count < FluidWorld.maxBodies {
             let c = PhysicsMath.xyz(b.position), r = b.invInertia.w + p.lo.w

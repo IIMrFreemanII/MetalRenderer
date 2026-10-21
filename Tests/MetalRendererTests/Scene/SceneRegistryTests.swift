@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The scenes by kind (SceneDefinition.swift): the engine's and the game's together, named as they were when scenes

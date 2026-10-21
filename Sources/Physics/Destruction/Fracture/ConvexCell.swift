@@ -34,10 +34,10 @@ package struct ConvexCell {
 
     package init(faces: [Face]) { self.faces = faces }
 
-    var isEmpty: Bool { faces.count < 4 }
+    package var isEmpty: Bool { faces.count < 4 }
 
     /// Every corner (each once).
-    var vertices: [SIMD3<Float>] {
+    package var vertices: [SIMD3<Float>] {
         var out: [SIMD3<Float>] = []
         let eps = max(size * 1e-5, 1e-7)
         for f in faces {
@@ -46,23 +46,23 @@ package struct ConvexCell {
         return out
     }
 
-    var bounds: AABB {
+    package var bounds: AABB {
         var box = AABB()
         for f in faces { for p in f.polygon { box.grow(p) } }
         return box
     }
 
     /// The longest side of its box.
-    var size: Float {
+    package var size: Float {
         let b = bounds
         return b.isEmpty ? 0 : simd_reduce_max(b.hi - b.lo)
     }
 
     /// The planes of its faces with tag `tag` (outer: the box's), or of every face that isn't (`except`).
-    func planes(where keep: (Int32) -> Bool) -> [SIMD4<Float>] { faces.filter { keep($0.tag) }.map(\.plane) }
+    package func planes(where keep: (Int32) -> Bool) -> [SIMD4<Float>] { faces.filter { keep($0.tag) }.map(\.plane) }
 
     /// The cell less what is outside `plane` (n . p > d), its new face tagged `tag`; nil if nothing is left.
-    func clipped(by plane: SIMD4<Float>, tag: Int32) -> ConvexCell? {
+    package func clipped(by plane: SIMD4<Float>, tag: Int32) -> ConvexCell? {
         let n = SIMD3(plane.x, plane.y, plane.z), d = plane.w
         let eps = max(size * 1e-6, 1e-8)
         var anyOut = false, anyIn = false
@@ -105,7 +105,7 @@ package struct ConvexCell {
     }
 
     /// Two unit vectors across `n` with u x v = n.
-    static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
+    package static func basis(_ n: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
         let a: SIMD3<Float> = abs(n.x) < 0.6 ? [1, 0, 0] : [0, 1, 0]
         let u = normalize(cross(a, n))
         return (u, cross(n, u))
@@ -137,14 +137,14 @@ package struct ConvexCell {
         }
     }
 
-    var volume: Float {
+    package var volume: Float {
         var v: Double = 0
         tets { o, a, b, c in v += Double(dot(a - o, cross(b - o, c - o))) / 6 }
         return Float(v)
     }
 
     /// Its centre of mass (uniform).
-    var centroid: SIMD3<Float> {
+    package var centroid: SIMD3<Float> {
         var v: Double = 0, m = SIMD3<Double>()
         tets { o, a, b, c in
             let w = Double(dot(a - o, cross(b - o, c - o))) / 6
@@ -156,7 +156,7 @@ package struct ConvexCell {
 
     /// Its inertia tensor about its centre of mass per unit density (trace(S) I - S, S the second moment about it):
     /// what PhysicsWorld.sampled integrates on a grid, exact here.
-    var inertia: simd_double3x3 {
+    package var inertia: simd_double3x3 {
         let c = SIMD3<Double>(centroid)
         var s = simd_double3x3()
         tets { o, a, b, cc in
@@ -176,7 +176,7 @@ package struct ConvexCell {
 
     /// The faces two cells share: where a face of this one lies on a face of `other` facing the other way, the
     /// polygons they overlap in (this one's normal out of it), none if they share no face.
-    func shared(with other: ConvexCell) -> (normal: SIMD3<Float>, polygons: [[SIMD3<Float>]]) {
+    package func shared(with other: ConvexCell) -> (normal: SIMD3<Float>, polygons: [[SIMD3<Float>]]) {
         let eps = max(max(size, other.size) * 1e-4, 1e-6)
         var polygons: [[SIMD3<Float>]] = [], normal = SIMD3<Float>()
         for f in faces {
@@ -203,7 +203,7 @@ package struct ConvexCell {
     }
 
     /// A polygon less what is outside the plane (n . p > d).
-    static func clip(_ poly: [SIMD3<Float>], normal n: SIMD3<Float>, offset d: Float) -> [SIMD3<Float>] {
+    package static func clip(_ poly: [SIMD3<Float>], normal n: SIMD3<Float>, offset d: Float) -> [SIMD3<Float>] {
         var out: [SIMD3<Float>] = []
         for i in poly.indices {
             let a = poly[i], b = poly[(i + 1) % poly.count]
@@ -215,7 +215,7 @@ package struct ConvexCell {
     }
 
     /// A planar polygon's area and centroid.
-    static func polygonArea(_ poly: [SIMD3<Float>]) -> (Float, SIMD3<Float>) {
+    package static func polygonArea(_ poly: [SIMD3<Float>]) -> (Float, SIMD3<Float>) {
         var area: Float = 0, centre = SIMD3<Float>()
         for i in 1..<(poly.count - 1) {
             let a = length(cross(poly[i] - poly[0], poly[i + 1] - poly[0])) / 2
@@ -226,12 +226,12 @@ package struct ConvexCell {
     }
 
     /// Whether `p` is inside (within `slack`).
-    func contains(_ p: SIMD3<Float>, slack: Float = 0) -> Bool {
+    package func contains(_ p: SIMD3<Float>, slack: Float = 0) -> Bool {
         faces.allSatisfy { dot(SIMD3($0.plane.x, $0.plane.y, $0.plane.z), p) - $0.plane.w <= slack }
     }
 
     /// The signed distance bound the GPU's cell node gives (Shaders/SDF.metal): the largest of its planes'.
-    func distance(_ p: SIMD3<Float>) -> Float {
+    package func distance(_ p: SIMD3<Float>) -> Float {
         faces.reduce(-Float.infinity) { max($0, dot(SIMD3($1.plane.x, $1.plane.y, $1.plane.z), p) - $1.plane.w) }
     }
 }

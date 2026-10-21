@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Physics
 import Plants
 import QuartzCore
 import simd
@@ -74,14 +75,10 @@ final class VoxelLOD {
     }
 
     /// MSL pcgHash (Shaders/Sampling.metal).
-    static func pcgHash(_ v: UInt32) -> UInt32 {
-        let state = v &* 747796405 &+ 2891336453
-        let word = ((state >> ((state >> 28) &+ 4)) ^ state) &* 277803737
-        return (word >> 22) ^ word
-    }
+    @inline(__always) static func pcgHash(_ v: UInt32) -> UInt32 { EngineCore.pcgHash(v) }
 
     /// A plant's offset of its level boundaries: the same for its wood and its leaves (they stand at one place).
-    static func jitter(_ position: SIMD3<Float>) -> Float {
+    @inline(__always) static func jitter(_ position: SIMD3<Float>) -> Float {
         let h = pcgHash(position.x.bitPattern ^ pcgHash(position.z.bitPattern ^ pcgHash(position.y.bitPattern)))
         return Float(h & 0xFF) * (0.5 / 255) - 0.25
     }

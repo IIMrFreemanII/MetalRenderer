@@ -11,14 +11,14 @@ import simd
 /// turns as the tet does.
 extension PhysicsWorld {
     /// Where `bary` puts a point in the tet whose particles are `ids` (weights of the last three).
-    @inline(__always) static func inTet(_ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>, _ ids: SIMD4<UInt32>,
+    @inline(__always) package static func inTet(_ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>, _ ids: SIMD4<UInt32>,
                                         _ bary: SIMD4<Float>) -> SIMD3<Float> {
         let x0 = PhysicsMath.xyz(particles[Int(ids.x)].position)
         return x0 + (PhysicsMath.xyz(particles[Int(ids.y)].position) - x0) * bary.x
             + (PhysicsMath.xyz(particles[Int(ids.z)].position) - x0) * bary.y
             + (PhysicsMath.xyz(particles[Int(ids.w)].position) - x0) * bary.z
     }
-    @inline(__always) func inTet(_ ids: SIMD4<UInt32>, _ bary: SIMD4<Float>) -> SIMD3<Float> {
+    @inline(__always) package func inTet(_ ids: SIMD4<UInt32>, _ bary: SIMD4<Float>) -> SIMD3<Float> {
         let x0 = PhysicsMath.xyz(particles[Int(ids.x)].position)
         return x0 + (PhysicsMath.xyz(particles[Int(ids.y)].position) - x0) * bary.x
             + (PhysicsMath.xyz(particles[Int(ids.z)].position) - x0) * bary.y
@@ -26,7 +26,7 @@ extension PhysicsWorld {
     }
 
     /// `x`, a skin particle of inverse mass `w`, held by `a` to `target` (and `deep` under it) over a substep of `h`.
-    @inline(__always) static func skinHold(_ x: SIMD3<Float>, _ a: GPUSkinAttach, target: SIMD3<Float>, deep: SIMD3<Float>,
+    @inline(__always) package static func skinHold(_ x: SIMD3<Float>, _ a: GPUSkinAttach, target: SIMD3<Float>, deep: SIMD3<Float>,
                                            w: Float, h: Float) -> SIMD3<Float> {
         let up = target - deep, l = length(up)
         let n = l > 1e-9 ? up / l : SIMD3<Float>()
@@ -40,7 +40,7 @@ extension PhysicsWorld {
     }
 
     /// Every skin particle held to the flesh (after the flesh's links and tets, before the collisions).
-    func solveSkin(_ p: GPUPhysicsParams) {
+    package func solveSkin(_ p: GPUPhysicsParams) {
         guard !skinAttachments.isEmpty else { return }
         let attachments = skinAttachments, h = p.gravity.w
         attachments.withUnsafeBufferPointer { attachments in
@@ -65,8 +65,8 @@ extension PhysicsWorld {
 /// A figure's skin shell (PhysicsWorld.addSkin): its particles (from `first`, one a vertex of `mesh`, its rest
 /// surface), and a finder of the triangle nearest a point.
 package struct SkinShell {
-    var mesh: MeshGeometry
-    var first: Int
+    package var mesh: MeshGeometry
+    package var first: Int
     private var cells: [SIMD3<Int32>: [Int]] = [:]
     private let cell: Float
 
@@ -82,7 +82,7 @@ package struct SkinShell {
 
     /// The triangle nearest `p` (rest space): its corners, `p`'s weights for the last two at the nearest point on it,
     /// and how far out from there along its normal `p` is.
-    func nearest(_ p: SIMD3<Float>) -> (corners: SIMD3<UInt32>, weights: SIMD2<Float>, out: Float)? {
+    package func nearest(_ p: SIMD3<Float>) -> (corners: SIMD3<UInt32>, weights: SIMD2<Float>, out: Float)? {
         let c = SIMD3<Int32>((p / cell).rounded(.down))
         var best: (d: Float, t: Int, w: SIMD2<Float>, q: SIMD3<Float>)?
         for r: Int32 in 1...3 where best == nil {
@@ -107,7 +107,7 @@ package struct SkinShell {
     }
 
     /// The point of triangle (a, b, c) nearest `p`, and its weights for b and c (Ericson's Real-Time Collision Detection).
-    static func closest(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> (SIMD3<Float>, SIMD2<Float>) {
+    package static func closest(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> (SIMD3<Float>, SIMD2<Float>) {
         let ab = b - a, ac = c - a, ap = p - a
         let d1 = simd_dot(ab, ap), d2 = simd_dot(ac, ap)
         if d1 <= 0 && d2 <= 0 { return (a, .zero) }

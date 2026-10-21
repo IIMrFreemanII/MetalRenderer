@@ -3,6 +3,7 @@ import EngineCore
 import Foundation
 import ImageIO
 import Metal
+import Physics
 import Plants
 import simd
 

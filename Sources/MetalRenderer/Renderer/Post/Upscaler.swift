@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Physics
 import Plants
 
 /// MetalFX's denoising scaler (macOS 26): the frame is traced at a lower resolution with a different sub-pixel jitter

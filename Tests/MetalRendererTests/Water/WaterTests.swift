@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The water's data: its looks, the FFT ocean's spectrum, the water map, the terrain's rivers, the open world's

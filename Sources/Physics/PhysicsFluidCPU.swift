@@ -85,7 +85,7 @@ struct FluidContext {
 /// same numbers. Each kernel's particles (or grid nodes) on PhysicsPool's workers.
 extension PhysicsWorld {
     /// One group's liquids (before the group's narrow phase), then their impulses on the bodies.
-    func stepFluids() {
+    package func stepFluids() {
         guard let fluid, !fluid.systems.isEmpty else { return }
         let shapes = shapeData
         for s in fluid.systems.indices { stepFluid(s, shapes) }
@@ -131,7 +131,7 @@ extension PhysicsWorld {
 
     /// Particle `i` as the nozzle pours it in group `clock`: its layer's place in the stream, as far along as the
     /// time since its layer left (MSL fluidPourKernel).
-    static func pour(_ p: GPUFluidParams, layer: [SIMD4<Float>], _ i: Int, clock: UInt32) -> GPUFluidParticle {
+    package static func pour(_ p: GPUFluidParams, layer: [SIMD4<Float>], _ i: Int, clock: UInt32) -> GPUFluidParticle {
         let per = Int(p.emission.x), k = UInt32(i / per), j = i % per
         let ticks = Float((clock - p.emission.z) &* 256 &- k &* p.emission.y) / 256
         let d = PhysicsMath.xyz(p.direction)
@@ -142,19 +142,19 @@ extension PhysicsWorld {
     }
 
     /// `v` x `scale` in fixed point (MSL fluidFixed): rounded to the nearest even, held to 2^30.
-    @inline(__always) static func fixed(_ v: SIMD3<Float>, _ scale: Float) -> SIMD3<Int32> {
+    @inline(__always) package static func fixed(_ v: SIMD3<Float>, _ scale: Float) -> SIMD3<Int32> {
         let c = simd_clamp(v * scale, SIMD3(repeating: -1_073_741_824), SIMD3(repeating: 1_073_741_824))
         // Each part on its own: SIMD's rounded(_:) is generic over the rule and asks for its metadata on every call.
         return SIMD3<Int32>(Int32(c.x.rounded(.toNearestOrEven)), Int32(c.y.rounded(.toNearestOrEven)),
                             Int32(c.z.rounded(.toNearestOrEven)))
     }
-    @inline(__always) static func fixed(_ v: Float, _ scale: Float) -> Int32 {
+    @inline(__always) package static func fixed(_ v: Float, _ scale: Float) -> Int32 {
         Int32(min(max(v * scale, -1_073_741_824), 1_073_741_824).rounded(.toNearestOrEven))
     }
 
     /// Body impulses from the liquids this group, applied (MSL fluidApplyKernel): a sleeping body wakes only when
     /// they move it more than gravity would have (a box floating at rest stays asleep), then they are cleared.
-    func applyFluidImpulses() {
+    package func applyFluidImpulses() {
         guard fluid != nil else { return }
         let group = PhysicsWorld.stepLength / Float(fluidGroups)
         // The bodies dropped this group (the first liquid's clock: its groups run, this one's included).
@@ -191,20 +191,20 @@ extension PhysicsWorld {
     // MARK: PBF
 
     /// Particle `x`'s grid cell (MSL fluidCell), its coordinates held to the grid.
-    @inline(__always) static func fluidCell(_ x: SIMD3<Float>, _ p: GPUFluidParams) -> SIMD3<Int32> {
+    @inline(__always) package static func fluidCell(_ x: SIMD3<Float>, _ p: GPUFluidParams) -> SIMD3<Int32> {
         let c = SIMD3<Int32>(((x - PhysicsMath.xyz(p.lo)) * p.hi.w).rounded(.down))
         return simd_clamp(c, .zero, SIMD3<Int32>(Int32(p.dims.x) - 1, Int32(p.dims.y) - 1, Int32(p.dims.z) - 1))
     }
-    @inline(__always) static func fluidCellIndex(_ c: SIMD3<Int32>, _ p: GPUFluidParams) -> Int {
+    @inline(__always) package static func fluidCellIndex(_ c: SIMD3<Int32>, _ p: GPUFluidParams) -> Int {
         Int(c.x) + Int(p.dims.x) * (Int(c.y) + Int(p.dims.y) * Int(c.z))
     }
 
     /// A cell's particles a neighbour search reads at most (MSL FLUID_CELL_MOST): a cell at rest holds about 8.
-    static let fluidCellMost: UInt32 = 96
+    package static let fluidCellMost: UInt32 = 96
     /// A particle's neighbours at most (MSL FLUID_NEIGHBOURS_MOST), and how far they are looked for, in h (FLUID_REACH):
     /// about 45 at rest.
-    static let fluidNeighboursMost = 64
-    static let fluidReach: Float = 1.1
+    package static let fluidNeighboursMost = 64
+    package static let fluidReach: Float = 1.1
 
     /// The neighbours of a particle in cell `c`, in the order the GPU visits them: the 27 cells about it (z, then y,
     /// then x), each cell's particles in order.
@@ -418,7 +418,7 @@ extension PhysicsWorld {
 
     /// The quadratic B-spline's weights about grid point `xg` (in cells): the first node's coordinates and, per axis,
     /// the three weights (MSL fluidSpline).
-    @inline(__always) static func spline(_ xg: SIMD3<Float>) -> (base: SIMD3<Int32>, fx: SIMD3<Float>, w: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)) {
+    @inline(__always) package static func spline(_ xg: SIMD3<Float>) -> (base: SIMD3<Int32>, fx: SIMD3<Float>, w: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>)) {
         let base = SIMD3<Int32>((simd_clamp(xg, SIMD3(repeating: 1), SIMD3(repeating: 1e6)) - 0.5).rounded(.down))
         let fx = xg - SIMD3<Float>(base)
         let a = 1.5 - fx, b = fx - 1, c = fx - 0.5
@@ -430,7 +430,7 @@ extension PhysicsWorld {
     }
 
     /// The node index of grid node `n`.
-    @inline(__always) static func mpmNode(_ n: SIMD3<Int32>, _ p: GPUFluidParams) -> Int {
+    @inline(__always) package static func mpmNode(_ n: SIMD3<Int32>, _ p: GPUFluidParams) -> Int {
         let c = simd_clamp(n, .zero, SIMD3<Int32>(Int32(p.dims.x) - 1, Int32(p.dims.y) - 1, Int32(p.dims.z) - 1))
         return Int(c.x) + Int(p.dims.x) * (Int(c.y) + Int(p.dims.y) * Int(c.z))
     }
@@ -538,7 +538,7 @@ extension PhysicsWorld {
     /// A particle at `x` going at `v` held inside the walls (MSL fluidMpmHold), its velocity into a wall it is held
     /// at as a node's (mpmContact): held there by its position alone, a pour sank onto the floor at gravity's pace
     /// and packed into a layer four times as dense, which J never saw.
-    @inline(__always) static func mpmHold(_ x: SIMD3<Float>, _ v: SIMD3<Float>, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>,
+    @inline(__always) package static func mpmHold(_ x: SIMD3<Float>, _ v: SIMD3<Float>, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>,
                                           _ p: GPUFluidParams) -> (SIMD3<Float>, SIMD3<Float>) {
         var u = v
         for a in 0..<3 {
@@ -551,7 +551,7 @@ extension PhysicsWorld {
 
     /// A particle's affine momentum per unit mass (MSL fluidMpmAffine): the stress's push over the substep (Tait's
     /// pressure from how its volume has changed, the viscous stress from its velocity's gradient) plus APIC's C.
-    static func mpmAffine(_ q: GPUFluidParticle, _ p: GPUFluidParams) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+    package static func mpmAffine(_ q: GPUFluidParticle, _ p: GPUFluidParams) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
         let j = q.position.w, k = p.material.z, gamma = p.material.w
         let pressure = max(k / gamma * (pow(j, -gamma) - 1), -p.pbf.x * k)
         let c0 = PhysicsMath.xyz(q.affine0), c1 = PhysicsMath.xyz(q.affine1), c2 = PhysicsMath.xyz(q.affine2)
@@ -631,7 +631,7 @@ extension PhysicsWorld {
 
     /// A node's velocity against a surface of normal `n` moving at `surface` (MSL fluidContact): going into it, it loses
     /// its normal part and slides with `friction` (Coulomb), less `stick` of the slide.
-    @inline(__always) static func mpmContact(_ v: SIMD3<Float>, _ n: SIMD3<Float>, _ surface: SIMD3<Float>, _ friction: Float,
+    @inline(__always) package static func mpmContact(_ v: SIMD3<Float>, _ n: SIMD3<Float>, _ surface: SIMD3<Float>, _ friction: Float,
                                              _ stick: Float) -> SIMD3<Float> {
         let rel = v - surface, vn = dot(rel, n)
         guard vn < 0 else { return v }

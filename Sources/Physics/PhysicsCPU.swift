@@ -10,7 +10,7 @@ import CPhysicsAtomics
 /// the GPU solves a colour's pairs at once and gets the same numbers. So are the joints, after the contacts.
 extension PhysicsWorld {
     /// A step (1/60 s), its stages on PhysicsPool's workers.
-    func step() {
+    package func step() {
         PhysicsPool.shared.run { stepStages() }
     }
 

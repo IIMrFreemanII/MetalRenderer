@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Physics+Fracture.swift and Scene+Fracture.swift: fractured objects that stand, break under impacts into pieces held

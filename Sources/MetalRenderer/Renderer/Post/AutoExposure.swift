@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Physics
 import Plants
 
 /// Auto exposure (PostSettings.autoExposure): the tone-map pass adds one pixel in 8 x 8 of the frame's light to a

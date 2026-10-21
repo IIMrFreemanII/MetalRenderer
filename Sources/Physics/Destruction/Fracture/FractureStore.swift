@@ -17,7 +17,7 @@ package enum FractureStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_FRACTURE"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Fracture/recipes.json")
+        default: return Assets.directory.appendingPathComponent("Fracture/recipes.json")
         }
     }
 

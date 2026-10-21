@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// A character as data (CharacterDNA) and its catalog and store.

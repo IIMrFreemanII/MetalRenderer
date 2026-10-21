@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Physics
 import Plants
 import QuartzCore
 

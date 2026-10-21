@@ -21,33 +21,33 @@ package struct DemolitionState {
         package var body: Int32
         /// In flight since `launched` (a step), at `speed` then; its blast's radius.
         package var armed = false
-        var launched: UInt32 = 0
-        var speed: Float = 0
-        var radius: Float = 0
+        package var launched: UInt32 = 0
+        package var speed: Float = 0
+        package var radius: Float = 0
     }
 
     package struct Walker {
         /// Its body (-1: no walker), enabled while walking.
-        var body: Int32 = -1
-        var on = false
+        package var body: Int32 = -1
+        package var on = false
         /// What the input asks: speed over the ground (m/s, x and z), a jump's speed (once, when it stands).
-        var speed = SIMD2<Float>()
-        var jump: Float = 0
+        package var speed = SIMD2<Float>()
+        package var jump: Float = 0
         /// A teleport asked for (where to), switching it on or off.
-        var place: SIMD3<Float>?
-        var enable = false, disable = false
+        package var place: SIMD3<Float>?
+        package var enable = false, disable = false
         /// What the last step found under it.
-        var grounded = false
-        var ground: Int32 = -1
+        package var grounded = false
+        package var ground: Int32 = -1
         /// Where it last stood (a fall out of the world, or stuck in rubble, comes back here), and steps stuck.
-        var safe = SIMD3<Float>()
-        var stuck = 0
+        package var safe = SIMD3<Float>()
+        package var stuck = 0
 
         /// Drive command flags (GPUFractureCommand.info.z).
         package static let enableFlag: UInt32 = 1, disableFlag: UInt32 = 2, placeFlag: UInt32 = 4
 
         /// Command `c` (a drive), at its step.
-        mutating func take(_ c: GPUFractureCommand, clock: UInt32) {
+        package mutating func take(_ c: GPUFractureCommand, clock: UInt32) {
             guard c.info.x == clock else { return }
             speed = SIMD2(c.direction.x, c.direction.z)
             if c.direction.y > 0 { jump = c.direction.y }
@@ -59,22 +59,22 @@ package struct DemolitionState {
 
     package var rockets: [Rocket] = []
     /// Blasts rockets set off, going on (as blast commands: start step, steps).
-    var blasts: [GPUFractureCommand] = []
+    package var blasts: [GPUFractureCommand] = []
     /// Where rockets went off (xyz, the blast's radius) and at which steps: the fireballs (the last `logLength`).
     package var detonations: [SIMD4<Float>] = []
     package var detonationSteps: [Int] = []
-    var walker = Walker()
+    package var walker = Walker()
     /// The walker as built (`reset` puts it back).
-    var startWalker = Walker()
+    package var startWalker = Walker()
     /// Bodies near the walker this step (scratch).
-    var near: [Int32] = []
+    package var near: [Int32] = []
     /// How many of the world's commands its build made (PhysicsWorld.keepBuiltCommands).
-    var builtCommands = 0
+    package var builtCommands = 0
 
-    var active: Bool { !rockets.isEmpty || walker.body >= 0 }
-    static let logLength = 32
+    package var active: Bool { !rockets.isEmpty || walker.body >= 0 }
+    package static let logLength = 32
 
-    mutating func reset() {
+    package mutating func reset() {
         for i in rockets.indices { rockets[i].armed = false }
         blasts.removeAll()
         detonations.removeAll()
@@ -85,21 +85,21 @@ package struct DemolitionState {
 
 extension PhysicsWorld {
     /// A rocket's ball (it goes off where it meets something) and the walker: bodies the rest of the world isn't.
-    static let fuseBit: UInt32 = 32
-    static let walkerBit: UInt32 = 64
+    package static let fuseBit: UInt32 = 32
+    package static let walkerBit: UInt32 = 64
     /// A rocket's blast: its push (m/s at the middle) over its steps.
-    static let rocketPush: Float = 16
-    static let rocketSteps = 6
+    package static let rocketPush: Float = 16
+    package static let rocketSteps = 6
     /// A rocket that has flown this long (steps) goes off where it is.
-    static let rocketLife: UInt32 = 240
+    package static let rocketLife: UInt32 = 240
     /// The walker's capsule (m): half the length of its middle, its radius; its eyes above its centre.
     package static let walkerHalf: Float = 0.6, walkerRadius: Float = 0.3
     /// How fast the walker gets to the speed asked for (m/s^2), standing and in the air.
-    static let walkerGrip: Float = 25, walkerAir: Float = 4
+    package static let walkerGrip: Float = 25, walkerAir: Float = 4
     /// A bullet's impact on a piece: this many times what breaks (or frees) it.
-    static let bulletBreak: Float = 3
+    package static let bulletBreak: Float = 3
     /// How fast a piece a bullet knocks out goes (m/s).
-    static let chipSpeed: Float = 3.5
+    package static let chipSpeed: Float = 3.5
 
     // MARK: Building
 
@@ -162,7 +162,7 @@ extension PhysicsWorld {
 
     /// A bullet: its body (or, if that broke since it was aimed at, the piece of it nearest the hit) takes the hit's
     /// impulse, and as much impact as breaks it a level (a leaf: frees it).
-    func hitBody(_ c: GPUFractureCommand) {
+    package func hitBody(_ c: GPUFractureCommand) {
         let point = PhysicsWorld.xyz(c.origin), dir = PhysicsWorld.xyz(c.direction), impulse = c.direction.w
         guard bodies.indices.contains(Int(c.info.z)) else { return }
         let i = livePiece(Int(c.info.z), near: point)
@@ -192,7 +192,7 @@ extension PhysicsWorld {
     }
 
     /// Body `i` if it is enabled; else, if it broke, its live descendant nearest `point`; else -1.
-    func livePiece(_ i: Int, near point: SIMD3<Float>) -> Int {
+    package func livePiece(_ i: Int, near point: SIMD3<Float>) -> Int {
         if bodies[i].info.y & PhysicsWorld.disabledBit == 0 { return i }
         guard bodies[i].info.y & PhysicsWorld.pieceBit != 0, broke(i) else { return -1 }
         let node = fractureNodes[i]
@@ -215,7 +215,7 @@ extension PhysicsWorld {
     }
 
     /// A rocket sent (at its command's step).
-    func launchRocket(_ c: GPUFractureCommand, clock: UInt32) {
+    package func launchRocket(_ c: GPUFractureCommand, clock: UInt32) {
         let i = Int(c.info.z)
         guard clock == c.info.x, bodies.indices.contains(i),
               let r = demolition.rockets.firstIndex(where: { $0.body == Int32(i) }) else { return }
@@ -229,7 +229,7 @@ extension PhysicsWorld {
     // MARK: The step's start
 
     /// The rockets that meet something this step gone off, the blasts going on pushing, the walker driven.
-    func beginDemolitionStep(_ clock: UInt32) {
+    package func beginDemolitionStep(_ clock: UInt32) {
         let h = PhysicsWorld.stepLength
         for r in demolition.rockets.indices where demolition.rockets[r].armed {
             let rocket = demolition.rockets[r], i = Int(rocket.body)
@@ -387,7 +387,7 @@ extension PhysicsWorld {
 
     /// The bodies of `b` whose spheres come within `reach` of `x` (but `skip`, disabled ones and rockets): their indices
     /// into `out`, and how many.
-    static func gather(_ b: UnsafeBufferPointer<GPUPhysicsBody>, around x: SIMD3<Float>, reach: Float, skip: Int,
+    package static func gather(_ b: UnsafeBufferPointer<GPUPhysicsBody>, around x: SIMD3<Float>, reach: Float, skip: Int,
                        into out: UnsafeMutableBufferPointer<Int32>) -> Int {
         var n = 0
         for k in 0..<b.count where k != skip && b[k].info.y & (disabledBit | fuseBit) == 0 {
@@ -401,7 +401,7 @@ extension PhysicsWorld {
     }
 
     /// Whether `x` is deeper than `by` inside any of `list`'s bodies.
-    static func inside(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, _ list: UnsafeBufferPointer<Int32>, _ x: SIMD3<Float>,
+    package static func inside(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, _ list: UnsafeBufferPointer<Int32>, _ x: SIMD3<Float>,
                        by depth: Float) -> Bool {
         for k in list {
             let o = b[Int(k)]
@@ -412,7 +412,7 @@ extension PhysicsWorld {
 
     /// The nearest of `b`'s bodies (those of `list`, or every enabled one but those with a flag of `skipping`) the ray
     /// from `origin` along `direction` (unit) meets within `length`, and how far along (body -1: none).
-    static func nearest(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, list: UnsafeBufferPointer<Int32>?,
+    package static func nearest(_ b: UnsafeBufferPointer<GPUPhysicsBody>, _ shapes: PhysicsShapes, list: UnsafeBufferPointer<Int32>?,
                         _ origin: SIMD3<Float>, _ direction: SIMD3<Float>, length: Float, skipping: UInt32) -> (body: Int, t: Float) {
         var best = (body: -1, t: length)
         if let list {
@@ -431,7 +431,7 @@ extension PhysicsWorld {
 
     /// How far along the ray body `o`'s surface is, if before `end` (else -1): sphere-traced through its distance from
     /// where the ray enters its bounding sphere.
-    @inline(__always) static func trace(_ o: GPUPhysicsBody, _ shapes: PhysicsShapes, _ origin: SIMD3<Float>, _ direction: SIMD3<Float>,
+    @inline(__always) package static func trace(_ o: GPUPhysicsBody, _ shapes: PhysicsShapes, _ origin: SIMD3<Float>, _ direction: SIMD3<Float>,
                                         until end: Float) -> Float {
         let x = xyz(o.position), q = PhysicsMath.qconj(o.rotation)
         let radius = o.invInertia.w, oc = origin - x
@@ -448,7 +448,7 @@ extension PhysicsWorld {
     }
 
     /// Blast `c`'s push on every body this step (as beginFractureStep's).
-    static func blastAll(_ c: GPUFractureCommand, _ b: UnsafeMutableBufferPointer<GPUPhysicsBody>, _ s: UnsafeMutableBufferPointer<GPUFractureState>,
+    package static func blastAll(_ c: GPUFractureCommand, _ b: UnsafeMutableBufferPointer<GPUPhysicsBody>, _ s: UnsafeMutableBufferPointer<GPUFractureState>,
                          _ nodes: UnsafeBufferPointer<GPUFractureNode>) {
         for i in 0..<b.count { blast(&b[i], &s[i], nodes[i], c) }
     }

@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The Terrain Editor's model (with a stand-in for the renderer) and its window, drawn offscreen.

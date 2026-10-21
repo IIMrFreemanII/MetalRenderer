@@ -13,7 +13,7 @@ import simd
 /// before each.
 package final class PhysicsGPU {
     /// MSL PhysicsGroup: a run of a step's substeps.
-    struct Group {
+    package struct Group {
         package var first: UInt32
         package var count: UInt32
         package var last: UInt32
@@ -21,14 +21,14 @@ package final class PhysicsGPU {
     }
 
     /// MSL PhysicsPoseParams.
-    struct PoseParams {
-        var bodies: UInt32
-        var descriptorStride: UInt32
-        var pad0: UInt32 = 0
-        var pad1: UInt32 = 0
+    package struct PoseParams {
+        package var bodies: UInt32
+        package var descriptorStride: UInt32
+        package var pad0: UInt32 = 0
+        package var pad1: UInt32 = 0
     }
 
-    let world: PhysicsWorld
+    package let world: PhysicsWorld
     private let params: MTLBuffer
     private let bodies: MTLBuffer
     private let initial: MTLBuffer
@@ -118,7 +118,7 @@ package final class PhysicsGPU {
     private let flesh: MTLBuffer
     private let bodyUploads: [MTLBuffer]
     /// The liquids (PhysicsFluidGPU.swift), stepped before each group's narrow phase.
-    let fluid: FluidGPU?
+    package let fluid: FluidGPU?
     /// Fractured objects (Physics+Fracture.swift): per body its node and its step's state, the welds (and as they
     /// start), per body its welds (from `weldStarts`), the commands and their clock (steps run, commands), what the
     /// fracture kernels are told; and the substeps' tables (MSL PhysicsTables: the tets', the welds', the states'
@@ -138,14 +138,14 @@ package final class PhysicsGPU {
     /// Per body whether it broke this step, and the ring of steps' breaks the dust is made from (MSL
     /// physicsFractureEventsKernel: a header per slot, then its events); the particles read it (ParticlesGPU.breakRing).
     private let broke: MTLBuffer
-    let breakRing: MTLBuffer
+    package let breakRing: MTLBuffer
     private var commandsSent = 0
-    var fractures: Bool { world.fractures }
+    package var fractures: Bool { world.fractures }
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
-    let simulates: Bool
-    var hasCloth: Bool { clothTable != nil }
-    var hasHair: Bool { !world.hairGroups.isEmpty }
-    var hasSoftBodies: Bool { !world.softVertices.isEmpty }
+    package let simulates: Bool
+    package var hasCloth: Bool { clothTable != nil }
+    package var hasHair: Bool { !world.hairGroups.isEmpty }
+    package var hasSoftBodies: Bool { !world.softVertices.isEmpty }
     /// The scene's SDF shapes (SDFBuffers.scene) and what it points at, for the narrow phase.
     private let sdfScene: MTLBuffer
     private let sdfResources: [MTLBuffer]
@@ -155,7 +155,7 @@ package final class PhysicsGPU {
     /// cloth, its mesh's last-frame offset (GPUMesh.prevOffset).
     /// The statics' heightfields changed (a terrain's sectors under a brush): their samples, shapes and boxes copied
     /// again (shared buffers: a frame in flight may see them a frame early).
-    func refreshStatics(_ world: PhysicsWorld) {
+    package func refreshStatics(_ world: PhysicsWorld) {
         func copy<T>(_ array: [T], into b: MTLBuffer) {
             array.withUnsafeBytes { raw in
                 if !raw.isEmpty && raw.count <= b.length { b.contents().copyMemory(from: raw.baseAddress!, byteCount: raw.count) }
@@ -301,7 +301,7 @@ package final class PhysicsGPU {
 
     /// The pass runs its dispatches together (with liquids, `Renderer.encodeSceneUpdate`): a barrier ahead of each of
     /// the bodies' (theirs run in order), and the liquids' side by side (FluidGPU).
-    var concurrent = false {
+    package var concurrent = false {
         didSet { fluid?.concurrent = concurrent }
     }
 
@@ -320,7 +320,7 @@ package final class PhysicsGPU {
     /// Back to the start (a replay).
     private var empty: Bool { count + particleCount == 0 && fluid == nil }
 
-    func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
+    package func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
         guard !empty else { return }
         enc.setComputePipelineState(pipelines[.physicsReset])
         enc.setBuffer(params, offset: 0, index: 0)
@@ -357,12 +357,12 @@ package final class PhysicsGPU {
     }
 
     /// The body held for slot `slot`'s steps (the world's `grab`), written once the slot's last frame is done.
-    func setGrab(slot: Int, _ grab: GPUPhysicsGrab) {
+    package func setGrab(slot: Int, _ grab: GPUPhysicsGrab) {
         grabs[slot].contents().storeBytes(of: grab, as: GPUPhysicsGrab.self)
     }
 
     /// `steps` steps, in order, into a serial pass, with slot `slot`'s grab.
-    func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int, slot: Int = 0) {
+    package func encodeSteps(_ enc: ComputePass, pipelines: Pipelines, steps: Int, slot: Int = 0) {
         guard !empty, steps > 0 else { return }
         enc.useResources(sdfResources, usage: .read)
         enc.setBuffer(params, offset: 0, index: 0)
@@ -460,7 +460,7 @@ package final class PhysicsGPU {
 
     /// The world's commands the GPU hasn't had yet (a shot, a blast: the CPU adds them between frames, stamped with a
     /// step not yet encoded), then their count. A shared buffer: a frame in flight may see them early, before their step.
-    func sendCommands() {
+    package func sendCommands() {
         let all = world.fractureCommands
         guard fractures, all.count > commandsSent else { return }
         let n = min(all.count, PhysicsWorld.maxCommands)
@@ -512,17 +512,17 @@ package final class PhysicsGPU {
     }
 
     /// The fracture states and welds as the GPU has them (tests).
-    func readFractureState() -> [GPUFractureState] {
+    package func readFractureState() -> [GPUFractureState] {
         Array(UnsafeBufferPointer(start: fractureState.contents().bindMemory(to: GPUFractureState.self, capacity: count), count: count))
     }
     /// Each body's pair entries (`maxPairs` each), how many it uses, and their contacts (`maxContacts` an entry): tests.
-    func readPairs() -> (pairs: [GPUPhysicsPair], counts: [UInt32], contacts: [GPUPhysicsContact]) {
+    package func readPairs() -> (pairs: [GPUPhysicsPair], counts: [UInt32], contacts: [GPUPhysicsContact]) {
         let n = count * PhysicsWorld.maxPairs, m = n * PhysicsWorld.maxContacts
         return (Array(UnsafeBufferPointer(start: pairs.contents().bindMemory(to: GPUPhysicsPair.self, capacity: n), count: n)),
                 Array(UnsafeBufferPointer(start: pairCounts.contents().bindMemory(to: UInt32.self, capacity: count), count: count)),
                 Array(UnsafeBufferPointer(start: contacts.contents().bindMemory(to: GPUPhysicsContact.self, capacity: m), count: m)))
     }
-    func readWelds() -> [GPUFractureWeld] {
+    package func readWelds() -> [GPUFractureWeld] {
         let n = world.initialWelds.count
         return Array(UnsafeBufferPointer(start: welds.contents().bindMemory(to: GPUFractureWeld.self, capacity: n), count: n))
     }
@@ -552,7 +552,7 @@ package final class PhysicsGPU {
     }
 
     /// The drawn strands' control points (and last frame's) into the scene's vertex buffer, ahead of the refits.
-    func encodeHairCurves(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer) {
+    package func encodeHairCurves(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer) {
         guard hasHair else { return }
         enc.setComputePipelineState(pipelines[.physicsHairCurves])
         enc.setBuffer(hairStrands, offset: 0, index: 1)
@@ -566,7 +566,7 @@ package final class PhysicsGPU {
     }
 
     /// The hair's vertices as the GPU has them (tests).
-    func readHairVertices() -> [GPUHairVertex] {
+    package func readHairVertices() -> [GPUHairVertex] {
         let n = world.initialHairVertices.count
         return Array(UnsafeBufferPointer(start: hairVertices.contents().bindMemory(to: GPUHairVertex.self, capacity: n), count: n))
     }
@@ -690,7 +690,7 @@ package final class PhysicsGPU {
     }
 
     /// The colours encodeWideSubsteps dispatches across the GPU (MSL PHYS_WIDE_COLOURS, PHYS_WIDE_EXTRA).
-    enum PhysicsWideColours { static let rounds = 10, extra = 4 }
+    package enum PhysicsWideColours { static let rounds = 10, extra = 4 }
 
     /// `group` of the step's substeps across the GPU (Physics.metal's physicsWide*Kernel; physicsSubstepsKernel's stages,
     /// with the substeps' buffers bound): the step's first poses, each substep's integration, its colours' pushes, the
@@ -754,7 +754,7 @@ package final class PhysicsGPU {
     }
 
     /// The frame's instance records (and descriptors, `descriptorStride` > 0) from the bodies, and slot `slot`'s snapshot.
-    func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, instances: MTLBuffer, descriptors: MTLBuffer?,
+    package func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, instances: MTLBuffer, descriptors: MTLBuffer?,
                     descriptorStride: Int) {
         guard !empty else { return }
         var p = PoseParams(bodies: UInt32(count), descriptorStride: descriptors == nil ? 0 : UInt32(descriptorStride))
@@ -781,7 +781,7 @@ package final class PhysicsGPU {
     }
 
     /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from.
-    func upload(slot: Int, _ drawn: PhysicsStepper.Drawn) {
+    package func upload(slot: Int, _ drawn: PhysicsStepper.Drawn) {
         if !uploads.isEmpty {
             drawn.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
         }
@@ -797,7 +797,7 @@ package final class PhysicsGPU {
     }
 
     /// The cloths' vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
-    func encodeClothMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
+    package func encodeClothMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
         guard let clothTable else { return }
         var n = UInt32(particleCount)
         enc.setComputePipelineState(pipelines[.physicsClothMesh])
@@ -810,7 +810,7 @@ package final class PhysicsGPU {
     }
 
     /// The soft bodies' drawn vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
-    func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
+    package func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
         guard hasSoftBodies else { return }
         var n = UInt32(world.softVertices.count)
         enc.setComputePipelineState(pipelines[.physicsSoftMesh])
@@ -829,22 +829,22 @@ package final class PhysicsGPU {
     }
 
     /// The liquids' surfaces into the scene's vertex and index buffers, ahead of the structures' builds.
-    func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {
+    package func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {
         fluid?.encodeSurfaces(enc, pipelines: pipelines, positions: positions, normals: normals, indices: indices)
     }
-    var hasFluid: Bool { fluid != nil }
+    package var hasFluid: Bool { fluid != nil }
     /// The frames its liquids' surfaces are still made for (the renderer's count): some more after the last step or
     /// reset, as the structure built over one takes its size from a count read back a few frames late.
-    var liquidFrames = Renderer.maxFramesInFlight + 1
+    package var liquidFrames = GPUFrames.maxInFlight + 1
 
     /// The flesh's buffer as the GPU has it (tests: its clock, the muscles' activations).
-    func readFlesh() -> [SIMD4<UInt32>] {
+    package func readFlesh() -> [SIMD4<UInt32>] {
         let n = flesh.length / 16
         return Array(UnsafeBufferPointer(start: flesh.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: n), count: n))
     }
 
     /// The particles as the GPU has them (tests).
-    func readParticles() -> [GPUPhysicsParticle] {
+    package func readParticles() -> [GPUPhysicsParticle] {
         Array(UnsafeBufferPointer(start: particles[0].contents().bindMemory(to: GPUPhysicsParticle.self, capacity: particleCount),
                                   count: particleCount))
     }
@@ -852,12 +852,12 @@ package final class PhysicsGPU {
     // MARK: - Reading back
 
     /// Slot `slot`'s poses (position, rotation per body), from when its frame was done.
-    func snapshot(slot: Int) -> UnsafeBufferPointer<SIMD4<Float>> {
+    package func snapshot(slot: Int) -> UnsafeBufferPointer<SIMD4<Float>> {
         UnsafeBufferPointer(start: snapshots[slot].contents().bindMemory(to: SIMD4<Float>.self, capacity: 2 * count), count: 2 * count)
     }
 
     /// The bodies as the GPU has them (the work that wrote them must be done): tests and the check.
-    func readBodies() -> [GPUPhysicsBody] {
+    package func readBodies() -> [GPUPhysicsBody] {
         Array(UnsafeBufferPointer(start: bodies.contents().bindMemory(to: GPUPhysicsBody.self, capacity: count), count: count))
     }
 }

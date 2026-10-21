@@ -159,7 +159,9 @@ def callee_key(name):
     """A callee's name for comparing builds: a specialisation's arguments taken out (they differ between builds),
     but kept a specialisation (one that became a plain call is new)."""
     m = SPECIALIZATION.match(name)
-    return "specialised " + name[m.end():] if m else name
+    if m:
+        return "specialised " + name[m.end():]
+    return "specialised " + name[len("specialized "):] if name.startswith("specialized ") else name
 
 
 def patterns(path):
@@ -305,8 +307,9 @@ def main():
                 print(f"GONE   {key}")
                 failed = True
                 continue
+            # (cross-allow.txt may allow a callee; a function's call to its own specialisation is its thunk's)
             new = sorted(c for c in set(now["callees"]) - set(was["callees"])
-                         if not any(a in key and b in c for a, b in allow))   # cross-allow.txt allows it
+                         if not any(a in key and b in c for a, b in allow) and c != "specialised " + key)
             if new or now["indirect"] > was["indirect"]:
                 failed = True
                 print(f"NEW    {key}")

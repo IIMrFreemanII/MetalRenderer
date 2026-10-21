@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The CPU step on PhysicsThreads' workers (PhysicsCPU.swift): the same numbers, bit for bit, on one thread and on all

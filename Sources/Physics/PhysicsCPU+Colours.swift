@@ -9,7 +9,7 @@ extension PhysicsWorld {
 
     /// A pair's priority in the colouring: a hash of its entry (Physics.metal physPairPriority), so that neighbours
     /// numbered in a row (a sorted pile) don't wait on each other one at a time; the entry breaks ties.
-    @inline(__always) static func priority(_ e: UInt32) -> UInt64 {
+    @inline(__always) package static func priority(_ e: UInt32) -> UInt64 {
         var x = e &* 0x9E37_79B1
         x ^= x >> 16
         x &*= 0x85EB_CA6B
@@ -22,7 +22,7 @@ extension PhysicsWorld {
     /// in each round, every pair outranking the uncoloured pairs it shares a body with takes the lowest colour none of
     /// those it shares a body with has (at most 31: a pair shares its bodies with 30 others at most). What
     /// `maxRounds` rounds leave (pad = `leftover`) is solved one pair after another, after the colours.
-    func colourPairs() {
+    package func colourPairs() {
         let k = PhysicsWorld.maxPairs, entries = pairs.count, n = bodies.count, fractured = fractures, idleWelds = self.idleWelds
         let held = grab.target.w > 0 ? grab.body : PhysicsWorld.none
         var left: [Int32] = [], oneSided: [Int32] = []
@@ -230,7 +230,7 @@ extension PhysicsWorld {
     /// and each colour is a stage a substep.
     /// With `welds` (PhysicsWorld.idleWelds), a weld's pair too: one between two bodies that don't move does nothing
     /// (solveWeld, kickFracturePair pass it by) and needn't take a colour.
-    @inline(__always) static func idle(_ s: StepBuffers, _ e: Int, held: UInt32, welds: Bool) -> Bool {
+    @inline(__always) package static func idle(_ s: StepBuffers, _ e: Int, held: UInt32, welds: Bool) -> Bool {
         let i = e / maxPairs, code = s.pairs[e].partner
         if moves(s.bodies[i]) || UInt32(i) == held || (!welds && s.contacts[e * maxContacts].lambda.w == 1) { return false }
         return code & staticBit != 0 || !(moves(s.bodies[Int(code)]) || code == held)

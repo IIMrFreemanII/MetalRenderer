@@ -8,14 +8,14 @@ extension PhysicsWorld {
     // MARK: Particles
 
     /// A particle's reach this step: its radius, as far as it goes (at up to the particle speed), and the margin.
-    @inline(__always) static func particleReach(_ q: GPUPhysicsParticle, _ p: GPUPhysicsParams) -> Float {
+    @inline(__always) package static func particleReach(_ q: GPUPhysicsParticle, _ p: GPUPhysicsParams) -> Float {
         q.position.w + min(length(PhysicsMath.xyz(q.velocity)), p.particleGrid.y) * p.grid.w + p.grid.y
     }
 
     /// Every particle's neighbours (the nearest `maxNeighbours` within reach, the lower first of equals) and the
     /// colliders it may touch (statics, then bodies, the lowest `maxColliders`). The grid here; each particle's query on
     /// every core.
-    func particleBroadPhase(_ p: GPUPhysicsParams) {
+    package func particleBroadPhase(_ p: GPUPhysicsParams) {
         guard !particles.isEmpty else { return }
         let size = p.particleGrid.x, n = particles.count
         particles.withUnsafeBufferPointer { q in
@@ -36,7 +36,7 @@ extension PhysicsWorld {
     /// Particle i's neighbours and colliders (particleBroadPhase): neighbours kept nearest first as they are found
     /// (the same as sorting them all: the order is total, none found twice); colliders found in the order they sort
     /// in (statics, then bodies, each by number), the first `maxColliders` kept.
-    @inline(__always) static func particleNeighbours(_ i: Int, _ s: ParticleBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
+    @inline(__always) package static func particleNeighbours(_ i: Int, _ s: ParticleBuffers, _ grid: PhysicsCellGrid.View, _ shapes: [GPUPhysicsShape],
                                                      _ staticBounds: [AABB], _ p: GPUPhysicsParams,
                                                      kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
         let k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
@@ -90,7 +90,7 @@ extension PhysicsWorld {
         s.colliderCounts[i] = UInt32(touching)
     }
 
-    func integrateParticles(_ p: GPUPhysicsParams) {
+    package func integrateParticles(_ p: GPUPhysicsParams) {
         guard !particles.isEmpty else { return }
         let h = p.gravity.w, n = particles.count
         withParticleBuffers { s in
@@ -113,7 +113,7 @@ extension PhysicsWorld {
 
     /// A push of `overlap` along `n` less the sliding friction holds back: all of `slide`'s tangential part while it
     /// is under friction x the overlap (static), otherwise that much of it (dynamic).
-    @inline(__always) static func particlePush(_ n: SIMD3<Float>, _ overlap: Float, _ slide: SIMD3<Float>, _ friction: Float) -> SIMD3<Float> {
+    @inline(__always) package static func particlePush(_ n: SIMD3<Float>, _ overlap: Float, _ slide: SIMD3<Float>, _ friction: Float) -> SIMD3<Float> {
         var push = n * overlap
         let tangent = slide - n * dot(slide, n)
         let l = length(tangent)
@@ -122,7 +122,7 @@ extension PhysicsWorld {
     }
 
     /// Whether a particle that went `moved` this substep stays put (PhysicsCPU.solveParticles).
-    @inline(__always) static func rests(_ q: GPUPhysicsParticle, touching: Bool, shoved: Bool, moved: SIMD3<Float>,
+    @inline(__always) package static func rests(_ q: GPUPhysicsParticle, touching: Bool, shoved: Bool, moved: SIMD3<Float>,
                                         _ p: GPUPhysicsParams) -> Bool {
         touching && !shoved && q.info.y & (clothBit | softBit) == 0 && length(moved) < p.particleGrid.w * p.gravity.w
     }
@@ -131,7 +131,7 @@ extension PhysicsWorld {
     /// full (they don't give), averaged too; then its velocity from how far it went. A soft body's particle takes both
     /// summed, and faster (`softPushSpeed`): its links hold it among its own, and averaged pushes let a body shove it
     /// in, or a jelly on top sink into it.
-    func solveParticles(_ p: GPUPhysicsParams) {
+    package func solveParticles(_ p: GPUPhysicsParams) {
         guard !particles.isEmpty else { return }
         let n = particles.count, shapes = shapeData
         withParticleBuffers { s in
@@ -143,7 +143,7 @@ extension PhysicsWorld {
     }
 
     /// Particle i's pushes (solveParticles), against the particles as the pass found them.
-    @inline(__always) static func solveParticle(_ i: Int, _ s: ParticleBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams) {
+    @inline(__always) package static func solveParticle(_ i: Int, _ s: ParticleBuffers, _ shapes: PhysicsShapes, _ p: GPUPhysicsParams) {
         let h = p.gravity.w, k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
         let q = s.before[i]
         let x = PhysicsMath.xyz(q.position), moved = x - PhysicsMath.xyz(q.prevPosition), w = q.prevPosition.w
@@ -193,7 +193,7 @@ extension PhysicsWorld {
     /// The cloths' and soft bodies' links, a colour at a time (Gauss-Seidel: each sees what the colours before it
     /// moved), each an XPBD distance constraint (one iteration a substep, so its lambda starts at 0); a soft body's
     /// with Macklin et al. 2016's damping of what moves along it.
-    func solveCloth(_ p: GPUPhysicsParams) {
+    package func solveCloth(_ p: GPUPhysicsParams) {
         guard colourStarts.count > 1 else { return }
         let h = p.gravity.w, starts = colourStarts, constraints = self.constraints
         constraints.withUnsafeBufferPointer { constraints in
@@ -209,7 +209,7 @@ extension PhysicsWorld {
     }
 
     /// One link (solveCloth).
-    @inline(__always) static func solveLink(_ con: GPUPhysicsConstraint, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+    @inline(__always) package static func solveLink(_ con: GPUPhysicsConstraint, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
                                             _ h: Float, _ p: GPUPhysicsParams) {
         let a = Int(con.a), b = Int(con.b)
         let wa = particles[a].prevPosition.w, wb = particles[b].prevPosition.w

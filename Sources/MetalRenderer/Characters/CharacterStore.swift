@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The characters scenes are made with: the built-in ones (BuiltInCharacters), any of them replaced by a saved file

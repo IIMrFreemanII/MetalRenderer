@@ -31,14 +31,14 @@ package struct FractureTree {
         package var normal: SIMD3<Float>
     }
 
-    let recipe: FractureRecipe
+    package let recipe: FractureRecipe
     package private(set) var nodes: [Node] = []
-    private(set) var welds: [Weld] = []
+    package private(set) var welds: [Weld] = []
     /// The object's own shape is the cell (a box): no piece is part outside it.
-    let convex: Bool
+    package let convex: Bool
 
-    var leaves: Int { nodes.filter(\.isLeaf).count }
-    var levels: Int { (nodes.map(\.level).max() ?? 0) + 1 }
+    package var leaves: Int { nodes.filter(\.isLeaf).count }
+    package var levels: Int { (nodes.map(\.level).max() ?? 0) + 1 }
 
     /// The object `cell` (its box, shape space) fractured by `recipe`. `inside`: the object's distance when it isn't
     /// the box (a pillar's cylinder, a statue's grid): cells with little of it inside are dropped, and welds count only
@@ -76,7 +76,7 @@ package struct FractureTree {
     }
 
     /// Whether node `a` holds node `b` (is it or one of its ancestors).
-    func holds(_ a: Int, _ b: Int) -> Bool {
+    package func holds(_ a: Int, _ b: Int) -> Bool {
         var k = b
         while k >= 0 {
             if k == a { return true }

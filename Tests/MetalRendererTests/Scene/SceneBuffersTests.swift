@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// A scene on the GPU (SceneBuffers.swift): borrowed meshes in buffers of their own, a still scene's one set of

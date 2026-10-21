@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Which source files make each scene and system, from graphify's graph of the code (graphify-out/graph.json in the

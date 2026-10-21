@@ -23,12 +23,12 @@ import simd
 /// and tets (a tet's fibre with its volume), the skin's holds, then the particles' collisions. A figure's particles
 /// don't collide with its own bones (GPUPhysicsParticle.info.z: the bones' first << 8 | how many).
 extension PhysicsWorld {
-    @inline(__always) static func kinematic(_ b: GPUPhysicsBody) -> Bool { b.info.y & kinematicBit != 0 }
+    @inline(__always) package static func kinematic(_ b: GPUPhysicsBody) -> Bool { b.info.y & kinematicBit != 0 }
 
     // MARK: Kinematic bodies
 
     /// Kinematic body `b`'s pose `alpha` of the way through step `step`: from the table's row for the step to the next.
-    func kinematicPose(_ b: GPUPhysicsBody, step: Int, alpha: Float) -> Pose {
+    package func kinematicPose(_ b: GPUPhysicsBody, step: Int, alpha: Float) -> Pose {
         let column = Int(b.info.y >> 8), rows = kinematicRows
         let a = ((step % rows) * kinematicColumns + column) * 2, e = (((step + 1) % rows) * kinematicColumns + column) * 2
         return PhysicsWorld.between(PhysicsMath.xyz(kinematicTable[a]), kinematicTable[a + 1],
@@ -37,7 +37,7 @@ extension PhysicsWorld {
 
     /// Kinematic body `b` to `pose` over a substep of `h`: its velocities from how far it went (what friction and the
     /// contacts' speeds see).
-    @inline(__always) static func moveKinematic(_ b: inout GPUPhysicsBody, to pose: Pose, h: Float) {
+    @inline(__always) package static func moveKinematic(_ b: inout GPUPhysicsBody, to pose: Pose, h: Float) {
         b.prevPosition = SIMD4(PhysicsMath.xyz(b.position), b.prevPosition.w)
         b.prevRotation = b.rotation
         b.position = SIMD4(pose.position, b.position.w)
@@ -52,7 +52,7 @@ extension PhysicsWorld {
 
     /// Muscle `m`'s activation, with its bones `a` and `b` where they are: how far the angle between their axes is
     /// from where it starts to where it is full.
-    @inline(__always) static func activation(_ m: GPUMuscle, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> Float {
+    @inline(__always) package static func activation(_ m: GPUMuscle, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> Float {
         let u = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(m.axisA)), v = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(m.axisB))
         let angle = atan2(length(cross(u, v)), dot(u, v))
         let f = (angle - m.range.x) / (m.range.y - m.range.x)
@@ -60,14 +60,14 @@ extension PhysicsWorld {
     }
 
     /// Where pin `pin`'s bones `a` and `b` put its particle.
-    @inline(__always) static func pinTarget(_ pin: GPUFleshPin, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> SIMD3<Float> {
+    @inline(__always) package static func pinTarget(_ pin: GPUFleshPin, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> SIMD3<Float> {
         (PhysicsMath.xyz(a.position) + PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(pin.restA))) * pin.restA.w
             + (PhysicsMath.xyz(b.position) + PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(pin.restB))) * pin.restB.w
     }
 
     /// Particle `q` held by `pin` to `target` over a substep of `h`: one of no mass put there, another pulled
     /// (an XPBD constraint of the pin's compliance, its lambda from 0).
-    @inline(__always) static func pin(_ q: inout GPUPhysicsParticle, _ pin: GPUFleshPin, to target: SIMD3<Float>, h: Float) {
+    @inline(__always) package static func pin(_ q: inout GPUPhysicsParticle, _ pin: GPUFleshPin, to target: SIMD3<Float>, h: Float) {
         let w = q.prevPosition.w
         if w > 0 {
             let k = w / (w + pin.compliance / (h * h))
@@ -80,7 +80,7 @@ extension PhysicsWorld {
     }
 
     /// The muscles' activations, then every pinned particle held to its bones, where this substep moved them.
-    func solveFlesh(_ p: GPUPhysicsParams) {
+    package func solveFlesh(_ p: GPUPhysicsParams) {
         guard !muscles.isEmpty || !pins.isEmpty else { return }
         let muscles = self.muscles, pins = self.pins, h = p.gravity.w
         activations.withUnsafeMutableBufferPointer { activations in
@@ -109,7 +109,7 @@ extension PhysicsWorld {
     /// A muscle's tet's fibre (before its volume, in the same pass): XPBD on the fibre's stretch, |Ds g| (Ds the tet's
     /// edges now, g = Dm^-1 f), toward 1 less its shortening at the muscle's activation, damped along its gradient as
     /// the volume is.
-    @inline(__always) static func solveFibre(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+    @inline(__always) package static func solveFibre(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
                                              _ fibres: UnsafeBufferPointer<GPUFleshFibre>, _ activations: UnsafeBufferPointer<Float>,
                                              _ h: Float) {
         let f = fibres[Int(t.fibre) - 1]
@@ -147,20 +147,20 @@ extension PhysicsWorld {
     /// How a figure's flesh is made: its lattice's spacing, how heavy and how soft it is, how much its muscles do.
     package struct FleshOptions {
         package var spacing: Float = 0.035
-        var density: Float = 1050
+        package var density: Float = 1050
         /// Its links' compliance, and the outer layer's (all of its links' particles near the surface): skin tension.
-        var edge: Float = 2e-4
-        var skinEdge: Float = 4e-5
+        package var edge: Float = 2e-4
+        package var skinEdge: Float = 4e-5
         /// Its tets' (m^3/N): flesh is nearly incompressible. (A jelly's 1e-9 is soft beside a 3.5 cm tet's own
         /// stiffness: a contracting muscle lost 8% of its volume rather than bulge.)
-        var volume: Float = 1e-11
-        var damping: Float = PhysicsWorld.softLinkDamping
-        var friction: Float = 0.8
+        package var volume: Float = 1e-11
+        package var damping: Float = PhysicsWorld.softLinkDamping
+        package var friction: Float = 0.8
         /// The muscles' activations are scaled by this (0: none contract).
         package var muscleGain: Float = 1
         /// How far a muscle's middle shortens at full activation (a share of its length).
-        var shortening: Float = 0.4
-        var fibreCompliance: Float = 1e-6
+        package var shortening: Float = 0.4
+        package var fibreCompliance: Float = 1e-6
 
         /// (As the memberwise initializer, for the modules above this one.)
         package init(spacing: Float = 0.035, density: Float = 1050, edge: Float = 2e-4, skinEdge: Float = 4e-5, volume: Float = 1e-11, damping: Float = PhysicsWorld.softLinkDamping, friction: Float = 0.8, muscleGain: Float = 1, shortening: Float = 0.4, fibreCompliance: Float = 1e-6) {
@@ -179,18 +179,18 @@ extension PhysicsWorld {
 
     /// Depths (FleshFigure.depth) of the core, held where its bones put it, and of the free surface layer; between
     /// them the pins' compliance rises from `firmPin` to `loosePin`.
-    static let coreDepth: Float = 0.45
-    static let freeDepth: Float = 0.85
-    static let firmPin: Float = 1e-7
-    static let loosePin: Float = 1e-4
+    package static let coreDepth: Float = 0.45
+    package static let freeDepth: Float = 0.85
+    package static let firmPin: Float = 1e-7
+    package static let loosePin: Float = 1e-4
 
     /// What `addFlesh` made: its particles (`model`'s points from `first`) and its soft body.
     package struct Flesh {
         package var model: SoftModel
-        var first: Int
-        var body: Int
+        package var first: Int
+        package var body: Int
         /// Per point, its pin's two bones (figure bones) and weights.
-        var bones: [(SIMD2<Int>, SIMD2<Float>)]
+        package var bones: [(SIMD2<Int>, SIMD2<Float>)]
     }
 
     /// A figure's flesh: `model`, a lattice in the figure's rest space (SoftModel(_:spacing:)), each point pinned by its
@@ -294,7 +294,7 @@ extension PhysicsWorld {
     /// `flesh`'s drawn surface (its model's `surface`, embedded), whose vertices start at `vertexBase` in the scene's
     /// vertex buffer: each where its tets put it, or on `skin` (PhysicsSkin.swift) where it is nearest, out along it as
     /// far as it is at rest; or (no tet: `rigid` says which figure bone) on that bone's body.
-    func addFleshSurface(_ flesh: Flesh, figure: FleshFigure, vertexBase: Int, rigid: [Int] = [], skin: SkinShell? = nil) {
+    package func addFleshSurface(_ flesh: Flesh, figure: FleshFigure, vertexBase: Int, rigid: [Int] = [], skin: SkinShell? = nil) {
         let model = flesh.model, base = UInt32(flesh.first)
         for v in model.surface.positions.indices {
             let ring = UInt32(softRings.count) << 5 | UInt32(model.rings[v].count)
@@ -326,7 +326,7 @@ extension PhysicsWorld {
 
     /// The flesh's buffer for the GPU (Physics.metal's PhysicsFleshHeader and what follows it): the header, then the
     /// pose table, the muscles, their activations, the fibres, the pins and the skin's holds, each from a 16-byte word.
-    func fleshWords() -> [SIMD4<UInt32>] {
+    package func fleshWords() -> [SIMD4<UInt32>] {
         var words = [SIMD4<UInt32>](repeating: .zero, count: MemoryLayout<GPUFleshHeader>.stride / 16)
         func append<T>(_ array: [T]) -> UInt32 {
             let at = UInt32(words.count)
@@ -350,22 +350,22 @@ extension PhysicsWorld {
 /// A muscle, by the parts of a figure it is on and crosses (FleshFigure.Role): its belly along a bone, to one side of
 /// it, and the angle between two bones' axes that activates it.
 package struct MuscleSpec {
-    enum Side { case front, back, out }
-    enum Axis { case along, up, front }
+    package enum Side { case front, back, out }
+    package enum Axis { case along, up, front }
 
-    var name: String
-    var on: FleshFigure.Role
-    var span: ClosedRange<Float>     // along the bone (from its joint, a share of its length)
-    var side: Side
-    var offset: Float                // how far to that side the belly's axis is (a share of the bone's thickness)
-    var radius: Float                // the belly's (a share of the bone's thickness)
-    var a: (role: FleshFigure.Role, axis: Axis)
-    var b: (role: FleshFigure.Role, axis: Axis)
-    var angles: (start: Float, full: Float)
-    var gain: Float
+    package var name: String
+    package var on: FleshFigure.Role
+    package var span: ClosedRange<Float>     // along the bone (from its joint, a share of its length)
+    package var side: Side
+    package var offset: Float                // how far to that side the belly's axis is (a share of the bone's thickness)
+    package var radius: Float                // the belly's (a share of the bone's thickness)
+    package var a: (role: FleshFigure.Role, axis: Axis)
+    package var b: (role: FleshFigure.Role, axis: Axis)
+    package var angles: (start: Float, full: Float)
+    package var gain: Float
 
     /// Its belly (rest space) and its record, if the figure has its bones.
-    func resolve(_ figure: FleshFigure, gain scale: Float) -> (origin: SIMD3<Float>, insertion: SIMD3<Float>, radius: Float, record: GPUMuscle)? {
+    package func resolve(_ figure: FleshFigure, gain scale: Float) -> (origin: SIMD3<Float>, insertion: SIMD3<Float>, radius: Float, record: GPUMuscle)? {
         guard let bone = figure.bone(on), let ba = figure.bone(a.role), let bb = figure.bone(b.role) else { return nil }
         let axis = normalize(bone.to - bone.from)
         func across(_ v: SIMD3<Float>) -> SIMD3<Float> {

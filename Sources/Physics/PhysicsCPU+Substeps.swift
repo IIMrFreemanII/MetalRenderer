@@ -7,16 +7,16 @@ import CPhysicsAtomics
 extension PhysicsWorld {
     // MARK: Substeps
 
-    @inline(__always) static func moves(_ b: GPUPhysicsBody) -> Bool {
+    @inline(__always) package static func moves(_ b: GPUPhysicsBody) -> Bool {
         b.position.w > 0 && b.info.y & (PhysicsWorld.asleep | PhysicsWorld.disabledBit) == 0
     }
-    @inline(__always) static func disabled(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.disabledBit != 0 }
+    @inline(__always) package static func disabled(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.disabledBit != 0 }
     /// An anchored piece the ground still holds (it moves only once it comes free).
-    @inline(__always) static func held(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.anchoredBit != 0 && b.position.w == 0 }
+    @inline(__always) package static func held(_ b: GPUPhysicsBody) -> Bool { b.info.y & PhysicsWorld.anchoredBit != 0 && b.position.w == 0 }
 
     /// Every moving body by its velocity and gravity; the held one (`grab`) woken, slowed and pulled to the target;
     /// a kinematic body to where its table puts it at the end of substep `sub` (PhysicsFlesh.swift).
-    func integrate(_ p: GPUPhysicsParams, sub: Int) {
+    package func integrate(_ p: GPUPhysicsParams, sub: Int) {
         let h = p.gravity.w, grab = self.grab, step = stepIndex, rows = kinematicRows
         movingBodies.withUnsafeBufferPointer { moving in
         withStepBuffers { s in
@@ -56,7 +56,7 @@ extension PhysicsWorld {
     /// The bodies a substep may move, in order (`movingBodies`): the kinematic ones, those that move, the held one.
     /// Made after the liquids, which wake what they push; nothing else between them wakes or stops a body but the
     /// held one's waking, so the substeps' loops over the bodies take these and pass over no body they would move.
-    func listMoving() {
+    package func listMoving() {
         let held = grab.target.w > 0 ? Int(grab.body) : -1
         movingBodies.removeAll(keepingCapacity: true)
         for (i, b) in bodies.enumerated() where PhysicsWorld.kinematic(b) || PhysicsWorld.moves(b) || i == held {
@@ -66,7 +66,7 @@ extension PhysicsWorld {
 
     /// The held body's anchor a fraction (`holdPull`) of the way to the target, shared between moving and turning
     /// it by its inverse mass and inertia there (as a contact's push is): a body held off its centre swings and hangs.
-    @inline(__always) static func hold(_ b: inout GPUPhysicsBody, _ g: GPUPhysicsGrab) {
+    @inline(__always) package static func hold(_ b: inout GPUPhysicsBody, _ g: GPUPhysicsGrab) {
         let r = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(g.anchor))
         let gap = PhysicsMath.xyz(g.target) - (PhysicsMath.xyz(b.position) + r)
         let l = length(gap)
@@ -78,7 +78,7 @@ extension PhysicsWorld {
     }
 
     /// A contact's world points and lever arms (from each centre of mass) for the poses given.
-    @inline(__always) static func points(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, previous: Bool = false)
+    @inline(__always) package static func points(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, previous: Bool = false)
         -> (pa: SIMD3<Float>, pb: SIMD3<Float>, ra: SIMD3<Float>, rb: SIMD3<Float>) {
         let n = PhysicsMath.xyz(c.normal)
         // (A kinematic body went somewhere too: a ball on a moving arm slides on it only as far as the arm left it.)
@@ -91,7 +91,7 @@ extension PhysicsWorld {
     }
 
     /// The generalised inverse mass of body `b` at lever arm `r` along `n` (0 for one that doesn't move).
-    @inline(__always) static func weight(_ b: GPUPhysicsBody, _ r: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
+    @inline(__always) package static func weight(_ b: GPUPhysicsBody, _ r: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
         guard moves(b) else { return 0 }
         let rn = cross(r, n)
         return b.position.w + dot(rn, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), rn))
@@ -99,7 +99,7 @@ extension PhysicsWorld {
 
     /// A contact's position correction: its normal push (lambda) and, if static friction holds it, its tangential one
     /// (the impulse on A; B takes the opposite), and the normal speed before it. The same numbers for both bodies.
-    @inline(__always) static func contactPush(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, h: Float)
+    @inline(__always) package static func contactPush(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, h: Float)
         -> (impulse: SIMD3<Float>, lambda: Float, speed: Float, ra: SIMD3<Float>, rb: SIMD3<Float>) {
         let n = PhysicsMath.xyz(c.normal)
         let (pa, pb, ra, rb) = points(c, a, b)
@@ -130,14 +130,14 @@ extension PhysicsWorld {
     }
 
     /// Moves body `b` (if it moves) by `impulse` at lever arm `r`.
-    @inline(__always) static func shove(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>) {
+    @inline(__always) package static func shove(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>) {
         guard moves(b) else { return }
         b.position = SIMD4(PhysicsMath.xyz(b.position) + impulse * b.position.w, b.position.w)
         b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), cross(r, impulse)))
     }
 
     /// Speeds body `b` (if it moves) up by `impulse` at lever arm `r` and angular impulse `twist`.
-    @inline(__always) static func kick(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>, _ twist: SIMD3<Float>) {
+    @inline(__always) package static func kick(_ b: inout GPUPhysicsBody, _ impulse: SIMD3<Float>, _ r: SIMD3<Float>, _ twist: SIMD3<Float>) {
         guard moves(b) else { return }
         b.velocity = SIMD4(PhysicsMath.xyz(b.velocity) + impulse * b.position.w, b.velocity.w)
         b.angular = SIMD4(PhysicsMath.xyz(b.angular)
@@ -147,10 +147,10 @@ extension PhysicsWorld {
     /// Two bodies neither of which moves (asleep, held, kinematic, static): their contacts push and kick nothing
     /// (each one's weight is 0: a push of 0, which no kick follows), so their pair is passed over. (Not a weld: it
     /// counts its load.)
-    @inline(__always) static func still(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> Bool { !moves(a) && !moves(b) }
+    @inline(__always) package static func still(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody) -> Bool { !moves(a) && !moves(b) }
 
     /// Pair `e`'s contacts' pushes, one after the other, each on both bodies at once.
-    @inline(__always) static func pushPair(_ e: Int, _ s: StepBuffers, h: Float) {
+    @inline(__always) package static func pushPair(_ e: Int, _ s: StepBuffers, h: Float) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
         if PhysicsWorld.still(a, b) { return }
@@ -167,7 +167,7 @@ extension PhysicsWorld {
     }
 
     /// Pair `e`'s contacts' kicks.
-    @inline(__always) static func kickPair(_ e: Int, _ s: StepBuffers, _ p: GPUPhysicsParams) {
+    @inline(__always) package static func kickPair(_ e: Int, _ s: StepBuffers, _ p: GPUPhysicsParams) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
         if PhysicsWorld.still(a, b) { return }
@@ -182,9 +182,9 @@ extension PhysicsWorld {
 
     /// Pairs a chunk of `pairSchedule` (eachColour): a pair's solve takes from tens of ns (a weld) to a µs (four
     /// contacts). (8 and 32 were about as fast, 4 and 64 slower; 1 several times slower.)
-    static let colourGrain = 16
+    package static let colourGrain = 16
     /// The chunks' done flags a cache line apart (Int32s): a flag a chunk's thread writes, the others read.
-    static let flagStride = 32
+    package static let flagStride = 32
 
     /// The pairs in `pairOrder` (the colours, then the rest), on every core, each body's pairs in that order, so each
     /// pair sees its bodies as the colours one at a time would give them, bit for bit. Not a colour at a time: each
@@ -237,7 +237,7 @@ extension PhysicsWorld {
     }
 
     /// The joints, then the contacts' pushes, a colour at a time, then every moving body's velocities from how far it went.
-    func solvePositions(_ p: GPUPhysicsParams) {
+    package func solvePositions(_ p: GPUPhysicsParams) {
         let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps)
         withStepBuffers { s in
             // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
@@ -269,14 +269,14 @@ extension PhysicsWorld {
     }
 
     /// The generalised inverse inertia of body `b` about axis `k` (0 for one that doesn't move).
-    @inline(__always) static func turnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>) -> Float {
+    @inline(__always) package static func turnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>) -> Float {
         moves(b) ? dot(k, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), k)) : 0
     }
 
     /// A contact's velocity change: dynamic friction against the sliding, and restitution (none for slow impacts);
     /// and its angular impulse (on A; B takes the opposite) against rolling and spinning on the spot, each held back by
     /// at most its resistance (a length) x the normal impulse.
-    @inline(__always) static func contactKick(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, _ p: GPUPhysicsParams)
+    @inline(__always) package static func contactKick(_ c: GPUPhysicsContact, _ a: GPUPhysicsBody, _ b: GPUPhysicsBody, _ p: GPUPhysicsParams)
         -> (impulse: SIMD3<Float>, twist: SIMD3<Float>, ra: SIMD3<Float>, rb: SIMD3<Float>)? {
         let lambda = c.lambda.x
         guard lambda > 0 else { return nil }
@@ -323,7 +323,7 @@ extension PhysicsWorld {
     }
 
     /// The contacts' velocity changes, a colour of pairs at a time.
-    func solveVelocities(_ p: GPUPhysicsParams) {
+    package func solveVelocities(_ p: GPUPhysicsParams) {
         let fractured = fractures
         withStepBuffers { s in
             if fractured {

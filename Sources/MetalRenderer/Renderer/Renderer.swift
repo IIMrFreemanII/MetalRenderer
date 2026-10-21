@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalKit
+import Physics
 import Plants
 import QuartzCore
 import simd
@@ -8,7 +9,7 @@ import simd
 /// Makes the frames, on its own thread (`RenderThread`): once that runs, everything here belongs to it. The main thread
 /// talks to it through `RendererController`, which posts work with `perform` and gets values back.
 package final class Renderer: NSObject {
-    package static let maxFramesInFlight = 3
+    package static let maxFramesInFlight = GPUFrames.maxInFlight
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
     /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).

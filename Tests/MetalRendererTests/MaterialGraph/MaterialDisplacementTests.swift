@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Displacement (MatSurface.displacement): meshes subdivided to a material's detail (MeshSubdivider), their vertices

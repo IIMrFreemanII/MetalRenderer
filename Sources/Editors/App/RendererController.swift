@@ -2,6 +2,7 @@ import AppKit
 import EngineCore
 import Metal
 import MetalRenderer
+import Physics
 import Plants
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the

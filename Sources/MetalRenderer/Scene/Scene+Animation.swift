@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import ImageIO
+import Physics
 import Plants
 import simd
 
@@ -29,7 +30,7 @@ extension Scene {
         }
         defer {
             // (The loose furniture of an interior: only while some of it is awake.)
-            let bodies = physics.map { p in settings.kind.simulates || p.bodies.contains(where: PhysicsWorld.moves) || !p.particles.isEmpty
+            let bodies = physics.map { p in settings.kind.simulates || p.bodies.contains { physicsBodyMoves(position: $0.position, info: $0.info) } || !p.particles.isEmpty
                 || !p.cloths.isEmpty || !p.softVertices.isEmpty || !p.hairGroups.isEmpty } ?? false
             motionThisFrame = changed || crowd != nil || bodies || !deforming.isEmpty || animated == nil
         }
@@ -121,9 +122,17 @@ extension Scene {
     /// The rigid bodies' and particles' instances where the physics has them.
     package func placeBodies() {
         guard let physics else { return }
-        for b in physics.bodies.indices { setTransform(Int(physics.bodies[b].info.z), physics.transform(b)) }
-        for p in physics.particles.indices where physics.particles[p].info.x != PhysicsWorld.none {   // (a cloth's vertex has none)
-            setTransform(Int(physics.particles[p].info.x), physics.particleTransform(p))
+        // (PhysicsWorld.transform and drawnScale, through the physics' inlinable functions: they're another module's.)
+        let fractured = physics.fractures
+        for b in physics.bodies.indices {
+            let body = physics.bodies[b], shape = physics.shapes[Int(body.info.x)]
+            let scale: Float = !fractured ? 1 : body.info.y & physicsDisabledBit != 0 ? 0
+                : b < physics.fractureState.count ? physics.fractureState[b].direction.w : 1
+            setTransform(Int(body.info.z), physicsBodyTransform(position: dropW(body.position), rotation: body.rotation,
+                                                                comPosition: shape.comPosition, comRotation: shape.comRotation, scale: scale))
+        }
+        for p in physics.particles.indices where physics.particles[p].info.x != physicsNone {   // (a cloth's vertex has none)
+            setTransform(Int(physics.particles[p].info.x), translate(dropW(physics.particles[p].position)))
         }
     }
 
@@ -134,12 +143,14 @@ extension Scene {
         for b in drawn.bodies.indices {
             let body = drawn.bodies[b]
             // (PhysicsWorld.drawnScale, from the drawn state.)
-            let scale: Float = !fractured ? 1 : body.info.y & PhysicsWorld.disabledBit != 0 ? 0
+            let scale: Float = !fractured ? 1 : body.info.y & physicsDisabledBit != 0 ? 0
                 : b < drawn.fractureState.count ? drawn.fractureState[b].direction.w : 1
-            setTransform(Int(body.info.z), physics.transform(body, scale: scale))
+            let shape = physics.shapes[Int(body.info.x)]
+            setTransform(Int(body.info.z), physicsBodyTransform(position: dropW(body.position), rotation: body.rotation,
+                                                                comPosition: shape.comPosition, comRotation: shape.comRotation, scale: scale))
         }
-        for p in drawn.particles.indices where drawn.particles[p].info.x != PhysicsWorld.none {
-            setTransform(Int(drawn.particles[p].info.x), translate(PhysicsMath.xyz(drawn.particles[p].position)))
+        for p in drawn.particles.indices where drawn.particles[p].info.x != physicsNone {
+            setTransform(Int(drawn.particles[p].info.x), translate(dropW(drawn.particles[p].position)))
         }
     }
 
@@ -196,9 +207,10 @@ extension Scene {
         let count = physics.bodies.count
         instances.withUnsafeMutableBufferPointer { inst in
             for b in 0..<count {
-                let i = Int(physics.bodies[b].info.z)
+                let i = Int(physics.bodies[b].info.z), shape = physics.shapes[Int(physics.bodies[b].info.x)]
                 // (w: how far it is hidden, 1 for a disabled body: PhysicsGPU's pose kernel.)
-                let m = physics.transform(b, position: PhysicsMath.xyz(poses[2 * b]), rotation: poses[2 * b + 1], scale: 1 - poses[2 * b].w)
+                let m = physicsBodyTransform(position: dropW(poses[2 * b]), rotation: poses[2 * b + 1], comPosition: shape.comPosition,
+                                             comRotation: shape.comRotation, scale: 1 - poses[2 * b].w)
                 inst[i].prevTransform = inst[i].transform
                 inst[i].transform = m
                 inst[i].normalMatrix = m.inverse.transpose
@@ -266,7 +278,7 @@ extension Scene {
         return taken
     }
 
-    package func setTransform(_ i: Int, _ transform: float4x4) {
+    @inline(__always) package func setTransform(_ i: Int, _ transform: float4x4) {
         instances[i].transform = transform
         instances[i].normalMatrix = transform.inverse.transpose
     }

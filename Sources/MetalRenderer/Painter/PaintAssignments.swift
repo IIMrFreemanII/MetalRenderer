@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Which scene objects the Material Painter paints, and with which document: per scene (MaterialAssignments.scope),

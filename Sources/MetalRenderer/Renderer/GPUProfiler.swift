@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Physics
 import Plants
 
 /// Live GPU time per pass for the settings panel ("GPU pass timings"): every timed encoder samples the GPU's timestamp

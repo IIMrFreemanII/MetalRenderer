@@ -22,17 +22,17 @@ import simd
 /// A strand is one thread's on the GPU, its vertices one after another: no colouring, and the same numbers every run.
 /// Strands on a sleeping body stop once they have come to rest.
 extension PhysicsWorld {
-    static let maxHairVertices = 16
-    static let maxHairColliders = 8
+    package static let maxHairVertices = 16
+    package static let maxHairColliders = 8
     /// How fast the air takes a strand's velocity to the breeze's (1/s).
-    static let hairDrag: Float = 2
+    package static let hairDrag: Float = 2
     /// A strand on a sleeping body stops once no vertex went further than this over a step, a second's worth (m/s):
     /// what it moved, not its velocities, which one pressed against what it lies on keeps wobbling.
-    static let hairRest: Float = 0.02
+    package static let hairRest: Float = 0.02
     /// The most a collider pushes a vertex in a substep (m).
-    static let hairPush: Float = 0.01
+    package static let hairPush: Float = 0.01
     /// Strands reach this far beyond their length in a step (m): which colliders they may meet.
-    static let hairReach: Float = 0.15
+    package static let hairReach: Float = 0.15
 
     /// A guide strand through `points` (world, where its body is now; the first is its root), which `body` holds (nil:
     /// the world). `radius`: how thick it is to the colliders. Its stiffness: the global shape's at the root and at the
@@ -75,7 +75,7 @@ extension PhysicsWorld {
         return hairGroups.count - 1
     }
 
-    var hairParams: GPUHairParams {
+    package var hairParams: GPUHairParams {
         GPUHairParams(gravity: SIMD4(gravity, PhysicsWorld.stepLength / Float(substeps)), wind: wind,
                       counts: SIMD4(UInt32(hairStrands.count), UInt32(bodies.count), UInt32(statics.count), UInt32(substeps)),
                       air: SIMD4(PhysicsWorld.hairDrag, PhysicsWorld.hairRest, time, 0))
@@ -84,7 +84,7 @@ extension PhysicsWorld {
     // MARK: - Shared with Physics.metal
 
     /// The breeze at `x` at time `t` (s): `wind`'s velocity, gusting by `wind.w` in time and along the way it blows.
-    @inline(__always) static func breeze(_ wind: SIMD4<Float>, _ x: SIMD3<Float>, _ t: Float) -> SIMD3<Float> {
+    @inline(__always) package static func breeze(_ wind: SIMD4<Float>, _ x: SIMD3<Float>, _ t: Float) -> SIMD3<Float> {
         let w = PhysicsMath.xyz(wind)
         let along = dot(x, SIMD3(0.7, 0.2, 0.5))
         let gust = 1 + wind.w * (0.6 * sin(1.1 * t - 1.7 * along) + 0.4 * sin(2.9 * t + 2.3 * x.y))
@@ -92,7 +92,7 @@ extension PhysicsWorld {
     }
 
     /// `v` turned by the least rotation that takes unit `a` to unit `b`.
-    @inline(__always) static func transport(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
+    @inline(__always) package static func transport(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
         let c = dot(a, b)
         guard c > -0.999 else { return v }
         let k = cross(a, b)
@@ -100,7 +100,7 @@ extension PhysicsWorld {
     }
 
     /// A body's pose `alpha` of the way from (`p0`, `q0`) to (`p1`, `q1`): the position lerped, the rotation nlerped.
-    @inline(__always) static func between(_ p0: SIMD3<Float>, _ q0: SIMD4<Float>, _ p1: SIMD3<Float>, _ q1: SIMD4<Float>,
+    @inline(__always) package static func between(_ p0: SIMD3<Float>, _ q0: SIMD4<Float>, _ p1: SIMD3<Float>, _ q1: SIMD4<Float>,
                                           _ alpha: Float) -> Pose {
         let q = dot(q0, q1) < 0 ? -q1 : q1
         var pose = Pose(GPUPhysicsBody())
@@ -111,7 +111,7 @@ extension PhysicsWorld {
 
     /// The bodies' and statics' spheres that reach a strand rooted at `centre` and `reach` long (statics first, then
     /// bodies, each by number), `maxHairColliders` at most, into `found`; returns how many.
-    @inline(__always) static func hairColliders(centre: SIMD3<Float>, reach: Float, _ p: GPUPhysicsParams, _ s: HairBuffers,
+    @inline(__always) package static func hairColliders(centre: SIMD3<Float>, reach: Float, _ p: GPUPhysicsParams, _ s: HairBuffers,
                                                 found: UnsafeMutableBufferPointer<UInt32>) -> Int {
         var count = 0
         for st in s.statics.indices where count < PhysicsWorld.maxHairColliders
@@ -133,7 +133,7 @@ extension PhysicsWorld {
     // MARK: - Stepping (the CPU's)
 
     /// A step of every strand, after the bodies' (`start`: their poses when it began).
-    func stepHair(_ start: [SIMD8<Float>]) {
+    package func stepHair(_ start: [SIMD8<Float>]) {
         guard !hairStrands.isEmpty else { return }
         let p = params, hp = hairParams
         let strands = hairStrands, shapeKinds = shapes, staticBounds = self.staticBounds, view = shapeData
@@ -166,7 +166,7 @@ extension PhysicsWorld {
 
     /// One strand's step; returns 1 if it lies still on a sleeping body (it then stops), else 0. (`scratch`: room for
     /// its vertices' positions before and their corrections; `colliders`: for those it may touch.)
-    static func stepStrand(_ strand: GPUHairStrand, _ s: HairBuffers, _ p: GPUPhysicsParams, _ hp: GPUHairParams,
+    package static func stepStrand(_ strand: GPUHairStrand, _ s: HairBuffers, _ p: GPUPhysicsParams, _ hp: GPUHairParams,
                            scratch: UnsafeMutableBufferPointer<SIMD3<Float>>, colliders: UnsafeMutableBufferPointer<UInt32>) -> UInt32 {
         let v = s.vertices
         let first = Int(strand.info.y), n = Int(strand.info.z)
@@ -275,8 +275,8 @@ extension PhysicsWorld {
         let first = Int(strand.info.y)
         let rotation = strand.info.x == PhysicsWorld.none ? SIMD4<Float>(0, 0, 0, 1) : bodies[Int(strand.info.x)].rotation
         let k = UInt32(r % perGuide)
-        let h0 = VoxelLOD.pcgHash(g.mesh.z ^ VoxelLOD.pcgHash(UInt32(r)))
-        let h1 = VoxelLOD.pcgHash(h0)
+        let h0 = pcgHash(g.mesh.z ^ pcgHash(UInt32(r)))
+        let h1 = pcgHash(h0)
         let radius = k == 0 ? 0 : g.shape.x * Float(h0 & 0xFFFF).squareRoot() / 256
         let angle = Float(h1 & 0xFFFF) * (2 * .pi / 65536)
         let x = (0..<n).map { PhysicsMath.xyz(hairVertices[first + $0].position) }

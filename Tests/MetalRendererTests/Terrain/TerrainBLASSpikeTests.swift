@@ -4,6 +4,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// M0's measurement: what a fast build of a ground grid's structure costs on this GPU, for a sector (64 cells a side)

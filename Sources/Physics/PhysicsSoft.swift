@@ -15,31 +15,31 @@ import simd
 /// (a little outside the lattice's hull, the weights go past 0 and 1, and one tet's alone creases the surface where
 /// two tets bend apart); its normal across the triangles around it (`rings`).
 package struct SoftModel {
-    var spacing: Float
-    var points: [SIMD3<Float>] = []
+    package var spacing: Float
+    package var points: [SIMD3<Float>] = []
     /// Each particle's share of the volume (a quarter of each of its tets').
-    var shares: [Float] = []
-    var tets: [SIMD4<UInt32>] = []
-    var edges: [SIMD2<UInt32>] = []
-    var surface: MeshGeometry = ([], [], [])
+    package var shares: [Float] = []
+    package var tets: [SIMD4<UInt32>] = []
+    package var edges: [SIMD2<UInt32>] = []
+    package var surface: MeshGeometry = ([], [], [])
     /// Per surface vertex: the tets it follows (its own first) and its weights for each one's last three corners
     /// (GPUSoftEmbed).
-    var embedding: [[(tet: Int, bary: SIMD3<Float>)]] = []
+    package var embedding: [[(tet: Int, bary: SIMD3<Float>)]] = []
     /// Per surface vertex, the triangles around it as their other two vertices, wound so that (b - v) x (c - v) faces
     /// out: its normal is their sum (area-weighted).
-    var rings: [[SIMD2<UInt32>]] = []
+    package var rings: [[SIMD2<UInt32>]] = []
 
     /// A particle's radius, a share of the spacing: its ball reaches the surface, and its neighbours' leave no gap
     /// another's fits through (0.3 of the spacing between two, a ball 0.7 across). The drawn surface is as far outside
     /// the lattice, where its tets' bends crease it.
-    static let radiusShare: Float = 0.35
-    var radius: Float { spacing * SoftModel.radiusShare }
+    package static let radiusShare: Float = 0.35
+    package var radius: Float { spacing * SoftModel.radiusShare }
 
     /// The lattice's cubes (their lowest corners' grid places: lattice point `origin` + place x `spacing`), each tet's,
     /// and each tet's rest frame's inverse (its first corner, its edges from there): what finds the tet a point is in.
-    var origin = SIMD3<Float>()
-    var tetCells: [SIMD3<Int32>] = []
-    var inverses: [simd_float3x3] = []
+    package var origin = SIMD3<Float>()
+    package var tetCells: [SIMD3<Int32>] = []
+    package var inverses: [simd_float3x3] = []
 
     /// `cells` cubes along the shape's longest side (and at least two thirds as many along its shortest); the drawn
     /// surface from `surfaceCells` along its longest.
@@ -153,7 +153,7 @@ package struct SoftModel {
 
     /// The lattice with only the tets `keep` says, and the points, links and shares they have (renumbered; before a
     /// surface is embedded).
-    mutating func prune(keeping keep: [Bool]) {
+    package mutating func prune(keeping keep: [Bool]) {
         let kept = tets.indices.filter { keep[$0] }
         var used = [Int](repeating: -1, count: points.count), renumbered: [SIMD3<Float>] = []
         for t in kept {
@@ -184,7 +184,7 @@ package struct SoftModel {
     }
 
     /// Point `p`'s weights in tet `t` (of its last three corners).
-    func bary(_ p: SIMD3<Float>, in t: Int) -> SIMD3<Float> { inverses[t] * (p - points[Int(tets[t].x)]) }
+    package func bary(_ p: SIMD3<Float>, in t: Int) -> SIMD3<Float> { inverses[t] * (p - points[Int(tets[t].x)]) }
 
     /// The tet `p` is most inside of among those within `reach` cubes of it (the nearest, if it is outside them all),
     /// and its weights there; nil if there are none.
@@ -224,7 +224,7 @@ package struct SoftModel {
     /// drawn some other way, PhysicsFlesh.swift) and those its ring's vertices follow. With `weld`, vertices at the
     /// same place share their ring (a mesh cut at its seams or made of pieces): its normal is smooth across them. A
     /// ring keeps 31 triangles at most.
-    mutating func embed(_ mesh: MeshGeometry, in own: [Int], weld: Bool = false) {
+    package mutating func embed(_ mesh: MeshGeometry, in own: [Int], weld: Bool = false) {
         surface = mesh
         let positions = mesh.positions
         var key = Array(positions.indices)
@@ -254,13 +254,13 @@ package struct SoftModel {
     }
 
     /// The area-weighted normal at vertex `v` across the triangles of its ring, of `positions`.
-    static func ringNormal(_ ring: [SIMD2<UInt32>], at v: Int, _ positions: [SIMD3<Float>]) -> SIMD3<Float> {
+    package static func ringNormal(_ ring: [SIMD2<UInt32>], at v: Int, _ positions: [SIMD3<Float>]) -> SIMD3<Float> {
         let p = positions[v]
         return ring.reduce(SIMD3<Float>()) { $0 + cross(positions[Int($1.x)] - p, positions[Int($1.y)] - p) }
     }
 
     /// Six times tet `t`'s volume (positive when it is wound the right way).
-    static func sixVolume(_ points: [SIMD3<Float>], _ t: SIMD4<UInt32>) -> Float {
+    package static func sixVolume(_ points: [SIMD3<Float>], _ t: SIMD4<UInt32>) -> Float {
         let p0 = points[Int(t.x)]
         return dot(cross(points[Int(t.y)] - p0, points[Int(t.z)] - p0), points[Int(t.w)] - p0)
     }
@@ -273,18 +273,18 @@ package struct SoftModel {
 extension PhysicsWorld {
     /// How fast the air slows a soft body's particles (1/s), and how much its links' and tets' constraints damp what
     /// moves along them (s, XPBD's beta): what stops a jelly wobbling on for ever.
-    static let softDrag: Float = 0.3
-    static let softLinkDamping: Float = 3
-    static let maxTetColours = 64
+    package static let softDrag: Float = 0.3
+    package static let softLinkDamping: Float = 3
+    package static let maxTetColours = 64
     /// The fastest a soft body's particle is pushed out of an overlap (m/s): faster than any particle's
     /// (`pushSpeed`), so that a ball rolling into a jelly at a few metres a second shoves it rather than sinks in.
-    static let softPushSpeed: Float = 10
+    package static let softPushSpeed: Float = 10
 
     /// A soft body made of `model`, placed by `transform` (a rotation and a translation); its drawn vertices start at
     /// `vertexBase` in the scene's vertex buffer, moving at `velocity`. `density` kg/m^3; `edge` and `volume`: the
     /// links' and the tets' compliance (0: rigid); `damping`: the tets' (s).
     @discardableResult
-    func addSoftBody(_ model: SoftModel, transform: float4x4, vertexBase: Int, velocity: SIMD3<Float> = .zero, density: Float = 1000,
+    package func addSoftBody(_ model: SoftModel, transform: float4x4, vertexBase: Int, velocity: SIMD3<Float> = .zero, density: Float = 1000,
                      edge: Float = 1e-3, volume: Float = 1e-9, damping: Float = PhysicsWorld.softLinkDamping, friction: Float = 0.6) -> Int {
         let first = particles.count, body = softBodies.count
         let world = model.points.map { PhysicsMath.xyz(transform * SIMD4($0, 1)) }
@@ -315,7 +315,7 @@ extension PhysicsWorld {
     }
 
     /// The tets in colours, as the cloths' links are: each takes the first colour none of its particles' tets has.
-    static func colourTets(_ unsorted: [GPUPhysicsTet]) -> (tets: [GPUPhysicsTet], starts: [UInt32]) {
+    package static func colourTets(_ unsorted: [GPUPhysicsTet]) -> (tets: [GPUPhysicsTet], starts: [UInt32]) {
         var used: [UInt32: UInt64] = [:]
         var colour = [Int](repeating: 0, count: unsorted.count)
         for (i, t) in unsorted.enumerated() {
@@ -333,13 +333,13 @@ extension PhysicsWorld {
     }
 
     /// Whether particles `q` and `o` may push each other: not a cloth's, nor two of one soft body's.
-    @inline(__always) static func meets(_ q: GPUPhysicsParticle, _ o: GPUPhysicsParticle) -> Bool {
+    @inline(__always) package static func meets(_ q: GPUPhysicsParticle, _ o: GPUPhysicsParticle) -> Bool {
         (q.info.y | o.info.y) & clothBit == 0 && !(q.info.y & o.info.y & softBit != 0 && q.info.w == o.info.w)
     }
 
     /// The tets' volumes, a colour at a time (Gauss-Seidel), each an XPBD constraint on six times its volume with
     /// Macklin et al. 2016's damping along its gradient (one iteration a substep, so its lambda starts at 0).
-    func solveTets(_ p: GPUPhysicsParams) {
+    package func solveTets(_ p: GPUPhysicsParams) {
         guard tetStarts.count > 1 else { return }
         let h = p.gravity.w, starts = tetStarts, tets = self.tets, fibres = self.fibres, activations = self.activations
         tets.withUnsafeBufferPointer { tets in
@@ -358,7 +358,7 @@ extension PhysicsWorld {
         }
     }
 
-    @inline(__always) static func solveTet(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
+    @inline(__always) package static func solveTet(_ t: GPUPhysicsTet, _ particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>,
                                            _ fibres: UnsafeBufferPointer<GPUFleshFibre>, _ activations: UnsafeBufferPointer<Float>, _ h: Float) {
         // A muscle's fibre first, then the volume: the last word is the volume's, so a contracting tet bulges (after
         // it, each pass's fibre took back the volume the pass before had put back).
@@ -391,7 +391,7 @@ extension PhysicsWorld {
     }
 
     /// Soft body `body`'s volume now (m^3): its tets'.
-    func softVolume(_ body: Int) -> Float {
+    package func softVolume(_ body: Int) -> Float {
         let range = softBodies[body].x..<(softBodies[body].x + softBodies[body].y)
         let points = particles.map { PhysicsMath.xyz($0.position) }
         return tets.filter { range.contains($0.ids.x) }.reduce(0) { $0 + SoftModel.sixVolume(points, $1.ids) } / 6
@@ -399,7 +399,7 @@ extension PhysicsWorld {
 
     /// Drawn vertex `v` where the particles (and bodies) are: where each of its tets puts it, averaged (MSL
     /// physicsSoftMeshKernel); or a body, or a skin's triangle (PhysicsFlesh.swift).
-    func drawnSoftVertex(_ v: Int, particles: [GPUPhysicsParticle]? = nil, bodies: [GPUPhysicsBody]? = nil) -> SIMD3<Float> {
+    package func drawnSoftVertex(_ v: Int, particles: [GPUPhysicsParticle]? = nil, bodies: [GPUPhysicsBody]? = nil) -> SIMD3<Float> {
         let q = particles ?? self.particles, s = softVertices[v]
         var p = SIMD3<Float>()
         for e in softEmbeds[Int(s.embeds.x)..<Int(s.embeds.x + s.embeds.y)] {
@@ -426,7 +426,7 @@ extension PhysicsWorld {
 
     /// Drawn vertex `v`'s normal across its ring, the drawn vertices at `position` (by their place in the scene's
     /// vertex buffer; MSL physicsSoftNormalsKernel).
-    func drawnSoftNormal(_ v: Int, position: (Int) -> SIMD3<Float>) -> SIMD3<Float> {
+    package func drawnSoftNormal(_ v: Int, position: (Int) -> SIMD3<Float>) -> SIMD3<Float> {
         let s = softVertices[v], p = position(Int(s.info.x))
         var n = SIMD3<Float>()
         for k in Int(s.info.w >> 5)..<Int((s.info.w >> 5) + (s.info.w & 31)) {

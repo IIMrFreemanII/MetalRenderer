@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Physics
 import Plants
 
 /// The day bar: at the bottom of the render view in the scenes with a day (DayClock), the time of day as a clock, the

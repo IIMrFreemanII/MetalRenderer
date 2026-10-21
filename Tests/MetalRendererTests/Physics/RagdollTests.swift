@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Joints and ragdolls (Physics.swift's addJoint, PhysicsCPU.solveJoint, Shaders/Physics.metal's physSolveJoint,

@@ -4,6 +4,7 @@ import Metal
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Kernel variants (Pipelines.swift): a kernel with a configuration's flags compiled in. The flag words are made

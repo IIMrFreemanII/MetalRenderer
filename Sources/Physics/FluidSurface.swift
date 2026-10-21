@@ -34,7 +34,7 @@ extension FluidSystem {
     }
 
     /// The box the surface stays in.
-    func surfaceBounds(_ s: GPUFluidSurface) -> AABB {
+    package func surfaceBounds(_ s: GPUFluidSurface) -> AABB {
         let lo = PhysicsMath.xyz(s.lo)
         return AABB(lo: lo, hi: lo + SIMD3<Float>(Float(s.dims.x - 1), Float(s.dims.y - 1), Float(s.dims.z - 1)) * s.lo.w)
     }

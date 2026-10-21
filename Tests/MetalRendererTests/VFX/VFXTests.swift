@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The effects as graphs (Sources/MetalRenderer/VFX): the built-in ones lower to the emitters the scenes had before

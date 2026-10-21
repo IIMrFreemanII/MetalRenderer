@@ -25,90 +25,90 @@ import simd
 /// simulation is no more than a step behind it. Going back in time replays from the start, so any time's state is
 /// the same however it was reached (a benchmark's stills start at 5 s).
 package final class PhysicsWorld {
-    static let staticBit: UInt32 = 0x8000_0000
+    package static let staticBit: UInt32 = 0x8000_0000
     package static let none: UInt32 = ~0
     /// info.y flags: a body's, and a particle's. A kinematic body's column in the pose table is in its flags above
     /// bit 8 (PhysicsFlesh.swift).
-    static let asleep: UInt32 = 1
-    static let kinematicBit: UInt32 = 2
+    package static let asleep: UInt32 = 1
+    package static let kinematicBit: UInt32 = 2
     /// A disabled body neither moves, collides nor shows (a fractured object's piece before its parent breaks, a shot
     /// not yet fired: Physics+Fracture.swift); a piece of a fractured object (it has a fracture node and welds); one
     /// held by the ground until it comes free (its inverse mass 0 meanwhile).
     package static let disabledBit: UInt32 = 4
-    static let pieceBit: UInt32 = 8
-    static let anchoredBit: UInt32 = 16
-    static let clothBit: UInt32 = 1
-    static let softBit: UInt32 = 2
-    static let skinBit: UInt32 = 4
+    package static let pieceBit: UInt32 = 8
+    package static let anchoredBit: UInt32 = 16
+    package static let clothBit: UInt32 = 1
+    package static let softBit: UInt32 = 2
+    package static let skinBit: UInt32 = 4
     /// How many pairs a body may be in (more are dropped: statics and the lowest bodies stay) and contacts a pair may have.
-    static let maxPairs = 16
-    static let maxContacts = PhysicsManifold.capacity
+    package static let maxPairs = 16
+    package static let maxContacts = PhysicsManifold.capacity
     /// Rounds of colouring a step's pairs (Jones-Plassmann) before the rest are solved one after another (their
     /// GPUPhysicsPair.pad), and the most colours there can be (a pair shares its bodies with 30 others at most).
-    static let maxRounds = 64
-    static let maxColours = 32
-    static let leftover: UInt32 = 0xFFFF_FFFE
+    package static let maxRounds = 64
+    package static let maxColours = 32
+    package static let leftover: UInt32 = 0xFFFF_FFFE
     /// GPUPhysicsPair.pad from `link` with fractured objects: only one of the pair's bodies lists it (PhysicsCPU.link).
-    static let oneSided: UInt32 = 0xFFFF_FFFD
+    package static let oneSided: UInt32 = 0xFFFF_FFFD
     /// ...and a pair neither of whose bodies moves this step, with fractured objects (`idle`): no colour, and the
     /// colouring's rounds pass it by.
-    static let idlePair: UInt32 = 0xFFFF_FFFC
+    package static let idlePair: UInt32 = 0xFFFF_FFFC
     /// The contacts are found again every this many substeps.
-    static let contactRefresh = 4
+    package static let contactRefresh = 4
     package static let stepLength: Float = 1.0 / 60
-    static let topSpeed: Float = 30
+    package static let topSpeed: Float = 30
     /// A body's sphere reaches as far as it goes in a step at up to this speed (faster ones lean on the substeps):
     /// what keeps the grid's cells small enough that a dense pile doesn't put dozens of bodies in each.
-    static let cellSpeed: Float = 10
-    static let margin: Float = 0.01
+    package static let cellSpeed: Float = 10
+    package static let margin: Float = 0.01
     /// The fastest an overlap is pushed apart (m/s).
-    static let pushSpeed: Float = 3
+    package static let pushSpeed: Float = 3
     /// A particle keeps its nearest `maxNeighbours` particles and lowest `maxColliders` colliders (statics first).
-    static let maxNeighbours = 16
-    static let maxColliders = 8
+    package static let maxNeighbours = 16
+    package static let maxColliders = 8
     /// A particle's reach allows for this speed (m/s): what its grid's cells are sized for.
-    static let particleSpeed: Float = 2
+    package static let particleSpeed: Float = 2
     /// How fast the air slows a cloth's vertices (1/s): without it a hanging cloth swings on and on.
-    static let clothDrag: Float = 2
+    package static let clothDrag: Float = 2
     /// A held body's anchor goes this fraction of the way to the target each substep, and the body's velocities fade
     /// at this rate (1/s) so that it doesn't swing about the cursor.
-    static let holdPull: Float = 0.03
-    static let holdDamping: Float = 8
+    package static let holdPull: Float = 0.03
+    package static let holdDamping: Float = 8
     /// A particle in a heap going slower than this (m/s) over a substep stays put.
-    static let particleRest: Float = 0.1
+    package static let particleRest: Float = 0.1
     /// How far ahead of a rolling body's contact the floor pushes back, and how wide a contact is against spinning on
     /// the spot (m): what brings a ball, a cone or a lying cylinder to a stop (without them they roll on for ever).
-    static let rollingResistance: Float = 0.004
-    static let spinningResistance: Float = 0.02
+    package static let rollingResistance: Float = 0.004
+    package static let spinningResistance: Float = 0.02
     /// A body is still while its turning moves its mass slower than this (m/s: its turn rate x its radius of gyration
     /// about the turn, at most `gyration`): 0.13 rad/s for a body 15 cm or more about it, more for a thin limb turning
     /// about its length (a ragdoll's forearm jittered at 0.27 rad/s about it, 1 cm/s at its surface, and never slept;
     /// at 0.08 rad/s, 1.2 cm/s, a pile of 24 ragdolls took 48 s to sleep).
-    static let sleepTurn: Float = 0.02
+    package static let sleepTurn: Float = 0.02
     /// ...and a body wakes what it touches while its turning moves its mass faster than this (0.27 rad/s at 15 cm).
-    static let wakeTurn: Float = 0.04
-    static let gyration: Float = 0.15
+    package static let wakeTurn: Float = 0.04
+    package static let gyration: Float = 0.15
     /// With fractured objects, rubble (a piece more than `fallen` m from where it began: what came down, welded or
     /// not) wakes for a hit, its partner going at `rubbleWake` x the wake speed or turn over a step, or for a partner
     /// that moves on (`PhysicsWorld.rubbleStirs`); a structure still standing, or sagging on its way down, as before.
-    static let fallen: Float = 0.5
-    static let rubbleWake: Float = 10
+    package static let fallen: Float = 0.5
+    package static let rubbleWake: Float = 10
     /// The most colours a body's joints can take (a body in more joints than this is refused).
-    static let maxJointColours = 16
+    package static let maxJointColours = 16
     /// Passes over the joints a substep: one leaves a whipping chain's anchors 2.5 mm apart, two 0.55 mm.
-    static let jointIterations = 2
+    package static let jointIterations = 2
 
     package var gravity = SIMD3<Float>(0, -9.81, 0)
-    let substeps: Int
+    package let substeps: Int
 
     /// What the shapes are made of: their distances and samples (PhysicsCollide.swift).
-    private(set) var shapes: [GPUPhysicsShape] = [] { didSet { shapeTable = nil; shapeView = nil } }
+    package private(set) var shapes: [GPUPhysicsShape] = [] { didSet { shapeTable = nil; shapeView = nil } }
     private(set) var samples: [SIMD4<Float>] = [] { didSet { shapeTable = nil; shapeView = nil } }
     private(set) var sdfShapes: [SDFShape] = [] { didSet { shapeTable = nil; shapeView = nil } }
     private(set) var sdfVolumes: [SDFVolume] = [] { didSet { shapeTable = nil; shapeView = nil } }
     /// The shapes above as the steps read them (PhysicsCollide.swift: shapeData), made when they are first asked for.
-    var shapeTable: PhysicsShapeTable?
-    var shapeView: PhysicsShapes?
+    package var shapeTable: PhysicsShapeTable?
+    package var shapeView: PhysicsShapes?
     private var shapeOf: [Int: Int] = [:]   // SDF shape -> its physics shape
     private var massOf: [Int: (volume: Float, moments: SIMD3<Float>)] = [:]
 
@@ -123,62 +123,62 @@ package final class PhysicsWorld {
     /// The state at the start (what a replay starts from).
     private(set) var initialBodies: [GPUPhysicsBody] = []
     /// Per body, `maxPairs` entries (`pairCounts` of them used), and per entry `maxContacts` contacts.
-    var pairs: [GPUPhysicsPair] = []
-    var pairCounts: [UInt32] = []
-    var contacts: [GPUPhysicsContact] = []
+    package var pairs: [GPUPhysicsPair] = []
+    package var pairCounts: [UInt32] = []
+    package var contacts: [GPUPhysicsContact] = []
     /// This step's owned pairs with contacts, by colour (PhysicsCPU.colourPairs), and where each colour starts; the
     /// last colour is what the rounds left, solved one pair after another.
-    var pairOrder: [UInt32] = []
-    var pairColourStarts: [UInt32] = [0]
+    package var pairOrder: [UInt32] = []
+    package var pairColourStarts: [UInt32] = [0]
     /// Those pairs in entry order (the refreshes': PhysicsCPU.narrowPhase).
-    var pairEntries: [Int32] = []
+    package var pairEntries: [Int32] = []
     /// The colouring's candidates' neighbours (PhysicsCPU.colourPairs): 2 x `maxPairs` places each, how many used.
-    var pairAdjacent: [Int32] = [], pairNeighbours: [UInt8] = []
+    package var pairAdjacent: [Int32] = [], pairNeighbours: [UInt8] = []
     /// `pairOrder`'s pairs in the order PhysicsCPU.eachColour hands them out (by depth: how many pairs it waits on in
     /// a row at most), per pair there the chunks it waits on (-1: none), and each chunk's done flag (= `pairPass` once
     /// it is done in the pass that is going on; `PhysicsCPU.flagStride` apart).
-    var pairSchedule: [Int32] = []
-    var pairWaits: [SIMD2<Int32>] = []
-    var pairDone: [Int32] = []
-    var pairPass: Int32 = 0
+    package var pairSchedule: [Int32] = []
+    package var pairWaits: [SIMD2<Int32>] = []
+    package var pairDone: [Int32] = []
+    package var pairPass: Int32 = 0
 
     /// The body the mouse holds, if any (`target.w` = 1), which the substeps pull to the target; the GPU takes a copy
     /// each frame (PhysicsGPU.setGrab).
-    var grab = GPUPhysicsGrab()
+    package var grab = GPUPhysicsGrab()
     /// The poses the bodies were last drawn with when the GPU steps them (its snapshot, a position and a rotation per
     /// body): what picking sees. Empty when the CPU steps them (then `bodies` are).
-    var drawnPoses: [SIMD4<Float>] = []
+    package var drawnPoses: [SIMD4<Float>] = []
 
     /// The particles, their start, and per particle its neighbours and the colliders it may touch this step.
-    var particles: [GPUPhysicsParticle] = []
+    package var particles: [GPUPhysicsParticle] = []
     private(set) var initialParticles: [GPUPhysicsParticle] = []
-    var neighbours: [UInt32] = []
-    var neighbourCounts: [UInt32] = []
-    var colliders: [UInt32] = []
-    var colliderCounts: [UInt32] = []
+    package var neighbours: [UInt32] = []
+    package var neighbourCounts: [UInt32] = []
+    package var colliders: [UInt32] = []
+    package var colliderCounts: [UInt32] = []
     /// The cloths' distance constraints, by colour (no two of a colour share a vertex: each colour is solved at once,
     /// one after the other, Gauss-Seidel), and where each colour starts (`colours + 1` entries).
     private(set) var constraints: [GPUPhysicsConstraint] = []
     private(set) var colourStarts: [UInt32] = [0]
     /// Each cloth: its first particle, its grid, and its first vertex in the scene's vertex buffer.
-    struct Cloth {
-        var first: Int
-        var columns: Int
-        var rows: Int
-        var vertexBase: Int
+    package struct Cloth {
+        package var first: Int
+        package var columns: Int
+        package var rows: Int
+        package var vertexBase: Int
     }
-    private(set) var cloths: [Cloth] = []
+    package private(set) var cloths: [Cloth] = []
     /// For the GPU: per cloth its first particle, columns, rows and first vertex, then its last frame's vertices'
     /// offset (Scene.finishDeforming), as MSL PhysicsCloth has them.
-    func clothTable(prevOffsets: [UInt32]) -> [SIMD4<UInt32>] {
+    package func clothTable(prevOffsets: [UInt32]) -> [SIMD4<UInt32>] {
         zip(cloths, prevOffsets).flatMap { c, prev -> [SIMD4<UInt32>] in
             [SIMD4<UInt32>(UInt32(c.first), UInt32(c.columns), UInt32(c.rows), UInt32(c.vertexBase)), SIMD4<UInt32>(prev, 0, 0, 0)]
         }
     }
-    var unsortedConstraints: [GPUPhysicsConstraint] = []
+    package var unsortedConstraints: [GPUPhysicsConstraint] = []
 
     /// The joints by colour (no two of a colour share a body), and where each colour starts (`colours + 1` entries).
-    private(set) var joints: [GPUPhysicsJoint] = []
+    package private(set) var joints: [GPUPhysicsJoint] = []
     private(set) var jointStarts: [UInt32] = [0]
     private var unsortedJoints: [GPUPhysicsJoint] = []
     /// Each ragdoll's bodies (first, count): they sleep and wake together.
@@ -190,16 +190,16 @@ package final class PhysicsWorld {
     /// (first, count). Their particles are among `particles`, their links among `constraints`.
     private(set) var tets: [GPUPhysicsTet] = []
     private(set) var tetStarts: [UInt32] = [0]
-    var unsortedTets: [GPUPhysicsTet] = []
-    var softVertices: [GPUSoftVertex] = []
-    var softEmbeds: [GPUSoftEmbed] = []
-    var softRings: [SIMD2<UInt32>] = []
-    var softBodies: [SIMD2<UInt32>] = []
+    package var unsortedTets: [GPUPhysicsTet] = []
+    package var softVertices: [GPUSoftVertex] = []
+    package var softEmbeds: [GPUSoftEmbed] = []
+    package var softRings: [SIMD2<UInt32>] = []
+    package var softBodies: [SIMD2<UInt32>] = []
 
     /// Hair (PhysicsHair.swift): the guide strands and their vertices (and the vertices' start), the groups of strands
     /// drawn around them, and the breeze.
     package var hairStrands: [GPUHairStrand] = []
-    var hairVertices: [GPUHairVertex] = []
+    package var hairVertices: [GPUHairVertex] = []
     private(set) var initialHairVertices: [GPUHairVertex] = []
     package var hairGroups: [GPUHairGroup] = []
     package var wind = SIMD4<Float>()
@@ -209,93 +209,93 @@ package final class PhysicsWorld {
     /// muscles' tets' fibres; the skin's holds on the flesh (PhysicsSkin.swift).
     package var kinematicTable: [SIMD4<Float>] = []
     private(set) var kinematicColumns = 0
-    var kinematicRows: Int { kinematicColumns == 0 ? 0 : kinematicTable.count / (2 * kinematicColumns) }
-    var muscles: [GPUMuscle] = []
-    var activations: [Float] = []
-    var pins: [GPUFleshPin] = []
-    var fibres: [GPUFleshFibre] = []
-    var skinAttachments: [GPUSkinAttach] = []
+    package var kinematicRows: Int { kinematicColumns == 0 ? 0 : kinematicTable.count / (2 * kinematicColumns) }
+    package var muscles: [GPUMuscle] = []
+    package var activations: [Float] = []
+    package var pins: [GPUFleshPin] = []
+    package var fibres: [GPUFleshFibre] = []
+    package var skinAttachments: [GPUSkinAttach] = []
 
     /// Liquids (PhysicsFluid.swift), if there are any.
-    var fluid: FluidWorld?
+    package var fluid: FluidWorld?
 
     /// Fractured objects (Physics+Fracture.swift): per body its node (all bodies, once one object is fractured), the
     /// welds (and as they start), per body its welds' (partner, weld) sorted by partner from `weldStarts[i]`, per body
     /// what the step did to it, and the shots and blasts, kept across replays.
     package var fractureNodes: [GPUFractureNode] = []
-    var welds: [GPUFractureWeld] = []
+    package var welds: [GPUFractureWeld] = []
     private(set) var initialWelds: [GPUFractureWeld] = []
     private(set) var weldStarts: [UInt32] = [0]
     private(set) var weldList: [SIMD2<UInt32>] = []
-    var fractureState: [GPUFractureState] = []
+    package var fractureState: [GPUFractureState] = []
     /// A flag a body for the CPU step's stages (PhysicsCPU+Broad.swift: who wakes, who sleeps, who came free), kept.
-    var wakeFlags: [UInt8] = []
+    package var wakeFlags: [UInt8] = []
     /// With fractured objects: each body's pose when its still time began (position, rotation; `settle`), and how
     /// fast its mass went over the last step (x: its move, y: its turn x its radius of gyration, each over the step;
     /// z: 1 if it left where its still time began soon after it began, w: 1 if it left it at all; what wakes a sleeper
     /// it touches: `wake`), kept.
-    var sleepAnchors: [SIMD8<Float>] = []
-    var stepMotion: [SIMD4<Float>] = []
+    package var sleepAnchors: [SIMD8<Float>] = []
+    package var stepMotion: [SIMD4<Float>] = []
     /// With fractured objects stepped here: where pieces broke, for the dust (the GPU's steps write PhysicsGPU.breakRing
     /// instead; the renderer copies these into a ring of its own, Renderer.cpuBreakRing): the latest `breakLogLength`,
     /// each one's step, and how many there have been since the start.
-    var breakLog: [GPUBreakEvent] = []
-    var breakSteps: [Int] = []
-    var breakTotal = 0
-    static let breakLogLength = 1024
+    package var breakLog: [GPUBreakEvent] = []
+    package var breakSteps: [Int] = []
+    package var breakTotal = 0
+    package static let breakLogLength = 1024
     /// The particles as a substep's Jacobi pass found them (solveParticles), kept.
-    var particleSnapshot: [GPUPhysicsParticle] = []
+    package var particleSnapshot: [GPUPhysicsParticle] = []
     /// The broad phases' cells of the bodies and of the particles (PhysicsCellGrid), kept.
-    var bodyCells = PhysicsCellGrid(), particleCells = PhysicsCellGrid()
+    package var bodyCells = PhysicsCellGrid(), particleCells = PhysicsCellGrid()
     /// The bodies a substep may move (listMoving), kept.
-    var movingBodies: [Int32] = []
+    package var movingBodies: [Int32] = []
     /// The bodies too big for the broad phase's grid this step (broadPhase).
-    var bigBodies: [Int32] = []
+    package var bigBodies: [Int32] = []
     /// The narrow phase's memo (NarrowMemo): an entry's partner its contacts were found with at the last step's start
     /// (`none`: not kept), how many; each body then, as the narrow phase reads it, and whether it is so now; the
     /// shapes' build they were found on (`shapeEpoch`, one more each time shapeData makes them).
-    var narrowPartners: [UInt32] = [], narrowCounts: [UInt32] = []
-    var narrowSeen: [SIMD16<UInt32>] = [], narrowChanged: [UInt8] = []
-    var narrowEpoch = -1, shapeEpoch = 0
+    package var narrowPartners: [UInt32] = [], narrowCounts: [UInt32] = []
+    package var narrowSeen: [SIMD16<UInt32>] = [], narrowChanged: [UInt8] = []
+    package var narrowEpoch = -1, shapeEpoch = 0
     /// The broad phase's copies, made each step (PhysicsCPU.broadPhase): per grid item its body's position and reach,
     /// and with fractured objects per body its box in the world.
-    var broadItems: [SIMD4<Float>] = [], broadFrames: [PhysicsBoxFrame] = []
+    package var broadItems: [SIMD4<Float>] = [], broadFrames: [PhysicsBoxFrame] = []
     /// Per entry, its partner's key as the broad phase kept it (a distance squared, or a gap: PhysicsCPU.consider).
-    var broadKeys: [Float] = []
+    package var broadKeys: [Float] = []
     /// Per body (then per static), where its samples' world points start in `sampleWorld`, the points, and whether they
     /// are this narrow phase's (SampleCache: 2 x `sampleEpoch` + 1 once they are; 2 x it while a thread works them out).
-    var sampleStarts: [Int32] = [], sampleWorld: [SIMD3<Float>] = [], sampleStates: [Int] = []
-    var sampleEpoch = 0
+    package var sampleStarts: [Int32] = [], sampleWorld: [SIMD3<Float>] = [], sampleStates: [Int] = []
+    package var sampleEpoch = 0
     /// The broad phase's memo (broadPhase, BroadMemo): each body as the broad phase read it at the last step, and
     /// whether it is so now; the bodies that aren't, in a grid of their own (the step's levels) and those too big for
     /// it; the shapes' build, the statics' and the parameters the partners were found with (`broadEpoch` -1: none).
-    var broadSeen: [SIMD16<UInt32>] = [], broadChanged: [UInt8] = []
-    var changedCells = PhysicsCellGrid(), changedBodies: [Int32] = [], changedBigs: [Int32] = []
-    var broadEpoch = -1, broadStatics = 0, broadParams = SIMD4<Float>()
+    package var broadSeen: [SIMD16<UInt32>] = [], broadChanged: [UInt8] = []
+    package var changedCells = PhysicsCellGrid(), changedBodies: [Int32] = [], changedBigs: [Int32] = []
+    package var broadEpoch = -1, broadStatics = 0, broadParams = SIMD4<Float>()
     /// With fractured objects, each shape's box in its body's space (centre, half extents; two per shape): the broad
     /// phase's test (PhysicsWorld.boxGap). A heap's flat pieces have spheres far bigger than they are, and more of
     /// them overlap than a body keeps partners.
-    var shapeBoxes: [SIMD4<Float>] = []
-    var fractureCommands: [GPUFractureCommand] = []
+    package var shapeBoxes: [SIMD4<Float>] = []
+    package var fractureCommands: [GPUFractureCommand] = []
     /// The CPU's index of them (beginFractureStep): their indices by start step (in the order added among those of a
     /// step), the most steps one lasts, and a step's live ones (scratch). A step looks at the few that may be live, not
     /// at every command of a session (a machine gun adds a dozen a second).
-    var commandOrder: [Int32] = []
-    var longestCommand: UInt32 = 1
-    var liveCommands: [Int32] = []
+    package var commandOrder: [Int32] = []
+    package var longestCommand: UInt32 = 1
+    package var liveCommands: [Int32] = []
     /// The demolition scene's rockets in flight, blasts going on and walker (Physics+Demolition.swift).
-    var demolition = DemolitionState()
+    package var demolition = DemolitionState()
     /// Welded pairs neither of whose bodies moves left out of the colouring (PhysicsWorld.idle): the demolition
     /// scene's office, every block welded to its neighbours and asleep, would otherwise solve 10,000 of them each
     /// substep for nothing. (Off elsewhere: the colours, and so the numbers, stay as they were.)
     package var idleWelds = false
     /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
     package var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
-    var fractures: Bool { !fractureNodes.isEmpty }
+    package var fractures: Bool { !fractureNodes.isEmpty }
 
     /// How far the simulation has gone (whole steps).
-    var stepIndex = 0
-    var time: Float { Float(stepIndex) * PhysicsWorld.stepLength }
+    package var stepIndex = 0
+    package var time: Float { Float(stepIndex) * PhysicsWorld.stepLength }
 
     package init(substeps: Int) {
         self.substeps = max(substeps, 1)
@@ -320,7 +320,7 @@ package final class PhysicsWorld {
     }
 
     /// The scene's baked grids, for shapes made of them (before any such shape is added).
-    func setVolumes(_ volumes: [SDFVolume]) { sdfVolumes = volumes }
+    package func setVolumes(_ volumes: [SDFVolume]) { sdfVolumes = volumes }
 
     /// The pose of shape `s`'s body whose shape space is placed by `transform` (a rotation and a translation).
     private func pose(shape s: Int, _ transform: float4x4) -> (SIMD3<Float>, SIMD4<Float>) {
@@ -335,7 +335,7 @@ package final class PhysicsWorld {
 
     /// A body moving `instance`, SDF shape `sdf`, placed by `transform` (no scale); `density` kg/m^3.
     @discardableResult
-    func addBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, density: Float = 500, friction: Float = 0.5,
+    package func addBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, density: Float = 500, friction: Float = 0.5,
                  restitution: Float = 0.2, velocity: SIMD3<Float> = .zero, spin: SIMD3<Float> = .zero,
                  prebuilt: ShapeBuild? = nil) -> Int {
         let s = self.shape(sdf: sdf, shape, prebuilt: prebuilt)
@@ -359,7 +359,7 @@ package final class PhysicsWorld {
     /// its column of the pose table says, step by step (PhysicsFlesh.swift), whatever touches it. What it touches it
     /// pushes, carries along by friction and wakes; nothing pushes it back.
     @discardableResult
-    func addKinematicBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, friction: Float = 0.6,
+    package func addKinematicBody(sdf: Int, _ shape: SDFShape, transform: float4x4, instance: Int, friction: Float = 0.6,
                           restitution: Float = 0.1) -> Int {
         let s = self.shape(sdf: sdf, shape)
         let (p, q) = pose(shape: s, transform)
@@ -381,7 +381,7 @@ package final class PhysicsWorld {
     package func bodyPose(_ i: Int, _ transform: float4x4) -> (SIMD3<Float>, SIMD4<Float>) { pose(shape: Int(bodies[i].info.x), transform) }
 
     /// A static collider: SDF shape `sdf` placed by `transform` (it needn't be drawn).
-    func addStatic(sdf: Int, _ shape: SDFShape, transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
+    package func addStatic(sdf: Int, _ shape: SDFShape, transform: float4x4, friction: Float = 0.6, restitution: Float = 0.2) {
         let s = self.shape(sdf: sdf, shape)
         let (p, q) = pose(shape: s, transform)
         var b = GPUPhysicsBody()
@@ -400,7 +400,7 @@ package final class PhysicsWorld {
     /// A static heightfield (a terrain's sector, in the scene): `side` samples (x, z) `cell` metres apart from `lo` (x, z),
     /// rows along z. Its index among the statics (`updateHeightfield` changes its heights).
     @discardableResult
-    func addStaticHeightfield(lo: SIMD2<Float>, cell: Float, side: SIMD2<Int>, heights: [Float], friction: Float = 0.7,
+    package func addStaticHeightfield(lo: SIMD2<Float>, cell: Float, side: SIMD2<Int>, heights: [Float], friction: Float = 0.7,
                               restitution: Float = 0.1) -> Int {
         precondition(heights.count == side.x * side.y && side.x > 1 && side.y > 1, "a height per sample")
         var shape = GPUPhysicsShape(comPosition: SIMD4(Float(side.y), 1, 0, 0),
@@ -431,7 +431,7 @@ package final class PhysicsWorld {
     /// Heightfield static `k`'s heights changed (a brush moved the ground): its samples, slope bound and box. The range
     /// of `samples` that changed (the GPU's copy is written again there: PhysicsGPU.updateSamples).
     @discardableResult
-    func updateHeightfield(_ k: Int, heights: [Float]) -> Range<Int> {
+    package func updateHeightfield(_ k: Int, heights: [Float]) -> Range<Int> {
         let s = Int(statics[k].info.x), shape = shapes[s]
         let side = SIMD2(Int(shape.params.w), Int(shape.comPosition.x)), first = Int(shape.info.w)
         guard heights.count == side.x * side.y else { return first..<first }
@@ -464,12 +464,12 @@ package final class PhysicsWorld {
     }
 
     /// Every body awake (the ground under them moved).
-    func wakeAll() {
+    package func wakeAll() {
         for i in bodies.indices { bodies[i].info.y &= ~PhysicsWorld.asleep }
     }
 
     /// An endless static plane through `point`, facing `normal`.
-    func addPlane(point: SIMD3<Float>, normal: SIMD3<Float>, friction: Float = 0.6, restitution: Float = 0.2) {
+    package func addPlane(point: SIMD3<Float>, normal: SIMD3<Float>, friction: Float = 0.6, restitution: Float = 0.2) {
         if shapes.firstIndex(where: { $0.info.x == PhysicsShapeKind.plane.rawValue }) == nil {
             shapes.append(GPUPhysicsShape(comPosition: SIMD4(0, 0, 0, 0), info: SIMD4(PhysicsShapeKind.plane.rawValue, 0, 0, 0)))
         }
@@ -489,7 +489,7 @@ package final class PhysicsWorld {
     }
 
     /// A particle moving `instance` (a sphere of `radius` centred on its origin).
-    func addParticle(at position: SIMD3<Float>, radius: Float, instance: Int, density: Float = 1500, friction: Float = 0.5,
+    package func addParticle(at position: SIMD3<Float>, radius: Float, instance: Int, density: Float = 1500, friction: Float = 0.5,
                      velocity: SIMD3<Float> = .zero) {
         let mass = density * 4 / 3 * Float.pi * radius * radius * radius
         particles.append(GPUPhysicsParticle(position: SIMD4(position, radius), velocity: SIMD4(velocity, friction),
@@ -500,7 +500,7 @@ package final class PhysicsWorld {
     /// each a particle of `thickness` radius; `pinned` vertices (row-major indices) never move. `vertexBase`: where its
     /// vertices are in the scene's vertex buffer (the mesh that draws it). Stretch and shear hold it (`stretch`
     /// compliance), every other vertex along the rows and columns bends it (`bend`).
-    func addCloth(origin: SIMD3<Float>, across: SIMD3<Float>, down: SIMD3<Float>, columns: Int, rows: Int, pinned: Set<Int>,
+    package func addCloth(origin: SIMD3<Float>, across: SIMD3<Float>, down: SIMD3<Float>, columns: Int, rows: Int, pinned: Set<Int>,
                   thickness: Float, density: Float = 0.3, friction: Float = 0.6, vertexBase: Int,
                   stretch: Float = 0, bend: Float = 2e-3) {
         let first = particles.count
@@ -568,7 +568,7 @@ package final class PhysicsWorld {
     }
 
     /// Whether a joint joins bodies `i` and `j` (then they don't collide).
-    @inline(__always) static func joined(_ a: GPUPhysicsBody, _ i: Int, _ b: GPUPhysicsBody, _ j: Int) -> Bool {
+    @inline(__always) package static func joined(_ a: GPUPhysicsBody, _ i: Int, _ b: GPUPhysicsBody, _ j: Int) -> Bool {
         a.info.w == UInt32(j) + 1 || b.info.w == UInt32(i) + 1
     }
 
@@ -614,7 +614,7 @@ package final class PhysicsWorld {
     }
 
     /// Once everything is in: the arrays the steps use, and the start to replay from.
-    func finish() {
+    package func finish() {
         colourConstraints()
         colourJoints()
         (tets, tetStarts) = PhysicsWorld.colourTets(unsortedTets)
@@ -666,7 +666,7 @@ package final class PhysicsWorld {
     }
 
     /// Back to the start.
-    func reset() {
+    package func reset() {
         bodies = initialBodies
         particles = initialParticles
         hairVertices = initialHairVertices
@@ -685,7 +685,7 @@ package final class PhysicsWorld {
     }
 
     /// The grid's cell: twice the largest bounding sphere a body may have in a step (its radius, its travel, the margin).
-    var cellSize: Float {
+    package var cellSize: Float {
         // (The largest bounding radius, as `bodies.map(\.invInertia.w).max()` finds it, without the array.)
         var r: Float = 1
         for (i, b) in bodies.enumerated() where i == 0 || r < b.invInertia.w { r = b.invInertia.w }
@@ -693,18 +693,18 @@ package final class PhysicsWorld {
     }
 
     /// Buckets of the GPU's hash grid: a power of two, twice the bodies at least.
-    var buckets: Int { PhysicsWorld.buckets(bodies.count) }
-    var particleBuckets: Int { PhysicsWorld.buckets(particles.count) }
-    static func buckets(_ n: Int) -> Int { max(64, 1 << Int(ceil(log2(Double(max(n, 1) * 2))))) }
+    package var buckets: Int { PhysicsWorld.buckets(bodies.count) }
+    package var particleBuckets: Int { PhysicsWorld.buckets(particles.count) }
+    package static func buckets(_ n: Int) -> Int { max(64, 1 << Int(ceil(log2(Double(max(n, 1) * 2))))) }
 
     /// The particles' grid cell: twice the largest reach a particle has in a step.
-    var particleCellSize: Float {
+    package var particleCellSize: Float {
         var r: Float = 0.05
         for (i, q) in particles.enumerated() where i == 0 || r < q.position.w { r = q.position.w }
         return 2 * (r + PhysicsWorld.particleSpeed * PhysicsWorld.stepLength + PhysicsWorld.margin)
     }
 
-    var params: GPUPhysicsParams {
+    package var params: GPUPhysicsParams {
         GPUPhysicsParams(gravity: SIMD4(gravity, PhysicsWorld.stepLength / Float(substeps)),
                          counts: SIMD4(UInt32(bodies.count), UInt32(statics.count), UInt32(PhysicsWorld.maxPairs), UInt32(buckets)),
                          grid: SIMD4(cellSize, PhysicsWorld.margin, PhysicsWorld.topSpeed, PhysicsWorld.stepLength),
@@ -723,20 +723,20 @@ package final class PhysicsWorld {
 
     /// How many steps reach `time` (from the start again if it is behind: `reset` first, which this says). Before 0
     /// the world waits at its start.
-    func stepsTo(_ time: Float) -> (steps: Int, restart: Bool) {
+    package func stepsTo(_ time: Float) -> (steps: Int, restart: Bool) {
         let target = max(Int((time / PhysicsWorld.stepLength).rounded(.down)), 0)
         return target < stepIndex ? (target, true) : (target - stepIndex, false)
     }
 
     /// Steps on the CPU to `time`.
-    func advance(to time: Float) {
+    package func advance(to time: Float) {
         let (steps, restart) = stepsTo(time)
         if restart { reset() }
         PhysicsPool.shared.run { for _ in 0..<steps { step() } }   // (the workers awake once for the lot)
     }
 
     /// ...`atMost` steps a call: further behind (a slow frame), the world skips the rest of the time.
-    func advance(to time: Float, atMost limit: Int) {
+    package func advance(to time: Float, atMost limit: Int) {
         var (steps, restart) = stepsTo(time)
         if restart { reset() }
         if steps > limit { stepIndex += steps - limit; steps = limit }
@@ -744,7 +744,7 @@ package final class PhysicsWorld {
     }
 
     /// For the GPU: the steps that reach `time` (from the start, `restart`), counted as run.
-    func claim(to time: Float) -> (steps: Int, restart: Bool) {
+    package func claim(to time: Float) -> (steps: Int, restart: Bool) {
         let (steps, restart) = stepsTo(time)
         if restart { stepIndex = 0 }
         stepIndex += steps
@@ -754,7 +754,7 @@ package final class PhysicsWorld {
     // MARK: - Picking
 
     /// Body `i`'s pose as last drawn.
-    func drawnPose(_ i: Int) -> (position: SIMD3<Float>, rotation: SIMD4<Float>) {
+    package func drawnPose(_ i: Int) -> (position: SIMD3<Float>, rotation: SIMD4<Float>) {
         drawnPoses.count == 2 * bodies.count ? (PhysicsMath.xyz(drawnPoses[2 * i]), drawnPoses[2 * i + 1])
                                              : (PhysicsMath.xyz(bodies[i].position), bodies[i].rotation)
     }
@@ -795,9 +795,8 @@ package final class PhysicsWorld {
     /// Body `b`'s instance transform (its record given: a stepper's drawn copy), drawn at `scale` about its centre.
     package func transform(_ b: GPUPhysicsBody, scale s: Float) -> float4x4 {
         let shape = shapes[Int(b.info.x)]
-        let q = PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(shape.comRotation))
-        let turned = translate(PhysicsMath.xyz(b.position)) * float4x4(PhysicsMath.simdQuat(q))
-        return (s < 1 ? turned * scale(max(s, PhysicsWorld.hiddenScale)) : turned) * translate(-PhysicsMath.xyz(shape.comPosition))
+        return physicsBodyTransform(position: PhysicsMath.xyz(b.position), rotation: b.rotation, comPosition: shape.comPosition,
+                                    comRotation: shape.comRotation, scale: s)
     }
 
     package func transform(_ i: Int) -> float4x4 {
@@ -805,35 +804,55 @@ package final class PhysicsWorld {
     }
 
     /// Particle `i`'s instance transform.
-    func particleTransform(_ i: Int) -> float4x4 { translate(PhysicsMath.xyz(particles[i].position)) }
+    package func particleTransform(_ i: Int) -> float4x4 { translate(PhysicsMath.xyz(particles[i].position)) }
 
     /// ...for the pose given (the GPU's), drawn at `scale` about its centre of mass.
     package func transform(_ i: Int, position: SIMD3<Float>, rotation: SIMD4<Float>, scale s: Float = 1) -> float4x4 {
         let shape = shapes[Int(bodies[i].info.x)]
-        let q = PhysicsMath.qmul(rotation, PhysicsMath.qconj(shape.comRotation))
-        let turned = translate(position) * float4x4(PhysicsMath.simdQuat(q))
-        return (s < 1 ? turned * scale(max(s, PhysicsWorld.hiddenScale)) : turned) * translate(-PhysicsMath.xyz(shape.comPosition))
+        return physicsBodyTransform(position: position, rotation: rotation, comPosition: shape.comPosition,
+                                    comRotation: shape.comRotation, scale: s)
     }
 
     /// How small a hidden body is drawn (Scene.addParticles hides a mesh particle so).
     package static let hiddenScale: Float = 1e-4
 }
 
+/// A body's instance transform: its shape space in the world, for its pose (`position`, `rotation`) and its shape's
+/// centre of mass, drawn at `scale` about it (PhysicsWorld.transform's). A free function on plain values, and
+/// inlinable: the scene's per-body loops call it from another module.
+@inlinable @inline(__always) package func physicsBodyTransform(position: SIMD3<Float>, rotation: SIMD4<Float>, comPosition: SIMD4<Float>,
+                                                             comRotation: SIMD4<Float>, scale s: Float) -> float4x4 {
+    let q = quatMultiply(rotation, quatConjugate(comRotation))
+    let turned = translate(position) * float4x4(quatToSIMD(q))
+    return (s < 1 ? turned * scale(max(s, 1e-4)) : turned) * translate(-dropW(comPosition))   // (1e-4: PhysicsWorld.hiddenScale)
+}
+
+/// Whether a body moves (PhysicsWorld.moves), from its record's position (w: its inverse mass) and info.
+@inlinable @inline(__always) package func physicsBodyMoves(position: SIMD4<Float>, info: SIMD4<UInt32>) -> Bool {
+    position.w > 0 && info.y & (physicsAsleep | physicsDisabledBit) == 0
+}
+
+// PhysicsWorld.none and the bodies' flags the scene's loops read per body, as constants they can inline from another
+// module (PhysicsTests checks they are the world's).
+@inlinable package var physicsNone: UInt32 { ~0 }
+@inlinable package var physicsAsleep: UInt32 { 1 }
+@inlinable package var physicsDisabledBit: UInt32 { 4 }
+
 /// What a joint keeps (PhysicsWorld.addJoint): GPUPhysicsJoint.info.z.
-enum PhysicsJointKind: UInt32 {
+package enum PhysicsJointKind: UInt32 {
     case ball = 0, hinge
 }
 
 /// A joint's kind and limits (radians): a ball joint's swing cone (the most its two axes part) and its twist about
 /// them; a hinge's turn about its axis.
 package struct PhysicsJoint {
-    var kind: PhysicsJointKind
-    var lo: Float
-    var hi: Float
-    var swing: Float = 0
+    package var kind: PhysicsJointKind
+    package var lo: Float
+    package var hi: Float
+    package var swing: Float = 0
     /// How fast two joined bodies' relative turning fades by default (1/s): a ragdoll's limbs don't flail on for ever,
     /// and a pile of them settles (24 ragdolls slept by 15 s at 6/s, by 27 s at 2/s).
-    static let damping: Float = 6
+    package static let damping: Float = 6
 
     package static func ball(swing: Float, twist: ClosedRange<Float>) -> PhysicsJoint {
         PhysicsJoint(kind: .ball, lo: twist.lowerBound, hi: twist.upperBound, swing: swing)

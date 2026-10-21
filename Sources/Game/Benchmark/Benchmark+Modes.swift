@@ -1,6 +1,7 @@
 import CoreGraphics
 import EngineCore
 import Foundation
+import Physics
 import Plants
 import simd
 import MetalRenderer

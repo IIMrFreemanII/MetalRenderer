@@ -9,7 +9,7 @@ extension PhysicsWorld {
 
     /// Turns `a` by `correction` (an angle times an axis) and `b` by its opposite, shared by their inverse inertia
     /// about the axis (an XPBD angular constraint of no compliance).
-    @inline(__always) static func swivel(_ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, _ correction: SIMD3<Float>) {
+    @inline(__always) package static func swivel(_ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, _ correction: SIMD3<Float>) {
         let angle = length(correction)
         guard angle > 1e-7 else { return }
         let k = correction / angle
@@ -21,13 +21,13 @@ extension PhysicsWorld {
     }
 
     /// The turn of A about `n` that brings the angle from `n1` (A's) to `n2` (B's) about `n` back within [lo, hi].
-    @inline(__always) static func limitAngle(_ n: SIMD3<Float>, _ n1: SIMD3<Float>, _ n2: SIMD3<Float>, _ lo: Float, _ hi: Float) -> SIMD3<Float> {
+    @inline(__always) package static func limitAngle(_ n: SIMD3<Float>, _ n1: SIMD3<Float>, _ n2: SIMD3<Float>, _ lo: Float, _ hi: Float) -> SIMD3<Float> {
         let phi = atan2(dot(cross(n1, n2), n), dot(n1, n2))
         return n * (phi - min(max(phi, lo), hi))
     }
 
     /// `v` less its part along unit `n`, as a unit vector (0 if nothing is left).
-    @inline(__always) static func across(_ v: SIMD3<Float>, _ n: SIMD3<Float>) -> SIMD3<Float> {
+    @inline(__always) package static func across(_ v: SIMD3<Float>, _ n: SIMD3<Float>) -> SIMD3<Float> {
         let u = v - n * dot(v, n)
         let l = length(u)
         return l > 1e-6 ? u / l : .zero
@@ -35,7 +35,7 @@ extension PhysicsWorld {
 
     /// Joint `j` between `a` and `b` (Müller et al. 2020): the turn limits (a ball joint's swing cone and twist; a
     /// hinge's axes together and its angle), then the anchors together.
-    @inline(__always) static func solveJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody) {
+    @inline(__always) package static func solveJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody) {
         guard moves(a) || moves(b) else { return }
         let lo = j.axisA.w, hi = j.axisB.w
         var axisA = PhysicsMath.qrot(a.rotation, PhysicsMath.xyz(j.axisA)), axisB = PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(j.axisB))
@@ -72,7 +72,7 @@ extension PhysicsWorld {
 
     /// Body `b`'s inverse inertia about axis `k` through the point at lever arm `r` (from its centre): what turning
     /// it about a joint's anchor takes, its mass going round the anchor included (0 for one that doesn't move).
-    @inline(__always) static func anchorTurnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>, _ r: SIMD3<Float>) -> Float {
+    @inline(__always) package static func anchorTurnWeight(_ b: GPUPhysicsBody, _ k: SIMD3<Float>, _ r: SIMD3<Float>) -> Float {
         let w = turnWeight(b, k)
         guard w > 0 else { return 0 }
         return 1 / (1 / w + length_squared(cross(k, r)) / b.position.w)
@@ -82,7 +82,7 @@ extension PhysicsWorld {
     /// velocity with it) by an angular impulse shared by their inertia about it. (Slowing only their turning about
     /// their centres hardly slowed a head swinging on its neck: the joint gave the turning back from how its centre
     /// still went round the anchor.)
-    @inline(__always) static func dampJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, h: Float) {
+    @inline(__always) package static func dampJoint(_ j: GPUPhysicsJoint, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody, h: Float) {
         let relative = PhysicsMath.xyz(b.angular) - PhysicsMath.xyz(a.angular)
         let speed = length(relative)
         guard speed > 1e-6 else { return }
@@ -107,7 +107,7 @@ extension PhysicsWorld {
     /// turn x its radius of gyration about the turn's axis, at most `gyration`), from `position` and `rotation` (where its velocities say
     /// little: at rest on a few contacts they are what the last substep's kicks left, which the next substep's pushes
     /// take back).
-    @inline(__always) static func still(_ b: GPUPhysicsBody, _ position: SIMD4<Float>, _ rotation: SIMD4<Float>,
+    @inline(__always) package static func still(_ b: GPUPhysicsBody, _ position: SIMD4<Float>, _ rotation: SIMD4<Float>,
                                         _ p: GPUPhysicsParams) -> Bool {
         let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(position))
         let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(rotation)))
@@ -123,7 +123,7 @@ extension PhysicsWorld {
     /// sleep time (as `still` measures a turn). Its speed over the time, not each step's: a heap's pieces creep at
     /// around a cm/s on the solver's last corrections (a cm and 2 degrees a second), and jolt faster for a step now
     /// and then, which restarted their timers.
-    @inline(__always) static func near(_ b: GPUPhysicsBody, _ anchor: SIMD8<Float>, _ p: GPUPhysicsParams) -> Bool {
+    @inline(__always) package static func near(_ b: GPUPhysicsBody, _ anchor: SIMD8<Float>, _ p: GPUPhysicsParams) -> Bool {
         let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(anchor.lowHalf))
         guard moved < p.sleep.x * p.sleep.z else { return false }
         let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(anchor.highHalf)))
@@ -135,7 +135,7 @@ extension PhysicsWorld {
 
     /// How fast body `b`'s mass went over a step from `start` (its pose then) in `h`: its move, and its turn x its
     /// radius of gyration about the turn (`gyration` at most).
-    @inline(__always) static func motion(_ b: GPUPhysicsBody, _ start: SIMD8<Float>, _ h: Float) -> SIMD4<Float> {
+    @inline(__always) package static func motion(_ b: GPUPhysicsBody, _ start: SIMD8<Float>, _ h: Float) -> SIMD4<Float> {
         let moved = length(PhysicsMath.xyz(b.position) - PhysicsMath.xyz(start.lowHalf))
         let turn = PhysicsMath.xyz(PhysicsMath.qmul(b.rotation, PhysicsMath.qconj(start.highHalf)))
         let sine = length(turn)
@@ -148,7 +148,7 @@ extension PhysicsWorld {
     /// contacts with) have been slow for half as long (or sleep): a pile goes to sleep together, not one body propped on moving ones.
     /// With fractured objects, rubble is slow while it stays near where its slow time began (`near`), and every
     /// moving body's motion over the step is kept for the next step's wake (`stepMotion`).
-    func settle(_ p: GPUPhysicsParams, _ start: [SIMD8<Float>]) {
+    package func settle(_ p: GPUPhysicsParams, _ start: [SIMD8<Float>]) {
         let n = bodies.count, k = PhysicsWorld.maxPairs, heaps = fractures
         wakeFlags.removeAll(keepingCapacity: true)
         wakeFlags.append(contentsOf: repeatElement(0, count: n))

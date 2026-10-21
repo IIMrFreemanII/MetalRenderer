@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The Mireland swamp (Scene+Mireland.swift): every Mireland material in it, procedural; its cut-outs on meshes with

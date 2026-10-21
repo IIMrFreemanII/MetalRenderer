@@ -7,24 +7,24 @@ import simd
 /// the bodies' groups (PhysicsGPU.encodeSteps), and the impulses the liquids gave the bodies applied after them. Written
 /// once, like the physics' own buffers: a group sets no bytes. The CPU counts the groups too (the GPU's clock is its
 /// own), only to size the dispatches to what is poured.
-final class FluidGPU {
+package final class FluidGPU {
     /// The physics' buffers the liquids read: its parameters, bodies, statics and their boxes, shapes and the SDF scene.
-    struct World {
-        var params: MTLBuffer
-        var bodies: MTLBuffer
-        var statics: MTLBuffer
-        var staticBounds: MTLBuffer
-        var shapes: MTLBuffer
-        var samples: MTLBuffer
-        var sdfScene: MTLBuffer
+    package struct World {
+        package var params: MTLBuffer
+        package var bodies: MTLBuffer
+        package var statics: MTLBuffer
+        package var staticBounds: MTLBuffer
+        package var shapes: MTLBuffer
+        package var samples: MTLBuffer
+        package var sdfScene: MTLBuffer
     }
 
     /// A liquid's buffers. PBF: two of its particles and predicted positions (the sort reads one and writes the other),
     /// its cells' counts, starts (n + 1) and cursors, the particles' cells, order, neighbours (FLUID_NEIGHBOURS_MOST
     /// each, the first of every particle's then the second ...) and how many, their lambdas. MPM: its grid, and
     /// its blocks' counts, starts and cursors and the particles' blocks and order (fluidMpmP2GKernel).
-    final class System {
-        let system: FluidSystem
+    package final class System {
+        package let system: FluidSystem
         let params: MTLBuffer
         let state: MTLBuffer
         let particles: [MTLBuffer]
@@ -108,7 +108,7 @@ final class FluidGPU {
         }
     }
 
-    let systems: [System]
+    package let systems: [System]
     /// Per body, the liquids' impulses this group (8 ints: linear, angular).
     let impulses: MTLBuffer
     /// FluidWorld.drops: a uint4 (x = how many), then (body, tick) pairs.
@@ -363,7 +363,7 @@ final class FluidGPU {
     }
 
     /// Per liquid (as its last frames left it): particles poured, how high they are (median, top), how fast, its surface.
-    var summary: String {
+    package var summary: String {
         systems.indices.map { s in
             let q = readParticles(s), st = readSurfaceStats(s)
             guard !q.isEmpty else { return "\(systems[s].system.kind.name) none yet" }
@@ -375,7 +375,7 @@ final class FluidGPU {
     }
 
     /// System `s`'s last surface: its vertices, its triangles, whether it ran out of room (tests, the bench's line).
-    func readSurfaceStats(_ s: Int) -> SIMD4<UInt32> { systems[s].stats.contents().load(as: SIMD4<UInt32>.self) }
+    package func readSurfaceStats(_ s: Int) -> SIMD4<UInt32> { systems[s].stats.contents().load(as: SIMD4<UInt32>.self) }
 
     // MARK: - Reading back (tests)
 

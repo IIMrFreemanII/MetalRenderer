@@ -4,6 +4,7 @@ import ImageIO
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The city's generated textures (ProceduralTextures.swift), at a small size and in a folder of their own.

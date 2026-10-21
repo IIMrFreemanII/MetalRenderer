@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The building styles that scenes are built with: the built-in ones (one per district, BuiltInBuildings) with any

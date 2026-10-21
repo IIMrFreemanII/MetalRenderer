@@ -1,6 +1,7 @@
 import Compression
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 enum FBXError: Error, CustomStringConvertible {

@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Hair (CharacterHair, CharacterHairCap): where it roots, that it stays off the head, that the brows and lashes ride

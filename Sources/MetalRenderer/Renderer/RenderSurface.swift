@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import Metal
+import Physics
 import Plants
 import QuartzCore
 

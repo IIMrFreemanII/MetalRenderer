@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The Material Painter past the unwrap: the painted scene (its materials, its corners' UVs, its assignments), the

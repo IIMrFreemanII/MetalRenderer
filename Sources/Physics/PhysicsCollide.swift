@@ -20,51 +20,45 @@ enum PhysicsShapeKind: UInt32 {
 /// more points found by descending one's field along the other's surface (edge against edge, face against face): one
 /// path for every pair, which the GPU takes without branching on the pair's kinds.
 package enum PhysicsMath {
-    @inline(__always) package static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { SIMD3(v.x, v.y, v.z) }
-    @inline(__always) static func qmul(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> SIMD4<Float> {
-        let av = xyz(a), bv = xyz(b)
-        return SIMD4(a.w * bv + b.w * av + cross(av, bv), a.w * b.w - dot(av, bv))
-    }
-    @inline(__always) package static func qrot(_ q: SIMD4<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
-        let u = xyz(q)
-        let t = 2 * cross(u, v)
-        return v + q.w * t + cross(u, t)
-    }
-    @inline(__always) package static func qconj(_ q: SIMD4<Float>) -> SIMD4<Float> { SIMD4(-q.x, -q.y, -q.z, q.w) }
-    @inline(__always) static func qnormalize(_ q: SIMD4<Float>) -> SIMD4<Float> {
+    // (These five forward to the core's free functions, which other modules' loops can inline.)
+    @inline(__always) package static func xyz(_ v: SIMD4<Float>) -> SIMD3<Float> { dropW(v) }
+    @inline(__always) package static func qmul(_ a: SIMD4<Float>, _ b: SIMD4<Float>) -> SIMD4<Float> { quatMultiply(a, b) }
+    @inline(__always) package static func qrot(_ q: SIMD4<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> { quatRotate(q, v) }
+    @inline(__always) package static func qconj(_ q: SIMD4<Float>) -> SIMD4<Float> { quatConjugate(q) }
+    @inline(__always) package static func qnormalize(_ q: SIMD4<Float>) -> SIMD4<Float> {
         let l = length(q)
         return l > 0 ? q / l : SIMD4(0, 0, 0, 1)
     }
     /// `q` turned by the small rotation vector `theta` (q + 0.5 (theta, 0) q, renormalised).
-    @inline(__always) static func qturn(_ q: SIMD4<Float>, _ theta: SIMD3<Float>) -> SIMD4<Float> {
+    @inline(__always) package static func qturn(_ q: SIMD4<Float>, _ theta: SIMD3<Float>) -> SIMD4<Float> {
         qnormalize(q + 0.5 * qmul(SIMD4(theta, 0), q))
     }
-    static func quat(_ q: simd_quatf) -> SIMD4<Float> { SIMD4(q.imag, q.real) }
-    static func simdQuat(_ q: SIMD4<Float>) -> simd_quatf { simd_quatf(ix: q.x, iy: q.y, iz: q.z, r: q.w) }
+    package static func quat(_ q: simd_quatf) -> SIMD4<Float> { SIMD4(q.imag, q.real) }
+    package static func simdQuat(_ q: SIMD4<Float>) -> simd_quatf { quatToSIMD(q) }
 
     /// The inverse inertia (principal moments `inv`, body -> world `q`) times `v`, in world space.
-    @inline(__always) static func applyInvInertia(_ q: SIMD4<Float>, _ inv: SIMD3<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
+    @inline(__always) package static func applyInvInertia(_ q: SIMD4<Float>, _ inv: SIMD3<Float>, _ v: SIMD3<Float>) -> SIMD3<Float> {
         qrot(q, inv * qrot(qconj(q), v))
     }
 
     // MARK: Distances
 
     /// A rounded box's distance (SDF.metal's sdfPrimitive, box).
-    @inline(__always) static func box(_ q: SIMD3<Float>, _ b: SIMD3<Float>, _ r: Float) -> Float {
+    @inline(__always) package static func box(_ q: SIMD3<Float>, _ b: SIMD3<Float>, _ r: Float) -> Float {
         let e = abs(q) - (b - r)
         return length(simd_max(e, .zero)) + min(max(e.x, max(e.y, e.z)), 0) - r
     }
-    @inline(__always) static func capsule(_ q: SIMD3<Float>, _ h: Float, _ r: Float) -> Float {
+    @inline(__always) package static func capsule(_ q: SIMD3<Float>, _ h: Float, _ r: Float) -> Float {
         length(SIMD3(q.x, q.y - min(max(q.y, -h), h), q.z)) - r
     }
     /// `v` made unit length (up, if it has none).
-    @inline(__always) static func direction(_ v: SIMD3<Float>) -> SIMD3<Float> {
+    @inline(__always) package static func direction(_ v: SIMD3<Float>) -> SIMD3<Float> {
         let l = length(v)
         return l > 1e-12 ? v / l : SIMD3(0, 1, 0)
     }
     /// A rounded box's gradient: outside its inner box, away from the nearest point of it; inside, its nearest face's
     /// normal (the first of equals: x, then y, then z).
-    @inline(__always) static func boxGradient(_ q: SIMD3<Float>, _ b: SIMD3<Float>, _ r: Float) -> SIMD3<Float> {
+    @inline(__always) package static func boxGradient(_ q: SIMD3<Float>, _ b: SIMD3<Float>, _ r: Float) -> SIMD3<Float> {
         let e = abs(q) - (b - r)
         let s = SIMD3<Float>(q.x >= 0 ? 1 : -1, q.y >= 0 ? 1 : -1, q.z >= 0 ? 1 : -1)
         if e.x > 0 || e.y > 0 || e.z > 0 { return direction(simd_max(e, .zero) * s) }
@@ -72,8 +66,8 @@ package enum PhysicsMath {
         return e.y >= e.z ? SIMD3(0, s.y, 0) : SIMD3(0, 0, s.z)
     }
     /// The four taps of the tetrahedral gradient (as sdfMarch takes its normal).
-    static let taps: [SIMD3<Float>] = [SIMD3(1, -1, -1), SIMD3(-1, -1, 1), SIMD3(-1, 1, -1), SIMD3(1, 1, 1)]
-    static let gradientStep: Float = 1e-3
+    package static let taps: [SIMD3<Float>] = [SIMD3(1, -1, -1), SIMD3(-1, -1, 1), SIMD3(-1, 1, -1), SIMD3(1, 1, 1)]
+    package static let gradientStep: Float = 1e-3
 }
 
 /// Per pair, from body A's side: A is the pair's owner (the lower body, or the body against a static collider).
@@ -92,7 +86,7 @@ struct PhysicsCandidate {
 /// Up to four contacts, kept as Bullet keeps a persistent manifold: the deepest always, the rest to cover the most
 /// area. Points are added one at a time (the GPU has no room for a pair's every candidate). Four fixed slots, no array:
 /// the narrow phase makes one a pair, on every core.
-struct PhysicsManifold {
+package struct PhysicsManifold {
     static let capacity = 4
     private var p0 = PhysicsCandidate.none, p1 = PhysicsCandidate.none, p2 = PhysicsCandidate.none, p3 = PhysicsCandidate.none
     /// How many of the slots hold a point.
@@ -229,7 +223,7 @@ struct PhysicsSDFNode {
 /// asking one shape's distance contended on its arrays' counts, and the hair scene's step took ten times as long): the
 /// shapes, their samples, the SDF shapes' nodes (PhysicsSDFNode) and planes, the baked grids. Made again when the
 /// world's shapes change (PhysicsWorld.shapeData).
-final class PhysicsShapeTable {
+package final class PhysicsShapeTable {
     let shapes: UnsafeMutableBufferPointer<GPUPhysicsShape>
     let samples: UnsafeMutableBufferPointer<SIMD4<Float>>
     let nodes: UnsafeMutableBufferPointer<PhysicsSDFNode>
@@ -276,7 +270,7 @@ final class PhysicsShapeTable {
 /// What a body's shape is to the steps, read-only while they run (PhysicsShapeTable's buffers, valid while the world's
 /// shapes don't change: take one before a stage, `PhysicsWorld.shapeData`): the distance, the gradient and a pair's
 /// contacts, on any thread.
-struct PhysicsShapes {
+package struct PhysicsShapes {
     let shapes: UnsafeBufferPointer<GPUPhysicsShape>
     let samples: UnsafeBufferPointer<SIMD4<Float>>
     let nodes: UnsafeBufferPointer<PhysicsSDFNode>
@@ -514,7 +508,7 @@ extension PhysicsWorld {
 
     /// The shapes as the steps read them (PhysicsShapes, on PhysicsShapeTable's buffers, made again after the shapes
     /// change): take one before a loop.
-    var shapeData: PhysicsShapes {
+    package var shapeData: PhysicsShapes {
         if let view = shapeView { return view }   // (raw buffers: nothing counted, from any thread)
         let table = PhysicsShapeTable(shapes: shapes, samples: samples, sdfShapes: sdfShapes, volumes: sdfVolumes)
         shapeTable = table
@@ -523,14 +517,14 @@ extension PhysicsWorld {
         return table.view
     }
 
-    func heightfieldHeight(_ shape: GPUPhysicsShape, _ x: Float, _ z: Float) -> Float { shapeData.heightfieldHeight(shape, x, z) }
+    package func heightfieldHeight(_ shape: GPUPhysicsShape, _ x: Float, _ z: Float) -> Float { shapeData.heightfieldHeight(shape, x, z) }
     package func distance(shape s: Int, _ p: SIMD3<Float>) -> Float { shapeData.distance(shape: s, p) }
     package func gradient(shape s: Int, _ p: SIMD3<Float>) -> SIMD3<Float> { shapeData.gradient(shape: s, p) }
-    func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold { shapeData.collide(a, b, margin: margin) }
+    package func collide(_ a: GPUPhysicsBody, _ b: GPUPhysicsBody, margin: Float) -> PhysicsManifold { shapeData.collide(a, b, margin: margin) }
 
-    static let refineSteps = 6
+    package static let refineSteps = 6
     /// Shapes with flat faces and edges (their samples alone miss edge-to-edge contacts).
-    static func flat(_ kind: UInt32) -> Bool { kind == PhysicsShapeKind.box.rawValue || kind == PhysicsShapeKind.sdf.rawValue }
+    package static func flat(_ kind: UInt32) -> Bool { kind == PhysicsShapeKind.box.rawValue || kind == PhysicsShapeKind.sdf.rawValue }
 }
 
 // MARK: - Building shapes
@@ -538,16 +532,16 @@ extension PhysicsWorld {
 extension PhysicsWorld {
     /// A shape for SDF shape `sdf`: its kind, its body frame (centre of mass, principal axes), its surface samples,
     /// and its mass properties per unit density (volume, principal moments).
-    struct ShapeBuild {
-        var shape: GPUPhysicsShape
-        var samples: [SIMD4<Float>]
-        var volume: Float
-        var moments: SIMD3<Float>   // per unit density
+    package struct ShapeBuild {
+        package var shape: GPUPhysicsShape
+        package var samples: [SIMD4<Float>]
+        package var volume: Float
+        package var moments: SIMD3<Float>   // per unit density
     }
 
-    static let maxSamples = 64
+    package static let maxSamples = 64
 
-    static func buildShape(_ sdf: SDFShape, index: Int, volumes: [SDFVolume]) -> ShapeBuild {
+    package static func buildShape(_ sdf: SDFShape, index: Int, volumes: [SDFVolume]) -> ShapeBuild {
         let node = sdf.nodes[0]
         let identity = abs(node.rotation.real) > 0.99999
         if sdf.nodes.count == 1 && node.scale == 1 && identity {
@@ -581,7 +575,7 @@ extension PhysicsWorld {
     }
 
     /// A rounded box's corner spheres and three spheres along each edge (`r` its rounding).
-    static func boxSamples(_ b: SIMD3<Float>, _ r: Float) -> [SIMD4<Float>] {
+    package static func boxSamples(_ b: SIMD3<Float>, _ r: Float) -> [SIMD4<Float>] {
         let e = b - r
         var out: [SIMD4<Float>] = []
         for c in 0..<8 {
@@ -680,7 +674,7 @@ extension PhysicsWorld {
     }
 
     /// A symmetric 3x3 matrix's eigenvalues and its eigenvectors as the columns of a rotation (Jacobi sweeps).
-    static func eigen(_ m: simd_double3x3) -> (SIMD3<Double>, simd_double3x3) {
+    package static func eigen(_ m: simd_double3x3) -> (SIMD3<Double>, simd_double3x3) {
         var a = m
         var v = matrix_identity_double3x3
         for _ in 0..<32 {

@@ -8,7 +8,7 @@ extension PhysicsWorld {
     // MARK: Broad phase
 
     /// A body's bounding sphere for this step: its radius, as far as it may go (at up to the cell speed), and the margin.
-    @inline(__always) static func reach(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Float {
+    @inline(__always) package static func reach(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Float {
         b.invInertia.w + min(length(PhysicsMath.xyz(b.velocity)), p.sleep.w) * p.grid.w + p.grid.y
     }
 
@@ -16,7 +16,7 @@ extension PhysicsWorld {
     /// `hb` their half sizes), each grown by its margin `ma`, `mb` (their reach past their size); the largest gap
     /// along the 15 axes that could part two boxes, negative when they overlap (a gap of zero or more as soon as an
     /// axis parts them: not the largest).
-    @inline(__always) static func boxGap(_ fa: PhysicsBoxFrame, _ ha: SIMD4<Float>, _ ma: Float,
+    @inline(__always) package static func boxGap(_ fa: PhysicsBoxFrame, _ ha: SIMD4<Float>, _ ma: Float,
                                          _ fb: PhysicsBoxFrame, _ hb: SIMD4<Float>, _ mb: Float) -> Float {
         let ax = (fa.x, fa.y, fa.z), bx = (fb.x, fb.y, fb.z)
         @inline(__always) func axis(_ t: (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>), _ k: Int) -> SIMD3<Float> {
@@ -40,23 +40,23 @@ extension PhysicsWorld {
         return gap
     }
 
-    @inline(__always) static func cell(_ x: SIMD3<Float>, _ size: Float) -> SIMD3<Int32> {
+    @inline(__always) package static func cell(_ x: SIMD3<Float>, _ size: Float) -> SIMD3<Int32> {
         let c = (x / size).rounded(.down)
         return SIMD3(Int32(c.x), Int32(c.y), Int32(c.z))   // (SIMD3<Int32>(c) converts through the generic path)
     }
 
     /// The squared distance between two points, fused as Physics.metal's physDistance2 is: the GPU sorts partners by it
     /// into the same order, bit for bit.
-    @inline(__always) static func distance2(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
+    @inline(__always) package static func distance2(_ a: SIMD3<Float>, _ b: SIMD3<Float>) -> Float {
         let d = a - b
         return (d.x * d.x).addingProduct(d.y, d.y).addingProduct(d.z, d.z)
     }
 
     /// Whether a sphere meets static collider `s`'s box (an endless plane: whether it reaches below it).
-    func touchesStatic(_ s: Int, centre: SIMD3<Float>, radius: Float) -> Bool {
+    package func touchesStatic(_ s: Int, centre: SIMD3<Float>, radius: Float) -> Bool {
         PhysicsWorld.touchesStatic(statics[s], shapes, staticBounds[s], centre: centre, radius: radius)
     }
-    @inline(__always) static func touchesStatic(_ st: GPUPhysicsBody, _ shapes: [GPUPhysicsShape], _ box: AABB, centre: SIMD3<Float>,
+    @inline(__always) package static func touchesStatic(_ st: GPUPhysicsBody, _ shapes: [GPUPhysicsShape], _ box: AABB, centre: SIMD3<Float>,
                                                 radius: Float) -> Bool {
         if shapes[Int(st.info.x)].info.x == PhysicsShapeKind.plane.rawValue {
             let n = PhysicsMath.qrot(st.rotation, SIMD3(0, 1, 0))
@@ -83,7 +83,7 @@ extension PhysicsWorld {
     /// A body whose partners can't have changed keeps the last step's (BroadMemo): a settled heap's sleepers. Three
     /// buildings at 25 s, 6,152 pieces and 500 awake: 5.1 → 3.1 ms a step. One a changed body reaches, or whose
     /// partner changed, takes theirs from the last step's and the changed bodies (memoPartners).
-    func broadPhase(_ p: GPUPhysicsParams) {
+    package func broadPhase(_ p: GPUPhysicsParams) {
         let levels = bodyLevels(), n = bodies.count
         // Who isn't as the last step's broad phase read it (BroadMemo), in a grid of their own.
         let fixed = SIMD4(p.sleep.w, p.grid.w, p.grid.y, 0)
@@ -203,7 +203,7 @@ extension PhysicsWorld {
     /// partners now are the nearest `maxPairs` of its unchanged ones and those changed ones; if it was full, and none
     /// of its partners changed, the candidates it dropped are still farther than all of them, so the same holds. A
     /// full list losing a partner that changed takes a whole query (the next nearest could be any it dropped).
-    @inline(__always) static func memoPartners(_ i: Int, _ s: StepBuffers, _ levels: PhysicsLevels, _ p: GPUPhysicsParams,
+    @inline(__always) package static func memoPartners(_ i: Int, _ s: StepBuffers, _ levels: PhysicsLevels, _ p: GPUPhysicsParams,
                                                _ memo: BroadMemo, _ keys: UnsafeMutableBufferPointer<Float>,
                                                _ frames: UnsafeBufferPointer<PhysicsBoxFrame>, _ boxes: [SIMD4<Float>], byGap: Bool,
                                                kept: UnsafeMutableBufferPointer<(Float, UInt32)>) -> Bool {
@@ -277,7 +277,7 @@ extension PhysicsWorld {
     /// Body i's partners (broadPhase), kept nearest first in `kept` as they are found (the same `maxPairs` as sorting
     /// them all: the order is total, and no partner is found twice): from each level's cells within reach, and the
     /// big bodies.
-    @inline(__always) static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ items: UnsafeBufferPointer<SIMD4<Float>>,
+    @inline(__always) package static func partners(_ i: Int, _ s: StepBuffers, _ grid: PhysicsCellGrid.View, _ items: UnsafeBufferPointer<SIMD4<Float>>,
                                            _ frames: UnsafeBufferPointer<PhysicsBoxFrame>, _ levels: PhysicsLevels,
                                            _ bigs: UnsafeBufferPointer<Int32>, _ shapes: [GPUPhysicsShape],
                                            _ boxes: [SIMD4<Float>], _ staticBounds: [AABB], _ p: GPUPhysicsParams, byGap: Bool,
@@ -323,7 +323,7 @@ extension PhysicsWorld {
 
     /// Body j as body i's partner (partners), if their spheres meet (with fractured objects, their boxes too): `at`,
     /// its position and reach (broadItems); `frames`, the bodies' boxes in the world (broadFrames).
-    @inline(__always) static func consider(_ j: Int, _ at: SIMD4<Float>, _ i: Int, _ b: GPUPhysicsBody, _ x: SIMD3<Float>, _ r: Float,
+    @inline(__always) package static func consider(_ j: Int, _ at: SIMD4<Float>, _ i: Int, _ b: GPUPhysicsBody, _ x: SIMD3<Float>, _ r: Float,
                                            _ s: StepBuffers, _ frames: UnsafeBufferPointer<PhysicsBoxFrame>, _ boxes: [SIMD4<Float>],
                                            _ p: GPUPhysicsParams, byGap: Bool, kept: UnsafeMutableBufferPointer<(Float, UInt32)>,
                                            _ count: inout Int) {
@@ -345,7 +345,7 @@ extension PhysicsWorld {
     }
 
     /// (`key`, `id`) into `kept` (`count` of them so far, `maxPairs` at most), nearest first.
-    @inline(__always) static func keep(_ key: Float, _ id: UInt32, _ kept: UnsafeMutableBufferPointer<(Float, UInt32)>, _ count: inout Int) {
+    @inline(__always) package static func keep(_ key: Float, _ id: UInt32, _ kept: UnsafeMutableBufferPointer<(Float, UInt32)>, _ count: inout Int) {
         let k = PhysicsWorld.maxPairs
         if count == k && !(key < kept[k - 1].0 || (key == kept[k - 1].0 && id < kept[k - 1].1)) { return }
         var at = min(count, k - 1)
@@ -360,7 +360,7 @@ extension PhysicsWorld {
     /// A sleeping body wakes when something it touches moves faster than the wake speed, or turns its mass faster than
     /// the wake turn (its turn rate x its radius of gyration about the turn, at most `gyration`), above the sleep ones: a neighbour settling
     /// down beside it doesn't, nor a thin limb jittering about its length.
-    @inline(__always) static func stirs(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Bool {
+    @inline(__always) package static func stirs(_ b: GPUPhysicsBody, _ p: GPUPhysicsParams) -> Bool {
         if kinematic(b) {   // (no mass: its turn is its turn rate x the most gyration)
             return length(PhysicsMath.xyz(b.velocity)) > p.rolling.z || length(PhysicsMath.xyz(b.angular)) * gyration > p.rolling.w
         }
@@ -379,7 +379,7 @@ extension PhysicsWorld {
     /// leaving its place at all (`motion.w`): about 44 of a settled heap's pieces rock past the wake speed each step,
     /// in place, and they woke 900 pieces a second; but what rests on a piece that slides off slowly must come too
     /// (woken all at once, a heap whose sleepers had stayed put on their supports' last places moved 9 cm).
-    @inline(__always) static func rubbleStirs(_ o: GPUPhysicsBody, _ motion: SIMD4<Float>, rubble: Bool, below: Bool, _ p: GPUPhysicsParams) -> Bool {
+    @inline(__always) package static func rubbleStirs(_ o: GPUPhysicsBody, _ motion: SIMD4<Float>, rubble: Bool, below: Bool, _ p: GPUPhysicsParams) -> Bool {
         guard moves(o), motion.x > p.rolling.z || motion.y > p.rolling.w else { return false }
         return !rubble || (below && motion.w != 0) || motion.z != 0 || motion.x > rubbleWake * p.rolling.z || motion.y > rubbleWake * p.rolling.w
     }
@@ -387,11 +387,11 @@ extension PhysicsWorld {
     /// Whether body b (body i, `initial` its first pose) is rubble: a piece more than `fallen` from where it began,
     /// what came down, welded or not. A structure still standing, or sagging on its way down, sleeps and wakes as
     /// before (a collapse starts slowly).
-    @inline(__always) static func rubble(_ b: GPUPhysicsBody, _ initial: GPUPhysicsBody) -> Bool {
+    @inline(__always) package static func rubble(_ b: GPUPhysicsBody, _ initial: GPUPhysicsBody) -> Bool {
         b.info.y & pieceBit != 0 && distance2(PhysicsMath.xyz(b.position), PhysicsMath.xyz(initial.position)) > fallen * fallen
     }
 
-    func wake(_ p: GPUPhysicsParams) {
+    package func wake(_ p: GPUPhysicsParams) {
         let n = bodies.count, heaps = fractures
         wakeFlags.removeAll(keepingCapacity: true)
         wakeFlags.append(contentsOf: repeatElement(0, count: n))
@@ -446,7 +446,7 @@ extension PhysicsWorld {
     /// With fractured objects, a pair only one of its bodies lists (the other's list is full: a slab in a heap touches
     /// more pieces than it has room for) is that one's, marked (pad = `oneSided`) to be solved one after another after
     /// the colours: without it, the piece sank into the slab and was pushed out again, and the heap stirred on.
-    func link() {
+    package func link() {
         let k = PhysicsWorld.maxPairs, oneSided = fractures, n = bodies.count
         withStepBuffers { s in
             PhysicsPool.shared.parallel(n, grain: 64) { range in

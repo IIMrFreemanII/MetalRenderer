@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The OpenEXR reader (EXRImage.swift) against what the OpenEXR library itself decodes from the same files: the

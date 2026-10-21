@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// PhysicsFlesh.swift, PhysicsRig.swift, PhysicsSkin.swift, MuscleAtlas.swift, SkeletonAtlas.swift and the muscles scene: kinematic bodies

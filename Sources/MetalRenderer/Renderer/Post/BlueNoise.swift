@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Tileable blue-noise texture, generated with Ulichney's void-and-cluster method.

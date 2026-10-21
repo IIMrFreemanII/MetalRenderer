@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Hair and fur (PhysicsHair.swift, Shaders/Physics.metal's hair kernels, Scene+Hair.swift, HairBSDF.swift): strands

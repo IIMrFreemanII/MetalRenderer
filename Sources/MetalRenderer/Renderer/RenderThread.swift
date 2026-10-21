@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The thread frames are made on. Once it runs it owns the `Renderer`: the main thread (the window, the panels, input)

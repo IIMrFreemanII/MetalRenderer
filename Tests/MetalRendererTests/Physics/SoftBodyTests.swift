@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// PhysicsSoft.swift, the soft bodies' stages of PhysicsCPU.swift and Shaders/Physics.metal, and the soft body scene:

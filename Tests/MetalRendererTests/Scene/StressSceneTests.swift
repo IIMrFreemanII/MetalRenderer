@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The stress building (Scene+Stress.swift), on the CPU: its knobs mean what the benchmarks' names say.

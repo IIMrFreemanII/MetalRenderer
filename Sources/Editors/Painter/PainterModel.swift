@@ -3,6 +3,7 @@ import Combine
 import EngineCore
 import Foundation
 import MetalRenderer
+import Physics
 import Plants
 import simd
 
