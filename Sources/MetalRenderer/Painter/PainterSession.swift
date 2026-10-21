@@ -2,52 +2,13 @@ import Characters
 import Effects
 import EngineCore
 import Foundation
+import Materials
 import Metal
 import Physics
 import Plants
 import simd
 
 // Swift twins of MaterialShaders/Paint.metal's structs.
-struct PaintObjectArgs {
-    var transform = matrix_identity_float4x4
-    var normalMatrix = matrix_identity_float4x4
-    var firstIndex: UInt32 = 0
-    var vertexOffset: UInt32 = 0
-    var size: UInt32 = 0
-    var triangles: UInt32 = 0
-    var texelsPerMetre: Float = 0
-    var heightDepth: Float = 0
-    var normalStrength: Float = 1
-    var layerCount: UInt32 = 0
-    var aoTexture: UInt32 = .max
-    var mirror: UInt32 = 0
-    var instance: UInt32 = 0
-    var level: Float = 0
-}
-
-struct PaintDab {
-    var centre: SIMD2<Float>
-    var radius: Float
-    var hardness: Float
-    var opacity: Float
-    var flow: Float
-    var angle: Float = 0
-    var stamp: Int32 = -1
-    var aspect: Float = 1
-    var pad0: Float = 0, pad1: Float = 0, pad2: Float = 0
-}
-
-struct PaintDabArgs {
-    var viewProjection = matrix_identity_float4x4
-    var camera = SIMD4<Float>.zero
-    var screen = SIMD2<Float>.zero
-    var dabs: UInt32 = 0
-    var stencil: UInt32 = 0
-    var stencilFrame = matrix_identity_float3x3
-    var tolerance: Float = 0.01
-    var fill: UInt32 = 0
-    var pad0: Float = 0, pad1: Float = 0
-}
 
 struct PaintApplyArgs {
     var value = SIMD4<Float>.zero

@@ -9,8 +9,8 @@ import simd
 /// A painted object's mesh as a glTF binary (.glb): its triangles with the painter's UVs (a vertex for each place and
 /// UV: the seams split here, not in the scene), and a material whose textures are the exported set beside it
 /// (`<name>_basecolor.png`, `_orm`, `_normal`, `_emissive` if there is one), as glTF lays them out.
-enum GLBWriter {
-    static func write(_ mesh: PaintMesh, corners: [SIMD2<Float>], name: String, emissive: Bool = false, imageSuffix: String = "png",
+package enum GLBWriter {
+    package static func write(_ mesh: PaintMesh, corners: [SIMD2<Float>], name: String, emissive: Bool = false, imageSuffix: String = "png",
                       to url: URL) throws {
         // Vertices: one per (mesh vertex, corner UV).
         var index: [SIMD3<UInt32>: UInt32] = [:]

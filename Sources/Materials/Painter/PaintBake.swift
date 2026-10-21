@@ -38,10 +38,10 @@ struct PaintGenerateArgs {
 }
 
 /// A PaintBake made off the render thread (it takes up to a second at 2K): the render thread adopts it once `done`.
-final class PaintBakeJob {
+package final class PaintBakeJob {
     private let lock = NSLock()
     private var made: PaintBake??
-    let started = CACurrentMediaTime()
+    package let started = CACurrentMediaTime()
 
     package init(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
         // A queue of its own: the frames' queue runs between its command buffers.
@@ -56,7 +56,7 @@ final class PaintBakeJob {
     }
 
     /// The bake once made (`.some(nil)`: it failed), nil while it is being made.
-    var done: PaintBake?? {
+    package var done: PaintBake?? {
         lock.lock()
         defer { lock.unlock() }
         return made
@@ -66,8 +66,8 @@ final class PaintBakeJob {
 /// A generated mask made off the render thread (a graph mask's bake and the generator's dispatch, waited for there,
 /// on a queue of the session's own): a new texture, which the render thread takes in place of the layer's last once
 /// `done` (the frames that read the last keep it while they run).
-final class PaintMaskJob {
-    let generator: PaintGenerator
+package final class PaintMaskJob {
+    package let generator: PaintGenerator
     private let lock = NSLock()
     private var made: MTLTexture??
 
@@ -82,7 +82,7 @@ final class PaintMaskJob {
     }
 
     /// The mask once made (`.some(nil)`: it failed), nil while it is being made.
-    var done: MTLTexture?? {
+    package var done: MTLTexture?? {
         lock.lock()
         defer { lock.unlock() }
         return made
@@ -94,20 +94,20 @@ final class PaintMaskJob {
 /// from how its neighbours' normals turn, and the creases near: edges whose faces meet at more than 25 degrees,
 /// convex or concave, within a reach of 3.5% of the object's size). The generators' masks read them
 /// (`generate`); they are made once a session, off the render thread (PaintBakeJob).
-final class PaintBake {
-    let occlusion: MTLTexture
-    let thickness: MTLTexture
-    let curvature: MTLTexture
+package final class PaintBake {
+    package let occlusion: MTLTexture
+    package let thickness: MTLTexture
+    package let curvature: MTLTexture
     /// The point within the bounds and the normal (object space), as pictures.
-    let position: MTLTexture
-    let normal: MTLTexture
+    package let position: MTLTexture
+    package let normal: MTLTexture
     /// The object's own arrays (bind pose), as the kernels read them.
-    let indices: MTLBuffer, positions: MTLBuffer, normals: MTLBuffer
-    let bounds: (SIMD3<Float>, SIMD3<Float>)
+    package let indices: MTLBuffer, positions: MTLBuffer, normals: MTLBuffer
+    package let bounds: (SIMD3<Float>, SIMD3<Float>)
 
-    static let rays: UInt32 = 32
+    package static let rays: UInt32 = 32
     /// A crease's reach (and the scale of the vertices' curvature): this share of the object's size.
-    static let reach: Float = 0.035
+    package static let reach: Float = 0.035
 
     /// `bandRows`: rows of occlusion and curvature per command buffer (nil: about 128K texels' worth).
     package init?(mesh: PaintMesh, map: MTLTexture, size: Int, device: MTLDevice, queue: MTLCommandQueue, bandRows: Int? = nil) {
@@ -222,7 +222,7 @@ final class PaintBake {
     /// Each vertex's curvature (mean of its welded neighbours' normal turn over their distance, >0 convex), the
     /// creases (segment ends: xyz, w = +1 convex / -1 concave; then the other end, w = sharpness), and a grid of
     /// cells of the reach over them (per cell its items' start and count; the items).
-    static func curvatureInputs(_ mesh: PaintMesh, radius: Float)
+    package static func curvatureInputs(_ mesh: PaintMesh, radius: Float)
         -> ([Float], [SIMD4<Float>], [SIMD2<UInt32>], [UInt32], (origin: SIMD3<Float>, cell: Float, dims: SIMD3<Int>)) {
         let (weld, count) = mesh.welded()
         // Welded normals: angle-weighted face normals (a hard edge's two sides are one vertex here).
@@ -304,7 +304,7 @@ final class PaintBake {
 
     /// A generator's mask, made now on the caller's thread (it waits for the GPU): a new R8 texture of `size` (a graph
     /// mask's graph baked first, with `catalog`).
-    func mask(_ g: PaintGenerator, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) -> MTLTexture? {
+    package func mask(_ g: PaintGenerator, map: MTLTexture, size: Int, catalog: MaterialCatalog?, device: MTLDevice, queue: MTLCommandQueue) -> MTLTexture? {
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: size, height: size, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
         d.storageMode = .private
@@ -319,7 +319,7 @@ final class PaintBake {
     }
 
     /// A generator's mask into `out` (R8, the set's size), now (waits for the GPU). `graph`: a graph mask's bake.
-    func generate(_ g: PaintGenerator, into out: MTLTexture, map: MTLTexture, graph: MTLTexture?, queue: MTLCommandQueue, device: MTLDevice) {
+    package func generate(_ g: PaintGenerator, into out: MTLTexture, map: MTLTexture, graph: MTLTexture?, queue: MTLCommandQueue, device: MTLDevice) {
         guard let state = try? MatCompiler.shared.state("paintGenerate", device: device),
               let cb = queue.makeCommandBuffer(), let enc = cb.makeComputeCommandEncoder() else { return }
         var a = PaintObjectArgs()

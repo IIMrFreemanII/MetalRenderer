@@ -10,11 +10,11 @@ import simd
 /// and the UVs it came with. The painter unwraps it (UVUnwrap) when those aren't fit to paint into (UVCheck), and its
 /// texture set is laid out by the unwrap's corner UVs.
 package struct PaintMesh {
-    var positions: [SIMD3<Float>]
-    var normals: [SIMD3<Float>]
-    var uvs: [SIMD2<Float>]          // per vertex: the mesh's own (zeros: it has none)
-    var indices: [UInt32]            // into its own vertices
-    var triangleCount: Int { indices.count / 3 }
+    package var positions: [SIMD3<Float>]
+    package var normals: [SIMD3<Float>]
+    package var uvs: [SIMD2<Float>]          // per vertex: the mesh's own (zeros: it has none)
+    package var indices: [UInt32]            // into its own vertices
+    package var triangleCount: Int { indices.count / 3 }
 
     package init(positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>]? = nil, indices: [UInt32]) {
         self.positions = positions
@@ -23,32 +23,19 @@ package struct PaintMesh {
         self.indices = indices
     }
 
-    /// Mesh `m` of a scene, out of the shared arrays: the vertices its triangles name (a pose slot's bind pose: the
-    /// ones before its `vertexOffset`), renumbered from 0.
-    package init(scene: Scene, mesh m: Int) {
-        let mesh = scene.meshes[m]
-        let range = Int(mesh.firstIndex)..<Int(mesh.firstIndex + mesh.indexCount)
-        let own = scene.indices[range]
-        let lo = Int(own.min() ?? 0), hi = Int(own.max() ?? 0)
-        positions = Array(scene.positions[lo...hi])
-        normals = Array(scene.normals[lo...hi])
-        uvs = Array(scene.uvs[lo...hi])
-        indices = own.map { $0 - UInt32(lo) }
-    }
-
     /// A triangle's corners.
-    @inline(__always) func corners(_ t: Int) -> (Int, Int, Int) {
+    @inline(__always) package func corners(_ t: Int) -> (Int, Int, Int) {
         (Int(indices[3 * t]), Int(indices[3 * t + 1]), Int(indices[3 * t + 2]))
     }
 
     /// A triangle's world (object-space) area.
-    func area(_ t: Int) -> Float {
+    package func area(_ t: Int) -> Float {
         let (a, b, c) = corners(t)
         return simd_length(simd_cross(positions[b] - positions[a], positions[c] - positions[a])) / 2
     }
 
     /// The same mesh, said in full, as a short name: what the unwrap and a painted document of it are filed under.
-    var fingerprint: String {
+    package var fingerprint: String {
         var hasher = GeneratedCache.Hasher()
         hasher.add([UInt32(positions.count), UInt32(indices.count)])
         hasher.add(positions)
@@ -58,7 +45,7 @@ package struct PaintMesh {
 
     /// Each vertex's weld group: vertices at the same place (a seam's two sides) are one, so the unwrap sees through
     /// the seams the mesh was cut along. Positions are compared on a grid of a millionth of the mesh's size.
-    func welded() -> (group: [Int32], count: Int) {
+    package func welded() -> (group: [Int32], count: Int) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
         for p in positions { lo = simd_min(lo, p); hi = simd_max(hi, p) }
         let step = max(simd_reduce_max(hi - lo), 1e-6) * 1e-6
@@ -77,7 +64,7 @@ package struct PaintMesh {
 
     /// Triangles that share an edge (of welded vertices), as CSR: `start[t]..<start[t + 1]` of `next`. An edge of
     /// more than two triangles links each of them to the others.
-    func adjacency(_ weld: [Int32]) -> (start: [Int32], next: [Int32]) {
+    package func adjacency(_ weld: [Int32]) -> (start: [Int32], next: [Int32]) {
         var edges: [(UInt64, Int32)] = []
         edges.reserveCapacity(indices.count)
         for t in 0..<triangleCount {

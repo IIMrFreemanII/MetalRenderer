@@ -85,10 +85,10 @@ package struct PaintBrush: Codable, Equatable {
 
 /// A stroke's dabs: each point the pointer reaches (screen pixels, its pressure) gives the dabs between it and the
 /// last at the brush's spacing, jittered as the brush says (the same stroke, the same dabs: seeded).
-struct PaintStrokeDabs {
-    var brush: PaintBrush
+package struct PaintStrokeDabs {
+    package var brush: PaintBrush
     /// Points per pixel of the render (the view's points are larger on a Retina screen at a render scale of 1).
-    var scale: Float
+    package var scale: Float
     private var last: SIMD2<Float>?
     private var carried: Float = 0
     private var rng: UInt64
@@ -106,7 +106,7 @@ struct PaintStrokeDabs {
     }
 
     /// The dabs from the last point to `p` (the first point: one dab at it).
-    mutating func move(to p: SIMD2<Float>, pressure: Float) -> [PaintDab] {
+    package mutating func move(to p: SIMD2<Float>, pressure: Float) -> [PaintDab] {
         let radius = brush.size * scale
         let step = max(1, brush.spacing * 2 * radius)
         var out: [PaintDab] = []
@@ -270,5 +270,32 @@ package final class PaintStamps {
     private static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(max((x - a) / (b - a), 0), 1)
         return t * t * (3 - 2 * t)
+    }
+}
+
+package struct PaintDab {
+    package var centre: SIMD2<Float>
+    package var radius: Float
+    package var hardness: Float
+    package var opacity: Float
+    package var flow: Float
+    package var angle: Float = 0
+    package var stamp: Int32 = -1
+    package var aspect: Float = 1
+    package var pad0: Float = 0, pad1: Float = 0, pad2: Float = 0
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(centre: SIMD2<Float>, radius: Float, hardness: Float, opacity: Float, flow: Float, angle: Float = 0, stamp: Int32 = -1, aspect: Float = 1, pad0: Float = 0, pad1: Float = 0, pad2: Float = 0) {
+        self.centre = centre
+        self.radius = radius
+        self.hardness = hardness
+        self.opacity = opacity
+        self.flow = flow
+        self.angle = angle
+        self.stamp = stamp
+        self.aspect = aspect
+        self.pad0 = pad0
+        self.pad1 = pad1
+        self.pad2 = pad2
     }
 }

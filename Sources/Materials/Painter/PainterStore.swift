@@ -15,7 +15,7 @@ package enum PainterStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_PAINTER"] {
         case "none": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Painter")
+        default: return Assets.directory.appendingPathComponent("Painter")
         }
     }
 

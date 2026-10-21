@@ -15,6 +15,13 @@ package struct PaintAssignments: Codable, Equatable {
         package var instance: Int
         package var fingerprint: String
         package var document: String
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(instance: Int, fingerprint: String, document: String) {
+            self.instance = instance
+            self.fingerprint = fingerprint
+            self.document = document
+        }
     }
     package var scenes: [String: [Entry]] = [:]
     /// Bumped when a document's shape changes (its holes, its emission, its size): the same paint, the scene made again.
@@ -35,12 +42,11 @@ package struct PaintAssignments: Codable, Equatable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 
-    /// The entries of the scene `s` is.
-    package func entries(_ s: SceneSettings) -> [Entry] { scenes[MaterialAssignments.scope(s)] ?? [] }
+    /// The entries of the scene whose scope (MaterialAssignments.scope) is `scope`.
+    package func entries(scope: String) -> [Entry] { scenes[scope] ?? [] }
 
-    /// `s`'s instance `instance` painted with `document` (nil: not painted).
-    package mutating func set(_ s: SceneSettings, instance: Int, fingerprint: String, document: String?) {
-        let scope = MaterialAssignments.scope(s)
+    /// That scene's instance `instance` painted with `document` (nil: not painted).
+    package mutating func set(scope: String, instance: Int, fingerprint: String, document: String?) {
         var list = scenes[scope] ?? []
         list.removeAll { $0.instance == instance }
         if let document { list.append(Entry(instance: instance, fingerprint: fingerprint, document: document)) }

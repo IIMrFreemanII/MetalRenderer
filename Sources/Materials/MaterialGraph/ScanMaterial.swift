@@ -20,8 +20,8 @@ package enum ScanMaterial {
 
     /// The maps found in a download: each one's file, and whether the normal is DirectX's (green flipped).
     package struct Maps: Equatable {
-        var files: [Map: URL] = [:]
-        var normalDirectX = false
+        package var files: [Map: URL] = [:]
+        package var normalDirectX = false
     }
 
     /// File name words (lower case; two words joined too: `nor_gl` is "norgl") naming each map. A name's last such word
@@ -205,7 +205,7 @@ package enum ScanMaterial {
 
     /// `url`'s path as a Bitmap node names it: relative to Assets/ when it is in it.
     package static func assetPath(_ url: URL) -> String {
-        let root = Scene.assetsDirectory.standardizedFileURL.resolvingSymlinksInPath().path + "/"
+        let root = Assets.directory.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         return path.hasPrefix(root) ? String(path.dropFirst(root.count)) : path
     }

@@ -3,6 +3,7 @@ import Characters
 import Combine
 import Effects
 import EngineCore
+import Materials
 import Metal
 import MetalRenderer
 import Physics

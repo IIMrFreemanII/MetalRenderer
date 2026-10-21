@@ -21,7 +21,7 @@ package enum MaterialStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_MATERIALS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Materials")
+        default: return Assets.directory.appendingPathComponent("Materials")
         }
     }
 

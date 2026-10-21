@@ -9,22 +9,32 @@ import simd
 /// A painted mesh's layout in its texture set: three UVs per triangle (its corners'; a seam is where two triangles
 /// sharing a vertex give it different ones), and the island (chart) each triangle is in.
 package struct UVAtlas: Equatable {
-    var corners: [SIMD2<Float>]          // 3 per triangle, in 0...1
-    var chartOfTriangle: [Int32]
-    var chartCount: Int
-    var resolution: Int                  // the texture set's side it was laid out for (its gutters are in its texels)
+    package var corners: [SIMD2<Float>]          // 3 per triangle, in 0...1
+    package var chartOfTriangle: [Int32]
+    package var chartCount: Int
+    package var resolution: Int                  // the texture set's side it was laid out for (its gutters are in its texels)
     /// Texels per metre (object space) at `resolution` (the mesh's own UVs: their mean).
-    var texelsPerMetre: Float = 0
+    package var texelsPerMetre: Float = 0
     /// The mesh's own UVs (UVCheck said good), not an unwrap.
-    var own = false
+    package var own = false
 
     /// The share of the square the triangles cover.
-    var coverage: Float {
+    package var coverage: Float {
         var sum: Float = 0
         for t in 0..<corners.count / 3 {
             sum += abs(UVCheck.cross2(corners[3 * t + 1] - corners[3 * t], corners[3 * t + 2] - corners[3 * t])) / 2
         }
         return sum
+    }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(corners: [SIMD2<Float>], chartOfTriangle: [Int32], chartCount: Int, resolution: Int, texelsPerMetre: Float = 0, own: Bool = false) {
+        self.corners = corners
+        self.chartOfTriangle = chartOfTriangle
+        self.chartCount = chartCount
+        self.resolution = resolution
+        self.texelsPerMetre = texelsPerMetre
+        self.own = own
     }
 }
 
@@ -34,25 +44,25 @@ package struct UVAtlas: Equatable {
 /// and the chart split in two if the projection folds too), turned to its smallest bounding rectangle (and cut in two
 /// where long or mostly empty in it) and packed by its outline (UVPack) into the square with gutters for the
 /// painting's dilation and mip levels.
-enum UVUnwrap {
+package enum UVUnwrap {
     /// Bumped when the unwrap lays a mesh out differently (the cached layouts are made again).
-    static let version = 6
+    package static let version = 6
     /// How far a chart's triangles may face from its mean normal, and from its first's.
-    static let coneAngle: Float = 66 * .pi / 180
-    static let seedAngle: Float = 85 * .pi / 180
+    package static let coneAngle: Float = 66 * .pi / 180
+    package static let seedAngle: Float = 85 * .pi / 180
     /// No chart grows across an edge whose faces meet at more than this (a box's edges: its faces are charts of their own).
-    static let creaseAngle: Float = 50 * .pi / 180
+    package static let creaseAngle: Float = 50 * .pi / 180
     /// The gutter round each chart, in texels of the set (twice it between two charts).
-    static func padding(_ resolution: Int) -> Int { max(2, resolution / 512) }
+    package static func padding(_ resolution: Int) -> Int { max(2, resolution / 512) }
 
     /// The mesh's layout: its own UVs if they will do (UVCheck), else an unwrap.
-    static func atlas(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
+    package static func atlas(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
         UVCheck.verdict(mesh) == .good ? own(mesh, resolution: resolution) : unwrap(mesh, resolution: resolution)
     }
 
     /// The mesh's own UVs as its layout; its charts are its UV islands (triangles joined by edges whose ends have the
     /// same place and the same UV).
-    static func own(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
+    package static func own(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
         var corners = [SIMD2<Float>](repeating: .zero, count: mesh.indices.count)
         for i in mesh.indices.indices { corners[i] = mesh.uvs[Int(mesh.indices[i])] }
         // Vertices with the same place and UV are one; islands are what the triangles' shared edges join.
@@ -80,7 +90,7 @@ enum UVUnwrap {
     }
 
     /// The unwrap.
-    static func unwrap(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
+    package static func unwrap(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
         let n = mesh.triangleCount
         let (weld, weldCount) = mesh.welded()
         let adj = mesh.adjacency(weld)
@@ -150,7 +160,7 @@ enum UVUnwrap {
 
     /// Charts grown from the largest triangles: each takes the neighbours that face most like it first, while they
     /// stay within the cones. A triangle of no area joins whatever reaches it.
-    static func grow(_ n: Int, normal: [SIMD3<Float>], area: [Float], adj: (start: [Int32], next: [Int32])) -> [[Int]] {
+    package static func grow(_ n: Int, normal: [SIMD3<Float>], area: [Float], adj: (start: [Int32], next: [Int32])) -> [[Int]] {
         let order = (0..<n).sorted { area[$0] > area[$1] || (area[$0] == area[$1] && $0 < $1) }
         var chartOf = [Int32](repeating: -1, count: n)
         var charts: [[Int]] = []
@@ -193,7 +203,7 @@ enum UVUnwrap {
     /// share the most edges with, smallest first, if the two face within 100 degrees of each other: fewer seams and
     /// gutters (across a crease too: a hard-edged model's bevels and slivers; a box's faces, all alike, stay apart).
     /// (A merged chart that won't flatten is split again.)
-    static func merge(_ grown: [[Int]], normal: [SIMD3<Float>], area: [Float], adj: (start: [Int32], next: [Int32])) -> [[Int]] {
+    package static func merge(_ grown: [[Int]], normal: [SIMD3<Float>], area: [Float], adj: (start: [Int32], next: [Int32])) -> [[Int]] {
         var charts = grown
         var chartOf = [Int32](repeating: 0, count: normal.count)
         var sums = [SIMD3<Float>](repeating: .zero, count: charts.count), areas = [Float](repeating: 0, count: charts.count)
@@ -230,7 +240,7 @@ enum UVUnwrap {
 
     /// A chart's triangles in two connected halves: each triangle goes to the nearer (in steps across edges) of the
     /// two farthest apart. A single triangle is its own chart, and never split.
-    static func split(_ tris: [Int], normal: [SIMD3<Float>], adj: (start: [Int32], next: [Int32]), n: Int) -> [[Int]] {
+    package static func split(_ tris: [Int], normal: [SIMD3<Float>], adj: (start: [Int32], next: [Int32]), n: Int) -> [[Int]] {
         guard tris.count > 1 else { return [tris] }
         var inChart = [Bool](repeating: false, count: n)
         for t in tris { inChart[t] = true }
@@ -269,7 +279,7 @@ enum UVUnwrap {
     }
 
     /// The connected pieces of a set of triangles: each one's piece (over all `n` triangles; -2 outside the set), and how many.
-    static func components(_ tris: [Int], _ adj: (start: [Int32], next: [Int32]), _ n: Int) -> ([Int32], Int) {
+    package static func components(_ tris: [Int], _ adj: (start: [Int32], next: [Int32]), _ n: Int) -> ([Int32], Int) {
         var chart = [Int32](repeating: -2, count: n)
         for t in tris { chart[t] = -1 }
         var count = 0
@@ -292,7 +302,7 @@ enum UVUnwrap {
 
     /// A chart's UVs (3 per triangle, in metres: its area as it is), or nil if neither LSCM nor its projection on its
     /// plane lays it out without folding.
-    static func flatten(_ tris: [Int], _ mesh: PaintMesh, _ weld: [Int32], normal: [SIMD3<Float>], area: [Float],
+    package static func flatten(_ tris: [Int], _ mesh: PaintMesh, _ weld: [Int32], normal: [SIMD3<Float>], area: [Float],
                         scratch local: inout [Int32]) -> [SIMD2<Float>]? {
         // Its vertices, numbered from 0 (welded: a seam inside the chart is closed).
         var verts: [Int] = []          // a mesh vertex of each
@@ -341,7 +351,7 @@ enum UVUnwrap {
     /// A chart's UVs (3 per triangle) lie over themselves: on a raster of its box (about 8 cells a triangle's side),
     /// more than 1% of the cells inside a triangle are inside another (a surface that turns back over itself, or two
     /// sheets at one place).
-    static func overlaps(_ uv: [SIMD2<Float>], count: Int) -> Bool {
+    package static func overlaps(_ uv: [SIMD2<Float>], count: Int) -> Bool {
         guard count > 1 else { return false }
         var lo = SIMD2<Float>(repeating: .infinity), hi = -lo
         for p in uv { lo = simd_min(lo, p); hi = simd_max(hi, p) }
@@ -374,7 +384,7 @@ enum UVUnwrap {
     /// LSCM: the UVs whose map from each triangle is as near to a similarity as can be (the Cauchy-Riemann residual,
     /// sum over the corners of the opposite edge x the corner's UV, as complex numbers, per triangle over the square
     /// root of its area), its two farthest vertices pinned where `start` has them. Nil if it doesn't settle.
-    static func lscm(_ tris: [Int], _ mesh: PaintMesh, _ corner: [Int32], count n: Int, start: [SIMD2<Float>],
+    package static func lscm(_ tris: [Int], _ mesh: PaintMesh, _ corner: [Int32], count n: Int, start: [SIMD2<Float>],
                      verts: [Int]) -> [SIMD2<Float>]? {
         // Each triangle's coefficients: m_k = e_k / sqrt(area), e_k the edge opposite corner k in its own plane.
         var a = [Float](repeating: 0, count: corner.count), b = [Float](repeating: 0, count: corner.count)
@@ -464,7 +474,7 @@ enum UVUnwrap {
 
     /// A chart's UVs turned to the smallest rectangle round them (over its hull's edges), lying down (wider than
     /// tall), from 0.
-    static func upright(_ uv: [SIMD2<Float>]) -> [SIMD2<Float>] {
+    package static func upright(_ uv: [SIMD2<Float>]) -> [SIMD2<Float>] {
         let hull = convexHull(uv)
         var best: (area: Float, c: Float, s: Float) = (.infinity, 1, 0)
         let step = max(1, hull.count / 256)
@@ -492,7 +502,7 @@ enum UVUnwrap {
     }
 
     /// The convex hull, counter-clockwise (Andrew's monotone chain).
-    static func convexHull(_ points: [SIMD2<Float>]) -> [SIMD2<Float>] {
+    package static func convexHull(_ points: [SIMD2<Float>]) -> [SIMD2<Float>] {
         let p = points.sorted { $0.x < $1.x || ($0.x == $1.x && $0.y < $1.y) }
         guard p.count > 2 else { return p }
         var lower: [SIMD2<Float>] = [], upper: [SIMD2<Float>] = []
@@ -508,7 +518,7 @@ enum UVUnwrap {
     }
 
     /// A min-heap of (cost, triangle).
-    struct Heap {
+    package struct Heap {
         private var items: [(Float, Int32)] = []
         mutating func removeAll() { items.removeAll(keepingCapacity: true) }
         mutating func push(_ cost: Float, _ t: Int32) {

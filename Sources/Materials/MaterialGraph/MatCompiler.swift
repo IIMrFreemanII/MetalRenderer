@@ -11,12 +11,12 @@ import QuartzCore
 /// pixel processors' and Code nodes' generated ones (ShadersMaterialCode.metal with their code spliced in after it,
 /// a small library each, the last few kept: an edit often comes back to code it had). Compiled with the device's
 /// compiler: the engine runs them on a Metal 3 queue of its own.
-final class MatCompiler {
-    static let shared = MatCompiler()
-    static let kept = 12
+package final class MatCompiler {
+    package static let shared = MatCompiler()
+    package static let kept = 12
 
     /// The entry files: next to Shaders.metal (`METALRENDERER_SHADERS`'s folder, if set).
-    static var folder: URL {
+    package static var folder: URL {
         ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0).deletingLastPathComponent() }
             ?? SourceTree.target
     }
@@ -30,7 +30,7 @@ final class MatCompiler {
     private(set) var baseMilliseconds: Double?
 
     /// The base library (compiling it the first time, on the caller's thread).
-    func library(_ device: MTLDevice) throws -> MTLLibrary {
+    package func library(_ device: MTLDevice) throws -> MTLLibrary {
         lock.lock()
         if let b = base, b.device == ObjectIdentifier(device) { lock.unlock(); return b.library }
         lock.unlock()
@@ -47,7 +47,7 @@ final class MatCompiler {
     }
 
     /// The pipeline of kernel `name` of the base library.
-    func state(_ name: String, device: MTLDevice) throws -> MTLComputePipelineState {
+    package func state(_ name: String, device: MTLDevice) throws -> MTLComputePipelineState {
         let library = try library(device)
         lock.lock()
         if let s = states[name] { lock.unlock(); return s }
@@ -62,7 +62,7 @@ final class MatCompiler {
 
     /// The pipeline of a generated kernel (`mat_generated`, in `source`), compiling it on the caller's thread the
     /// first time; a failure is kept (its compiler's message) until the code changes.
-    func generated(_ source: String, device: MTLDevice) -> Result<MTLComputePipelineState, MatError> {
+    package func generated(_ source: String, device: MTLDevice) -> Result<MTLComputePipelineState, MatError> {
         lock.lock()
         if let r = generated[source] {
             recent.removeAll { $0 == source }
@@ -92,7 +92,7 @@ final class MatCompiler {
     }
 
     /// A compiler's message without its noise: the errors' lines, about the generated code.
-    static func shorten(_ message: String) -> String {
+    package static func shorten(_ message: String) -> String {
         let lines = message.split(separator: "\n").filter { $0.contains("error:") }
         let kept = lines.map { line -> String in
             guard let r = line.range(of: "generated:") else { return String(line) }
@@ -104,7 +104,7 @@ final class MatCompiler {
     // MARK: - Generated kernels
 
     /// A pixel processor's kernel: its function's body (MatFunction.code) as `float4 f(uv)`.
-    static func pixelProcessorSource(_ body: String) -> String {
+    package static func pixelProcessorSource(_ body: String) -> String {
         """
         inline float4 matGeneratedFunction(float2 uv, float2 size, float seed, constant MatArgs& args,
                                            texture2d<float> in0, texture2d<float> in1, texture2d<float> in2, texture2d<float> in3) {
@@ -121,7 +121,7 @@ final class MatCompiler {
     }
 
     /// A Code node's kernel: its text as the body of `float4 f(uv)`, with its parameters a, b, c, d.
-    static func codeSource(_ body: String) -> String {
+    package static func codeSource(_ body: String) -> String {
         """
         inline float4 matGeneratedFunction(float2 uv, float2 size, float seed, constant MatArgs& args, constant float4* p,
                                            texture2d<float> in0, texture2d<float> in1, texture2d<float> in2, texture2d<float> in3) {

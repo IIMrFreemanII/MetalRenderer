@@ -126,8 +126,8 @@ Where the time goes (M1 Max, October 2026; one module, then the modules):
   changed (an added declaration, a changed signature), or one of its `@inlinable` bodies did.
 * **A system's edit** costs what its module does, where inside the engine it cost what an engine edit does: a plant's
   (`Sources/Plants`) 4.5 s in the dev build and 10.5 s in release, the physics' (`Sources/Physics`) 2.8 s and 27 s,
-  a character's (`Sources/Characters`) 3.5 s and 30 s, an effect's (`Sources/Effects`) 3.7 s and 16 s. With them out,
-  an engine edit is 7.6 s and 113 s.
+  a character's (`Sources/Characters`) 3.5 s and 30 s, an effect's (`Sources/Effects`) 3.7 s and 16 s, a material's
+  (`Sources/Materials`) 3.2 s and 26 s. With them out, an engine edit is 6.9 s and 93 s.
 * **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
   one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
   modules above).
@@ -2196,13 +2196,14 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | `Physics` | `Sources/Physics` | The physics: rigid bodies and their CPU and GPU steps (`PhysicsCPU+*`, threads, the stepper), shapes and collisions, joints, particles and cloth, soft bodies, muscles and skin, hair, liquids, and the destruction inside the step (`Destruction/`: fracture, demolition); its GPU structs and settings. The scene's side (`Scene+PhysicsWorld`, the rigs, `CharacterRig`) is the engine's |
 | `Characters` | `Sources/Characters` | People: their DNA and bodies, faces, skin, hair, muscles and skeletons (the atlases), animation (FBX, the Mixamo library), the crowd and its skinning, a character's rig for the physics, the catalog and store, the workshop's settings; on the plants (their parameter rows) and the physics. Putting them in a scene (`Scene+Characters`, the crowd's parts) is the engine's |
 | `Effects` | `Sources/Effects` | GPU particles (emitters, fields, colliders, their textures and maths) and effects as graphs (the VFX graph and its nodes, the lowering, the interpreter, generated Metal and its compiler, the library and store, the gizmos), with their GPU structs and settings; on the physics (its break events emit particles). Running them in a scene (`Scene+Effects`, the stage, `VFXLive`) is the engine's |
+| `Materials` | `Sources/Materials` | The Material Designer's graphs and nodes, their plan, compiler, engine and bakes (generated Metal and Swift), the library (Mireland's, the scans') and store, scanned materials; the Material Painter's documents, brushes, bakes, smart materials, unwrapping and packing, its GPU structs; on the effects (the graphs' curves and gradients). Their part of a scene and a frame (assignments, displacement, the painter's session) is the engine's |
 | `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
 | `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
 | `Game` | `Sources/Game` | The demo scenes (below) |
 | `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
 
 The modules reach each other through `package` declarations (nothing is `public`). Above the core the systems (the
-plants, the physics, the characters on both, the effects), then the engine, then the editors and the game, which know nothing of each other; the tests
+plants, the physics, the characters on both, the effects, the materials on them), then the engine, then the editors and the game, which know nothing of each other; the tests
 (`Tests/MetalRendererTests`) import them all.
 
 * **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
@@ -2334,7 +2335,7 @@ The engine's folders:
 | `Buildings/` | The generator, plans, styles; `Interior/`, `City/` |
 | `Plants/`, `Characters/` | The plants in a scene (tracing, voxel levels, the forest, the workshop); the characters in a scene (the workshop, the crowd's meshes and instances) |
 | `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
-| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer's graphs, compiler and bakes, the Material Painter's documents and GPU side, scanned materials |
+| `MaterialGraph/`, `Painter/`, `Textures/` | The materials in a scene and a frame (procedural materials, displacement, assignments, the pick), the painter's session and its GPU work, scanned materials on meshes |
 | `VFX/` | The effects in a scene: the VFX stage, `Scene+Effects`, `VFXLive` (what the editor sees of them running) |
 | `ProjectGraph/` | Outlines, overrides, the Project Graph's model |
 | `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |

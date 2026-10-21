@@ -43,9 +43,6 @@ package struct MaterialAssignments: Codable, Equatable {
         try encoder.encode(self).write(to: url, options: .atomic)
     }
 
-    /// The scene `s` is: its kind, and what its materials' order depends on.
-    package static func scope(_ s: SceneSettings) -> String { s.kind.definition.scope?(s) ?? s.kind.envName }
-
     /// A material's fingerprint: its values as the scene made it.
     package static func fingerprint(_ m: GPUMaterial) -> String {
         var h = Hasher64()
@@ -72,23 +69,5 @@ package struct MaterialAssignments: Codable, Equatable {
     /// (As the memberwise initializer, for the modules above this one.)
     package init(scenes: [String: [Entry]] = [:]) {
         self.scenes = scenes
-    }
-}
-
-extension Scene {
-    /// The scene's assignments (SceneSettings.materialAssignments): each material whose fingerprint still matches
-    /// becomes the procedural material of its graph. Warnings for the stale ones.
-    package func applyMaterialAssignments() {
-        guard !settings.kind.isWorld else { return }
-        let entries = MaterialAssignments.resolve(settings.materialAssignments).scenes[MaterialAssignments.scope(settings)] ?? []
-        guard !entries.isEmpty else { return }
-        let catalog = MaterialCatalog.resolve(settings.materials)
-        for e in entries {
-            guard e.material < materials.count, MaterialAssignments.fingerprint(materials[e.material]) == e.fingerprint else {
-                print("Materials: the assignment of \(e.graph) to material \(e.material) is stale (the scene's materials changed)")
-                continue
-            }
-            makeProcedural(e.material, graph: e.graph, catalog: catalog)
-        }
     }
 }

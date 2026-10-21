@@ -80,9 +80,9 @@ package enum MatShaderCode {
     /// A program: its Metal (its nodes' functions, and the body of its case in proceduralMaterial), its parameters
     /// (each node's, packed, then its curves' and gradients' tables) at `base` in the buffer.
     package struct Program {
-        var functions: String
-        var body: String
-        var params: [SIMD4<Float>]
+        package var functions: String
+        package var body: String
+        package var params: [SIMD4<Float>]
     }
 
     /// Program `number` of `plan`, its parameters at float4 `base` of the buffer.

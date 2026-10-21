@@ -76,9 +76,9 @@ enum UVPack {
 
     /// Where the charts went, and the room left above them (texels²).
     private struct Placed {
-        var origins: [SIMD2<Float>]
-        var turns: [Int]
-        var free: Float
+        package var origins: [SIMD2<Float>]
+        package var turns: [Int]
+        package var free: Float
     }
     /// They all fit, or the area (metres) of those that did before one didn't.
     private enum Outcome {

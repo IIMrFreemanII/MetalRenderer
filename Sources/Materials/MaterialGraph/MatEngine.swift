@@ -376,7 +376,7 @@ package final class MatEngine {
         lock.lock()
         if let t = bitmaps[path] { lock.unlock(); return t }
         lock.unlock()
-        let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : Scene.assetsDirectory.appendingPathComponent(path)
+        let url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : Assets.directory.appendingPathComponent(path)
         let usage: MTLTextureUsage = [.shaderRead, .pixelFormatView]
         var t = try MTKTextureLoader(device: device).newTexture(URL: url, options: [.SRGB: false, .textureStorageMode: MTLStorageMode.private.rawValue,
                                                                                     .textureUsage: usage.rawValue])
