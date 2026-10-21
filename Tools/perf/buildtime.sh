@@ -16,22 +16,27 @@
 # Scenarios:
 #   clean      the build folder removed first (a fresh worktree)
 #   noop       nothing changed
-#   renderer   a line in a function body of Renderer+Stages.swift
+#   renderer   a line in a function body of Renderer+Stages.swift (the engine)
 #   physics    a line in a function body of PhysicsCPU+Narrow.swift
 #   editor     a line in a SwiftUI body (MaterialEditorView.swift)
 #   test       a line in a test (PhysicsThreadsTests.swift)
 #   interface  a static added to Uniforms (GPUTypes.swift), which nearly every file sees
-#   game       a line in a function body of a scene's builder (Scene+Demolition.swift, in the engine or the game)
-# Each edit scenario is measured twice, the line added and then removed; the faster counts. Before each build it waits
-# for other sessions' compiles to finish. Prints: scenario, build, seconds, the object files it recompiled.
+#   engineinterface  a static added to Scene (Scene.swift): the engine's interface, which the editors and game see
+#   game       a line in a function body of a scene's builder (Scene+Demolition.swift)
+#   core, plants, characters, effects, materials, buildings, landscape
+#              a line in a function body of BVH.swift, Foliage.swift, Crowd.swift, Particles.swift, MatCompiler.swift,
+#              Building.swift, Terrain.swift: each module's own edit once it is a module
+# Files are found by name wherever they are (they move between modules). Each edit scenario is measured twice, the
+# line added and then removed; the faster counts. Before each build it waits for other sessions' compiles to finish.
+# Prints: scenario, build, seconds, the object files it recompiled, and how many in each module.
 set -euo pipefail
 
-usage() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 work=${TMPDIR:-/tmp}/metalrenderer-buildtime
 builds=dev,devtest,release,releasetest
-scenarios=clean,noop,renderer,physics,editor,test,interface,game
+scenarios=clean,noop,renderer,physics,editor,test,interface,engineinterface,game
 stats=0
 rev=
 while (($#)); do
@@ -58,17 +63,33 @@ else
 fi
 w=$work
 
-# file | the line after which the edit goes | the edit
-edit_for() {
+# file name | a part of the line after which the edit goes | the edit
+spec_for() {
   case $1 in
-    renderer) echo "Sources/MetalRenderer/Renderer/Renderer+Stages.swift|    func bind(_ enc: ComputePass|        _ = 1 // buildtime" ;;
-    physics) echo "Sources/MetalRenderer/Physics/PhysicsCPU+Narrow.swift|    func narrowPhase(|        _ = 1 // buildtime" ;;
-    editor) echo "Sources/MetalRenderer/MaterialGraph/Editor/MaterialEditorView.swift|    var body: some View {|        let _ = 1 // buildtime" ;;
-    test) echo "Tests/MetalRendererTests/Physics/PhysicsThreadsTests.swift|    func testOneThreadAndAllAgree() throws {|        _ = 1 // buildtime" ;;
-    interface) echo "Sources/MetalRenderer/Renderer/GPUTypes.swift|struct Uniforms {|    static let buildtimeProbe = 0 // buildtime" ;;
-    # (wherever the file is: it moved from the engine to the game)
-    game) echo "$(cd "$w" && find Sources -name 'Scene+Demolition.swift' | head -1)|    func buildDemolition(|        _ = 1 // buildtime" ;;
+    renderer) echo "Renderer+Stages.swift|func bind(_ enc: ComputePass|        _ = 1 // buildtime" ;;
+    physics) echo "PhysicsCPU+Narrow.swift|func narrowPhase(|        _ = 1 // buildtime" ;;
+    editor) echo "MaterialEditorView.swift|var body: some View {|        let _ = 1 // buildtime" ;;
+    test) echo "PhysicsThreadsTests.swift|func testOneThreadAndAllAgree() throws {|        _ = 1 // buildtime" ;;
+    interface) echo "GPUTypes.swift|struct Uniforms {|    static let buildtimeProbe = 0 // buildtime" ;;
+    engineinterface) echo "Scene.swift|final class Scene {|    static let buildtimeProbe = 0 // buildtime" ;;
+    game) echo "Scene+Demolition.swift|func buildDemolition(|        _ = 1 // buildtime" ;;
+    core) echo "BVH.swift|static func build(boxes:|        _ = 1 // buildtime" ;;
+    plants) echo "Foliage.swift|static func perpendicular(_ t: SIMD3<Float>, up:|        _ = 1 // buildtime" ;;
+    characters) echo "Crowd.swift|func pose(at t: Float) {|        _ = 1 // buildtime" ;;
+    effects) echo "Particles.swift|func stepsTo(_ time: Float)|        _ = 1 // buildtime" ;;
+    materials) echo "MatCompiler.swift|static func shorten(_ message: String)|        _ = 1 // buildtime" ;;
+    buildings) echo "Building.swift|mutating func setFrame(_ frame: float4x4) {|        _ = 1 // buildtime" ;;
+    landscape) echo "Terrain.swift|static func fbm(_ p: SIMD2<Float>, octaves:|        _ = 1 // buildtime" ;;
   esac
+}
+
+# file (found by name under Sources and Tests) | anchor | the edit
+edit_for() {
+  local name anchor line file
+  IFS='|' read -r name anchor line <<<"$(spec_for "$1")"
+  file=$(cd "$w" && find Sources Tests -name "$name" | head -1)
+  [[ -n $file ]] || { echo "buildtime.sh: $name not found" >&2; exit 1; }
+  echo "$file|$anchor|$line"
 }
 
 # Adds the edit, or removes it when it is there.
@@ -81,7 +102,7 @@ src = open(path).read().split("\n")
 if line in src:
     src.remove(line)
 else:
-    i = next(i for i, l in enumerate(src) if l.startswith(anchor))
+    i = next(i for i, l in enumerate(src) if anchor in l)
     src.insert(i + 1, line)
 open(path, "w").write("\n".join(src))
 EOF
@@ -115,7 +136,14 @@ run() {
   esac || { echo "buildtime.sh: $build failed, see $log" >&2; tail -20 "$log" >&2; exit 1; }
   t1=$(python3 -c 'import time; print(time.time())')
   local objects
-  objects=$(find "$(scratch_of "$build")" -name '*.o' -newer "$stamp" 2>/dev/null | wc -l | tr -d ' ')
+  objects=$(find "$(scratch_of "$build")" -name '*.o' -newer "$stamp" 2>/dev/null | python3 -c '
+import collections, re, sys
+per = collections.Counter()
+for path in sys.stdin.read().split():
+    # .../<Target>-t.build/... (swift-build) or .../<Target>.build/... ; a product (.o of a whole module) by its name
+    m = re.findall(r"/([^/]+?)(?:-[tp])?\.build/", path)
+    per[m[-1] if m else path.rsplit("/", 1)[-1][:-2]] += 1
+print(sum(per.values()), ",".join(f"{k}:{v}" for k, v in sorted(per.items())) or "-")')
   python3 -c "print(f'{$t1 - $t0:.1f}')"
   echo "$objects"
 }
@@ -139,7 +167,7 @@ for k, v in total.most_common(8):
 EOF
 }
 
-printf '%-10s %-12s %8s %8s\n' scenario build seconds objects
+printf '%-16s %-12s %8s %8s  %s\n' scenario build seconds objects modules
 IFS=, read -ra bs <<<"$builds"
 IFS=, read -ra ss <<<"$scenarios"
 for s in "${ss[@]}"; do
@@ -149,21 +177,21 @@ for s in "${ss[@]}"; do
         rm -rf "$(scratch_of "$b")"
         # the tests' build after a clean app build: what a fresh worktree pays for its first related.sh
         [[ $b == *test ]] && run "${b%test}" >/dev/null
-        read -r secs objs < <(run "$b" | paste -sd' ' -) ;;
+        read -r secs objs mods < <(run "$b" | paste -sd' ' -) ;;
       noop)
         run "$b" >/dev/null
-        read -r secs objs < <(run "$b" | paste -sd' ' -) ;;
+        read -r secs objs mods < <(run "$b" | paste -sd' ' -) ;;
       *)
         run "$b" >/dev/null   # up to date first
         best=
         for _ in 1 2; do
           toggle "$s"
-          read -r t o < <(run "$b" | paste -sd' ' -)
-          if [[ -z $best ]] || python3 -c "import sys; sys.exit(0 if $t < $best else 1)"; then best=$t; objs=$o; fi
+          read -r t o m < <(run "$b" | paste -sd' ' -)
+          if [[ -z $best ]] || python3 -c "import sys; sys.exit(0 if $t < $best else 1)"; then best=$t; objs=$o; mods=$m; fi
         done
         secs=$best ;;
     esac
-    printf '%-10s %-12s %8s %8s\n' "$s" "$b" "$secs" "$objs"
+    printf '%-16s %-12s %8s %8s  %s\n' "$s" "$b" "$secs" "$objs" "$mods"
     if ((stats)); then phases "$b"; fi
   done
 done

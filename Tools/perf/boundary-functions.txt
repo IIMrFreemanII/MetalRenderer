@@ -1,0 +1,23 @@
+# The per-frame loops that call across the engine's modules by design (Scene and Renderer above the systems they
+# hold): Tools/perf/hotcalls.py doesn't hold them clean, it compares them with a baseline (--save-baseline on main's
+# build, --against on the branch's), so a module split that stops inlining something in them fails. Same format as
+# hot-functions.txt: a part of a demangled name per line.
+
+# Per frame, per instance, body, light or walker (Scene+Animation, Scene+GPUData, SceneBuffers).
+Scene.update(time:dayTime:)
+Scene.placeBodies(
+Scene.writeLights(into:all:)
+Scene.gpuLight(_:)
+Scene.moveInstances(_:record:)
+SceneBuffers.writeInstanceDescriptors(slot:scene:api:all:range:)
+Renderer.writeFrameData(slot:lod:)
+
+# The systems' writers the frame calls per instance or slot.
+PlantTracing.writeDescriptors(slot:into:stride:scene:wind:view:)
+VirtualTracing.writeDescriptors(slot:into:stride:first:scene:)
+VoxelLOD.rebuild(for:queue:)
+static VoxelLOD.entry(descriptor:transform:mesh:mask:meshVoxels:grids:)
+static VoxelLOD.level(distance:size:view:jitter:)
+Crowd.pose(at:)
+Crowd.poseFaces(at:)
+CrowdSkinner.write(slot:)

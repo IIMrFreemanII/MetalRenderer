@@ -142,7 +142,9 @@ extension PhysicsWorld {
     /// `v` x `scale` in fixed point (MSL fluidFixed): rounded to the nearest even, held to 2^30.
     @inline(__always) static func fixed(_ v: SIMD3<Float>, _ scale: Float) -> SIMD3<Int32> {
         let c = simd_clamp(v * scale, SIMD3(repeating: -1_073_741_824), SIMD3(repeating: 1_073_741_824))
-        return SIMD3<Int32>(c.rounded(.toNearestOrEven))
+        // Each part on its own: SIMD's rounded(_:) is generic over the rule and asks for its metadata on every call.
+        return SIMD3<Int32>(Int32(c.x.rounded(.toNearestOrEven)), Int32(c.y.rounded(.toNearestOrEven)),
+                            Int32(c.z.rounded(.toNearestOrEven)))
     }
     @inline(__always) static func fixed(_ v: Float, _ scale: Float) -> Int32 {
         Int32(min(max(v * scale, -1_073_741_824), 1_073_741_824).rounded(.toNearestOrEven))

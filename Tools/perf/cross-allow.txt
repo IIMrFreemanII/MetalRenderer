@@ -1,0 +1,4 @@
+# Calls from a hot function (hot-functions.txt) into another of the package's modules that are allowed, with why:
+# `caller pattern -> callee pattern  # why`, each a part of a demangled name. Tools/perf/hotcalls.py fails on any other
+# call across modules from a hot function: with -disable-cmo it is a call that used to be inlined, unless it already
+# was a call before the split (say so here) or the callee is made @inlinable.

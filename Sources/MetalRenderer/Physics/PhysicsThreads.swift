@@ -258,9 +258,10 @@ struct PhysicsBoxFrame {
 
     package init() {}
     @inline(__always) package init(_ b: GPUPhysicsBody, _ box: SIMD4<Float>) {
-        x = PhysicsMath.qrot(b.rotation, [1, 0, 0])
-        y = PhysicsMath.qrot(b.rotation, [0, 1, 0])
-        z = PhysicsMath.qrot(b.rotation, [0, 0, 1])
+        // (Not array literals: they build an array and convert it, per pair.)
+        x = PhysicsMath.qrot(b.rotation, SIMD3(1, 0, 0))
+        y = PhysicsMath.qrot(b.rotation, SIMD3(0, 1, 0))
+        z = PhysicsMath.qrot(b.rotation, SIMD3(0, 0, 1))
         centre = PhysicsMath.xyz(b.position) + PhysicsMath.qrot(b.rotation, PhysicsMath.xyz(box))
     }
 }
