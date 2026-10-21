@@ -38,26 +38,26 @@ package struct SkinnedCharacter: Equatable {
     }
 
     package var name: String
-    var positions: [SIMD3<Float>]      // the mesh at full detail (level 0)
-    var normals: [SIMD3<Float>]
-    var uvs: [SIMD2<Float>]
-    var indices: [UInt32]
-    var skin: [GPUSkinVertex]
+    package var positions: [SIMD3<Float>]      // the mesh at full detail (level 0)
+    package var normals: [SIMD3<Float>]
+    package var uvs: [SIMD2<Float>]
+    package var indices: [UInt32]
+    package var skin: [GPUSkinVertex]
     /// Each triangle's material at full detail (Level.materials); empty: one material.
-    var materials: [UInt8] = []
+    package var materials: [UInt8] = []
     /// Levels 1, 2, ...: each about half the triangles of the one before (CharacterImporter.coarser). A crowd is
     /// skinned and traced at the level its scene asks for: a pose's cost follows its triangles.
-    var coarser: [Level] = []
-    var joints: [GPUJoint]             // parents first
-    var jointNames: [String]
+    package var coarser: [Level] = []
+    package var joints: [GPUJoint]             // parents first
+    package var jointNames: [String]
     package var color: SIMD3<Float>            // its largest mesh's diffuse colour
     /// Bounds of every pose of every clip (the joints' positions, widened by how far a vertex is from its joints).
-    var boundsMin: SIMD3<Float>
-    var boundsMax: SIMD3<Float>
+    package var boundsMin: SIMD3<Float>
+    package var boundsMax: SIMD3<Float>
     package var clips: [Clip]
 
-    var triangleCount: Int { indices.count / 3 }
-    func clip(named name: String) -> Int? { clips.firstIndex { $0.name == name } }
+    package var triangleCount: Int { indices.count / 3 }
+    package func clip(named name: String) -> Int? { clips.firstIndex { $0.name == name } }
     /// Level `i` of detail (0 = full), or the coarsest there is.
     package func level(_ i: Int) -> Level {
         i <= 0 || coarser.isEmpty ? Level(positions: positions, normals: normals, uvs: uvs, indices: indices, skin: skin, materials: materials)
@@ -81,13 +81,13 @@ extension SkinnedCharacter {
     }
 
     /// Normalized blend of two quaternions the short way round (crowdPoseKernel's blend).
-    static func nlerp(_ a: SIMD4<Float>, _ b: SIMD4<Float>, _ t: Float) -> SIMD4<Float> {
+    package static func nlerp(_ a: SIMD4<Float>, _ b: SIMD4<Float>, _ t: Float) -> SIMD4<Float> {
         simd_normalize(a + ((dot(a, b) < 0 ? -b : b) - a) * t)
     }
 
     /// Every joint's pose in the character's space (a rotation and where it is): clip `clipA` at `timeA` (in keys),
     /// blended with `clipB` at `timeB` by `blend`.
-    func jointPoses(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [(q: simd_quatf, t: SIMD3<Float>)] {
+    package func jointPoses(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [(q: simd_quatf, t: SIMD3<Float>)] {
         var (rotations, root) = sample(clips[clipA], timeA)
         if blend > 0 {
             let b = sample(clips[clipB], timeB)
@@ -109,7 +109,7 @@ extension SkinnedCharacter {
     }
 
     /// Every joint's pose in the bind pose (where the mesh is): its inverse bind's inverse.
-    var bindPoses: [(q: simd_quatf, t: SIMD3<Float>)] {
+    package var bindPoses: [(q: simd_quatf, t: SIMD3<Float>)] {
         joints.map { joint in
             let q = simd_quatf(vector: joint.inverseBindRotation).inverse
             return (q, -q.act(SIMD3(joint.inverseBindTranslation.x, joint.inverseBindTranslation.y, joint.inverseBindTranslation.z)))
@@ -117,7 +117,7 @@ extension SkinnedCharacter {
     }
 
     /// The skinning matrices of a pose: clip `clipA` at `timeA` (in keys), blended with `clipB` at `timeB` by `blend`.
-    func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
+    package func palette(clipA: Int, timeA: Float, clipB: Int = 0, timeB: Float = 0, blend: Float = 0) -> [GPUJointMatrix] {
         let world = jointPoses(clipA: clipA, timeA: timeA, clipB: clipB, timeB: timeB, blend: blend)
         var out = [GPUJointMatrix]()
         out.reserveCapacity(joints.count)
@@ -134,7 +134,7 @@ extension SkinnedCharacter {
     }
 
     /// The bind-pose mesh deformed by `palette` (linear blend skinning, as crowdSkinKernel does it).
-    func skin(_ palette: [GPUJointMatrix]) -> (positions: [SIMD3<Float>], normals: [SIMD3<Float>]) {
+    package func skin(_ palette: [GPUJointMatrix]) -> (positions: [SIMD3<Float>], normals: [SIMD3<Float>]) {
         var outP = [SIMD3<Float>](repeating: .zero, count: positions.count)
         var outN = outP
         outP.withUnsafeMutableBufferPointer { p in
@@ -146,7 +146,7 @@ extension SkinnedCharacter {
     }
 
     /// Skins a mesh (its bind-pose `positions` and `normals`, each vertex's `skin`) into `outPositions` and `outNormals`.
-    static func skin(positions: [SIMD3<Float>], normals: [SIMD3<Float>], skin: [GPUSkinVertex], palette: [GPUJointMatrix],
+    package static func skin(positions: [SIMD3<Float>], normals: [SIMD3<Float>], skin: [GPUSkinVertex], palette: [GPUJointMatrix],
                      into outPositions: UnsafeMutablePointer<SIMD3<Float>>, _ outNormals: UnsafeMutablePointer<SIMD3<Float>>) {
         for v in positions.indices {
             let s = skin[v]
@@ -198,22 +198,22 @@ func concurrently(_ count: Int, _ work: (Int) throws -> Void) throws {
 enum CharacterImporter {
     /// An FBX file's skeleton: its bones, parents first, children by name (the same order in every file of a rig).
     struct Skeleton {
-        var names: [String] = []
-        var parents: [Int] = []                      // -1 = root
-        var ids: [Int64] = []
-        var translations: [SIMD3<Double>] = []       // in the parent's space, metres
-        var preRotations: [simd_quatd] = []          // the joint's own axes in its parent's space
-        var bindLocal: [simd_quatd] = []             // its rotation in the bind pose: the pre-rotation, then the model's own
-        var index: [Int64: Int] = [:]                // by object id
+        package var names: [String] = []
+        package var parents: [Int] = []                      // -1 = root
+        package var ids: [Int64] = []
+        package var translations: [SIMD3<Double>] = []       // in the parent's space, metres
+        package var preRotations: [simd_quatd] = []          // the joint's own axes in its parent's space
+        package var bindLocal: [simd_quatd] = []             // its rotation in the bind pose: the pre-rotation, then the model's own
+        package var index: [Int64: Int] = [:]                // by object id
 
         /// Each joint's bind rotation in model space.
-        var bindRotations: [simd_quatd] {
+        package var bindRotations: [simd_quatd] {
             var out = [simd_quatd]()
             for j in names.indices { out.append(parents[j] < 0 ? bindLocal[j] : out[parents[j]] * bindLocal[j]) }
             return out
         }
         /// Each joint's bind position in model space.
-        var bindPositions: [SIMD3<Double>] {
+        package var bindPositions: [SIMD3<Double>] {
             let rotations = bindRotations
             var out = [SIMD3<Double>]()
             for j in names.indices {
@@ -293,14 +293,14 @@ enum CharacterImporter {
     // MARK: Meshes
 
     private struct Part {
-        var name = ""
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var uvs: [SIMD2<Float>] = []
-        var indices: [UInt32] = []
-        var skin: [GPUSkinVertex] = []
-        var color = SIMD3<Float>(repeating: 0.7)
-        var inverseBind: [Int: simd_double4x4] = [:]   // by joint, from the clusters
+        package var name = ""
+        package var positions: [SIMD3<Float>] = []
+        package var normals: [SIMD3<Float>] = []
+        package var uvs: [SIMD2<Float>] = []
+        package var indices: [UInt32] = []
+        package var skin: [GPUSkinVertex] = []
+        package var color = SIMD3<Float>(repeating: 0.7)
+        package var inverseBind: [Int: simd_double4x4] = [:]   // by joint, from the clusters
     }
 
     private enum Mapping { case polygonVertex, controlPoint }
@@ -827,7 +827,7 @@ private extension SIMD4 where Scalar == Double {
 package struct CharacterLibrary {
     package var characters: [SkinnedCharacter] = []
 
-    static var directory: URL { Scene.assetsDirectory.appendingPathComponent("Characters") }
+    package static var directory: URL { Assets.directory.appendingPathComponent("Characters") }
 
     private static func fbxFiles(_ folder: URL) -> [URL] {
         ((try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [])
@@ -865,7 +865,7 @@ package struct CharacterLibrary {
     }
 
     /// Reads every file at the same time, then puts every clip on every character.
-    static func importFiles(characters characterFiles: [URL], clips clipFiles: [URL]) throws -> CharacterLibrary {
+    package static func importFiles(characters characterFiles: [URL], clips clipFiles: [URL]) throws -> CharacterLibrary {
         let start = CFAbsoluteTimeGetCurrent()
         var characters = [(character: SkinnedCharacter, skeleton: CharacterImporter.Skeleton)?](repeating: nil, count: characterFiles.count)
         var clips = [CharacterImporter.SourceClip?](repeating: nil, count: clipFiles.count)
@@ -909,13 +909,13 @@ package struct CharacterLibrary {
     // MARK: Cache file
 
     private static let magic: UInt32 = 0x3143_474D   // "MGC1"
-    static let version: UInt32 = 3
+    package static let version: UInt32 = 3
     /// Levels of detail below the full mesh: 1/2, 1/4, 1/8 and 1/16 of its triangles.
-    static let coarserLevels = 4
+    package static let coarserLevels = 4
 
     /// The cache file for these FBX files (by their names, sizes and modification times): in `.metalrenderer-cache`
     /// of the assets folder, or in ~/Library/Caches/MetalRenderer if that isn't writable.
-    static func cacheURL(for files: [URL], in directory: URL, prefix: String = "characters", version: UInt32 = version) -> URL {
+    package static func cacheURL(for files: [URL], in directory: URL, prefix: String = "characters", version: UInt32 = version) -> URL {
         var hash: UInt64 = 0xCBF2_9CE4_8422_2325
         func mix(_ text: String) { for byte in text.utf8 { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01B3 } }
         for file in files {
@@ -932,7 +932,7 @@ package struct CharacterLibrary {
         return CacheFile.userFolder.appendingPathComponent(name)
     }
 
-    func encoded() -> Data {
+    package func encoded() -> Data {
         var w = BlobWriter()
         w.put(CharacterLibrary.magic)
         w.put(CharacterLibrary.version)
@@ -955,7 +955,7 @@ package struct CharacterLibrary {
         return w.data
     }
 
-    static func read(_ url: URL) throws -> CharacterLibrary {
+    package static func read(_ url: URL) throws -> CharacterLibrary {
         var r = BlobReader(try Data(contentsOf: url, options: .alwaysMapped))
         guard try r.get(UInt32.self) == magic, try r.get(UInt32.self) == version else { throw FBXError.invalid("not a character cache") }
         var library = CharacterLibrary()

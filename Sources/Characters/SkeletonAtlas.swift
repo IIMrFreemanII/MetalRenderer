@@ -15,7 +15,7 @@ import simd
 /// from it (`distance`), leave it bare.
 package struct SkeletonAtlas {
     /// A shape: its distance at a point (negative inside; near the true one near its surface) and the box it is in.
-    struct Solid {
+    package struct Solid {
         package var lo: SIMD3<Float>
         package var hi: SIMD3<Float>
         package var distance: (SIMD3<Float>) -> Float
@@ -25,25 +25,25 @@ package struct SkeletonAtlas {
     }
 
     package struct Piece {
-        var name: String
+        package var name: String
         /// -1 the figure's right, 1 its left, 0 the middle.
-        var side: Float
+        package var side: Float
         /// The rig bone it rides.
-        var rides: Int
-        var solid: Solid
+        package var rides: Int
+        package var solid: Solid
         /// How far apart its grid's samples are (m).
-        var cell: Float
+        package var cell: Float
     }
 
     /// How deep under the skin every bone is at least.
-    static let within: Float = 0.003
+    package static let within: Float = 0.003
     /// How far apart the samples of the grid of their distance are (m).
-    static let gridCell: Float = 0.006
+    package static let gridCell: Float = 0.006
 
     // MARK: Solids
 
     /// A round cone: the segment from `a` to `b`, `ra` thick at `a` and `rb` at `b` (Inigo Quilez's).
-    static func cone(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ ra: Float, _ rb: Float) -> Solid {
+    package static func cone(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ ra: Float, _ rb: Float) -> Solid {
         let r = max(ra, rb)
         return Solid(lo: simd_min(a, b) - r, hi: simd_max(a, b) + r) { p in
             let ba = b - a, l2 = simd_dot(ba, ba), rr = ra - rb
@@ -59,12 +59,12 @@ package struct SkeletonAtlas {
         }
     }
 
-    static func ball(_ c: SIMD3<Float>, _ r: Float) -> Solid {
+    package static func ball(_ c: SIMD3<Float>, _ r: Float) -> Solid {
         Solid(lo: c - r, hi: c + r) { simd_length($0 - c) - r }
     }
 
     /// An ellipsoid of radii `r` along `frame`'s columns (orthonormal).
-    static func ellipsoid(_ c: SIMD3<Float>, _ r: SIMD3<Float>, frame: simd_float3x3 = matrix_identity_float3x3) -> Solid {
+    package static func ellipsoid(_ c: SIMD3<Float>, _ r: SIMD3<Float>, frame: simd_float3x3 = matrix_identity_float3x3) -> Solid {
         let into = frame.transpose
         return Solid(lo: c - r.max(), hi: c + r.max()) { p in
             let q = into * (p - c)
@@ -74,19 +74,19 @@ package struct SkeletonAtlas {
     }
 
     /// A triangle `thickness` thick each way.
-    static func plate(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ thickness: Float) -> Solid {
+    package static func plate(_ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>, _ thickness: Float) -> Solid {
         Solid(lo: simd_min(simd_min(a, b), c) - thickness, hi: simd_max(simd_max(a, b), c) + thickness) { p in
             simd_length(p - SkinShell.closest(p, a, b, c).0) - thickness
         }
     }
 
     /// Round cones through `points`, each as thick as its `radii`.
-    static func chain(_ points: [SIMD3<Float>], _ radii: [Float]) -> Solid {
+    package static func chain(_ points: [SIMD3<Float>], _ radii: [Float]) -> Solid {
         union((0..<(points.count - 1)).map { cone(points[$0], points[$0 + 1], radii[$0], radii[$0 + 1]) }, smooth: 0)
     }
 
     /// `parts` joined, blended where they meet over `k` (0: not).
-    static func union(_ parts: [Solid], smooth k: Float) -> Solid {
+    package static func union(_ parts: [Solid], smooth k: Float) -> Solid {
         let lo = parts.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1.lo) }
         let hi = parts.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1.hi) }
         return Solid(lo: lo, hi: hi) { p in
@@ -105,7 +105,7 @@ package struct SkeletonAtlas {
     }
 
     /// `a` less `b`, the edge rounded over `k`.
-    static func subtract(_ a: Solid, _ b: Solid, smooth k: Float) -> Solid {
+    package static func subtract(_ a: Solid, _ b: Solid, smooth k: Float) -> Solid {
         Solid(lo: a.lo, hi: a.hi) { p in
             let d = a.distance(p)
             guard b.outside(p) < k - d else { return d }
@@ -118,7 +118,7 @@ package struct SkeletonAtlas {
 
     package let pieces: [Piece]
     /// Each piece's surface, whole.
-    let meshes: [(positions: [SIMD3<Float>], indices: [UInt32])]
+    package let meshes: [(positions: [SIMD3<Float>], indices: [UInt32])]
     /// Their distance (the nearest piece's) on a grid over the body: what the muscles are carved from.
     private let lo: SIMD3<Float>
     private let counts: SIMD3<Int>
@@ -508,7 +508,7 @@ package struct SkeletonAtlas {
     }
 
     /// The nearest bone's distance at `p` (trilinear between the grid's samples; 5 cm beyond it).
-    func distance(_ p: SIMD3<Float>) -> Float {
+    package func distance(_ p: SIMD3<Float>) -> Float {
         let g = (p - lo) / SkeletonAtlas.gridCell
         let f = g.rounded(.down)
         let i = SIMD3<Int>(f)

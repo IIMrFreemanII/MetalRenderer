@@ -13,38 +13,38 @@ import simd
 /// plays, `Crowd.pose`); everything per joint and per vertex happens on the GPU.
 package final class CrowdSkinner {
     /// MSL CrowdPoseParams: one character's slots.
-    struct PoseParams {
+    package struct PoseParams {
         var jointBase: UInt32, jointCount: UInt32, firstSlot: UInt32, slotCount: UInt32
         var paletteStride: UInt32, pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
     }
     /// MSL CrowdSkinParams: one part's slots. A face's (FaceRig): its first range and group (`none`: it has no
     /// expressions, or no face), the weights per slot, and how big its head is against the base's.
-    struct SkinParams {
+    package struct SkinParams {
         var bindBase: UInt32, vertexCount: UInt32, currentBase: UInt32, previousBase: UInt32
         var skinBase: UInt32, firstSlot: UInt32, slotCount: UInt32, paletteStride: UInt32
         var faceBase = CrowdSkinner.none, groupBase = CrowdSkinner.none, faceTargets = UInt32(FaceRig.targetNames.count)
         var faceScale: Float = 1
     }
-    static let none = UInt32.max
+    package static let none = UInt32.max
     /// MSL CrowdHairParams: one groom on one slot (Crowd.Hair).
-    struct HairParams {
+    package struct HairParams {
         var firstStrand: UInt32, strandCount: UInt32, perStrand: UInt32, firstOffset: UInt32
         var curveBase: UInt32, prevOffset: UInt32, slotBase: UInt32, palette: UInt32
         var scale: Float, followsHead: UInt32, pad0: UInt32 = 0, pad1: UInt32 = 0
     }
     /// MSL CrowdHairRoot.
-    struct HairRoot {
+    package struct HairRoot {
         var vertices: SIMD4<UInt32>
         var bary: SIMD4<Float>
     }
 
     /// `METALRENDERER_CROWD=frozen`: no skinning and no refits, so the crowd stays in the pose the CPU gave it at
     /// time 0 (to compare a frame with and without the GPU's work).
-    static let frozen = ProcessInfo.processInfo.environment["METALRENDERER_CROWD"] == "frozen"
+    package static let frozen = ProcessInfo.processInfo.environment["METALRENDERER_CROWD"] == "frozen"
     /// `METALRENDERER_CROWD_CHECK=1` (benchmarks): after each captured frame, the GPU's vertices against the CPU's.
-    static let checked = ProcessInfo.processInfo.environment["METALRENDERER_CROWD_CHECK"] == "1"
+    package static let checked = ProcessInfo.processInfo.environment["METALRENDERER_CROWD_CHECK"] == "1"
 
-    let crowd: Crowd
+    package let crowd: Crowd
     private let joints: MTLBuffer, rotationKeys: MTLBuffer, rootKeys: MTLBuffer, skin: MTLBuffer
     private let palette: MTLBuffer                 // slots x paletteStride matrices (written and read by the GPU only)
     private var slotBuffers: [MTLBuffer] = []      // per frame slot: a GPUPoseSlot per pose slot
@@ -54,7 +54,7 @@ package final class CrowdSkinner {
     // weights and turns (FaceState).
     private let faceRanges: MTLBuffer, faceEntries: MTLBuffer, faceGroups: MTLBuffer
     private var faceWeights: [MTLBuffer] = [], faceTurns: [MTLBuffer] = []
-    let hasFaces: Bool
+    package let hasFaces: Bool
     // Hair: every groom's roots and offsets (uploaded once), and per groom where it draws.
     private let hairRoots: MTLBuffer, hairOffsets: MTLBuffer
     private let hairParams: [HairParams]
@@ -160,7 +160,7 @@ package final class CrowdSkinner {
     }
 
     /// What every pose slot plays this frame, for frame slot `slot`.
-    func write(slot: Int) {
+    package func write(slot: Int) {
         let out = slotBuffers[slot].contents().bindMemory(to: GPUPoseSlot.self, capacity: crowd.slots.count)
         for (i, s) in crowd.slots.enumerated() { out[i] = s.record }
         guard hasFaces else { return }
@@ -175,7 +175,7 @@ package final class CrowdSkinner {
     }
 
     /// The pose and skinning dispatches, in order (a serial pass).
-    func encode(_ enc: ComputePass, pose: MTLComputePipelineState, skin skinState: MTLComputePipelineState,
+    package func encode(_ enc: ComputePass, pose: MTLComputePipelineState, skin skinState: MTLComputePipelineState,
                 hair hairState: MTLComputePipelineState, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
         let group = MTLSize(width: 64, height: 1, depth: 1)
         enc.setComputePipelineState(pose)
@@ -216,7 +216,7 @@ package final class CrowdSkinner {
 
     /// The GPU's hair against the CPU's (CharacterHair.place over the GPU's skinned vertices, so the skinning's own
     /// error isn't counted twice): the largest distance between control points.
-    func checkHair(positions: MTLBuffer) -> Float {
+    package func checkHair(positions: MTLBuffer) -> Float {
         let p = positions.contents().bindMemory(to: SIMD3<Float>.self, capacity: positions.length / 16)
         var worst: Float = 0
         for (h, hair) in crowd.hair.enumerated() {
@@ -234,7 +234,7 @@ package final class CrowdSkinner {
 
     /// The GPU's skinned vertices against the CPU's for the crowd's current time (the frame that wrote them must be
     /// done): the largest distance between positions, and the largest angle between normals as 1 - their dot product.
-    func check(positions: MTLBuffer, normals: MTLBuffer) -> (position: Float, normal: Float) {
+    package func check(positions: MTLBuffer, normals: MTLBuffer) -> (position: Float, normal: Float) {
         let p = positions.contents().bindMemory(to: SIMD3<Float>.self, capacity: positions.length / 16)
         let n = normals.contents().bindMemory(to: SIMD3<Float>.self, capacity: normals.length / 16)
         var worst = [(Float, Float)](repeating: (0, 0), count: crowd.slots.count)

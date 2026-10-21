@@ -20,10 +20,10 @@ package final class Crowd {
     /// What a slot plays: clip A, or a cross-fade from it to clip B and back every `blendPeriod` seconds, the two
     /// kept in step (both at the same point of their loops).
     package struct Motion {
-        var clipA: Int
-        var clipB: Int
-        var blendPeriod: Float = 0
-        var isBlend: Bool { clipA != clipB }
+        package var clipA: Int
+        package var clipB: Int
+        package var blendPeriod: Float = 0
+        package var isBlend: Bool { clipA != clipB }
     }
 
     /// A character in a motion, with the pose slots that play it from different points of the loop.
@@ -38,43 +38,43 @@ package final class Crowd {
     /// source), and where its slots' vertices are: slot k's at `currentBase + k * vertexCount`, their previous
     /// frame's positions at `previousBase + k * vertexCount`.
     package struct Part {
-        var character: Int
-        var level: Int                // the character's level of detail (SkinnedCharacter.level)
-        var mesh = -1
-        var bindVertex = 0
-        var vertexCount: Int
-        var firstSlot = 0
-        var slotCount = 0
-        var currentBase = 0
-        var previousBase = 0
+        package var character: Int
+        package var level: Int                // the character's level of detail (SkinnedCharacter.level)
+        package var mesh = -1
+        package var bindVertex = 0
+        package var vertexCount: Int
+        package var firstSlot = 0
+        package var slotCount = 0
+        package var currentBase = 0
+        package var previousBase = 0
     }
 
     package struct Slot {
-        var part: Int
-        var state: Int
-        var phase: Float              // 0...1: where in the loop it is at time 0
+        package var part: Int
+        package var state: Int
+        package var phase: Float              // 0...1: where in the loop it is at time 0
         package var mesh = -1                 // the scene's mesh that is this pose
         // At the crowd's current time:
-        var record = GPUPoseSlot()
-        var distance: Double = 0          // how far its members have travelled (m, for a member of scale 1)
-        var previousDistance: Double = 0  // ...at the time before
+        package var record = GPUPoseSlot()
+        package var distance: Double = 0          // how far its members have travelled (m, for a member of scale 1)
+        package var previousDistance: Double = 0  // ...at the time before
     }
 
     /// A member that walks: along its lane from `origin` in direction `forward`, wrapping around at the lane's end.
     package struct Walker {
-        var instance: Int
-        var slot: Int
-        var origin: SIMD3<Float>
-        var forward: SIMD3<Float>
-        var start: Float              // where on the lane it is at time 0 (m)
-        var lane: Float               // the lane's length (m)
-        var scale: Float
+        package var instance: Int
+        package var slot: Int
+        package var origin: SIMD3<Float>
+        package var forward: SIMD3<Float>
+        package var start: Float              // where on the lane it is at time 0 (m)
+        package var lane: Float               // the lane's length (m)
+        package var scale: Float
         // Rows of its world -> object matrix without the translation (its rotation's columns / scale).
-        var inverse0: SIMD3<Float>, inverse1: SIMD3<Float>, inverse2: SIMD3<Float>
+        package var inverse0: SIMD3<Float>, inverse1: SIMD3<Float>, inverse2: SIMD3<Float>
 
         /// Where it is and where it was a frame ago, given its slot's travel. The previous position is taken back
         /// along the lane from this one, so a wrap-around doesn't read as a jump across the scene.
-        func positions(_ slot: Slot) -> (current: SIMD3<Float>, previous: SIMD3<Float>) {
+        package func positions(_ slot: Slot) -> (current: SIMD3<Float>, previous: SIMD3<Float>) {
             let travelled = Double(start) + Double(scale) * slot.distance
             let s = Float(travelled - (travelled / Double(lane)).rounded(.down) * Double(lane))
             let step = Float(Double(scale) * (slot.distance - slot.previousDistance))
@@ -118,24 +118,33 @@ package final class Crowd {
 
     /// A groom's strands on one slot (CharacterHair): drawn into the scene's curve mesh `mesh` every frame after the
     /// slot's skinning (crowdHairKernel), shaped by its character's head (its size against the base's, its joint).
-    struct Hair {
+    package struct Hair {
         package var slot: Int
         package var groom: CharacterHair.Groom
         package var mesh: Int
         package var scale: Float
         package var head: Int
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(slot: Int, groom: CharacterHair.Groom, mesh: Int, scale: Float, head: Int) {
+            self.slot = slot
+            self.groom = groom
+            self.mesh = mesh
+            self.scale = scale
+            self.head = head
+        }
     }
 
     package let characters: [SkinnedCharacter]
     /// Per character, its face (nil: a mannequin's, none).
     package var faces: [Face?] = []
     /// The strands the slots grow (a workshop's characters'; crowds have caps).
-    var hair: [Hair] = []
+    package var hair: [Hair] = []
     /// What the expressive faces do, and where the viewer is (world space) for their eyes.
-    var expression: FaceExpression = .neutral
-    var viewer: SIMD3<Float>?
+    package var expression: FaceExpression = .neutral
+    package var viewer: SIMD3<Float>?
     /// Per slot that one member stands in: that member's object-to-world transform (its eyes find the viewer from it).
-    var lookers: [Int: float4x4] = [:]
+    package var lookers: [Int: float4x4] = [:]
     /// Per slot, its face at the crowd's current time (nil where its character has none).
     private(set) var faceStates: [FaceState?] = []
     package private(set) var states: [State] = []
@@ -226,7 +235,7 @@ package final class Crowd {
     package var liveStates: [Int] { states.indices.filter { !states[$0].slots.isEmpty } }
 
     /// Sets every slot to what it plays at time `t`: its record for the GPU and how far its members have travelled.
-    func pose(at t: Float) {
+    package func pose(at t: Float) {
         let time = Double(t)
         for i in slots.indices {
             let state = states[slots[i].state], motion = state.motion
@@ -282,14 +291,14 @@ package final class Crowd {
     package func geometry(part p: Int) -> SkinnedCharacter.Level { characters[parts[p].character].level(parts[p].level) }
 
     /// The skinning matrices of slot `i` at the crowd's current time, as the GPU makes them.
-    func palette(slot i: Int) -> [GPUJointMatrix] {
+    package func palette(slot i: Int) -> [GPUJointMatrix] {
         let state = states[slots[i].state], r = slots[i].record
         return characters[state.character].palette(clipA: state.motion.clipA, timeA: r.timeA, clipB: state.motion.clipB,
                                                    timeB: r.timeB, blend: r.blend)
     }
 
     /// First vertex of slot `i`'s current positions (and normals) and of its previous positions in the scene's buffers.
-    func vertexRange(slot i: Int) -> (current: Int, previous: Int, count: Int) {
+    package func vertexRange(slot i: Int) -> (current: Int, previous: Int, count: Int) {
         let part = parts[slots[i].part], k = i - part.firstSlot
         return (part.currentBase + k * part.vertexCount, part.previousBase + k * part.vertexCount, part.vertexCount)
     }

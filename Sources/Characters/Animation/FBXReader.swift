@@ -219,7 +219,7 @@ final class FBXFile {
     package struct Children: Sequence, IteratorProtocol {
         fileprivate let nodes: [Node]
         fileprivate var next_: Int32
-        mutating func next() -> Int? {
+        package mutating func next() -> Int? {
             guard next_ >= 0 else { return nil }
             defer { next_ = nodes[Int(next_)].nextSibling }
             return Int(next_)

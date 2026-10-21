@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+@testable import Characters
 @testable import Editors
 @testable import EngineCore
 @testable import Game

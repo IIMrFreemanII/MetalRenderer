@@ -16,7 +16,7 @@ import simd
 /// and the hands' and feet's rounded boxes in the joint's frame, as wide as most of them reach; the head a sphere.
 package struct CharacterRig {
     /// The joints that are bones: Mixamo's names, without "mixamorig:", the joint their length runs to, and the part.
-    static let modelled: [(joint: String, next: String, role: FleshFigure.Role)] = [
+    package static let modelled: [(joint: String, next: String, role: FleshFigure.Role)] = [
         ("Hips", "Spine", .pelvis), ("Spine", "Spine1", .spine), ("Spine1", "Spine2", .spine), ("Spine2", "Neck", .chest),
         ("Neck", "Head", .neck), ("Head", "HeadTop_End", .head),
         ("RightArm", "RightForeArm", .upperArm(-1)), ("RightForeArm", "RightHand", .forearm(-1)),
@@ -39,14 +39,14 @@ package struct CharacterRig {
         package var parent: Int
     }
 
-    let character: SkinnedCharacter
-    let bind: [(q: simd_quatf, t: SIMD3<Float>)]
+    package let character: SkinnedCharacter
+    package let bind: [(q: simd_quatf, t: SIMD3<Float>)]
     package private(set) var bones: [Bone] = []
     /// Per joint, the bone it moves with (its own, or the nearest one up its chain).
     package private(set) var boneOf: [Int] = []
     /// The routine's clips (indices into the character's) and when each starts (s), and how long it is.
-    let programme: [(clip: Int, start: Float)]
-    let seconds: Float
+    package let programme: [(clip: Int, start: Float)]
+    package let seconds: Float
 
     package init?(_ character: SkinnedCharacter) {
         self.character = character
@@ -128,7 +128,7 @@ package struct CharacterRig {
     }
 
     /// Bone `b`'s shape's placement in the character's space for `poses` (each joint's).
-    func placement(_ b: Int, _ poses: [(q: simd_quatf, t: SIMD3<Float>)]) -> float4x4 {
+    package func placement(_ b: Int, _ poses: [(q: simd_quatf, t: SIMD3<Float>)]) -> float4x4 {
         let j = bones[b].joint
         return translate(poses[j].t) * float4x4(poses[j].q) * bones[b].offset
     }
@@ -141,14 +141,14 @@ package struct CharacterRig {
     /// The clips it goes through, each for its `seconds` (nil: its clip's length, once), and how long a crossfade into
     /// one takes. The dances' travel (SkinnedCharacter.Clip.velocity) is put back as they dance. `METALRENDERER_ROUTINE`
     /// replaces it (MixamoLibrary).
-    static let routine: [(clip: String, seconds: Float?)] = [
+    package static let routine: [(clip: String, seconds: Float?)] = [
         ("Idle", 2.5), ("Hip Hop Dancing", nil), ("Breakdance Freeze Var 2", nil), ("Hip Hop Dancing (1)", nil),
         ("Breakdance Freeze Var 3", nil), ("Hip Hop Dancing (2)", nil), ("Idle", 2),
     ]
-    static let fade: Float = 0.5
+    package static let fade: Float = 0.5
 
     /// Its pose at `t` (s, within the programme): the clips' blend.
-    func pose(at t: Float) -> (clipA: Int, timeA: Float, clipB: Int, timeB: Float, blend: Float) {
+    package func pose(at t: Float) -> (clipA: Int, timeA: Float, clipB: Int, timeB: Float, blend: Float) {
         let count = programme.count
         let s = (0..<count).last { programme[$0].start <= t } ?? 0
         // A clip's time (keys) since its segment started; the last segment's runs on into the first's.

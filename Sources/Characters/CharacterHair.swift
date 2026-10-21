@@ -87,18 +87,18 @@ package enum CharacterHair {
     /// corners'), and `perStrand` control points as offsets from the root, in the base's bind space (`followsHead`: they
     /// turn with the head's bone) or in its triangle's frame (x along its first edge, z its normal).
     package struct Groom {
-        enum Kind: Int { case scalp, brows, lashes, beard }
-        var kind: Kind
-        var perStrand: Int
+        package enum Kind: Int { case scalp, brows, lashes, beard }
+        package var kind: Kind
+        package var perStrand: Int
         var triangles: [UInt32] = []
         var bary: [SIMD2<Float>] = []
         var offsets: [SIMD3<Float>] = []
         var rootRadius: Float
         var tipRadius: Float
         var followsHead: Bool
-        var strandCount: Int { triangles.count }
+        package var strandCount: Int { triangles.count }
         /// The furthest a point is from its root (m, the base's).
-        var reach: Float { offsets.map { simd_length($0) }.max() ?? 0 }
+        package var reach: Float { offsets.map { simd_length($0) }.max() ?? 0 }
     }
 
     // MARK: Colour

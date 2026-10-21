@@ -1,4 +1,5 @@
 import AppKit
+import Characters
 import EngineCore
 import MetalKit
 import Physics

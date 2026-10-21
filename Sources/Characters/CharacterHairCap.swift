@@ -9,9 +9,9 @@ import simd
 /// (CharacterBuilder `cap`). Made in the base's bind space from a sample of the style's strands: their volume (each a
 /// tube of a few millimetres, as a distance grid) joined to a shell a few millimetres over the scalp where the hair
 /// grows, cut off just under the skin, meshed (sparse surface nets) and simplified for each level of detail.
-enum CharacterHairCap {
+package enum CharacterHairCap {
     /// The cap at full detail, then one for each of the base's coarser levels.
-    struct Cap {
+    package struct Cap {
         var levels: [(positions: [SIMD3<Float>], normals: [SIMD3<Float>], indices: [UInt32])]
     }
 

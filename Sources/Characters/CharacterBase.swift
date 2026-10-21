@@ -17,11 +17,11 @@ package struct CharacterBase {
     /// each character the library's.
     package var character: SkinnedCharacter
     /// Per vertex, what part of the body it is (Region), for the morphs' masks.
-    var regions: [UInt8]
+    package var regions: [UInt8]
     /// Per vertex, its material (FaceParts.Material); a triangle takes its corners' (`triangleMaterials`).
-    var materials: [UInt8]
+    package var materials: [UInt8]
 
-    enum Region: UInt8 {
+    package enum Region: UInt8 {
         case trunk, head, neck, arm, hand, leg, foot
         /// The face's meshes of their own (FaceParts): the eyeballs, the upper and lower teeth, the tongue.
         case leftEye, rightEye, upperTeeth, lowerTeeth, tongue
@@ -29,46 +29,46 @@ package struct CharacterBase {
 
     package struct Options {
         /// Surface nets' cell (m), and how many triangles the full-detail mesh is simplified to (the head's among them).
-        var cell: Float = 0.0025
-        var triangles = 96_000
+        package var cell: Float = 0.0025
+        package var triangles = 96_000
         /// BodySurface's: its grid and how far it is smoothed (cells).
-        var surfaceCell: Float = 0.006
-        var smoothing = 3
+        package var surfaceCell: Float = 0.006
+        package var smoothing = 3
         /// Taubin passes over the mesh.
-        var smoothingPasses = 12
-        var trunkPasses = 20
+        package var smoothingPasses = 12
+        package var trunkPasses = 20
         /// The head's cell and triangles (it is meshed apart from the body, finer, and joined to it at the neck).
-        var headCell: Float = 0.001
-        var headTriangles = 32_000
+        package var headCell: Float = 0.001
+        package var headTriangles = 32_000
     }
 
     // MARK: Joints
 
     /// A joint's index by its Mixamo name without "mixamorig:".
-    static func joint(_ name: String, in c: SkinnedCharacter) -> Int? {
+    package static func joint(_ name: String, in c: SkinnedCharacter) -> Int? {
         c.jointNames.firstIndex { $0 == name || $0 == "mixamorig:" + name }
     }
 
     /// Each joint's position in the bind pose.
-    static func bindPositions(_ c: SkinnedCharacter) -> [SIMD3<Float>] { c.bindPoses.map(\.t) }
+    package static func bindPositions(_ c: SkinnedCharacter) -> [SIMD3<Float>] { c.bindPoses.map(\.t) }
 
     // MARK: Hands
 
     /// A hand made again from its bones: a palm (a rounded box from the wrist to the knuckles, fanned out to them) and
     /// five fingers (round cones along their joints), on the forearm's end. `zone`: where the body's own hand is cut
     /// off (beyond a plane across the wrist).
-    struct Hand {
-        struct Segment { var a: SIMD3<Float>; var b: SIMD3<Float>; var ra: Float; var rb: Float; var joint: Int; var finger: Int }
-        let wrist: SIMD3<Float>
-        let along: SIMD3<Float>            // from the forearm toward the fingers
-        let frame: simd_float3x3           // palm: x toward the fingers, y out of the back of the hand, z across
-        let palmCentre: SIMD3<Float>
-        let palmHalf: SIMD3<Float>
-        let palmRounding: Float
-        let wristRadius: SIMD2<Float>      // across (y, z)
-        let segments: [Segment]            // fingers, thumb first
-        let hand: Int                      // the hand's joint
-        let reach: Float                   // a sphere round the wrist that holds it all
+    package struct Hand {
+        package struct Segment { var a: SIMD3<Float>; var b: SIMD3<Float>; var ra: Float; var rb: Float; var joint: Int; var finger: Int }
+        package let wrist: SIMD3<Float>
+        package let along: SIMD3<Float>            // from the forearm toward the fingers
+        package let frame: simd_float3x3           // palm: x toward the fingers, y out of the back of the hand, z across
+        package let palmCentre: SIMD3<Float>
+        package let palmHalf: SIMD3<Float>
+        package let palmRounding: Float
+        package let wristRadius: SIMD2<Float>      // across (y, z)
+        package let segments: [Segment]            // fingers, thumb first
+        package let hand: Int                      // the hand's joint
+        package let reach: Float                   // a sphere round the wrist that holds it all
 
         package init?(_ c: SkinnedCharacter, side: String, body: BodySurface) {
             let bind = CharacterBase.bindPositions(c)
@@ -120,9 +120,9 @@ package struct CharacterBase {
         }
 
         /// The body's own hand: past a plane 2 cm beyond the wrist.
-        func cut(_ p: SIMD3<Float>) -> Float { simd_dot(p - wrist, along) - 0.02 }
+        package func cut(_ p: SIMD3<Float>) -> Float { simd_dot(p - wrist, along) - 0.02 }
 
-        func palm(_ p: SIMD3<Float>) -> Float {
+        package func palm(_ p: SIMD3<Float>) -> Float {
             let q = frame.transpose * (p - palmCentre)
             // Narrower toward the wrist, and thinner at the knuckles.
             let t = min(max(q.x / palmHalf.x * 0.5 + 0.5, 0), 1)
@@ -130,7 +130,7 @@ package struct CharacterBase {
             return CharacterBase.roundedBox(q, half, palmRounding)
         }
 
-        func wristPiece(_ p: SIMD3<Float>) -> Float {
+        package func wristPiece(_ p: SIMD3<Float>) -> Float {
             let q = frame.transpose * (p - wrist)
             // An elliptical cylinder from 6 cm up the forearm (within it) to the palm.
             let along = simd_dot(p - wrist, self.along)
@@ -139,7 +139,7 @@ package struct CharacterBase {
             return max(r, max(-0.06 - along, along - 0.025))
         }
 
-        func distance(_ p: SIMD3<Float>) -> Float {
+        package func distance(_ p: SIMD3<Float>) -> Float {
             var d = CharacterBase.smoothMin(palm(p), wristPiece(p), 0.015)
             for s in segments {
                 let f = CharacterBase.roundCone(p, s.a, s.b, s.ra, s.rb)
@@ -150,7 +150,7 @@ package struct CharacterBase {
         }
 
         /// The hand's bones' weights at `p`: the nearest bone, blended with its finger's neighbours and the palm's.
-        func weights(_ p: SIMD3<Float>) -> [(joint: Int, weight: Float)] {
+        package func weights(_ p: SIMD3<Float>) -> [(joint: Int, weight: Float)] {
             var near: [(joint: Int, finger: Int, d: Float)] = [(hand, -1, palm(p))]
             for s in segments { near.append((s.joint, s.finger, CharacterBase.roundCone(p, s.a, s.b, s.ra, s.rb))) }
             let best = near.min { $0.d < $1.d }!
@@ -171,7 +171,7 @@ package struct CharacterBase {
     /// station's half width and front and back as a man's (or a woman's) are on average, fitted to the rig: the Y Bot's
     /// own trunk is a mannequin's (a narrow waist, a deep pelvis, panels), its limbs, neck and head are kept
     /// (`limbZone`).
-    struct TrunkLoft {
+    package struct TrunkLoft {
         /// (height, half width, front, back) in metres, at a Y Bot's size (1.8 m, crotch at 0.84, neck at 1.5).
         typealias Station = (y: Float, w: Float, front: Float, back: Float)
         /// At its ends (the crotch, the shoulders, the neck) as wide and deep as the Y Bot is there, so that the two
@@ -284,7 +284,7 @@ package struct CharacterBase {
     // MARK: Building
 
     /// The base made from `source` (the Y Bot, or any character of a Mixamo rig). nil if it hasn't the joints.
-    static func build(_ source: SkinnedCharacter, options: Options = Options()) -> CharacterBase? {
+    package static func build(_ source: SkinnedCharacter, options: Options = Options()) -> CharacterBase? {
         guard let rig = CharacterRig(source), let face = FaceSculpt(source) else { return nil }
         let start = CFAbsoluteTimeGetCurrent()
         let level = source.level(0)
@@ -433,7 +433,7 @@ package struct CharacterBase {
     }
 
     /// Each triangle's material: the one most of its corners have (the first corner's if they all differ).
-    static func triangleMaterials(_ indices: [UInt32], _ materials: [UInt8], source: [UInt32]? = nil) -> [UInt8] {
+    package static func triangleMaterials(_ indices: [UInt32], _ materials: [UInt8], source: [UInt32]? = nil) -> [UInt8] {
         stride(from: 0, to: indices.count, by: 3).map { t in
             let m = (0..<3).map { k -> UInt8 in
                 let v = Int(indices[t + k])
@@ -444,7 +444,7 @@ package struct CharacterBase {
     }
 
     /// `skin` moved toward the joint `j` alone by `t` (0...1), the four heaviest kept.
-    static func blended(_ skin: GPUSkinVertex, toward j: Int, by t: Float) -> GPUSkinVertex {
+    package static func blended(_ skin: GPUSkinVertex, toward j: Int, by t: Float) -> GPUSkinVertex {
         let ws = [skin.w0, skin.w1, skin.w2, 1 - skin.w0 - skin.w1 - skin.w2]
         var w: [Int: Float] = [:]
         for k in 0..<4 where ws[k] > 0 { w[Int((skin.joints >> UInt32(8 * k)) & 0xFF), default: 0] += ws[k] * (1 - t) }
@@ -458,7 +458,7 @@ package struct CharacterBase {
 
     /// The part of a mesh below (`below`) or above the level `y`, the triangles across it cut along it (corners within
     /// `snap` of it moved onto it first, so that no sliver is left), vertices renumbered: its open edge lies flat at `y`.
-    static func sliced(_ positions: [SIMD3<Float>], _ indices: [UInt32], at y: Float, below: Bool, snap: Float) -> ([SIMD3<Float>], [UInt32]) {
+    package static func sliced(_ positions: [SIMD3<Float>], _ indices: [UInt32], at y: Float, below: Bool, snap: Float) -> ([SIMD3<Float>], [UInt32]) {
         let p = positions.map { abs($0.y - y) < snap ? SIMD3($0.x, y, $0.z) : $0 }
         let side = p.map { below ? y - $0.y : $0.y - y }   // > 0 kept, 0 on the level
         var remap = [Int32](repeating: -1, count: p.count), crossings: [UInt64: UInt32] = [:]
@@ -492,7 +492,7 @@ package struct CharacterBase {
     }
 
     /// Whether each vertex is on an open edge (one triangle's).
-    static func openEdgeVertices(_ count: Int, _ indices: [UInt32]) -> [Bool] {
+    package static func openEdgeVertices(_ count: Int, _ indices: [UInt32]) -> [Bool] {
         var edges: [UInt64: Int] = [:]
         for t in stride(from: 0, to: indices.count, by: 3) {
             for k in 0..<3 {
@@ -508,7 +508,7 @@ package struct CharacterBase {
     /// Two meshes made one: each has an open edge round the same upright tube (the neck, cut: `sliced`, the first's a
     /// little below the second's), and a strip of triangles sews the two round, the shorter way across at every step.
     /// (Edges laid flat at one height would sew with a flat strip, folded wherever the two loops cross.)
-    static func stitched(_ a: ([SIMD3<Float>], [UInt32]), _ b: ([SIMD3<Float>], [UInt32])) -> ([SIMD3<Float>], [UInt32]) {
+    package static func stitched(_ a: ([SIMD3<Float>], [UInt32]), _ b: ([SIMD3<Float>], [UInt32])) -> ([SIMD3<Float>], [UInt32]) {
         let positions = a.0 + b.0
         var indices = a.1 + b.1.map { $0 + UInt32(a.0.count) }
         // Open edges (one triangle), in their triangles' direction.
@@ -565,7 +565,7 @@ package struct CharacterBase {
     }
 
     /// Each vertex's part of the body, by the bone that moves it most.
-    static func regions(_ c: SkinnedCharacter) -> [UInt8] {
+    package static func regions(_ c: SkinnedCharacter) -> [UInt8] {
         let names = c.jointNames.map { $0.replacingOccurrences(of: "mixamorig:", with: "") }
         let byJoint: [Region] = names.map { n in
             if n.contains("Hand") { return .hand }
@@ -582,7 +582,7 @@ package struct CharacterBase {
     // MARK: Mesh helpers
 
     /// The largest connected piece of a mesh (surface nets leave specks where the field folds), its vertices renumbered.
-    static func largestPart(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> ([SIMD3<Float>], [UInt32]) {
+    package static func largestPart(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> ([SIMD3<Float>], [UInt32]) {
         var parent = Array(0..<Int32(positions.count))
         func find(_ x: Int32) -> Int32 {
             var x = x
@@ -611,7 +611,7 @@ package struct CharacterBase {
 
     /// The mesh simplified to about `target` triangles (MeshSimplifier's quadric edge collapses), vertices renumbered.
     /// `locked` vertices stay (and so their triangles).
-    static func simplified(_ positions: [SIMD3<Float>], _ indices: [UInt32], to target: Int, locked: [Bool]? = nil) -> ([SIMD3<Float>], [UInt32]) {
+    package static func simplified(_ positions: [SIMD3<Float>], _ indices: [UInt32], to target: Int, locked: [Bool]? = nil) -> ([SIMD3<Float>], [UInt32]) {
         guard indices.count / 3 > target else { return (positions, indices) }
         let ids = Array(0..<Int32(positions.count))
         let uvs = [SIMD2<Float>](repeating: .zero, count: positions.count)
@@ -634,7 +634,7 @@ package struct CharacterBase {
 
     /// Taubin's smoothing (a step toward the neighbours' mean, then one back a little further): smooths without
     /// shrinking. `fixed` vertices stay.
-    static func taubin(_ positions: [SIMD3<Float>], _ ring: [[Int32]], fixed: [Bool], iterations: Int,
+    package static func taubin(_ positions: [SIMD3<Float>], _ ring: [[Int32]], fixed: [Bool], iterations: Int,
                        lambda: Float = 0.5, mu: Float = -0.53) -> [SIMD3<Float>] {
         var a = positions, b = positions
         for _ in 0..<iterations {
@@ -658,7 +658,7 @@ package struct CharacterBase {
     }
 
     /// Area-weighted vertex normals.
-    static func vertexNormals(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> [SIMD3<Float>] {
+    package static func vertexNormals(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> [SIMD3<Float>] {
         var n = [SIMD3<Float>](repeating: .zero, count: positions.count)
         for t in stride(from: 0, to: indices.count, by: 3) {
             let a = Int(indices[t]), b = Int(indices[t + 1]), c = Int(indices[t + 2])
@@ -669,7 +669,7 @@ package struct CharacterBase {
     }
 
     /// Each vertex's neighbours (the vertices it shares a triangle with).
-    static func neighbours(_ count: Int, _ indices: [UInt32]) -> [[Int32]] {
+    package static func neighbours(_ count: Int, _ indices: [UInt32]) -> [[Int32]] {
         var out = [[Int32]](repeating: [], count: count)
         for t in stride(from: 0, to: indices.count, by: 3) {
             for k in 0..<3 {
@@ -686,7 +686,7 @@ package struct CharacterBase {
     /// Each vertex's joints and weights: the Y Bot's skin at the points of it nearest the vertex that face the same way
     /// (within 3 cm), the hands' from their bones; vertices with neither take their neighbours'; then smoothed (by `neck`
     /// in space, elsewhere over the mesh), the four heaviest kept.
-    static func transferWeights(_ positions: [SIMD3<Float>], _ normals: [SIMD3<Float>], _ indices: [UInt32],
+    package static func transferWeights(_ positions: [SIMD3<Float>], _ normals: [SIMD3<Float>], _ indices: [UInt32],
                                 from source: SkinnedCharacter.Level, hands: [Hand], jointCount: Int,
                                 neck: [Float]) -> [GPUSkinVertex] {
         let count = positions.count
@@ -844,18 +844,18 @@ package struct CharacterBase {
 
     // MARK: Distance functions
 
-    static func smoothMin(_ a: Float, _ b: Float, _ k: Float) -> Float {
+    package static func smoothMin(_ a: Float, _ b: Float, _ k: Float) -> Float {
         let h = max(k - abs(a - b), 0) / k
         return min(a, b) - h * h * k * 0.25
     }
 
-    static func roundedBox(_ q: SIMD3<Float>, _ half: SIMD3<Float>, _ r: Float) -> Float {
+    package static func roundedBox(_ q: SIMD3<Float>, _ half: SIMD3<Float>, _ r: Float) -> Float {
         let d = simd_abs(q) - (half - r)
         return simd_length(simd_max(d, .zero)) + min(max(d.x, max(d.y, d.z)), 0) - r
     }
 
     /// A cone between two spheres (centres `a`, `b`, radii `ra`, `rb`), its sides tangent to both (Quílez's round cone).
-    static func roundCone(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ ra: Float, _ rb: Float) -> Float {
+    package static func roundCone(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ ra: Float, _ rb: Float) -> Float {
         let ba = b - a
         let l2 = simd_dot(ba, ba)
         guard l2 > 1e-12 else { return simd_length(p - a) - max(ra, rb) }

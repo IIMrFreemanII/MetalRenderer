@@ -1,5 +1,6 @@
 import XCTest
 import ImageIO
+@testable import Characters
 @testable import Editors
 @testable import EngineCore
 @testable import Game

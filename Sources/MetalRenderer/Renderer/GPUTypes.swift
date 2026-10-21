@@ -1,3 +1,4 @@
+import Characters
 import EngineCore
 import Metal
 import Physics
@@ -62,51 +63,6 @@ package struct GPUSkyParams {
 
     static let atmosphere: UInt32 = 1, image: UInt32 = 2
     static let clouds: UInt32 = 1, shadows: UInt32 = 2, updateAll: UInt32 = 4, cloudsOverImage: UInt32 = 8
-}
-
-/// A skinned vertex's joints and weights (MSL SkinVertex, Shaders/Crowd.metal).
-package struct GPUSkinVertex: Equatable {
-    package var joints: UInt32 = 0     // four joint indices, a byte each (the first in the low byte)
-    var w0: Float = 1          // the first three joints' weights; the fourth's is what is left of 1
-    var w1: Float = 0
-    var w2: Float = 0
-}
-
-/// A skeleton's joint (MSL CrowdJoint): where it sits in its parent, and its inverse bind transform (a rotation,
-/// then a translation), which takes a bind-pose vertex into the joint's space.
-struct GPUJoint: Equatable {
-    var local: SIMD4<Float>      // xyz = translation in the parent's space (m), w = the parent's index + 1 (bits; 0 = root)
-    var inverseBindRotation: SIMD4<Float>      // quaternion, xyzw
-    var inverseBindTranslation: SIMD4<Float>   // xyz
-
-    var parent: Int { Int(local.w.bitPattern) - 1 }
-}
-
-/// A joint's skinning matrix in a pose (MSL JointMatrix): the three rows of bind space -> posed space.
-struct GPUJointMatrix: Equatable {
-    var row0 = SIMD4<Float>(1, 0, 0, 0), row1 = SIMD4<Float>(0, 1, 0, 0), row2 = SIMD4<Float>(0, 0, 1, 0)
-
-    func point(_ p: SIMD3<Float>) -> SIMD3<Float> {
-        let v = SIMD4(p, 1)
-        return SIMD3(dot(row0, v), dot(row1, v), dot(row2, v))
-    }
-    func direction(_ d: SIMD3<Float>) -> SIMD3<Float> {
-        let v = SIMD4(d, 0)
-        return SIMD3(dot(row0, v), dot(row1, v), dot(row2, v))
-    }
-}
-
-/// A pose of the crowd at one time (MSL PoseSlot): two clips of its character, each at a time in keys, and how far
-/// the pose is from the first toward the second. A clip is named by where its keys start in the crowd's key tables.
-struct GPUPoseSlot: Equatable {
-    var rotationsA: UInt32 = 0   // clip A's first rotation key (a quaternion per joint and key)
-    var rootA: UInt32 = 0        // its first root-translation key
-    var rotationsB: UInt32 = 0
-    var rootB: UInt32 = 0
-    var timeA: Float = 0         // in keys, inside the loop
-    var timeB: Float = 0
-    var blend: Float = 0         // 0 = clip A alone
-    var pad: Float = 0
 }
 
 package struct GPUInstanceData {

@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+@testable import Characters
 @testable import Editors
 @testable import EngineCore
 @testable import Game

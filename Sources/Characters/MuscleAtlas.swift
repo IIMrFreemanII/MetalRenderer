@@ -300,7 +300,7 @@ package struct BodyMarks {
 package struct MuscleAtlas {
     /// Where a mark is: up the trunk (0 at the hips' joint, 1 at the neck's; beyond that along its ends), or along a
     /// bone (0 at its joint, 1 at the next).
-    enum Place {
+    package enum Place {
         case trunk(Float)
         case on(FleshFigure.Role, Float)
     }
@@ -308,45 +308,45 @@ package struct MuscleAtlas {
     /// A point a muscle passes: from its place out to the skin at `angle` (degrees) round the trunk or bone, 0 its
     /// front and 90 its outer side (the trunk's and the legs' away from the middle, the arms' up: in the T pose their
     /// outer side), then the muscle's depth back under it.
-    struct Mark {
+    package struct Mark {
         var place: Place
         var angle: Float
     }
 
     package struct Muscle {
-        var name: String
-        var side: Float
+        package var name: String
+        package var side: Float
         /// 0: on top; 1: under others (carved by them all).
-        var layer = 0
+        package var layer = 0
         /// Its strands, each origin to insertion: one is a tube's axis; more, across a sheet in order.
-        var strands: [[Mark]]
+        package var strands: [[Mark]]
         /// A tube's belly's radius, a sheet's half its thickness (m), and how deep its middle is under the skin.
-        var radius: Float
-        var depth: Float
+        package var radius: Float
+        package var depth: Float
         /// Where along it the belly is fullest (0...1), and its tendons' shares of its length at each end.
-        var peak: Float = 0.5
-        var tendons: SIMD2<Float> = [0.08, 0.15]
+        package var peak: Float = 0.5
+        package var tendons: SIMD2<Float> = [0.08, 0.15]
         /// How much wider than deep a tube's section is (along the skin).
-        var wide: Float = 1.8
+        package var wide: Float = 1.8
     }
 
-    static let fat: Float = 0.004
-    static let gap: Float = 0.0012
-    static let fascia: Float = 0.014
-    static let tendonRadius: Float = 0.0045
+    package static let fat: Float = 0.004
+    package static let gap: Float = 0.0012
+    package static let fascia: Float = 0.014
+    package static let tendonRadius: Float = 0.0045
     /// How much fuller than its radius a belly is grown: muscles side by side overlap, and share it (`init`).
-    static let swell: Float = 1.35
+    package static let swell: Float = 1.35
     /// How far apart the shapes' grid samples are (m), and the fascia's.
-    static let cell: Float = 0.005
-    static let fasciaCell: Float = 0.01
+    package static let cell: Float = 0.005
+    package static let fasciaCell: Float = 0.01
     /// How long one repeat of the fibres' texture is across them (m).
-    static let tile: Float = 0.08
-    static let samples = 20
+    package static let tile: Float = 0.08
+    package static let samples = 20
 
     // MARK: The muscles
 
     /// One side's muscles (`s`: -1 the figure's right, 1 its left), from the top of the list down to what it covers.
-    static func muscles(side s: Float) -> [Muscle] {
+    package static func muscles(side s: Float) -> [Muscle] {
         func t(_ h: Float, _ angle: Float) -> Mark { Mark(place: .trunk(h), angle: angle) }
         func arm(_ u: Float, _ angle: Float) -> Mark { Mark(place: .on(.upperArm(s), u), angle: angle) }
         func fore(_ u: Float, _ angle: Float) -> Mark { Mark(place: .on(.forearm(s), u), angle: angle) }
@@ -441,7 +441,7 @@ package struct MuscleAtlas {
     }
 
     /// Both sides', the right's first.
-    static let all: [Muscle] = [Float(-1), 1].flatMap { muscles(side: $0) }
+    package static let all: [Muscle] = [Float(-1), 1].flatMap { muscles(side: $0) }
 
     // MARK: Shapes
 
@@ -540,14 +540,14 @@ package struct MuscleAtlas {
     }
 
     /// How full muscle `m`'s belly is at `u` along it: 0 in its tendons, 1 at its peak.
-    static func belly(_ u: Float, _ m: Muscle) -> Float {
+    package static func belly(_ u: Float, _ m: Muscle) -> Float {
         let x = min(max((u - m.tendons.x) / (1 - m.tendons.x - m.tendons.y), 0), 1)
         let warped = pow(x, log(0.5) / log(min(max(m.peak, 0.05), 0.95)))
         return pow(sin(.pi * warped), 0.6)
     }
 
     /// Where along it the texture is at `u`: its tendons in [0, 0.12] and [0.88, 1], its belly between.
-    static func textureU(_ u: Float, _ m: Muscle) -> Float {
+    package static func textureU(_ u: Float, _ m: Muscle) -> Float {
         if u < m.tendons.x { return 0.12 * u / max(m.tendons.x, 1e-4) }
         if u > 1 - m.tendons.y { return 0.88 + 0.12 * (u - (1 - m.tendons.y)) / max(m.tendons.y, 1e-4) }
         return 0.12 + 0.76 * (u - m.tendons.x) / max(1 - m.tendons.x - m.tendons.y, 1e-4)
@@ -557,8 +557,8 @@ package struct MuscleAtlas {
 
     package let shapes: [Shape]
     /// The skin it is sculpted to.
-    let body: BodySurface
-    let marks: BodyMarks
+    package let body: BodySurface
+    package let marks: BodyMarks
     package let skeleton: SkeletonAtlas
     /// The drawn mesh: the muscles', then the fascia's, then the bones'; per vertex its texture's place and the rig's
     /// bone it moves with (a muscle's or the fascia's the one it is deepest in, a bone's the one it rides); per triangle
@@ -568,12 +568,12 @@ package struct MuscleAtlas {
     package let bones: [Int]
     package let materials: [UInt8]
     /// Each muscle's vertices, and each of its skeleton's pieces'.
-    let ranges: [Range<Int>]
+    package let ranges: [Range<Int>]
     package let pieces: [Range<Int>]
 
     /// `rig`'s bones' shapes (all but the rigid ones: head, hands, feet) 8 mm within them, as BodySurface's `solids`:
     /// inside too, whatever the mesh says (the Y Bot's elbows are hollow).
-    static func boneSolids(_ rig: CharacterRig) -> [(bounds: AABB, distance: (SIMD3<Float>) -> Float)] {
+    package static func boneSolids(_ rig: CharacterRig) -> [(bounds: AABB, distance: (SIMD3<Float>) -> Float)] {
         rig.bones.indices.filter { !rig.bones[$0].rigid }.map { b -> (bounds: AABB, distance: (SIMD3<Float>) -> Float) in
             let shape = rig.bones[b].shape, unplace = rig.restPlacement(b).inverse, placed = rig.restPlacement(b)
             let box = shape.bounds()
@@ -734,7 +734,7 @@ package struct MuscleAtlas {
 
     /// `distance`'s gradient at `p` (central differences `h` apart), no shorter than half a distance's (1): where it is
     /// flat (past the skin's band, between two shapes' sides) a Newton step by a short one would fling a vertex off.
-    static func gradient(_ distance: (SIMD3<Float>) -> Float, _ p: SIMD3<Float>, h: Float) -> SIMD3<Float> {
+    package static func gradient(_ distance: (SIMD3<Float>) -> Float, _ p: SIMD3<Float>, h: Float) -> SIMD3<Float> {
         let g = SIMD3(distance(p + [h, 0, 0]) - distance(p - [h, 0, 0]), distance(p + [0, h, 0]) - distance(p - [0, h, 0]),
                       distance(p + [0, 0, h]) - distance(p - [0, 0, h])) / (2 * h)
         let length = simd_length(g)
@@ -742,13 +742,13 @@ package struct MuscleAtlas {
     }
 
     /// How deep `p` is in rig bone `b`'s shape (0 on its axis, 1 on its surface).
-    static func depth(_ rig: CharacterRig, _ b: Int, _ p: SIMD3<Float>) -> Float {
+    package static func depth(_ rig: CharacterRig, _ b: Int, _ p: SIMD3<Float>) -> Float {
         let local = rig.restPlacement(b).inverse * SIMD4(p, 1)
         return 1 + rig.bones[b].shape.distance(PhysicsMath.xyz(local)).d / rig.bones[b].thickness
     }
 
     /// `mesh` without its specks: the parts (by shared vertices) with less than a fifth of the largest's vertices.
-    static func largestParts(_ mesh: (positions: [SIMD3<Float>], indices: [UInt32])) -> (positions: [SIMD3<Float>], indices: [UInt32]) {
+    package static func largestParts(_ mesh: (positions: [SIMD3<Float>], indices: [UInt32])) -> (positions: [SIMD3<Float>], indices: [UInt32]) {
         var parent = Array(mesh.positions.indices)
         func find(_ x: Int) -> Int {
             var x = x
@@ -776,7 +776,7 @@ package struct MuscleAtlas {
     }
 
     /// Area-weighted vertex normals of a mesh.
-    static func normals(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> [SIMD3<Float>] {
+    package static func normals(_ positions: [SIMD3<Float>], _ indices: [UInt32]) -> [SIMD3<Float>] {
         var normals = [SIMD3<Float>](repeating: .zero, count: positions.count)
         for t in stride(from: 0, to: indices.count, by: 3) {
             let a = Int(indices[t]), b = Int(indices[t + 1]), c = Int(indices[t + 2])

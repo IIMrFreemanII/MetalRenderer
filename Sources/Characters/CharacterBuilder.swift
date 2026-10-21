@@ -7,7 +7,7 @@ import simd
 /// What a character's DNA asks of the base body: each morph target's weight, and each joint's reshaping (how its
 /// children's offsets and the skin round it scale). The macro sliders drive many of both at once, in the manner of
 /// MakeHuman's macros; the DNA's own morph and bone offsets go on top.
-struct CharacterShape {
+package struct CharacterShape {
     var weights: [String: Float] = [:]
     /// Per joint, in the bind pose's (world) space: what the offsets of its children, and the skin it moves, are
     /// multiplied by.
@@ -107,7 +107,7 @@ enum MacroRig {
 /// root's travel scaled to the new hips.
 package enum CharacterBuilder {
     /// The new bind positions of every joint for `shape`.
-    static func bind(_ shape: CharacterShape, base c: SkinnedCharacter, morphs: CharacterMorphs) -> [SIMD3<Float>] {
+    package static func bind(_ shape: CharacterShape, base c: SkinnedCharacter, morphs: CharacterMorphs) -> [SIMD3<Float>] {
         let old = CharacterBase.bindPositions(c)
         var out = old
         for (j, joint) in c.joints.enumerated() where joint.parent >= 0 {
@@ -119,7 +119,7 @@ package enum CharacterBuilder {
     }
 
     /// The mesh for `shape`: positions and normals (and each level of detail's, gathered from them).
-    static func mesh(_ shape: CharacterShape, base c: SkinnedCharacter, morphs: CharacterMorphs, bind newBind: [SIMD3<Float>])
+    package static func mesh(_ shape: CharacterShape, base c: SkinnedCharacter, morphs: CharacterMorphs, bind newBind: [SIMD3<Float>])
         -> (positions: [SIMD3<Float>], normals: [SIMD3<Float>]) {
         var p = c.positions
         for t in morphs.targets {
@@ -186,7 +186,7 @@ package enum CharacterBuilder {
     /// `cap` (the base's bind space) on character `c` whose head joint went from `from` to `to`, scaled by `scale`: its
     /// levels appended to `c`'s, on the head's bone, of material `hair`. Its vertices have no full-detail source
     /// (`Level.source` UInt32.max: no morphs, no face).
-    static func addCap(_ cap: CharacterHairCap.Cap, to c: inout SkinnedCharacter, head: Int, from: SIMD3<Float>, to: SIMD3<Float>,
+    package static func addCap(_ cap: CharacterHairCap.Cap, to c: inout SkinnedCharacter, head: Int, from: SIMD3<Float>, to: SIMD3<Float>,
                        scale: simd_float3x3) {
         let skin = GPUSkinVertex(joints: UInt32(head), w0: 1, w1: 0, w2: 0)
         let normalScale = scale.inverse.transpose
@@ -217,7 +217,7 @@ package enum CharacterBuilder {
     }
 
     /// `base`'s joints with their bind positions at `bind` (rotations unchanged): local offsets and inverse binds.
-    static func joints(_ base: SkinnedCharacter, bind: [SIMD3<Float>]) -> [GPUJoint] {
+    package static func joints(_ base: SkinnedCharacter, bind: [SIMD3<Float>]) -> [GPUJoint] {
         let poses = base.bindPoses
         return base.joints.enumerated().map { j, joint in
             var out = joint
@@ -236,7 +236,7 @@ package enum CharacterBuilder {
 
     /// One of a generated character's materials: base colour, roughness, and how it scatters light under its surface
     /// (0: not skin; else its strength, + 2 where it is thin: Material.params.w's code, Shaders/Hair.metal).
-    struct Material {
+    package struct Material {
         package var color: SIMD3<Float>
         package var roughness: Float
         package var skin: Float = 0
@@ -247,7 +247,7 @@ package enum CharacterBuilder {
     /// A generated character's run of materials (FaceParts.Material's order). `skin`: the skin's colour (`skinColor`,
     /// or a crowd's tint of it). `strandBrows`: its brows are strands (CharacterHair), the skin under them only a
     /// little darker; else painted.
-    static func materials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, hair: SIMD3<Float> = [0.08, 0.05, 0.03],
+    package static func materials(_ look: CharacterDNA.Look, skin: SIMD3<Float>, hair: SIMD3<Float> = [0.08, 0.05, 0.03],
                           strandBrows: Bool = false) -> [Material] {
         let m = look.melanin
         // Irises from dark brown through hazel and green to light blue.
@@ -276,7 +276,7 @@ package enum CharacterBuilder {
     }
 
     /// The skin's diffuse colour: a mix of a pale and a dark skin by melanin, made redder by `redness` (linear RGB).
-    static func skinColor(_ look: CharacterDNA.Look) -> SIMD3<Float> {
+    package static func skinColor(_ look: CharacterDNA.Look) -> SIMD3<Float> {
         let pale = SIMD3<Float>(0.82, 0.6, 0.5), dark = SIMD3<Float>(0.13, 0.065, 0.04)
         let m = look.melanin
         var c = pale * pow(dark / pale, SIMD3(repeating: m))

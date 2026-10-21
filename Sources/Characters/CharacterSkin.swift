@@ -27,14 +27,14 @@ enum SkinAtlas {
 /// (metres per texel along u and v). Made by drawing the base's triangles into the atlas, the outermost surface
 /// (furthest from the axis) kept where several fall on one texel (the lips' inside behind their outside).
 package struct SkinChart {
-    static let defaultSize = 1024
-    let size: Int
-    var points: [SIMD3<Float>]
-    var normals: [SIMD3<Float>]
-    var covered: [Bool]
-    var spacing: [SIMD2<Float>]
+    package static let defaultSize = 1024
+    package let size: Int
+    package var points: [SIMD3<Float>]
+    package var normals: [SIMD3<Float>]
+    package var covered: [Bool]
+    package var spacing: [SIMD2<Float>]
 
-    static func make(_ base: CharacterBase, size: Int = SkinChart.defaultSize) -> SkinChart {
+    package static func make(_ base: CharacterBase, size: Int = SkinChart.defaultSize) -> SkinChart {
         let c = base.character
         let sculpt = FaceSculpt(c) ?? FaceSculpt()
         var chart = SkinChart(size: size, points: [SIMD3<Float>](repeating: .zero, count: size * size),
@@ -114,18 +114,18 @@ package struct SkinChart {
 /// - normals (tangent space): pores (wider on the nose and cheeks), the fine lines across the lips, and the wrinkles
 ///   age brings (across the forehead, between the brows, the crow's feet, under the eyes, beside the mouth, on the neck).
 /// Plain (a multiplier of 1, a flat normal) from the neck down.
-enum SkinTextures {
+package enum SkinTextures {
     /// In the caches' keys, with the kit's (the chart is the base's).
-    static let version = 3
-    static var versionKey: String { "v\(version)k\(CharacterKit.version)" }
+    package static let version = 3
+    package static var versionKey: String { "v\(version)k\(CharacterKit.version)" }
     /// A colour texel holds the multiplier times this (so the multiplier can go above 1); materials divide by it.
-    static let colourScale: Float = 0.8
-    static let roughnessScale: Float = 0.9
+    package static let colourScale: Float = 0.8
+    package static let roughnessScale: Float = 0.9
 
     /// What the colour texture depends on, beside the chart.
-    struct Marks: Equatable {
-        var redness: Float, melanin: Float, freckles: Float, blush: Float, eyeShadow: Float, lipstick: Float
-        var age: Float, sex: Float, stubble: Float, seed: UInt64
+    package struct Marks: Equatable {
+        package var redness: Float, melanin: Float, freckles: Float, blush: Float, eyeShadow: Float, lipstick: Float
+        package var age: Float, sex: Float, stubble: Float, seed: UInt64
 
         package init(_ dna: CharacterDNA) {
             let l = dna.look
@@ -136,14 +136,14 @@ enum SkinTextures {
         }
 
         /// Quantised (a slider's drag remakes the texture a few dozen times, not at every step) for the cache's key.
-        var key: String {
+        package var key: String {
             let q = [redness, melanin, freckles, blush, eyeShadow, lipstick, sex, stubble].map { Int(($0 * 24).rounded()) }
             return SkinTextures.versionKey + "-" + q.map(String.init).joined(separator: ".") + "-a\(Int(age / 4))-s\(seed % 1024)"
         }
     }
 
     /// The wrinkles' depth for `age` (0 young ... 1 deep), quantised the same way.
-    static func wrinkles(age: Float) -> Float { (min(max((age - 22) / 58, 0), 1) * 12).rounded() / 12 }
+    package static func wrinkles(age: Float) -> Float { (min(max((age - 22) / 58, 0), 1) * 12).rounded() / 12 }
 
     // MARK: Drawing
 
@@ -152,7 +152,7 @@ enum SkinTextures {
 
     /// The image `key` names, drawn by `make` unless one of the last few drawn is it (the disk caches keep them
     /// too, but a workshop off them, or one made again while they write, asks here).
-    static func cached(_ key: String, _ make: () -> FoliageTextures.Image) -> FoliageTextures.Image {
+    package static func cached(_ key: String, _ make: () -> FoliageTextures.Image) -> FoliageTextures.Image {
         lock.lock()
         if let found = recent.first(where: { $0.key == key }) { lock.unlock(); return found.image }
         lock.unlock()
@@ -164,7 +164,7 @@ enum SkinTextures {
         return image
     }
 
-    static func colour(_ chart: SkinChart, _ m: Marks) -> FoliageTextures.Image {
+    package static func colour(_ chart: SkinChart, _ m: Marks) -> FoliageTextures.Image {
         draw(chart) { p, n in
             var c = SIMD3<Float>(repeating: 1)
             let face = faceMask(p, n)
@@ -219,7 +219,7 @@ enum SkinTextures {
         }
     }
 
-    static func roughness(_ chart: SkinChart) -> FoliageTextures.Image {
+    package static func roughness(_ chart: SkinChart) -> FoliageTextures.Image {
         draw(chart, size: chart.size / 2) { p, n in
             var r: Float = 1
             // The T zone shines: the forehead's middle, the nose, the chin.
@@ -233,7 +233,7 @@ enum SkinTextures {
     }
 
     /// The normals: pores and fine lines always, the wrinkles at `wrinkles` (`SkinTextures.wrinkles`).
-    static func normals(_ chart: SkinChart, wrinkles w: Float) -> FoliageTextures.Image {
+    package static func normals(_ chart: SkinChart, wrinkles w: Float) -> FoliageTextures.Image {
         let size = chart.size
         // Heights (m) per texel first, then their slopes over the texels' spacing.
         var height = [Float](repeating: 0, count: size * size)
@@ -267,7 +267,7 @@ enum SkinTextures {
     }
 
     /// The skin's relief at `p` (normal `n`), m: negative in a pore or a wrinkle.
-    static func skinHeight(_ p: SIMD3<Float>, _ n: SIMD3<Float>, wrinkles w: Float) -> Float {
+    package static func skinHeight(_ p: SIMD3<Float>, _ n: SIMD3<Float>, wrinkles w: Float) -> Float {
         let material = FaceParts.skinMaterial(p)
         var h: Float = 0
         if material == .lips {
@@ -332,12 +332,12 @@ enum SkinTextures {
     // MARK: Regions
 
     /// The face (not the scalp, ears or neck), smoothly.
-    static func faceMask(_ p: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
+    package static func faceMask(_ p: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
         smooth(0.02, 0.05, p.z) * (1 - smooth(1.73, 1.76, p.y)) * smooth(1.565, 1.59, p.y)
     }
 
     /// Where a beard grows: the jaw, chin and upper lip, up the cheeks to a line from the ear to the mouth's corner.
-    static func beardMask(_ p: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
+    package static func beardMask(_ p: SIMD3<Float>, _ n: SIMD3<Float>) -> Float {
         let fx = abs(p.x)
         // The cheek line: from in front of the ear (y 1.65) down to beside the mouth (y 1.625); over the upper lip, up
         // to the nose.
@@ -355,7 +355,7 @@ enum SkinTextures {
     }
 
     /// 1 along an upper lid's edge (the eye's opening, FaceRig.lid's), 0 off it.
-    static func lashLine(_ p: SIMD3<Float>) -> Float {
+    package static func lashLine(_ p: SIMD3<Float>) -> Float {
         for (e, centre) in FaceSculpt.eyeCentres.enumerated() {
             let r = p - centre, x = r.x * (e == 0 ? 1 : -1)
             guard x > -0.016, x < 0.018, r.z > 0.004, abs(r.y) < 0.012 else { continue }
@@ -369,12 +369,12 @@ enum SkinTextures {
     }
 
     /// 1 on the face and head, fading to 0 down the neck (the body below stays plain).
-    static func neckFade(_ p: SIMD3<Float>) -> Float { smooth(SkinAtlas.bottom + 0.005, SkinAtlas.bottom + 0.045, p.y) }
+    package static func neckFade(_ p: SIMD3<Float>) -> Float { smooth(SkinAtlas.bottom + 0.005, SkinAtlas.bottom + 0.045, p.y) }
 
     // MARK: Helpers
 
     /// Each texel's colour from its point and normal.
-    static func draw(_ chart: SkinChart, size: Int? = nil, _ f: (SIMD3<Float>, SIMD3<Float>) -> SIMD4<Float>) -> FoliageTextures.Image {
+    package static func draw(_ chart: SkinChart, size: Int? = nil, _ f: (SIMD3<Float>, SIMD3<Float>) -> SIMD4<Float>) -> FoliageTextures.Image {
         let n = size ?? chart.size, step = chart.size / n
         var pixels = [UInt8](repeating: 0, count: n * n * 4)
         pixels.withUnsafeMutableBufferPointer { out in
@@ -389,12 +389,12 @@ enum SkinTextures {
         return FoliageTextures.Image(width: n, height: n, pixels: pixels)
     }
 
-    @inline(__always) static func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { FaceSculpt.smoothstep(a, b, x) }
-    @inline(__always) static func step(_ x: Float, _ edge: Float) -> Float { smooth(edge - 0.05, edge + 0.05, x) }
+    @inline(__always) package static func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { FaceSculpt.smoothstep(a, b, x) }
+    @inline(__always) package static func step(_ x: Float, _ edge: Float) -> Float { smooth(edge - 0.05, edge + 0.05, x) }
     /// A crease's profile across it: 1 on its line, falling off over `width`.
-    @inline(__always) static func crease(_ d: Float, _ width: Float) -> Float { exp(-(d * d) / (width * width)) }
+    @inline(__always) package static func crease(_ d: Float, _ width: Float) -> Float { exp(-(d * d) / (width * width)) }
 
-    static func gauss(_ p: SIMD3<Float>, _ c: SIMD3<Float>, _ r: Float, mirror: Bool = false) -> Float {
+    package static func gauss(_ p: SIMD3<Float>, _ c: SIMD3<Float>, _ r: Float, mirror: Bool = false) -> Float {
         var q = p
         if mirror { q.x = abs(q.x) * (c.x < 0 ? -1 : 1) }
         let d = simd_distance_squared(q, c)
@@ -402,19 +402,19 @@ enum SkinTextures {
     }
 
     /// An elliptic falloff in x and y about `c` (each side of the face mirrored onto c's).
-    static func gaussXY(_ p: SIMD3<Float>, _ c: SIMD3<Float>, _ r: SIMD2<Float>) -> Float {
+    package static func gaussXY(_ p: SIMD3<Float>, _ c: SIMD3<Float>, _ r: SIMD2<Float>) -> Float {
         let x = c.x == 0 ? p.x : abs(p.x) - abs(c.x)
         let d = SIMD2(x / r.x, (p.y - c.y) / r.y)
         return exp(-simd_length_squared(d))
     }
 
-    static func segmentDistance(_ p: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+    package static func segmentDistance(_ p: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
         let ab = b - a
         let t = min(max(simd_dot(p - a, ab) / simd_length_squared(ab), 0), 1)
         return simd_distance(p, a + ab * t)
     }
 
-    @inline(__always) static func hash(_ x: Int32, _ y: Int32, _ z: Int32, _ seed: UInt32) -> UInt32 {
+    @inline(__always) package static func hash(_ x: Int32, _ y: Int32, _ z: Int32, _ seed: UInt32) -> UInt32 {
         var h = seed &* 0x9E37_79B9 ^ UInt32(bitPattern: x) &* 0x85EB_CA6B
         h ^= UInt32(bitPattern: y) &* 0xC2B2_AE35
         h ^= UInt32(bitPattern: z) &* 0x27D4_EB2F
@@ -425,10 +425,10 @@ enum SkinTextures {
         h ^= h >> 15
         return h
     }
-    @inline(__always) static func unit(_ h: UInt32) -> Float { Float(h & 0xFFFFFF) / Float(0x1000000) }
+    @inline(__always) package static func unit(_ h: UInt32) -> Float { Float(h & 0xFFFFFF) / Float(0x1000000) }
 
     /// Value noise in 3D, 0...1.
-    static func noise(_ p: SIMD3<Float>, seed: UInt32) -> Float {
+    package static func noise(_ p: SIMD3<Float>, seed: UInt32) -> Float {
         let f = p.rounded(.down), t = p - f
         let i = SIMD3<Int32>(Int32(f.x), Int32(f.y), Int32(f.z))
         let s = t * t * (3 - 2 * t)
@@ -439,7 +439,7 @@ enum SkinTextures {
         return y0 + (y1 - y0) * s.z
     }
 
-    static func fbm(_ p: SIMD3<Float>, seed: UInt32, octaves: Int = 3) -> Float {
+    package static func fbm(_ p: SIMD3<Float>, seed: UInt32, octaves: Int = 3) -> Float {
         var sum: Float = 0, amplitude: Float = 0.5, q = p, total: Float = 0
         for o in 0..<octaves {
             sum += amplitude * noise(q, seed: seed &+ UInt32(o) &* 101)
@@ -451,7 +451,7 @@ enum SkinTextures {
     }
 
     /// The distance (in cells) to the nearest of one random point per cell.
-    static func worley(_ p: SIMD3<Float>, seed: UInt32) -> Float {
+    package static func worley(_ p: SIMD3<Float>, seed: UInt32) -> Float {
         let f = p.rounded(.down)
         let i = SIMD3<Int32>(Int32(f.x), Int32(f.y), Int32(f.z))
         var best: Float = 9
@@ -469,7 +469,7 @@ enum SkinTextures {
     }
 
     /// Round spots of radius about `size`, one in a `cell`-sized cell with probability `chance`: 1 inside, soft edged.
-    static func spots(_ p: SIMD3<Float>, cell: Float, size: Float, chance: Float, seed: UInt32) -> Float {
+    package static func spots(_ p: SIMD3<Float>, cell: Float, size: Float, chance: Float, seed: UInt32) -> Float {
         guard chance > 0 else { return 0 }
         let q = p / cell, f = q.rounded(.down)
         let i = SIMD3<Int32>(Int32(f.x), Int32(f.y), Int32(f.z))
