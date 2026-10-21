@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The water at one place of the world: its surface's height, how it flows there (m/s, the world's x, z), its look

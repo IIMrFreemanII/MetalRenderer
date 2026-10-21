@@ -31,9 +31,9 @@ extension Foliage {
         package var cover: Cover? = nil
 
         package struct Ramp: Codable, Equatable {
-            var gain: Float = 0
-            var from: Float = 0
-            var to: Float = 0.7
+            package var gain: Float = 0
+            package var from: Float = 0
+            package var to: Float = 0.7
         }
 
         package struct Cover: Codable, Equatable {
@@ -98,7 +98,7 @@ extension Foliage {
             scale = shared.reduce(1) { $0 + $1.share }
         }
 
-        var isEmpty: Bool { weighted.isEmpty && shared.isEmpty }
+        package var isEmpty: Bool { weighted.isEmpty && shared.isEmpty }
 
         /// `r`: a random 0...1.
         package func pick(_ r: Float, high: Float, slope: Float, stand: Float, light: [SIMD2<Float>]) -> Species? {

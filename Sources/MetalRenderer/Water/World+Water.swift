@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The open world's water, as a function of its seed and a place, as everything else of the world is: asked twice,

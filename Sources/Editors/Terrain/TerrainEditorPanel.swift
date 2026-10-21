@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Terrain Editor's window (TerrainView), beside the main one: Shift-T or Shift-Cmd-T. Tab in it toggles sculpt

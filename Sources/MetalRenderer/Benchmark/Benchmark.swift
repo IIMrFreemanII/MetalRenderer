@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 import CoreGraphics
 import ImageIO

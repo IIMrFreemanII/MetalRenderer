@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The building editor's numbers (BuildingStyleDef's), described once like the plant editor's (PlantParams): the
 /// rows of its tabs, Mutate (BuildingMutate) and the tests read these tables. A range (Span) is two rows, its least

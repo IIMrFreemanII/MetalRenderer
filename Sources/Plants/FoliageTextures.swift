@@ -88,9 +88,9 @@ package enum FoliageTextures {
     /// 255 where there is leaf or twig; the traversal tests it (Shaders/Intersect.metal), and the colours are an
     /// ordinary texture.
     package struct CardSheet {
-        var image: Image
-        var alpha: [UInt8]
-        var coverage: Float                 // the share of a card that is there
+        package var image: Image
+        package var alpha: [UInt8]
+        package var coverage: Float                 // the share of a card that is there
     }
     package static let cardCells = 2
     package static let cardSheetSize = 512          // CUTOUT_SIZE in Shaders/Intersect.metal

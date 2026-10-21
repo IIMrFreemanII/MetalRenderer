@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The building styles that scenes are built with: the built-in ones (one per district, BuiltInBuildings) with any
 /// saved over them, then the custom ones; and single buildings' own plans (LotOverride, BuildingOverrides.swift).

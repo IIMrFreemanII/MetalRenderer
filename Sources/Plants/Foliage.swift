@@ -207,18 +207,18 @@ package enum Foliage {
         var count: Int32                    // nodes: 2 or more
         var parent: Int32                   // stem, -1 for level 0
         var limb: Int32                     // which level-1 stem it belongs to (-1: level 0)
-        var level: UInt8
+        package var level: UInt8
         var radial: UInt8
         var length: Float
     }
 
     package struct Skeleton {
-        var nodes: [SIMD4<Float>] = []      // xyz position, w radius
-        var stems: [Stem] = []
-        var limbs = 0
+        package var nodes: [SIMD4<Float>] = []      // xyz position, w radius
+        package var stems: [Stem] = []
+        package var limbs = 0
 
         /// A stem at fraction `f` of its length.
-        func sample(_ s: Stem, _ f: Float) -> (position: SIMD3<Float>, tangent: SIMD3<Float>, radius: Float) {
+        package func sample(_ s: Stem, _ f: Float) -> (position: SIMD3<Float>, tangent: SIMD3<Float>, radius: Float) {
             let x = min(max(f, 0), 1) * Float(s.count - 1)
             let i = min(Int(x), Int(s.count) - 2)
             let a = nodes[Int(s.first) + i], b = nodes[Int(s.first) + i + 1]
@@ -478,10 +478,10 @@ package enum Foliage {
     }
 
     package struct Part {
-        var mesh: Int                       // in the plant's own meshes, or the species' palette if `shared`
-        var shared: Bool
-        var transform: float4x4             // into plant space: a rotation, a uniform scale and a translation
-        var bone: Int
+        package var mesh: Int                       // in the plant's own meshes, or the species' palette if `shared`
+        package var shared: Bool
+        package var transform: float4x4             // into plant space: a rotation, a uniform scale and a translation
+        package var bone: Int
     }
 
     /// One variant of a species at an age. Bone 0 is the root; part 0 is the trunk.
@@ -496,11 +496,11 @@ package enum Foliage {
     }
 
     package struct SpeciesSet {
-        let species: Species
-        var palette: [Mesh]
-        var plants: [Plant]
+        package let species: Species
+        package var palette: [Mesh]
+        package var plants: [Plant]
 
-        func plants(of age: Age) -> [Int] { plants.indices.filter { plants[$0].age == age } }
+        package func plants(of age: Age) -> [Int] { plants.indices.filter { plants[$0].age == age } }
     }
 
     /// The part's local frame for a bough along `dir`: +Y along it, +Z as far toward `up` as it goes.

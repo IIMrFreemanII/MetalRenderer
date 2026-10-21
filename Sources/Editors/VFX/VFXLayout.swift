@@ -1,6 +1,7 @@
 import CoreGraphics
 import EngineCore
 import MetalRenderer
+import Plants
 import simd
 
 /// Where the VFX editor's canvas draws an effect's graph, in the graph's units (a point at zoom 1): each emitter a

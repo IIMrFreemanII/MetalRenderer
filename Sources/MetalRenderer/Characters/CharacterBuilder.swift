@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a character's DNA asks of the base body: each morph target's weight, and each joint's reshaping (how its

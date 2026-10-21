@@ -4,6 +4,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The day as a clock (DayClock.swift): the scenes' suns along their days, the presets, holding the day, and the day bar.
 final class DayClockTests: XCTestCase {

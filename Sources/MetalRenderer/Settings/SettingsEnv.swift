@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The settings as `METALRENDERER_*` environment variables, both ways, driven by `SettingsTable`: `export` writes the
 /// variables that reproduce the settings ("Copy as Env" in the settings panel), `apply` reads them back.

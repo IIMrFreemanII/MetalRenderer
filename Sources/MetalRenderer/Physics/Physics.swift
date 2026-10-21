@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Rigid bodies that are SDF shapes (SDFShapes.swift), falling, sliding, rolling and stacking against each other and

@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalKit
+import Plants
 import QuartzCore
 import simd
 

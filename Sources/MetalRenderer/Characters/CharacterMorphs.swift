@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The base body's morph targets (CharacterBase): each a sparse list of vertices and how far each moves at weight 1.

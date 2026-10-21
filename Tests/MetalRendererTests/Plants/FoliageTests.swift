@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Foliage.swift: the plants are a pure function of the seed (built in parallel or not), every mesh is sound (a
 /// degenerate triangle would shade with a NaN normal), and an assembly baked flat is the same triangles.

@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The benchmark modes (Benchmark+Modes.swift) and the `Benchmark.Config` modifiers they are built with.
 final class BenchmarkModesTests: XCTestCase {

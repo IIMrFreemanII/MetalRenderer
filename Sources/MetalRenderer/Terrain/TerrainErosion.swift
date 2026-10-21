@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Erosion: water that rains, runs downhill carrying earth and leaves it where it slows (hydraulic: the virtual pipes

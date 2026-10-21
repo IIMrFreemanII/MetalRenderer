@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A graph as the engine bakes it (MatEngine): its subgraphs inlined, its exposed parameters set, its nodes in an

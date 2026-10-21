@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The Mixamo motions Tools/mixamo/download.py fetched: `METALRENDERER_MIXAMO`, or ~/MixamoAnimations, one folder per
 /// character it was baked on, each with an index.json. Far too many to load at once (~2,450), so a run names the

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The face's morph targets: the face sliders' (the nose's length, the eyes' spacing, the jaw's width ...) and the

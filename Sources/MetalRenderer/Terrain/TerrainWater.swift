@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A terrain's water (WaterBody): a river's bed carved into the ground, a lake's basin found by flooding the ground

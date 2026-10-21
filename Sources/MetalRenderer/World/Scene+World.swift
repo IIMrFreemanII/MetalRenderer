@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Which part of the open world a scene holds (Scene.worldPlace).

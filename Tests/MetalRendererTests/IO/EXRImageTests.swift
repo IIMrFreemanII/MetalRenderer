@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The OpenEXR reader (EXRImage.swift) against what the OpenEXR library itself decodes from the same files: the
 /// fixtures in Tools/test-assets/exr, which make.py there writes (with the library's Python package) together with

@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Material Painter's window (PainterView), beside the main one: V or Shift-Cmd-P. Tab in it toggles paint mode;

@@ -3,6 +3,7 @@ import Combine
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import simd
 
 /// What the Material Painter's window needs of the renderer (RendererController; a stand-in in the tests).

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The ground a terrain's edits are made on: a function of the sample, from the scene's own seed (the Forest's

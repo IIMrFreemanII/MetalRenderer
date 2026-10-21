@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Shaders/Hair.metal's hair BSDF on the CPU (Chiang et al. 2016, as pbrt-v3's HairBSDF), for the tests: the same

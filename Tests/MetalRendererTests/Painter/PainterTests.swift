@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The Material Painter past the unwrap: the painted scene (its materials, its corners' UVs, its assignments), the
 /// documents, the brush's dabs, the GLB a set exports with, the composite and a stroke on the GPU, and the window's

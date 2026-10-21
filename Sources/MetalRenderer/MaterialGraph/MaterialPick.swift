@@ -1,3 +1,4 @@
+import Plants
 import simd
 
 /// What a click in the view found (Renderer.readPick): the instance, its material (its index in the scene), the

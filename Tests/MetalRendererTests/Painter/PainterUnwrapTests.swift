@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The Material Painter's UV check and unwrap (Painter/UVCheck, UVUnwrap, UVPack): every texel at one place of the
 /// mesh, no fold, gutters between the charts, the area kept, the same answer every time, and in time.

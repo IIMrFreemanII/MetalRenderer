@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The parts of a generated character's face that are meshes of their own, beside the skin (FaceSculpt): the

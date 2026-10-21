@@ -2,6 +2,7 @@ import AppKit
 import EngineCore
 import Metal
 import MetalRenderer
+import Plants
 import SwiftUI
 import simd
 

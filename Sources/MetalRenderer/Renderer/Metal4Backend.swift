@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Plants
 import QuartzCore
 
 /// Frames through Metal 4's command model (`RenderAPI.metal4`, macOS 26): an `MTL4CommandQueue`, command buffers that

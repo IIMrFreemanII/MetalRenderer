@@ -4,6 +4,7 @@ import AppKit
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The character editor without its UI: its parameter table (CharacterParams), Randomize and Mutate, and its model
 /// (CharacterEditorModel) against a stand-in renderer.

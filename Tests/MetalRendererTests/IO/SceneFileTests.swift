@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Scene files (SceneFile.swift): written and read back the same, another version a miss, and what one places in a
 /// scene (Scene.place) where it says.

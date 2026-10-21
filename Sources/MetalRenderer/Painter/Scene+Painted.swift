@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// An object the Material Painter paints: its instance, given materials of its own (copies of the ones it had, one

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The city's layout, from its settings alone (no geometry yet): a street grid with jittered block sizes and wider

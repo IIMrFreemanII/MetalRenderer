@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 
 /// Floating panel with live debug data: a frame-time graph, GPU pass timings, the scene, virtual geometry, texture
 /// streaming, memory and the ray queries' counters. Like the settings panel it never becomes key, so

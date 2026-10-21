@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The terrain workshop (`SceneSettings.terrainWorkshop`): a terrain of its own to make with the Terrain Editor, from

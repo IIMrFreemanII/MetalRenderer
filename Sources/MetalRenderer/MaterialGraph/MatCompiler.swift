@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import QuartzCore
 
 /// The material graph's kernels: the library of the nodes' kernels (ShadersMaterial.metal, compiled once), and the

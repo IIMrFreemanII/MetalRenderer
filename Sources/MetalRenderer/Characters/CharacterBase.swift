@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The body every generated character is made from (CharacterDNA, CharacterBuilder): the Y Bot's skin made again as

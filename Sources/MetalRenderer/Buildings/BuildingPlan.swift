@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a room is for: what furnishes it, what its floor and walls are, what it connects to.

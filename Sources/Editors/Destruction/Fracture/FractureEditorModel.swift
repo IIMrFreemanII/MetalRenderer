@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// What the Fracture Editor needs of the renderer (RendererController).

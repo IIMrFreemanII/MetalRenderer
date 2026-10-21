@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Project Graph's window (ProjectGraphView), beside the main one. It takes the keys when clicked: Delete hides the

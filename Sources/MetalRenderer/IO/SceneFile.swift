@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A scene's hand-placed content, as a binary file (Assets/Scenes/<scene>.scene): the objects put where they stand (an

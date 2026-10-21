@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A pixel processor's function (Substance's): math nodes wired into a Result, evaluated for every pixel of the

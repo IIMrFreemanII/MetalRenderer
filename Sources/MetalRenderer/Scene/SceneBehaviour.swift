@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A scene's own runtime logic, its gameplay (the demolition's weapons and walker, the destruction's tools): made by

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The furniture and the things on it, made of boxes and cylinders like the buildings: each piece in its own frame,

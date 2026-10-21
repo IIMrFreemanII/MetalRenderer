@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// A character as data: everything that makes one person different from another, and nothing else. The character
 /// editor and the NPC generator only ever write it; CharacterBuilder makes the mesh, skeleton and materials from it.

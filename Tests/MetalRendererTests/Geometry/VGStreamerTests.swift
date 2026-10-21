@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Virtual geometry's streaming (VGStreamer) and what the cuts assume of the DAG.
 final class VGStreamerTests: XCTestCase {

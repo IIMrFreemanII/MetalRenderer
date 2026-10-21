@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 /// One node of the light tree (MSL LightTreeNode): its lights' bounds, power and emission cone.

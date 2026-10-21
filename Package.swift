@@ -38,11 +38,19 @@ let package = Package(
             path: "Sources/EngineCore",
             swiftSettings: engineSettings
         ),
+        // The plants: species, their generator (meshes, voxels, textures), the catalog and its store. The scene's
+        // plant tracing (descriptors, voxel levels) is the engine's.
+        .target(
+            name: "Plants",
+            dependencies: ["EngineCore"],
+            path: "Sources/Plants",
+            swiftSettings: engineSettings
+        ),
         // The engine: the scene, the renderer and its systems, the editors' workshop scenes, the benchmarks; all but
         // the core, the editors, the game and the entry point.
         .target(
             name: "MetalRenderer",
-            dependencies: ["EngineCore", "CPhysicsAtomics"],
+            dependencies: ["EngineCore", "Plants", "CPhysicsAtomics"],
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.
@@ -53,7 +61,7 @@ let package = Package(
         // engine never calls them: they read its reports (RendererController) and send it work.
         .target(
             name: "Editors",
-            dependencies: ["EngineCore", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "MetalRenderer"],
             path: "Sources/Editors",
             swiftSettings: engineSettings
         ),
@@ -61,7 +69,7 @@ let package = Package(
         // on the engine's `package` API. A change here recompiles this target alone (README, "Source layout").
         .target(
             name: "Game",
-            dependencies: ["EngineCore", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "MetalRenderer"],
             path: "Sources/Game",
             swiftSettings: engineSettings
         ),
@@ -72,7 +80,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MetalRendererTests",
-            dependencies: ["EngineCore", "MetalRenderer", "Editors", "Game"],
+            dependencies: ["EngineCore", "Plants", "MetalRenderer", "Editors", "Game"],
             path: "Tests/MetalRendererTests"
         )
     ]

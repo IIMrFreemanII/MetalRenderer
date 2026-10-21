@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import UniformTypeIdentifiers
 
 /// Floating panel with a control for every `RenderSettings` field (live stats are in the Debug window, DebugPanel).

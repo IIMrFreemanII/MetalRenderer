@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The demolition scene's world (Scene+Demolition.swift, Physics+Demolition.swift) on the CPU: the office stands, the
 /// tools break it, the walker walks it, and all of it is the same however it is stepped.

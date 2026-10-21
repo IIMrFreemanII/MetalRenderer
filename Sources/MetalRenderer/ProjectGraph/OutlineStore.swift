@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The scenes' outlines on disk: Assets/Scenes/Outlines/<scene>.json, one per kind of scene (its last one made), so the
 /// Project Graph knows the scenes that aren't loaded. The renderer writes a scene's when it installs it (off its thread);

@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 
 /// `METALRENDERER_VFX_SCRIPT=<folder>` (the app with its window): the VFX editor driven through what its controls do,
 /// a step every few seconds, as the renderer runs it. After each step the renderer's report (VFXStatus) is printed

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// Kernels of virtual geometry's per-frame cut (Shaders/VirtualGeometry.metal).

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import simd
 
 /// The game: the demo scenes, what suits each (their fog, sky, lens, camera and day), their settings rows and the

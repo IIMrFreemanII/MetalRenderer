@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 import UniformTypeIdentifiers
 

@@ -2,6 +2,7 @@ import CoreGraphics
 import EngineCore
 import Foundation
 import ImageIO
+import Plants
 import simd
 
 /// The sky's atmosphere on the CPU, with the constants of Shaders/Sky.metal ("Sky and clouds"): the sun light's colour,

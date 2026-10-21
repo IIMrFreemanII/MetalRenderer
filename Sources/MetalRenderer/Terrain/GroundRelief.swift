@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The realistic look's relief on the CPU (realism high): how far the ground's blended scans raise or sink it at a

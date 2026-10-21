@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A square heightfield around the origin: rolling ground from a few octaves of gradient noise, flattened to y = 0

@@ -13,21 +13,28 @@ import simd
 package enum FoliageVoxels {
     /// Level 0 voxels along the plant's longest side. Measured in the forest: a march of 32 steps costs less than
     /// walking the plant's parts, one of 64 costs more, so a finer level would only ever be slower than triangles.
-    static let resolution = 32
+    package static let resolution = 32
     /// Wood counts for this many times its area: a trunk is solid, and a ray through the voxels of its two walls
     /// should stop in one of them nearly always, not as often as it would in the same area of scattered leaves.
-    static let woodWeight: Float = 3
-    static let levels = 3
-    static let depth: Float = 4         // VOXEL_DEPTH in Shaders/Intersect.metal
+    package static let woodWeight: Float = 3
+    package static let levels = 3
+    package static let depth: Float = 4         // VOXEL_DEPTH in Shaders/Intersect.metal
 
     /// MSL `RTVoxels`: one plant's grid.
-    struct Grid {
-        var lo = SIMD4<Float>()         // xyz = the grid's corner (plant space), w = a level 0 voxel's size
-        var dims = SIMD4<UInt32>()      // xyz = level 0 voxels per axis, w = 1: an evergreen (it keeps its leaves)
-        var offsets = SIMD4<UInt32>()   // xyz = where levels 0, 1, 2 start among the cells
+    package struct Grid {
+        package var lo = SIMD4<Float>()         // xyz = the grid's corner (plant space), w = a level 0 voxel's size
+        package var dims = SIMD4<UInt32>()      // xyz = level 0 voxels per axis, w = 1: an evergreen (it keeps its leaves)
+        package var offsets = SIMD4<UInt32>()   // xyz = where levels 0, 1, 2 start among the cells
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(lo: SIMD4<Float> = SIMD4<Float>(), dims: SIMD4<UInt32> = SIMD4<UInt32>(), offsets: SIMD4<UInt32> = SIMD4<UInt32>()) {
+            self.lo = lo
+            self.dims = dims
+            self.offsets = offsets
+        }
     }
 
-    static func dims(_ d: SIMD3<Int>, level: Int) -> SIMD3<Int> {
+    package static func dims(_ d: SIMD3<Int>, level: Int) -> SIMD3<Int> {
         let r = (1 << level) - 1
         return SIMD3(max((d.x + r) >> level, 1), max((d.y + r) >> level, 1), max((d.z + r) >> level, 1))
     }
@@ -35,23 +42,38 @@ package enum FoliageVoxels {
     /// What a plant's grid is made of: its meshes, placed in its space: an assembly's parts, or the parts a baked plant
     /// was flattened from.
     package struct Piece {
-        var mesh: Foliage.Mesh
-        var transform: float4x4         // into plant space
-        var firstLeaf: UInt32           // the mesh's triangles from here on are leaves
-        var leafCoverage: Float = 1     // the share of a leaf triangle that is there: a card's picture's (Scene.cutouts)
+        package var mesh: Foliage.Mesh
+        package var transform: float4x4         // into plant space
+        package var firstLeaf: UInt32           // the mesh's triangles from here on are leaves
+        package var leafCoverage: Float = 1     // the share of a leaf triangle that is there: a card's picture's (Scene.cutouts)
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(mesh: Foliage.Mesh, transform: float4x4, firstLeaf: UInt32, leafCoverage: Float = 1) {
+            self.mesh = mesh
+            self.transform = transform
+            self.firstLeaf = firstLeaf
+            self.leafCoverage = leafCoverage
+        }
     }
     package struct Plant {
         package var key: String                 // what it is (its library, species and number): the cache's name for it
         package var pieces: [Piece]
         package var evergreen: Bool
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(key: String, pieces: [Piece], evergreen: Bool) {
+            self.key = key
+            self.pieces = pieces
+            self.evergreen = evergreen
+        }
     }
 
     /// Of `build`'s output: a change of the voxelisation makes other files in the cache.
-    static let version = 1
+    package static let version = 1
 
     /// `build`, from the cache or into it (GeneratedCache); the file is named by the plants' keys and their cards'
     /// coverage, which is all their meshes are made from.
-    static func cached(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
+    package static func cached(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
         guard !plants.isEmpty else { return ([], []) }
         var hasher = GeneratedCache.Hasher()
         for plant in plants {
@@ -73,7 +95,7 @@ package enum FoliageVoxels {
     }
 
     /// Every plant's grid (offsets from 0: `build` places them) and cells. The plants are voxelised in parallel.
-    static func build(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
+    package static func build(_ plants: [Plant]) -> (grids: [Grid], cells: [UInt32]) {
         var built = [(grid: Grid, cells: [UInt32])](repeating: (Grid(), []), count: plants.count)
         built.withUnsafeMutableBufferPointer { slots in
             DispatchQueue.concurrentPerform(iterations: plants.count) { p in slots[p] = voxelise(plants[p]) }

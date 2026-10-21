@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The realistic look's rocks (SceneSettings.realism): boulders, stones and pebbles on a scene's terrain, in its rock

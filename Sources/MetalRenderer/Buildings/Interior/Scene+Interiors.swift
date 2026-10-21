@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Puts generated buildings into a scene (the city's, the world's, the building workshop's): their materials (each

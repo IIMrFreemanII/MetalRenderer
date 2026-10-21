@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What every scene's builder shares: a kit of meshes and boxes, a camera from a position and angles, the day sun,

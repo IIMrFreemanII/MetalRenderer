@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Where a terrain's samples are. A sample is a point of a square grid of `cell` metres, numbered (i, j) from the one

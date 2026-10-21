@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Liquids: water, blood and honey poured from nozzles, each in a box of its own (its domain: the box's walls hold it),

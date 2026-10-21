@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a scene is made of, as a tree: the Project Graph's view of it (ProjectGraph.swift merges the scenes'). Made by

@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 import simd
 
 /// The liquids on the GPU (Shaders/Fluid.metal): each liquid's buffers, its group of substeps encoded before each of

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 // MARK: - The graph's edits and checks (the VFX editor's, the benchmarks')

@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Plants
 
 /// MetalFX's denoising scaler (macOS 26): the frame is traced at a lower resolution with a different sub-pixel jitter
 /// every frame, and MetalFX takes the raw 1-spp light, still linear and unbounded, with the surface's albedo, normal

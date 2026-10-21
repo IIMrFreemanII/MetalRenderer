@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// Which source files make each scene and system, from graphify's graph of the code (graphify-out/graph.json in the
 /// repository): a scene's builder (`Scene.buildCornell()`) and the files of what it calls; a system's type. Read in the

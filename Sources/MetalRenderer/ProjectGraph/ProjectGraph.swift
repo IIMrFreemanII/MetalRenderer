@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The project as one graph: the project, its scenes and what each is made of (their outlines, SceneOutline), the assets
 /// they are made from and with (one node each, which every user of it links to), the source files that make them, and

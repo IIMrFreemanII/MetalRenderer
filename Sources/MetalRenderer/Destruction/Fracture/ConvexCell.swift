@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A convex polytope: the intersection of half-spaces, kept as its faces (each a plane and the polygon of the polytope

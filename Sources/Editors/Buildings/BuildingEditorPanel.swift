@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The building editor's floating panels: the editor (BuildingEditorView) beside the main window, and its Floor Plan

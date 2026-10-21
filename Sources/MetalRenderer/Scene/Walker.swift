@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Walking (walk mode, the V key): a person 1.8 m tall (1.2 crouched), 0.3 m round, who falls, stands on what is

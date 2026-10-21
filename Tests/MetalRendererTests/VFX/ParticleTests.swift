@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Particles.swift, ParticleMath.swift, VFXInterpreter.swift, ParticlesGPU.swift and Shaders/ParticleSim.metal: what emitters ask for, the
 /// pool's invariants (every slot alive or on its emitter's dead list, once), the GPU's step against the CPU's

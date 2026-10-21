@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The plant editor's floating panel (PlantEditorView in an NSPanel), beside the main window like Render Settings.

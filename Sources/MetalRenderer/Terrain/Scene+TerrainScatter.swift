@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a scene's terrain carries on it: its document's scatter rules' things (TerrainScatter: every candidate of a

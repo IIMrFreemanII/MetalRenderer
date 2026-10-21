@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The character editor's floating panel (CharacterEditorView in an NSPanel), beside the main window like the plant

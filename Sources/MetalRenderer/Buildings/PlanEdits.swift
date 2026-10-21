@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A hand edit of a building's floor plan (the Floor Plan window's tools), saved with its building (LotOverride).

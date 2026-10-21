@@ -4,6 +4,7 @@ import AppKit
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// What the plant editor is built from without its UI: the parameter table (PlantParams.swift) and Mutate
 /// (PlantMutate.swift).

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import simd
 
 /// What a click does in the destruction scene (keys 1, 2, 3): grab a body, shoot a ball from the camera, or blast

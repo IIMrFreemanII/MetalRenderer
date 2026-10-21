@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The open world: its ground, its forests and its cities as a function of a seed and a place, with no edge. Nothing

@@ -1,5 +1,6 @@
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The building editor: the styles across the top, the selected one's tabs below, and the workshop's controls, its

@@ -3,6 +3,7 @@ import Combine
 import EngineCore
 import Metal
 import MetalRenderer
+import Plants
 import QuartzCore
 import simd
 

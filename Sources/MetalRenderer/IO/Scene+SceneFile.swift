@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a scene file (SceneFile) places in a scene, and what the editor needs to move it: each object's instances,

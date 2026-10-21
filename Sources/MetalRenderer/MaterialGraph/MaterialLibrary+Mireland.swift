@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Mireland: the swamp materials of the collection "Welcome to Mireland" (Sherif Dawoud, Substance 3D Assets),

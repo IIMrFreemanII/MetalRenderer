@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A body's skin as a signed distance in its rest space (negative inside), kept on a grid within `band` of it: what

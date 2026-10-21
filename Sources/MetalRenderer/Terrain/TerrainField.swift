@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What the edits keep of a tile: per sample (tileCells squared, rows along j), the height added to the base, and if

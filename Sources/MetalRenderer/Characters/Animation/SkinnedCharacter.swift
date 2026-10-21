@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A character that deforms with a skeleton: its mesh in the bind pose, each vertex's joints and weights, the

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Builds a material graph in Swift: nodes added with their parameters and what is wired into them, outputs named

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A soft body's make-up, in its shape's space (PhysicsWorld.addSoftBody places it): a lattice of tetrahedra filling

@@ -2,6 +2,7 @@ import CoreGraphics
 import EngineCore
 import Foundation
 import ImageIO
+import Plants
 import simd
 
 extension Scene {

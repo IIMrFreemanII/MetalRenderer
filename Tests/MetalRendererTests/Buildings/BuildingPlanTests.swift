@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The buildings' floor plans (BuildingPlanner.swift) and the interiors made from them (Building+Interior.swift):
 /// every style on lots of several sizes and kinds, over a run of seeds.

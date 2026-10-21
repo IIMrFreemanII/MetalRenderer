@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// How a window is made: its opening in a bay, how deep it sits in the wall, and what is around it.

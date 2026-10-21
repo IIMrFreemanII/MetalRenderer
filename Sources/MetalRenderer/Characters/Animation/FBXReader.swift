@@ -1,6 +1,7 @@
 import Compression
 import EngineCore
 import Foundation
+import Plants
 
 enum FBXError: Error, CustomStringConvertible {
     case invalid(String)

@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 import simd
 
 /// A mesh in a buffer of its own: a borrowed mesh (`Scene.BorrowedMesh`: an open world's tile, a plant of the

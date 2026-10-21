@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The skin's UVs (SkinAtlas), the base's head in them (SkinChart) and the textures drawn over it (SkinTextures).
 /// Skipped where Assets/Characters isn't there. `METALRENDERER_SKIN_DUMP=<folder>` writes the textures as PNGs.

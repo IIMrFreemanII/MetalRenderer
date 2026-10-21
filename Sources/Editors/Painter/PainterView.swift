@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Material Painter's window: the layers on the left (each its thumbnail, visibility, blend, opacity, mask), the

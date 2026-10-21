@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Whether a mesh's own UVs can hold a painted texture set: every point of it at a texel of its own. If not, the

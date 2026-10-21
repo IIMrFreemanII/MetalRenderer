@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// Power-of-two allocator for the streaming pool: blocks of 4 KB to 64 KB (a page), carved from 64 KB chunks.

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a layer can write: the texture set's channels (the normal is the height's and the graphs' normals', never

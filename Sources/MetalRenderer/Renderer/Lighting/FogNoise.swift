@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Tiling 3D noise for the volumetric fog's density (fogNoise in Shaders/Fog.metal): three octaves of gradient noise

@@ -21,11 +21,17 @@ extension Foliage {
     }
 
     package struct MeshSize {
-        var vertices = 0
-        var indices = 0
+        package var vertices = 0
+        package var indices = 0
 
         package static func + (a: MeshSize, b: MeshSize) -> MeshSize { MeshSize(vertices: a.vertices + b.vertices, indices: a.indices + b.indices) }
         package static func * (a: MeshSize, n: Int) -> MeshSize { MeshSize(vertices: a.vertices * n, indices: a.indices * n) }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(vertices: Int = 0, indices: Int = 0) {
+            self.vertices = vertices
+            self.indices = indices
+        }
     }
 
     /// Writes a mesh's arrays in order. Nothing grows: the arrays have their final size.
@@ -40,7 +46,7 @@ extension Foliage {
         var hi = SIMD3<Float>(repeating: -.infinity)
 
         @discardableResult
-        @inline(__always) mutating func vertex(_ p: SIMD3<Float>, _ n: SIMD3<Float>, _ uv: SIMD2<Float>) -> UInt32 {
+        @inline(__always) package mutating func vertex(_ p: SIMD3<Float>, _ n: SIMD3<Float>, _ uv: SIMD2<Float>) -> UInt32 {
             positions[vertices] = p
             normals[vertices] = n
             uvs[vertices] = uv
@@ -50,7 +56,7 @@ extension Foliage {
             return UInt32(vertices - 1)
         }
 
-        @inline(__always) mutating func triangle(_ a: UInt32, _ b: UInt32, _ c: UInt32) {
+        @inline(__always) package mutating func triangle(_ a: UInt32, _ b: UInt32, _ c: UInt32) {
             indices[written] = a
             indices[written + 1] = b
             indices[written + 2] = c
@@ -106,6 +112,12 @@ extension Foliage {
         package func detail(level: UInt8, footRadius: Float, radial: UInt8) -> (rings: Int, sides: Int)? {
             guard level <= 1, footRadius > 0.03, radial >= 3 else { return nil }
             return level == 0 ? (3, 3) : (2, 2)
+        }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(height: TextureSet.HeightField, relief: Float) {
+            self.height = height
+            self.relief = relief
         }
     }
 

@@ -1,5 +1,6 @@
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The VFX editor: the effects (a menu), what to do with the shown one (new, save, Copy as Swift, the stage), its

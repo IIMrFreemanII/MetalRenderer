@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 extension Scene {

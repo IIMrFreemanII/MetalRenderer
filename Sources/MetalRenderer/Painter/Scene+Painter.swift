@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The painter workshop: one object on a plinth (`SceneSettings.painterWorkshop.subject`: a shape of the material

@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 
 /// The day bar: at the bottom of the render view in the scenes with a day (DayClock), the time of day as a clock, the
 /// day's times to switch to (Dawn, Noon, Sunset, Night), a play button that lets the day run or holds it, and a slider

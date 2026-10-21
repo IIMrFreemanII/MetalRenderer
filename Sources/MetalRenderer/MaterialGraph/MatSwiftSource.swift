@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A graph as Swift (the Material Designer's Copy as Swift): the statements that make it, for MaterialLibrary.

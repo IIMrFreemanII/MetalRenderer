@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// One number of a character's DNA as the character editor shows it: PlantParam's row (title, range, how far a
 /// mutation moves it) with an id (what a lock keeps), the group it is randomized with, and how a random value is

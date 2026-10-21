@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A crowd's hair (CharacterHair's strands are the workshop's): one closed shell round what a style's scalp strands

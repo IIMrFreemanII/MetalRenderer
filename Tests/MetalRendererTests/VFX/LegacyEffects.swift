@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The particles scene's and the showcase's emitters as they were written before effects were graphs (Scene+Particles
 /// at 81a1a59), for VFXTests' golden test: the graphs (VFXLibrary) must lower to these, byte for byte.

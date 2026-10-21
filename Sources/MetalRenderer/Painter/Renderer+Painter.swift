@@ -3,6 +3,7 @@ import EngineCore
 import Foundation
 import Metal
 import MetalKit
+import Plants
 import simd
 
 /// How a click paints in paint mode: a stroke of the brush, or a fill of the triangles it names.

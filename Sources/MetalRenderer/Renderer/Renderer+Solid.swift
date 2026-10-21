@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// The solid look's resources (RenderSettings.solidLook; Shaders/Output.metal solidTraceKernel, solidResolveKernel).

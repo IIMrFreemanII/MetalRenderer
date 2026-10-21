@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Effects in Swift: a block a call, its arguments its parameters (defaults: the catalogue's, VFXNodes.swift), as

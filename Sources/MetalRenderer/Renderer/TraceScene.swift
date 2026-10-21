@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// What the virtual-geometry cut needs to know about the view each frame.

@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The plants in Metal's structures (PlantTracing.swift): each plant names its assembly's variant for its phase bucket
 /// and the share of leaves it keeps, and plantWindKernel poses a variant's parts as the shading turns their points.

@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 import QuartzCore
 import simd
 
@@ -27,7 +28,9 @@ final class VoxelGrids {
     let bounds: MTLBuffer
     /// Grid g's level l is `boxes[levels * g + l]`.
     let boxes: [MTLAccelerationStructure]
-    static let levels = FoliageVoxels.levels
+    /// (FoliageVoxels.levels, in the plants' module: a literal here, so the descriptors' loops read a constant, not
+    /// another module's lazy global. `init` checks they agree.)
+    static let levels = 3
 
     /// What a frame reads of it, besides the structures: the ray queries reach these through the boxes' data.
     var buffers: [MTLBuffer] { [grids, cells, boxData, bounds] }
@@ -44,6 +47,7 @@ final class VoxelGrids {
 
     /// Builds the boxes on `queue` and waits for them.
     package init(device: MTLDevice, queue: MTLCommandQueue, plants: [FoliageVoxels.Plant]) throws {
+        precondition(VoxelGrids.levels == FoliageVoxels.levels, "VoxelGrids.levels is FoliageVoxels.levels")
         let start = CACurrentMediaTime()
         key = VoxelGrids.key(plants)
         let built = FoliageVoxels.cached(plants)
