@@ -86,6 +86,15 @@ extension Benchmark {
         return c
     }
 
+    /// 25 points around a circle, the first and the last the same. Spelled out with its types: as one expression in a
+    /// `map` closure, `SIMD2` with literals and `cos` made the type checker take seconds over each call.
+    private static func ring(_ x: Double, _ z: Double, radius: Double) -> [SIMD2<Double>] {
+        (0...24).map { (k: Int) -> SIMD2<Double> in
+            let a: Double = Double(k) / 24 * 2 * Double.pi
+            return SIMD2<Double>(x + radius * cos(a), z + radius * sin(a))
+        }
+    }
+
     private static func waterShots() -> [Config] {
         // A sea over the hills' lowland: islands, a shore with shallows.
         func coast(_ name: String, _ camera: Camera) -> Config {
@@ -96,7 +105,7 @@ extension Benchmark {
         // A lake dug into the flat ground, a river carved into it.
         func lake(_ name: String, _ camera: Camera) -> Config {
             let dig: [TerrainStep] = [.brush(TerrainBrush(tool: .lower, radius: 45, strength: 1))]
-                + Array(repeating: TerrainStep.strokeWorld((0...24).map { SIMD2(60 + 25 * cos(Double($0) / 24 * 2 * .pi), -40 + 25 * sin(Double($0) / 24 * 2 * .pi)) }),
+                + Array(repeating: TerrainStep.strokeWorld(ring(60, -40, radius: 25)),
                         count: 3)
             let river = WaterBody(name: "River", kind: .river, points: (0..<30).map { SIMD2(-200 + 260 * Double($0) / 29, -150 + 110 * Double($0) / 29) },
                                   width: 12, depth: 2.5)
@@ -108,7 +117,7 @@ extension Benchmark {
         // A lagoon: flat sand under a metre and a half of clear sea, an island raised in it.
         func lagoon(_ name: String, _ camera: Camera) -> Config {
             let raise: [TerrainStep] = [.brush(TerrainBrush(tool: .raise, radius: 30, strength: 1))]
-                + Array(repeating: TerrainStep.strokeWorld((0...24).map { SIMD2(30 + 12 * cos(Double($0) / 24 * 2 * .pi), -30 + 12 * sin(Double($0) / 24 * 2 * .pi)) }),
+                + Array(repeating: TerrainStep.strokeWorld(ring(30, -30, radius: 12)),
                         count: 2)
             var c = waterWorkshop(name, size: .m512, base: .flat, steps: raise, bodies: [WaterBody(name: "Sea", kind: .sea, level: 1.5)])
             c.camera = camera
@@ -125,7 +134,7 @@ extension Benchmark {
     private static func waterUnder() -> [Config] {
         func lagoon(_ name: String, level: Float, _ camera: Camera) -> Config {
             let raise: [TerrainStep] = [.brush(TerrainBrush(tool: .raise, radius: 30, strength: 0.5))]
-                + [TerrainStep.strokeWorld((0...24).map { SIMD2(30 + 12 * cos(Double($0) / 24 * 2 * .pi), -30 + 12 * sin(Double($0) / 24 * 2 * .pi)) })]
+                + [TerrainStep.strokeWorld(ring(30, -30, radius: 12))]
             var c = waterWorkshop(name, size: .m512, base: .flat, steps: raise, bodies: [WaterBody(name: "Sea", kind: .sea, level: level)])
             c.camera = camera
             return c
