@@ -15,10 +15,10 @@ import simd
 /// step knows none of it (the scene steps on the CPU).
 package struct DemolitionState {
     /// A rocket of the pool (bodies made at the scene's build, disabled until fired).
-    struct Rocket {
-        var body: Int32
+    package struct Rocket {
+        package var body: Int32
         /// In flight since `launched` (a step), at `speed` then; its blast's radius.
-        var armed = false
+        package var armed = false
         var launched: UInt32 = 0
         var speed: Float = 0
         var radius: Float = 0
@@ -55,12 +55,12 @@ package struct DemolitionState {
         }
     }
 
-    var rockets: [Rocket] = []
+    package var rockets: [Rocket] = []
     /// Blasts rockets set off, going on (as blast commands: start step, steps).
     var blasts: [GPUFractureCommand] = []
     /// Where rockets went off (xyz, the blast's radius) and at which steps: the fireballs (the last `logLength`).
-    var detonations: [SIMD4<Float>] = []
-    var detonationSteps: [Int] = []
+    package var detonations: [SIMD4<Float>] = []
+    package var detonationSteps: [Int] = []
     var walker = Walker()
     /// The walker as built (`reset` puts it back).
     var startWalker = Walker()
@@ -119,7 +119,7 @@ extension PhysicsWorld {
     package func keepBuiltCommands() { demolition.builtCommands = fractureCommands.count }
 
     /// The player's commands dropped (a restart: the world replays its build's alone from the start).
-    func dropPlayerCommands() {
+    package func dropPlayerCommands() {
         let n = demolition.builtCommands
         guard fractureCommands.count > n else { return }
         fractureCommands.removeLast(fractureCommands.count - n)
@@ -130,7 +130,7 @@ extension PhysicsWorld {
     /// The nearest body of `drawn` (a stepper's latest poses: any thread), but disabled ones, rockets and the walker,
     /// that the ray from `origin` along `direction` (unit) meets within `limit`: it, how far, and its surface's normal
     /// there (the world).
-    func pick(drawn: [GPUPhysicsBody], origin: SIMD3<Float>, direction: SIMD3<Float>, limit: Float = 500)
+    package func pick(drawn: [GPUPhysicsBody], origin: SIMD3<Float>, direction: SIMD3<Float>, limit: Float = 500)
         -> (body: Int, t: Float, normal: SIMD3<Float>)? {
         var best: (body: Int, t: Float)?
         let skip = PhysicsWorld.disabledBit | PhysicsWorld.fuseBit | PhysicsWorld.walkerBit

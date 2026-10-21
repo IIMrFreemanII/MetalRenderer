@@ -455,9 +455,8 @@ extension Renderer {
         status.displacement = scene.displacementSummary
         status.buildingPlan = scene.buildingPlan
         status.walker = walkerStatus
-        status.demolition = demolitionStatus
-        status.destruction = scene.destructionRig != nil
-            ? DestructionStatus(tool: destructionTool, objects: scene.destructionRig?.info ?? []) : nil
+        status.hud = scene.behaviour?.hud
+        status.destruction = scene.destructionRig.map { DestructionStatus(objects: $0.info) }
         status.cameraPosition = camera.position
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)

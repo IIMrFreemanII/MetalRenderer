@@ -562,6 +562,13 @@ package final class Scene {
     package var destructionRig: DestructionRig?
     /// The demolition scene's tools (Scene+Demolition.swift), if it is that scene.
     package var demolitionRig: DemolitionRig?
+    /// Its gameplay (SceneDefinition.behaviour: the destruction's tools, the demolition's player), made once it is built.
+    package var behaviour: SceneBehaviour?
+    /// What its scene file placed (Scene.place), for the editor to move; nil when it had none.
+    package var placed: PlacedFile?
+    /// The kit's meshes (Scene.kitMesh) and the materials a scene file's objects name (Scene.nameMaterial).
+    var kitMeshes: [Int: Int] = [:]
+    var namedMaterials: [String: Int] = [:]
     /// Per material, what the solid look should know of it (Scene.cutFace): a fractured object's broken inside.
     private(set) var materialFlags: [UInt8] = []
     static let cutFace: UInt8 = 1
@@ -651,6 +658,9 @@ package final class Scene {
         self.usesVoxelBoxes = voxelBoxes
         if let building { building(self) } else if let check = settings.lightCheck { buildLightCheck(check) } else {
         settings.kind.definition.build(self)
+        // What was placed by hand (Assets/Scenes/<scene>.scene), on what the builder made.
+        if let file = SceneFile(settings.kind) { place(file) }
+        behaviour = settings.kind.definition.behaviour?(self)
         while !openTags.isEmpty { endObject() }   // (the builder's last section, and anything it left open)
         applyMaterialAssignments()
         buildProceduralPrograms()

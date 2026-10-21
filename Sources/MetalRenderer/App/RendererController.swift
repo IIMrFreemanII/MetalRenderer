@@ -26,10 +26,10 @@ struct RendererStatus {
     var walker: WalkerStatus?
     /// Where the camera is (the building editor's Pin: the city's building nearest it).
     var cameraPosition: SIMD3<Float>?
-    /// The destruction scene's tool (DestructionOverlay).
+    /// The destruction scene's objects (the Fracture Editor's list).
     var destruction: DestructionStatus?
-    /// The demolition scene's player (DemolitionHUD).
-    var demolition: DemolitionStatus?
+    /// What the scene's behaviour shows over the frame (SceneHUDView): the destruction's tool, the demolition's player.
+    var hud: SceneHUD?
 }
 
 /// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).
@@ -49,9 +49,8 @@ struct WalkerStatus: Equatable {
 /// stats come back as values. So the main thread never waits for a frame. Main thread only.
 final class RendererController: InputHandler {
     private let renderer: Renderer
-    /// The window's view (the demolition scene captures the mouse in it), and the demolition tool its keys last chose.
+    /// The window's view (a scene's HUD captures the mouse in it: the demolition's).
     weak var renderView: RenderView?
-    private var demolitionTool = DemolitionTool.machineGun
 
     /// The settings as the renderer last reported them, with the edits sent since then applied on top.
     private(set) var settings: RenderSettings
@@ -214,9 +213,8 @@ final class RendererController: InputHandler {
 
     private func ticked(_ s: RendererStatus) {
         status = s
-        // Another scene, or the window in the background: the mouse let go.
-        if s.demolition == nil || !(NSApp.isActive && renderView?.window?.isKeyWindow == true) { setCaptured(false) }
-        if let d = s.demolition { demolitionTool = d.tool }
+        // Another scene, a tool that leaves the cursor free, or the window in the background: the mouse let go.
+        if s.hud?.capturesMouse != true || !(NSApp.isActive && renderView?.window?.isKeyWindow == true) { setCaptured(false) }
         traversalCounters = s.traversalCounters
         for observer in tickObservers { observer() }
         if let times = s.passTimes { onPassTimes?(times) }
@@ -257,16 +255,16 @@ final class RendererController: InputHandler {
 
     func keyDown(_ event: NSEvent) {
         guard let key = event.charactersIgnoringModifiers?.lowercased() else { return }
-        // The demolition scene: Escape lets the mouse go; 1 to 4 pick its tools (Grab with the cursor free).
-        if demolitionActive {
-            if event.keyCode == 53 { setCaptured(false); return }
-            if let n = Int(key), (1...4).contains(n), !event.modifierFlags.contains(.command) {
-                demolitionTool = DemolitionTool(rawValue: n - 1)!
-                if demolitionTool == .grab { setCaptured(false) }
-            }
+        // The mouse captured (the demolition scene): Escape lets it go. (A tool that leaves the cursor free lets it go
+        // at the next tick: SceneHUD.capturesMouse.)
+        if renderView?.captured == true && event.keyCode == 53 { setCaptured(false); return }
+        // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key. Command-J copies the selected placed object,
+        // Command-N puts a box in front of the camera (Renderer+Placement.swift).
+        if event.modifierFlags.contains(.command) {
+            if key == "j" && !event.isARepeat { renderer.perform { $0.duplicatePlaced() } }
+            if key == "n" && !event.isARepeat { renderer.perform { $0.addPlaced() } }
+            return
         }
-        // A menu's shortcut (Cmd-Z with nothing to undo): not the plain key.
-        if event.modifierFlags.contains(.command) { return }
         // The panels' keys work here, so they answer however slow the frames are.
         if key == "\t" || key == "i" || key == "p" || key == "k" || key == "j" || key == "h" || key == "x" || key == "o" || key == "y"
             || key == "z" {
@@ -338,28 +336,22 @@ final class RendererController: InputHandler {
     }
 
     func mouseDown(at cursor: SIMD2<Float>) {
-        // The demolition scene: the first click takes the mouse (and doesn't fire).
-        if demolitionActive && demolitionTool != .grab && !(renderView?.captured ?? true) {
+        // A scene whose HUD captures the mouse (the demolition): the first click takes it (and doesn't fire).
+        if status?.hud?.capturesMouse == true && !(renderView?.captured ?? true) {
             setCaptured(true)
             return
         }
         renderer.perform { $0.mouseDown(at: cursor) }
     }
 
-    /// The demolition scene is up (the last tick said so).
-    private var demolitionActive: Bool { status?.demolition != nil }
-
-    /// The mouse captured for the demolition scene's aim, or let go (the window's view and the renderer both told).
+    /// The mouse captured for the scene's aim, or let go (the window's view and the scene's behaviour both told).
     func setCaptured(_ on: Bool) {
         guard let view = renderView, view.captured != on else { return }
         view.captured = on
-        renderer.perform { r in
-            r.demolition.captured = on
-            if !on { r.demolition.firing = false }
-        }
+        renderer.perform { r in r.scene.behaviour?.captured = on }
     }
 
-    func mouseLook(dx: Float, dy: Float) { renderer.perform { $0.demolitionLook(dx: dx, dy: dy) } }
+    func mouseLook(dx: Float, dy: Float) { renderer.perform { r in r.scene.behaviour?.look(r, dx: dx, dy: dy) } }
 
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         renderer.perform { $0.mouseDragged(dx: dx, dy: dy, at: cursor) }

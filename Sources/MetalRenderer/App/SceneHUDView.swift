@@ -1,13 +1,14 @@
 import AppKit
 
-/// The demolition scene's HUD (Renderer+Demolition.swift): a crosshair in the view's middle while the mouse is captured,
-/// and a box in the bottom-left corner with the tools (the one in hand lit), the charges stuck, walking or flying, and
-/// the keys. A view over the render: the frames never have it, and clicks go through it to the render view.
-final class DemolitionHUD: NSView {
+/// A scene's HUD (SceneHUD, from its behaviour: the destruction's tools, the demolition's player): a box of text in a
+/// corner of the render view, and a crosshair in its middle while the mouse is captured. A view over the render: the
+/// frames never have it, and clicks go through it to the render view.
+final class SceneHUDView: NSView {
     private let cross = CAShapeLayer()
     private let panel = NSView()
     private let label = NSTextField(labelWithString: "")
-    private var shown: DemolitionStatus?
+    private var shown: SceneHUD?
+    private var corner: [NSLayoutConstraint] = []
 
     package init() {
         super.init(frame: .zero)
@@ -27,7 +28,6 @@ final class DemolitionHUD: NSView {
         panel.layer?.borderColor = NSColor(white: 1, alpha: 0.12).cgColor
         panel.layer?.borderWidth = 1
         panel.translatesAutoresizingMaskIntoConstraints = false
-        label.font = .monospacedSystemFont(ofSize: 11.5, weight: .medium)
         label.textColor = NSColor(white: 0.92, alpha: 1)
         label.translatesAutoresizingMaskIntoConstraints = false
         label.maximumNumberOfLines = 0
@@ -36,7 +36,7 @@ final class DemolitionHUD: NSView {
         NSLayoutConstraint.activate([
             label.leadingAnchor.constraint(equalTo: panel.leadingAnchor, constant: 11), label.trailingAnchor.constraint(equalTo: panel.trailingAnchor, constant: -11),
             label.topAnchor.constraint(equalTo: panel.topAnchor, constant: 7), label.bottomAnchor.constraint(equalTo: panel.bottomAnchor, constant: -7),
-            panel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), panel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            panel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
         ])
         isHidden = true
     }
@@ -65,22 +65,21 @@ final class DemolitionHUD: NSView {
         cross.path = path
     }
 
-    /// The renderer's tick: the player's state, or nothing (another scene).
-    func show(_ status: DemolitionStatus?) {
-        guard status != shown else { return }
-        shown = status
-        isHidden = status == nil
-        guard let status else { return }
-        cross.isHidden = !status.captured
-        var lines = DemolitionTool.allCases.map { t in
-            "\(t == status.tool ? "▶" : " ") \(t.rawValue + 1) \(t.title)"
+    /// The renderer's tick: the scene's HUD, or nothing.
+    func show(_ hud: SceneHUD?) {
+        guard hud != shown else { return }
+        let moved = hud?.corner != shown?.corner
+        shown = hud
+        isHidden = hud == nil
+        guard let hud else { return }
+        cross.isHidden = !hud.crosshair
+        label.font = hud.monospaced ? .monospacedSystemFont(ofSize: 11.5, weight: .medium) : .systemFont(ofSize: 12, weight: .medium)
+        label.stringValue = hud.lines.joined(separator: "\n")
+        if moved {
+            NSLayoutConstraint.deactivate(corner)
+            corner = [hud.corner == .topLeft ? panel.topAnchor.constraint(equalTo: topAnchor, constant: 12)
+                                             : panel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)]
+            NSLayoutConstraint.activate(corner)
         }
-        lines.append("")
-        lines.append(status.tool.help)
-        if status.charges > 0 { lines.append("TNT stuck: \(status.charges)  (right click: off, Delete: take off)") }
-        lines.append(status.walking ? "Walking  (Shift-V: fly)" : "Flying  (Shift-V: walk)")
-        lines.append(status.captured ? "Esc: free the mouse   R: restart" : "Click in the view to aim   R: restart")
-        if let m = status.message { lines.append(m) }
-        label.stringValue = lines.joined(separator: "\n")
     }
 }

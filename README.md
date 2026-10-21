@@ -2198,6 +2198,58 @@ The engine never names a game scene.
 * **Saved settings** from before the split hold the scene's old enum number. They read back by it
   (`SceneKind.numbered`).
 
+**A scene's gameplay** is a `SceneBehaviour` (`Scene/SceneBehaviour.swift`), which its definition makes with the
+scene (`SceneDefinition.behaviour`); it lives on the scene and goes with it.
+
+* The renderer gives it, on the render thread:
+  * the frame (`update`, before the camera moves);
+  * the keys and clicks first;
+  * the right button and the captured mouse's moves;
+  * the physics' poses as drawn.
+* It describes what the view shows over the frame as a `SceneHUD`, which the engine's `SceneHUDView` draws: lines of
+  text in a corner, a crosshair, and whether a click captures the mouse.
+* The game's two are the demolition's player (`DemolitionPlayer`: weapons, the walker, the captured mouse) and the
+  destruction's tools (`DestructionPlayer`).
+* Their physics, which runs inside the step over many bodies, stays in the engine (`Physics+Demolition.swift`,
+  `Physics+Fracture.swift`). The behaviours drive it with commands (`Scene.physicsCommand`).
+
+### Scene files
+
+A scene's hand-placed content can be a binary file, `Assets/Scenes/<scene>.scene` (`IO/SceneFile.swift`). It holds:
+
+* objects: an asset each (`prefab:box`, `prefab:ball`, `prefab:quad`, a game's own prefabs, or `model:<path under
+  Assets>`), a position, rotation and scale, a parent, and a named material (`Scene.nameMaterial`);
+* lights;
+* generators with their seeds and parameters;
+* the camera.
+
+**How a scene is built with it.** The scene is built by its builder first, then gets what its file places
+(`Scene.place`), so the file is a layer on what the code generates.
+
+**The format.** It is a `SectionFile`: mapped, with each section an array of one fixed-size record, so nothing is parsed
+and a file of thousands of objects reads in milliseconds. A record layout change bumps `SceneFile.version`, and a file
+of another version reads as no file.
+
+**Editing it in the view.** Select a placed object (a click), then:
+
+| Action | Does |
+|---|---|
+| Drag an arrow | Moves the object along that axis |
+| Option-drag an arrow | Turns it about that axis |
+| Control-drag an arrow | Scales it along that axis |
+| End | Drops it onto the ground |
+| Delete | Takes it out |
+| Command-J | Copies it beside itself |
+| Command-N | Puts a box in front of the camera |
+
+Every change is written to the file at once, so placing needs no build.
+
+**Diffs.** git shows the files' diffs as text through `Tools/scene/scenedump.py` (`.gitattributes`), once per clone:
+
+```bash
+git config diff.scenedump.textconv "python3 Tools/scene/scenedump.py"
+```
+
 **Placing a new file:**
 
 * A new demo scene is a builder in the game's feature folder plus an entry in `GameScenes.scenes()`.

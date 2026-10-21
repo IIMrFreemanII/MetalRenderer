@@ -534,10 +534,10 @@ struct PhysicsCellGrid {
 /// where the steps before left them (`latest`), while these run beside the frame's own work. The same numbers as
 /// stepping in the frame: the steps run in the order asked, each with its frame's grab, and anything else done to the
 /// world (a pick, a shot, a blast) waits for the steps asked before it (`sync`), so it lands on the same step.
-final class PhysicsStepper {
+package final class PhysicsStepper {
     /// What a frame draws: the world's poses as a frame's steps left them (copies on write: the steps after copy).
-    struct Drawn {
-        var bodies: [GPUPhysicsBody]
+    package struct Drawn {
+        package var bodies: [GPUPhysicsBody]
         var particles: [GPUPhysicsParticle]
         var hairVertices: [GPUHairVertex]
         var fractureState: [GPUFractureState]
@@ -546,7 +546,7 @@ final class PhysicsStepper {
         var breakSteps: [Int]
         var breakTotal: Int
         /// The rockets, the fireballs, the walker (PhysicsWorld.demolition), and the step these are before.
-        var demolition: DemolitionState
+        package var demolition: DemolitionState
         var stepIndex: Int
 
         package init(_ w: PhysicsWorld) {

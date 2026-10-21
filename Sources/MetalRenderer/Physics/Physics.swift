@@ -24,7 +24,7 @@ import simd
 /// the same however it was reached (a benchmark's stills start at 5 s).
 package final class PhysicsWorld {
     static let staticBit: UInt32 = 0x8000_0000
-    static let none: UInt32 = ~0
+    package static let none: UInt32 = ~0
     /// info.y flags: a body's, and a particle's. A kinematic body's column in the pose table is in its flags above
     /// bit 8 (PhysicsFlesh.swift).
     static let asleep: UInt32 = 1
@@ -32,7 +32,7 @@ package final class PhysicsWorld {
     /// A disabled body neither moves, collides nor shows (a fractured object's piece before its parent breaks, a shot
     /// not yet fired: Physics+Fracture.swift); a piece of a fractured object (it has a fracture node and welds); one
     /// held by the ground until it comes free (its inverse mass 0 meanwhile).
-    static let disabledBit: UInt32 = 4
+    package static let disabledBit: UInt32 = 4
     static let pieceBit: UInt32 = 8
     static let anchoredBit: UInt32 = 16
     static let clothBit: UInt32 = 1
@@ -220,7 +220,7 @@ package final class PhysicsWorld {
     /// Fractured objects (Physics+Fracture.swift): per body its node (all bodies, once one object is fractured), the
     /// welds (and as they start), per body its welds' (partner, weld) sorted by partner from `weldStarts[i]`, per body
     /// what the step did to it, and the shots and blasts, kept across replays.
-    var fractureNodes: [GPUFractureNode] = []
+    package var fractureNodes: [GPUFractureNode] = []
     var welds: [GPUFractureWeld] = []
     private(set) var initialWelds: [GPUFractureWeld] = []
     private(set) var weldStarts: [UInt32] = [0]
@@ -760,7 +760,7 @@ package final class PhysicsWorld {
     /// The nearest body the ray from `origin` along `direction` (unit) meets, where it meets it (in the body's space)
     /// and how far along: each body whose bounding sphere the ray crosses, sphere-traced through its distance.
     /// `pieces`: a fractured object's anchored pieces too (a blast's aim), which nothing else moves.
-    func pick(origin: SIMD3<Float>, direction: SIMD3<Float>, pieces: Bool = false) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
+    package func pick(origin: SIMD3<Float>, direction: SIMD3<Float>, pieces: Bool = false) -> (body: Int, anchor: SIMD3<Float>, distance: Float)? {
         var best: (body: Int, anchor: SIMD3<Float>, distance: Float)?
         // (Not what nothing moves: a kinematic body, a mount; nor a hidden one: disabled, as last drawn when the GPU
         // steps the world, whose `bodies` are the start's.)

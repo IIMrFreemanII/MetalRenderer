@@ -8,7 +8,7 @@ extension Renderer {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     func keyDown(_ key: String, isRepeat: Bool) {
-        if demolitionKey(key, isRepeat: isRepeat) { return }
+        if scene.behaviour?.keyDown(self, key, isRepeat: isRepeat) == true { return }
         if key == "v" && !isRepeat { toggleWalk(); return }
         if let w = walker {
             switch key {
@@ -38,7 +38,11 @@ extension Renderer {
             return
         }
         if isRepeat { return }
-        if destructionKey(key) { return }
+        // The selected placed object: Delete takes it out, End drops it onto the ground (Renderer+Placement.swift).
+        if placedSelection != nil, key == "\u{7f}" || key == "\u{F72B}" {
+            if key == "\u{7f}" { deletePlaced() } else { dropPlaced() }
+            return
+        }
         switch key {
         case " ": settings.paused.toggle()
         case "g": settings.giEnabled.toggle()
@@ -92,7 +96,7 @@ extension Renderer {
     // Walking: a drag looks, a click uses.
 
     func mouseDown(at cursor: SIMD2<Float>) {
-        if demolitionMouseDown() { return }
+        if scene.behaviour?.mouseDown(self) == true { return }
         // Paint mode: a stroke (Option: the camera turns about the object).
         if paintMouseDown(at: cursor, pressure: penPressure, orbit: optionHeld) { return }
         // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
@@ -102,6 +106,8 @@ extension Renderer {
         navDrag = nil
         leftLook = false
         navCursor = cursor
+        // A placed object's arrow (Option: turns it, Control: scales it).
+        if walker == nil, placementMouseDown(at: cursor) { return }
         if walker == nil, optionHeld {
             navDrag = commandHeld ? .pan : .orbit
             flight = nil
@@ -119,7 +125,7 @@ extension Renderer {
         }
         clickAt = cursor
         leftLook = walker == nil
-        guard scene.physics != nil, !destructionFires else { return }
+        guard scene.physics != nil, scene.behaviour?.grabs ?? true else { return }
         let direction = cursorRay(cursor)
         guard let pick = scene.withPhysics({ $0.pick(origin: camera.position, direction: direction) }), let hit = pick else { return }
         let point = camera.position + direction * hit.distance
@@ -131,6 +137,7 @@ extension Renderer {
     func mouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
         if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
+        if placementMouseDragged(at: cursor) { return }
         if let drag = gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
@@ -154,9 +161,13 @@ extension Renderer {
 
     /// Lets go: the body keeps its speed (a flick throws it).
     func mouseUp() {
-        demolition.firing = false
+        scene.behaviour?.mouseUp(self)
         if paintMouseUp() { return }
         if terrainMouseUp() { return }
+        if placementMouseUp() {
+            clickAt = nil
+            return
+        }
         if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         gizmoDrag = nil
         // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
@@ -165,8 +176,7 @@ extension Renderer {
                 pickRequest = c
                 pickSelects = false
                 pickArmed = false
-            } else if destructionFires {
-                fireDestruction(at: c)
+            } else if scene.behaviour?.click(self, at: c) == true {
             } else if walker != nil {
                 use(cursorRay(c))
             } else {
@@ -184,7 +194,7 @@ extension Renderer {
     /// The right button: looks around, as a left drag does (Option: dollies); W A S D Q E fly while it is held. In
     /// paint mode the camera turns about the object.
     func rightMouseDown(at cursor: SIMD2<Float>) {
-        if demolition.captured { detonateCharges(); return }
+        if scene.behaviour?.rightMouseDown(self) == true { return }
         if paintMouseDown(at: cursor, pressure: 1, orbit: true) { return }
         rightHeld = true
         rightDrag = walker == nil && optionHeld ? .dolly : .look

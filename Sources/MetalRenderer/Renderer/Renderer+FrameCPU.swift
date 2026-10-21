@@ -113,7 +113,7 @@ extension Renderer {
     func updateCamera(dt: Float) {
         turnByArrows(dt)
         if flight != nil { fly(); return }
-        if updateDemolition(dt) { return }
+        if scene.behaviour?.update(self, dt: dt) == true { return }
         if walker != nil {
             walk(dt)
             return

@@ -299,12 +299,14 @@ extension GameScenes {
             scene(.destruction, "Destruction", "buildDestruction", build: { $0.buildDestruction($0.settings.destruction) }) {
                 $0.simulates = true
                 $0.roles = [.fracture]
+                $0.behaviour = { _ in DestructionPlayer() }
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 2.6, 13.5], pitch: -0.1)
             },
             // In the solid look; its rockets and walker are the CPU's step's alone (Physics+Demolition.swift).
             scene(.demolition, "Demolition", "buildDemolition", build: { $0.buildDemolition($0.settings.demolition) }) {
                 $0.simulates = true
+                $0.behaviour = { DemolitionPlayer($0) }
                 $0.solid = true
                 $0.cpuPhysics = true
                 $0.sky = courtyard

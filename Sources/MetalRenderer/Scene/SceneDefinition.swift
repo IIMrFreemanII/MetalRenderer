@@ -136,6 +136,8 @@ package final class SceneDefinition {
     package var cameraMove: ((Float, Camera?) -> Camera?)? = nil
     /// What its materials' order depends on (MaterialAssignments.scope): its name, unless given.
     package var scope: ((SceneSettings) -> String)? = nil
+    /// Its gameplay (SceneBehaviour), made with the scene once it is built.
+    package var behaviour: ((Scene) -> SceneBehaviour)? = nil
     /// What the benchmark's table adds to its name (the stress test's counts).
     package var detail: ((SceneSettings) -> String)? = nil
 

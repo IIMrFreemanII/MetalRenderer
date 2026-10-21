@@ -80,11 +80,11 @@ extension Scene {
                 physicsTime = t
                 let drawn = stepper.latest
                 placeBodies(drawn)
-                if demolitionRig != nil { placeDemolition(drawn.bodies, drawn.demolition, step: drawn.stepIndex) }
+                behaviour?.drawn(self, bodies: drawn.bodies, state: drawn.demolition, step: drawn.stepIndex)
             } else {
                 physics.advance(to: t)
                 placeBodies()
-                if demolitionRig != nil { placeDemolition(physics.bodies, physics.demolition, step: physics.stepIndex) }
+                behaviour?.drawn(self, bodies: physics.bodies, state: physics.demolition, step: physics.stepIndex)
             }
         }
         if let particles {
@@ -152,13 +152,13 @@ extension Scene {
 
     /// Command `c` for the world's next steps (its start step PhysicsWorld.none: where they begin), without waiting
     /// for the steps a stepper is running (PhysicsStepper.command).
-    func physicsCommand(_ c: GPUFractureCommand) {
+    package func physicsCommand(_ c: GPUFractureCommand) {
         if let physicsStepper { physicsStepper.command(c) } else { physics?.add(c) }
     }
 
     /// `body` with the world, once the steps asked for are done when a stepper runs them (a pick, a command: they
     /// then land on the step they would have without it); nil without a world.
-    func withPhysics<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R? {
+    package func withPhysics<R>(_ body: (PhysicsWorld) throws -> R) rethrows -> R? {
         guard let physics else { return nil }
         if let physicsStepper { return try physicsStepper.sync(body) }
         return try body(physics)
@@ -175,7 +175,7 @@ extension Scene {
     }
 
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
-    var drawnPhysics: PhysicsStepper.Drawn? {
+    package var drawnPhysics: PhysicsStepper.Drawn? {
         if let physicsStepper { return physicsStepper.latest }
         return physics.map { PhysicsStepper.Drawn($0) }
     }

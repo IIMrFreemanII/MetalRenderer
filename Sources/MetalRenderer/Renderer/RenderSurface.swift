@@ -4,7 +4,7 @@ import QuartzCore
 
 /// Where a frame ends up: the window's layer, or offscreen textures (benchmarks, which run without a window unless
 /// `METALRENDERER_WINDOW=1`).
-protocol RenderSurface: AnyObject {
+package protocol RenderSurface: AnyObject {
     /// The size in points; the render resolution is this times the render scale.
     var pointSize: CGSize { get }
     /// Physical pixels per point: the upscaled output is capped at `pointSize * backingScale`.
@@ -22,7 +22,7 @@ protocol RenderSurface: AnyObject {
     var refreshInterval: CFTimeInterval? { get }
 }
 
-struct FrameOutput {
+package struct FrameOutput {
     let texture: MTLTexture
     let drawable: CAMetalDrawable?
 }

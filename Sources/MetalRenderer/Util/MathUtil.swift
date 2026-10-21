@@ -28,8 +28,8 @@ package struct Camera {
     package var forward: SIMD3<Float> {
         SIMD3<Float>(cos(pitch) * sin(yaw), sin(pitch), -cos(pitch) * cos(yaw))
     }
-    var right: SIMD3<Float> { normalize(cross(forward, SIMD3<Float>(0, 1, 0))) }
-    var up: SIMD3<Float> { cross(right, forward) }
+    package var right: SIMD3<Float> { normalize(cross(forward, SIMD3<Float>(0, 1, 0))) }
+    package var up: SIMD3<Float> { cross(right, forward) }
 
     /// The depth of the near plane in the reversed-Z depth the upscalers read (Shaders.metal's NEAR_PLANE).
     static let nearPlane: Float = 0.05

@@ -424,8 +424,8 @@ struct GPUPhysicsJoint {
 /// A fractured object's node as the body it is (FractureTree.Node, Physics+Fracture.swift): MSL PhysicsFractureNode.
 /// Every node of a fractured object is a body from the start, its children's bodies one after another; all but the
 /// root are disabled (PhysicsWorld.disabledBit) until their parent breaks.
-struct GPUFractureNode {
-    var info = SIMD4<UInt32>(~0, 0, 0, 0)   // x = its parent's body (none: a root), y = its first child's body, z = how
+package struct GPUFractureNode {
+    package var info = SIMD4<UInt32>(~0, 0, 0, 0)   // x = its parent's body (none: a root), y = its first child's body, z = how
                                              // many children, w = flags (PhysicsWorld.anchoredNode ...)
     var offset = SIMD4<Float>()              // its centre of mass in its parent's body space at rest; w = the impact (N s)
                                              // that breaks it into its children (0: it has none)
@@ -474,6 +474,13 @@ package struct GPUFractureCommand {
                                              // (a shot's ball, a body woken), w = how many steps it lasts
     var origin = SIMD4<Float>()              // world; w = a blast's radius
     var direction = SIMD4<Float>()           // a shot's way (unit); w = its speed (m/s), or a blast's speed at its middle
+
+    /// (As the memberwise initializer, for the game: Sources/Game.)
+    package init(info: SIMD4<UInt32> = SIMD4<UInt32>(), origin: SIMD4<Float> = SIMD4<Float>(), direction: SIMD4<Float> = SIMD4<Float>()) {
+        self.info = info
+        self.origin = origin
+        self.direction = direction
+    }
 }
 
 /// Where a piece broke, for the dust (PhysicsGPU.breakRing): MSL PhysicsBreakEvent.
