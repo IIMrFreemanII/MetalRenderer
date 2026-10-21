@@ -106,7 +106,7 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
-**Build times.** The code is two library targets: the engine (`Sources/MetalRenderer`) and the game, which holds the demo scenes (`Sources/Game`, README "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole. On an M1 Max that is about 4 minutes after an engine edit, most of it the optimiser over the whole module on one core, and 28 s after a game edit. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
+**Build times.** The code is library modules: the core, the engine, the editors and the game (README, "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole; on an M1 Max that is about 3 minutes after an engine edit, most of it the optimiser over the engine on one core, and half a minute after an editor's, the game's or the core's. Build release with `Tools/release.sh` (`swift build -c release`, after the modules above an `@inlinable` body that changed are marked for rebuilding). Release builds are testable, so `Tools/release.sh` and `Tools/release.sh test` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in 3–10 s, and it draws the same images at the same speed. Quote release numbers.
 
 ```bash
 Tools/build.sh                                  # builds it and prints the binary's path
@@ -115,23 +115,29 @@ Tools/build.sh test --filter 'CityTests'        # tests in it
 
 A debug build warns about any function that takes the type checker over 600 ms, or an expression over 300 ms. Give it explicit types or split it. The warnings show only for the files a build compiles, and `render.sh` keeps only errors, so look for them after a clean dev build (`Tools/build.sh 2>&1 | grep "to type-check"`).
 
-Where the time goes (M1 Max, October 2026):
+Where the time goes (M1 Max, October 2026; one module, then the modules):
 
-| Build | Clean | After an engine edit | After a game edit (a scene) |
-|---|---|---|---|
-| Dev (`Tools/build.sh`) | 75 s | 13 s | 3.6 s |
-| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit | |
-| Release | 290 s | 225 s; 252 s for an interface change | 28 s |
-| Release with the tests | +50 s | 265 s; 46 s after a test edit | |
+| Build | Clean | An engine edit | An editor's edit | The core's edit | The game's edit | An interface change |
+|---|---|---|---|---|---|---|
+| Dev (`Tools/build.sh`) | 75 → 79 s | 13 → 10 s | 13 → 4.3 s | 13 → 2.8 s | 3.6 → 3.9 s | 14 → 14 s (the core's), 28 s (the engine's) |
+| Release | 290 → 246 s | 225 → 176 s | 225 → 33 s | 225 → 22 s | 28 s | 252 → 224 s (the core's), 211 s (the engine's) |
 
-The split's own price is a clean build 6–7% longer: two modules, the engine's `package` interface written for the game.
-
-* **A game edit** (a scene's builder, its look, a benchmark mode) recompiles the game's file and its module interface. The engine isn't touched, and a release build optimises only the game's 9k lines. **An engine edit** whose interface doesn't change leaves the game as it was.
-* **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes the module's interface for the app and the tests to import: it type-checks every declaration of the 102k lines and optimises the accessors that `-enable-testing` exposes (12 s; 7 s without testing).
-* **A release edit** is about 200 s of SIL optimisation and 35 s of type checking, both on one core and spread over the whole module: the costliest file is 2% of it. Code generation already runs on every core.
+* **An edit** recompiles its module. The modules above it are compiled again only when the module's interface
+  changed (an added declaration, a changed signature), or one of its `@inlinable` bodies did.
+* **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
+  one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
+  modules above).
+* **An engine edit that changes its interface** costs more in the dev build than before (28 s against 14): the editors
+  and the game check what they use of the new interface. In release it costs less (211 s against 252): their whole
+  modules are smaller than the engine was.
+* **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes its module's interface for
+  the modules above and the tests: it type-checks every declaration of the module and optimises the accessors that
+  `-enable-testing` exposes, which is why a small module's edit is cheap.
+* **A release edit** is mostly SIL optimisation and type checking on one core, spread over its whole module. Code
+  generation already runs on every core.
 * **A new worktree** starts the dev build in the background when the session starts (`Tools/warmup.sh`, the SessionStart hook), so the first `render.sh` or `related.sh` finds it built or waits for it.
 * `Tools/perf/buildtime.sh` measures all of this on a copy of the tree (clean, no-op and one-line edits; `--rev <commit>` for a commit, `--stats` for the compiler's phases). Run it before and after a change to the build.
-* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build, a C entry point (the link still waits for the module), module emission per file, and leaf modules (only 3.5% of the code depends on nothing else). An app build without `-enable-testing` would make an edit about 4.5 s faster, but SwiftPM's debug builds always enable testability (`--disable-testable-imports` is an option of `swift test` only).
+* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build (it is off now, for the modules' sake: it cost nothing), a C entry point (the link still waits for the module), module emission per file, and leaf modules taken off the one module as it was (only 3.5% of its code depended on nothing else; the modules came after the folders' cycles were cut). An app build without `-enable-testing` would make an edit about 4.5 s faster, but SwiftPM's debug builds always enable testability (`--disable-testable-imports` is an option of `swift test` only).
 
 ### Benchmark mode
 
