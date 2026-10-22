@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Generated plants in a scene (Foliage.swift), and the forest: rolling ground with a clearing, trees of four

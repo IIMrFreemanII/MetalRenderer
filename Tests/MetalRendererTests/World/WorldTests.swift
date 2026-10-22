@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The open world as a function of its seed and a place (World.swift), and its tiles (WorldTile.swift).
 final class WorldTests: XCTestCase {

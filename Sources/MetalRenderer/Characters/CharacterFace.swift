@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A generated character's face in motion: what the GPU does to the base's bind-pose vertices before skinning them

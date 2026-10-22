@@ -1,5 +1,6 @@
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Fracture Editor's window: the destruction scene's objects, the selected one's recipe (material, pattern, seed,

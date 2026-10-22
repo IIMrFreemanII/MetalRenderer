@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import simd
 
 /// The scene gizmo (Unity's): in the render view's top-right corner, the world's axes as the camera sees them, with

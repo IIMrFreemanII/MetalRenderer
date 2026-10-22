@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The FFT ocean's starting spectrum (Tessendorf, "Simulating Ocean Water"; JONSWAP with a cos² spread about the

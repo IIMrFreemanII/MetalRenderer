@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A building's inside, made from its plan (BuildingPlan): the inner face of its outer walls (cut round the windows

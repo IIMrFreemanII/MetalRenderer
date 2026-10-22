@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a pin takes: a grey image, a colour one, or either (the node's outputs then follow what is wired: colour if

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import QuartzCore
 import simd
 
@@ -69,7 +70,7 @@ final class VoxelLOD {
     static func level(distance: Float, size: Float, view: Float, jitter: Float) -> UInt8 {
         guard view > 0 else { return 0 }
         let lod = log2(distance * view / size) + jitter
-        return lod < 0 ? 0 : UInt8(min(Int(lod), FoliageVoxels.levels - 1) + 1)
+        return lod < 0 ? 0 : UInt8(min(Int(lod), VoxelGrids.levels - 1) + 1)
     }
 
     /// MSL pcgHash (Shaders/Sampling.metal).

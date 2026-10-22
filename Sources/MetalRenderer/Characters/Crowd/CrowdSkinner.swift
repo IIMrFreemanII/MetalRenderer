@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// The crowd's per-frame GPU work (Shaders/Crowd.metal): every pose slot's skinning matrices from the clips' keys,

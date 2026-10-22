@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The building workshop (Scene+Buildings.swift): what it holds, and how long an edit's new scene takes to make with
 /// its structures (it is made again at every edit).

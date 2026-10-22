@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What the destruction and demolition scenes hold for their players (Sources/Game: DestructionPlayer,

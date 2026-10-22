@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The water map around the camera (Shaders/WaterCommon.metal waterAt): two squares of texels, a near one of a metre

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A building's facades: a split grammar. A wall is cut into storeys, each storey into a pier at either end and

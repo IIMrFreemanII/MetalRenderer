@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Fractured objects in a scene (Physics+Fracture.swift): every node of an object's fracture tree an SDF shape, an

@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Plants
 
 /// What the running GPU and system can do, asked once at launch (`App.swift`). The settings panel disables the
 /// options that need something missing, `RenderSettings.clamped(to:)` swaps them for ones that work, and the

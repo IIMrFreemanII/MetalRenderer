@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// An object fractured ahead of time (UE Chaos's geometry collection): a tree of convex cells, the object itself at

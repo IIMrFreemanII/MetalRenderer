@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A liquid's drawn surface, made again every frame on the GPU (Shaders/FluidSurface.metal) from where its particles

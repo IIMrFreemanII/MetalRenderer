@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Plants
 import QuartzCore
 
 /// MetalFX's frame interpolator (macOS 26): from this frame's picture and the last one's, with the traced depth and

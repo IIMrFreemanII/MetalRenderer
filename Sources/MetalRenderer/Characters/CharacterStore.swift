@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// The characters scenes are made with: the built-in ones (BuiltInCharacters), any of them replaced by a saved file
 /// of its id, then the saved ones of other ids. Kept by fingerprint in a registry, as the plants' and buildings'

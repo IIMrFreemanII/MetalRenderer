@@ -2,6 +2,7 @@ import AppKit
 import EngineCore
 import Metal
 import MetalRenderer
+import Plants
 import UniformTypeIdentifiers
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {

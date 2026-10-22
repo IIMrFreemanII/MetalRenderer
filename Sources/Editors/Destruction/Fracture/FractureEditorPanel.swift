@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Fracture Editor's window (FractureEditorView), beside the main one: Shift-F or Shift-Cmd-F.

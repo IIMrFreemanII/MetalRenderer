@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Temporal AA without upscaling (RenderSettings.taa, Post.metal taaResolveKernel): when it runs, its jitter, and the
 /// resolve on small images.

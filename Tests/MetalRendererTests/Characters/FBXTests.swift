@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The FBX reader and the character import (FBXReader.swift, SkinnedCharacter.swift), on the characters in
 /// Assets/Characters. Skipped where that folder isn't there.

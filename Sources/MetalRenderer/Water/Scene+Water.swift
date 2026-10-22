@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A scene's water (Shaders/Water.metal): the looks of its bodies, its surfaces' triangles, and where the water is

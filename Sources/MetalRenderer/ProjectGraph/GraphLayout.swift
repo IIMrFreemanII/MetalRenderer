@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What the Project Graph's layouts place: a tree (the shown part of the project graph, ProjectGraph.Visible), each

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What grows on a generated character: the hair of its scalp in a style, its beard, its brows and its lashes, as

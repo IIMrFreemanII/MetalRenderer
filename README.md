@@ -124,6 +124,8 @@ Where the time goes (M1 Max, October 2026; one module, then the modules):
 
 * **An edit** recompiles its module. The modules above it are compiled again only when the module's interface
   changed (an added declaration, a changed signature), or one of its `@inlinable` bodies did.
+* **A system's edit** costs what its module does: a plant's (`Sources/Plants`) 4.5 s in the dev build and 10.5 s in
+  release, where inside the engine it cost what an engine edit does.
 * **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
   one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
   modules above).
@@ -2188,13 +2190,15 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | Module | Folder | Holds |
 |---|---|---|
 | `EngineCore` | `Sources/EngineCore` | What every module shares and that knows no scene or renderer: maths, `SourceTree` and the assets' folder, the load activity; offline geometry (BVH, mesh builders, simplification, SDF shapes and volumes, the virtual geometry builder); file formats (glTF, EXR, cache and section files); textures (sets, streaming, generated ones); the GPU structs every module reads (`GPU/GPUTypes.swift`), compute passes, the kernels and their pipelines |
+| `Plants` | `Sources/Plants` | The plants: species and their parameters, the generator (stems, leaves, meshes, voxels, textures), habitats, the catalog and its store (`Assets/Plants`), the workshop's settings. Tracing them in a scene (descriptors, voxel levels, the wind's structures) is the engine's |
 | `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
 | `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
 | `Game` | `Sources/Game` | The demo scenes (below) |
 | `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
 
-The modules reach each other through `package` declarations (nothing is `public`). Above the core the engine, then the
-editors and the game, which know nothing of each other; the tests (`Tests/MetalRendererTests`) import them all.
+The modules reach each other through `package` declarations (nothing is `public`). Above the core the systems (the
+plants), then the engine, then the editors and the game, which know nothing of each other; the tests
+(`Tests/MetalRendererTests`) import them all.
 
 * **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
   editor's or the game's edit leaves the engine as it was; an engine edit that keeps its interface leaves the editors
@@ -2323,7 +2327,7 @@ The engine's folders:
 | `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids |
 | `Destruction/` | The tools' rigs; `Fracture/` (trees, patterns, cutting), `Demolition/` (its physics) |
 | `Buildings/` | The generator, plans, styles; `Interior/`, `City/` |
-| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/` |
+| `Plants/`, `Characters/` | The plants in a scene (tracing, voxel levels, the forest, the workshop); people, with `Animation/`, `Crowd/` |
 | `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
 | `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer's graphs, compiler and bakes, the Material Painter's documents and GPU side, scanned materials |
 | `Particles/`, `VFX/` | GPU particles; effects as graphs |

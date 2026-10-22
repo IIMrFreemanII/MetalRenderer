@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// What a GPU can't run (Capabilities.swift): the settings fall back, and the benchmark skips the settings that need it.
 /// Metal ray tracing has no stand-in: without it nothing runs.

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The VFX stage: effects lined up (`SceneSettings.stage.effects`, by name: VFXLibrary's built-in ones, or the effects

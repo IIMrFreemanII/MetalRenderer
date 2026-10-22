@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A building style as data: what the building editor edits and Assets/Buildings/Styles keeps, the built-in ones

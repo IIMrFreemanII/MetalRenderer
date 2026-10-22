@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Joints and ragdolls (Physics.swift's addJoint, PhysicsCPU.solveJoint, Shaders/Physics.metal's physSolveJoint,
 /// Scene+Ragdolls.swift): anchors that stay together, limits that hold, joined bodies that don't collide, ragdolls that

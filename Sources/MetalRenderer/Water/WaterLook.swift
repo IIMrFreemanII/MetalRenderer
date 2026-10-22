@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// How a body of water looks (Shaders/Water.metal): what it absorbs and scatters per metre (Beer-Lambert: clear sea

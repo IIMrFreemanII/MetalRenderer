@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 
 /// Live GPU time per pass for the settings panel ("GPU pass timings"): every timed encoder samples the GPU's timestamp
 /// counter at its start and end (Apple GPUs sample only at encoder boundaries), so each named pass gets its own

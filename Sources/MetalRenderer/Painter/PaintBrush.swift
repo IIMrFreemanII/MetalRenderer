@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// The Material Painter's brush: how big, hard and strong its dabs are, how far apart along a stroke, what tip they

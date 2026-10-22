@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Which scene is loaded: a name the registry knows (SceneRegistry). The engine's own scenes are the Cornell room (its

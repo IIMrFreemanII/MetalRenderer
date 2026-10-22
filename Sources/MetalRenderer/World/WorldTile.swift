@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// One tile of the open world (World.swift) at one level of detail: everything the world has in a 256 m square, made

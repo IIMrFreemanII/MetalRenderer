@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The walker (Walker.swift) among a generated building's colliders (Building+Interior.swift) and the ground: it
 /// comes in through the door, climbs the stairs to the next floor, doesn't pass walls or glass, jumps and crouches.

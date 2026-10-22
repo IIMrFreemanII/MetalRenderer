@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import EngineCore
 import MetalRenderer
+import Plants
 import QuartzCore
 
 /// What the plant editor needs of the renderer (RendererController; a stand-in in the tests).

@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import QuartzCore
 
 /// The loading overlay: a box in the render view's bottom-left corner that shows what loads in the background

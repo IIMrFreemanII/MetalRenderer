@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// Photo-scanned materials: Bitmap nodes over the maps in Assets/Textures/<set>/ (Git LFS), the graph the Designer's
 /// "Import Scanned Material…" makes (ScanMaterial.graph).

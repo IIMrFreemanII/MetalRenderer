@@ -3,6 +3,7 @@ import EngineCore
 import Foundation
 import ImageIO
 import Metal
+import Plants
 import UniformTypeIdentifiers
 
 /// A baked graph's textures as files: each output channel a PNG (8 or 16 bits a channel) or an EXR (32-bit float),

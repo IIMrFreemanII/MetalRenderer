@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 /// What the scene view's camera turns about (Unity's pivot): a point in front of it, and how far it is. The camera is

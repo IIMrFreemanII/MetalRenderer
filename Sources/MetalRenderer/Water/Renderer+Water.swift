@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// A scene's water on the GPU (Shaders/Water.metal, WaterCommon.metal): its looks, its surfaces' own structure, the

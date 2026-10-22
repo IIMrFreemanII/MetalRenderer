@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a physics shape's distance is (GPUPhysicsShape.info.x): exact formulas for the simple primitives, the SDF

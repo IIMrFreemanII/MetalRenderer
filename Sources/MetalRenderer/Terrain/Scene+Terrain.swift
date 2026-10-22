@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a scene has of its terrain (Terrain/): the field it was made from, and each sector it meshes (a borrowed

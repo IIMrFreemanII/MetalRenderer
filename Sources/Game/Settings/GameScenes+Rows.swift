@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 
 extension GameScenes {
     private typealias S = SettingSpec

@@ -2,6 +2,7 @@ import AppKit
 import EngineCore
 import Metal
 import MetalRenderer
+import Plants
 
 /// The main thread's side of the renderer. The window's input, the menus and the panels talk to this, never to the
 /// `Renderer`, which belongs to the render thread: edits go to it as work (`Renderer.perform`), and its settings and

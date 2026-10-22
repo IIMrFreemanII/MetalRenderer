@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a part of a generated mesh is made of. The scene turns each distinct one into a material (Scene+City), so

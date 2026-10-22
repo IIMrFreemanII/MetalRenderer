@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 /// One entry of the light table's alias table (MSL LightTableEntry).

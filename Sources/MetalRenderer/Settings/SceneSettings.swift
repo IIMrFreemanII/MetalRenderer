@@ -1,6 +1,7 @@
 import CoreGraphics
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Which buildings the city is made of: every style by district, or one of them everywhere.
@@ -648,39 +649,6 @@ package struct CharacterSceneSettings: Equatable, Codable {
         case strands, caps, none
         package var title: String { ["Strands", "Caps", "None"][rawValue] }
     }
-}
-
-/// The plant workshop (Scene+Plants.swift): which plants it shows, and how.
-package struct PlantSceneSettings: Equatable, Codable {
-    /// The species' id (PlantCatalog), and the age and seeded variant of the one plant shown.
-    package var species = "oak"
-    package var age = Foliage.Age.mature
-    package var variant = 0
-    /// What the variants are grown from: the library's seed (SceneSettings.seed), so the workshop's oak 2 at seed 1 is
-    /// the forest's.
-    package var seed = 1
-    package var layout = Layout.single
-    package var view = View.plant
-    /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
-    /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
-    package var mutants = ""
-    package var compare = ""
-
-    package enum Layout: Int, CaseIterable, Codable {
-        case single         // the one plant
-        case lineup         // every age (rows) and variant (columns)
-        case mutate         // the plant and the editor's variations of it, in a row
-
-        package var title: String { ["One plant", "Ages and variants", "Variations"][rawValue] }
-    }
-    package enum View: Int, CaseIterable, Codable {
-        case plant
-        case skeleton       // the stems as thin lines, a colour to a level; no leaves
-
-        package var title: String { ["Plant", "Skeleton"][rawValue] }
-    }
-
-    package static let variantRange = 0...7
 }
 
 extension SceneKind {

@@ -58,8 +58,10 @@ if [[ -n $rev ]]; then
   # once: unpacking it again would give every file a new time and rebuild everything
   [[ -f $work/Package.swift ]] || git -C "$repo" archive "$rev" Sources Tests Tools Package.swift | tar -x -C "$work"
 else
-  (cd "$repo" && git ls-files -co --exclude-standard -- Sources Tests Tools Package.swift Package.resolved) |
-    rsync -a --files-from=- "$repo/" "$work/"
+  listed=$(cd "$repo" && git ls-files -co --exclude-standard -- Sources Tests Tools Package.swift Package.resolved)
+  rsync -a --files-from=<(echo "$listed") "$repo/" "$work/"
+  # what the tree no longer has (a file moved to another module) goes from the copy too
+  (cd "$work" && find Sources Tests Tools -type f 2>/dev/null) | grep -vxF -f <(echo "$listed") | (cd "$work" && xargs rm -f)
 fi
 w=$work
 

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A scene's particle effects as graphs (VFXGraph.swift): it places effects (`addEffect`), names the colliders of its

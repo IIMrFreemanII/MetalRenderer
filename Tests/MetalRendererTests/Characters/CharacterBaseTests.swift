@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The base body (CharacterBase), its morphs (CharacterMorphs) and characters made from DNA (CharacterBuilder).
 /// Skipped where Assets/Characters isn't there.

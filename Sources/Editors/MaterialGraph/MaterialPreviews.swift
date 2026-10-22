@@ -1,6 +1,7 @@
 import EngineCore
 import MetalKit
 import MetalRenderer
+import Plants
 import SwiftUI
 import simd
 

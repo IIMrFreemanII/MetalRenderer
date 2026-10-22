@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 // Swift twins of MaterialShaders/Paint.metal's structs.

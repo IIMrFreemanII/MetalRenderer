@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 import CPhysicsAtomics
 

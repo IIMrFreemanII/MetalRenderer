@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Displacement (MatSurface.displacement): meshes subdivided to a material's detail (MeshSubdivider), their vertices
 /// grouped where they meet, moved on the GPU by the height (MaterialShaders/MatDisplace.metal) without opening the

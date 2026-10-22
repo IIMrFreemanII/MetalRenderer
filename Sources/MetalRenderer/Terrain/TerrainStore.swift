@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Terrains on disk: `Assets/Terrains/<slug>.terrain/`, a folder each — `terrain.json` (the document, the base it was

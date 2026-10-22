@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The building generator (Building*.swift) on the CPU: every style, on lots of several sizes with their sides
 /// looking onto different things, over a run of seeds.

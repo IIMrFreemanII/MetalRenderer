@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Hair (CharacterHair, CharacterHairCap): where it roots, that it stays off the head, that the brows and lashes ride
 /// the face's expressions, the caps, and how quickly the workshop is made again with it. Skipped where

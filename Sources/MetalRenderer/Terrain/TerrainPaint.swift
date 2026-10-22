@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The ground's 16 layers at a place: each layer's own rule (TerrainRule: height, slope, noise) where nothing is

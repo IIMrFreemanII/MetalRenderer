@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The blue-noise tile's cache file (BlueNoise.swift, CacheFile.swift) and the generated scenes' section files
 /// (SectionFile.swift).

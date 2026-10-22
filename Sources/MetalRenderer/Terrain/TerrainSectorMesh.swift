@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// How a terrain's ground is meshed in a scene: where its UVs come from, how deep the skirts under tile sides hang,

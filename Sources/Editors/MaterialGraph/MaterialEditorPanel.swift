@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The Material Designer's window (MaterialEditorView), beside the main one. It takes the keys when clicked: Delete

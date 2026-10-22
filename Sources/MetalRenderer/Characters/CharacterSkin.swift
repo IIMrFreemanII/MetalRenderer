@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Where a generated character's skin is in its textures (SkinTextures): the head and neck unrolled round the head's

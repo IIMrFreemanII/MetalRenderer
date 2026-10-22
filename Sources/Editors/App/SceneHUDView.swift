@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Plants
 
 /// A scene's HUD (SceneHUD, from its behaviour: the destruction's tools, the demolition's player): a box of text in a
 /// corner of the render view, and a crosshair in its middle while the mouse is captured. A view over the render: the

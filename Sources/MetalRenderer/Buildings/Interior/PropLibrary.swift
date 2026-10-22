@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Furniture from glTF files, in place of the generated pieces (FurnitureKit): `Assets/Props/props.json` lists them,

@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The VFX editor without its window (VFXEditorModel, VFXLayout), how its edits reach a running particle system
 /// (VFXLive.swift), and, with VFX_EDITOR_PNG=<folder>, pictures of its window drawn offscreen.

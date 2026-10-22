@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// SDF shapes (SDFShapes.swift, SDFVolume.swift, SDFBuffers.swift): the distances the shaders march (Shaders/SDF.metal
 /// computes the same), the boxes the tracers clip them to, the triangles an emissive shape is sampled by as a light,

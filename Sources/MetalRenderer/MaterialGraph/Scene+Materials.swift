@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The material workshop: one Material Designer graph (`SceneSettings.materialWorkshop.graph`, by name: the

@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The showcase (Showcase.swift, Scene+Showcase.swift): every model of Assets/ has a look of its own, a setting names
 /// its model, and the lens effects are the showcase's and, outdoors, the realistic look's alone.

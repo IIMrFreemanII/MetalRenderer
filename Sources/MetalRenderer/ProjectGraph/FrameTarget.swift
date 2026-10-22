@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 /// Where the camera goes: what it frames of a scene (`scope`: MaterialAssignments.scope), its instances (where they are

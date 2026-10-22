@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// Physics.swift, PhysicsCollide.swift, PhysicsCPU.swift, PhysicsGPU.swift and Shaders/Physics.metal: shapes' mass
 /// properties, contacts, bodies that rest, stack, bounce and slide as they should, and the GPU's steps against the CPU's.

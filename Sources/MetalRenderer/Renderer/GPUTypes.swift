@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 import simd
 
 // Structs shared with the shaders (Shaders/Types.metal unless a comment names another piece).

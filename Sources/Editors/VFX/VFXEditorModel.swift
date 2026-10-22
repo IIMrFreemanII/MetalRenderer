@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import EngineCore
 import MetalRenderer
+import Plants
 import QuartzCore
 import simd
 

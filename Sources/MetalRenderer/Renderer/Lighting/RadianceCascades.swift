@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 
 /// Matches `RCParams` in Shaders/RadianceCascades.metal.
 struct RCParams {

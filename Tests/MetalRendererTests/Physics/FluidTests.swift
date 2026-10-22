@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// PhysicsFluid.swift, PhysicsFluidCPU.swift and Shaders/Fluid.metal: the pour, PBF and MLS-MPM against each other
 /// (GPU against the CPU, a GPU run against another), liquids that stay in their box and settle, honey that spreads

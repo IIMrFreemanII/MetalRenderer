@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// Painted objects' documents on disk: `Assets/Painter/<slug>.painter/`, a folder each — its `document.json` (the
 /// layers), the painted pixels as PNGs (`layers/`), and the finished texture set (`final/`). The folder is

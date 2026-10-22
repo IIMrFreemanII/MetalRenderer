@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A crowd: thousands of instances of a few skinned characters, animated on the GPU.

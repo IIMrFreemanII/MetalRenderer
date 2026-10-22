@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The particles' maths (Shaders/ParticleSim.metal's twin, line for line; VFXInterpreter runs them): the hash, the random stream, gradient noise

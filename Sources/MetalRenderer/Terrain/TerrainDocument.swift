@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What a terrain's ground is made of where it isn't painted: a layer's own weight from the ground's height and slope

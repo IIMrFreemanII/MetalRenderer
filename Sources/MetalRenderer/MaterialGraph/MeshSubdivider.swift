@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A mesh made fine enough for a material's height to move its vertices (displacement: Scene+Displacement.swift):

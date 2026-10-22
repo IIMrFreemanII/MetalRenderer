@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 
 /// Auto exposure (PostSettings.autoExposure): the tone-map pass adds one pixel in 8 x 8 of the frame's light to a
 /// histogram of its log2 luminance (Shaders/Output.metal meterExposure); a few frames on, when its frame is done, the

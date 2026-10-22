@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// The particles' flipbooks (ParticleTrace.metal's `particleTexel`): one layer of a texture array per kind, `grid` x

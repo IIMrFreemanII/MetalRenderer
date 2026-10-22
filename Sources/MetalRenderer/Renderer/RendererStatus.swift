@@ -1,4 +1,5 @@
 import EngineCore
+import Plants
 import simd
 
 /// What the renderer reports on its stats tick, twice a second, besides the settings.

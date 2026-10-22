@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The built-in plants as they were before the plant editor: the library's meshes, where the forest, the valley and
 /// the open world put them, their materials and the names the caches know them by. Whoever means to change what a

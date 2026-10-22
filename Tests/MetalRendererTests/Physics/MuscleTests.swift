@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// PhysicsFlesh.swift, PhysicsRig.swift, PhysicsSkin.swift, MuscleAtlas.swift, SkeletonAtlas.swift and the muscles scene: kinematic bodies
 /// that follow their table and carry what they touch, a character's rig, flesh held to its bones, muscles that bulge

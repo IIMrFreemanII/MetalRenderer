@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The material graph's GPU engine (MatEngine, the kernels in MaterialShaders/): nodes' values against the CPU's
 /// formulas, the cache (only what an edit reaches is baked again), and the multi-pass nodes against brute force.

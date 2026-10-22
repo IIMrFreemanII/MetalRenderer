@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A mesh a procedural material's height moves (MatSurface.displacement): a copy of the mesh its instances had,

@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The Mixamo clip library (MixamoLibrary.swift): its index, names, picks, and the clips Tools/mixamo/download.py
 /// writes (skinless, 60 fps), read and retargeted onto the characters in Assets/Characters. The last test is skipped

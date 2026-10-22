@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The écorché's skeleton (MuscleAtlas): a character's bones as shapes of their own, built from its joints and fitted

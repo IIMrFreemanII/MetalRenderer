@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A triangle mesh's piece inside a convex cell (a fractured statue's, Scene+Fracture.swift): its triangles clipped

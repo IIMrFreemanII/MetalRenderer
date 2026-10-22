@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A terrain's generator (GeneratorStack): its steps evaluated at a place of the world, a source's noise combined with

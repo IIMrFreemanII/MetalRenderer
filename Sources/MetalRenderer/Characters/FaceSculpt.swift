@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The head of every generated character (CharacterBase), sculpted as a distance field: a skull and a face of smooth

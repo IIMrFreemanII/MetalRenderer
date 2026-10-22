@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import Metal
+import Plants
 import QuartzCore
 
 /// Where a frame ends up: the window's layer, or offscreen textures (benchmarks, which run without a window unless

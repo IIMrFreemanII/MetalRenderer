@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Placing objects: the selected object of the scene's file (Scene.placed; a click selects, as everywhere) gets three

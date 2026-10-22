@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// What moves and switches in a scene's interiors: the doors' leaves (how far each is open), the rooms' lights (on

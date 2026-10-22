@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The texture slots a procedural material's bake fills (MatOutputs' textures).

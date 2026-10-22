@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 
 /// A scene's sun along its day: where it is between morning (0) and evening (1) at time t of the scene's day clock.
 /// The scenes pose their suns with it (Scene+Lights, Scene+City), and the day bar reads it as a clock (`DayClock`).

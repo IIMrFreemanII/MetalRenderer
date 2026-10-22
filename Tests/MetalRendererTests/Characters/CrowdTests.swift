@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The crowd's description and clock (Crowd.swift) and the scene built around it (Scene+Crowd.swift). The GPU's
 /// skinning and refits are checked in a run: `METALRENDERER_BENCH=crowd METALRENDERER_CROWD_CHECK=1`.

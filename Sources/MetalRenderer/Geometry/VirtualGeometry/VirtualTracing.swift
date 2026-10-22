@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// Virtual geometry in the top-level structure: what the virtual instances' descriptors point at, and what the ray

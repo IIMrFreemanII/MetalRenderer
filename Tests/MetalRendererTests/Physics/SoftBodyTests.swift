@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// PhysicsSoft.swift, the soft bodies' stages of PhysicsCPU.swift and Shaders/Physics.metal, and the soft body scene:
 /// the lattice and its embedded surface, jellies that keep their volume, rest, sag by their compliance and don't pass

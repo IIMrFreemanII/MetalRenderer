@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Plants
 import QuartzCore
 
 /// What MetalFX reads besides the frame's targets.

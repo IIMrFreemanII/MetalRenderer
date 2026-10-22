@@ -4,6 +4,7 @@ import Metal
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Plants
 
 /// The mip kernels Metal 4 frames use (Shaders/Mips.metal, Metal4Frame.generateMipmaps) against the blit encoder's
 /// generateMipmaps, which Metal 3 frames use: the same levels, bit for bit, so the two APIs draw the same frames.

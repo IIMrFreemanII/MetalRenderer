@@ -1,5 +1,6 @@
 import EngineCore
 import MetalRenderer
+import Plants
 import SwiftUI
 
 /// The character editor: the characters across the top, the selected one's tabs below, and the workshop's controls,

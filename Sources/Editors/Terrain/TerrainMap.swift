@@ -2,6 +2,7 @@ import CoreGraphics
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import simd
 
 /// The Terrain Editor's map: a picture of a terrain from above, drawn from a snapshot (any thread) — its heights in

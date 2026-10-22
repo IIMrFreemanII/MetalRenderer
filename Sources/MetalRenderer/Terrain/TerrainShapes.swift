@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Shapes a scene gives its ground over its base, as a function of the place alone (never added to what is there:

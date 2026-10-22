@@ -1,6 +1,7 @@
 import CoreGraphics
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A value that can be written into a `METALRENDERER_*` variable and read back from one.

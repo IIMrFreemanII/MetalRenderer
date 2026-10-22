@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// Virtual geometry, ray-tracing friendly: the Nanite cut through each virtual mesh's cluster DAG is evaluated on the

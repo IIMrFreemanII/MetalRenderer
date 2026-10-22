@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// An effect a scene placed (Scene.addEffect): where, and what its names bind to in the scene (a Mesh block's mesh

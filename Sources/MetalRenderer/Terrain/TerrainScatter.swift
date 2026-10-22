@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// Where a scatter rule (ScatterRule) puts its things: one candidate to each cell of a grid over the world, each from

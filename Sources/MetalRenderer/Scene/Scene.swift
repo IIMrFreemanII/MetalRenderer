@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import ImageIO
+import Plants
 import simd
 
 /// A small Cornell-style room with static objects, animated objects and moving sphere lights, or one of the other

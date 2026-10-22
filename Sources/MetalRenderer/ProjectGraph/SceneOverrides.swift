@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// The Project Graph's edits of scenes, per scene (MaterialAssignments.scope): things hidden, things duplicated, and

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import MetalRenderer
+import Plants
 import simd
 
 /// What the left button does in the demolition scene (keys 1 to 4).

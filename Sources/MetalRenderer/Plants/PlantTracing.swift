@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Plants
 import simd
 
 /// A part of an assembly as the GPU reads it (MSL `RTPart`, Shaders/Foliage.metal): plant -> part rows, its mesh,

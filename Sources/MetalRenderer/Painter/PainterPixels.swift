@@ -3,6 +3,7 @@ import EngineCore
 import Foundation
 import ImageIO
 import Metal
+import Plants
 import simd
 
 /// A painted object's pixels on disk (PainterStore's package): each paint layer's channels and painted masks as 16-bit

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// A painted mesh's layout in its texture set: three UVs per triangle (its corners'; a seam is where two triangles

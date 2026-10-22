@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Plants
 import simd
 
 /// How an edit of the placed effects reaches a scene's running particles (Renderer.editEffects), the cheapest that
