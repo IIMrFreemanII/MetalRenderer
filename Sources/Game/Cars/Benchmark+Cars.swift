@@ -65,20 +65,22 @@ extension Benchmark {
         }
     }
 
-    /// Every style (the car pack's models, CarPack, when Assets/Cars has it) standing, in the full look: the parked lot
-    /// of eight from beside it, starting with the sedan, then with the SUV (the two the first leaves out), and the
-    /// player's car close from its front three-quarters.
+    /// Every car (its model: CarPack) standing, in the full look: the three parked from beside the lot, then each close
+    /// as the player's, from its front three-quarters and from its rear three-quarters.
     private static func carsModels() -> [Config] {
-        let lot = Scene.camera([21, 4.5, -8], yaw: 0.56, pitch: -0.2), close = Scene.camera([3.6, 1.5, -2.6], yaw: -0.62, pitch: -0.12)
-        return [("lot from sedan", CarStyle.sedan, lot), ("lot from suv", .suv, lot), ("close sedan", .sedan, close), ("close suv", .suv, close)]
-            .map { name, style, camera in
-                carBase(name).with {
-                    $0.scene.cars.demo = .none
-                    $0.scene.cars.cars = 8
-                    $0.scene.cars.style = style
-                    $0.solid = false
-                }.from(camera).still(at: 2)
-            }
+        let lot = Scene.camera([21, 4.5, -8], yaw: 0.56, pitch: -0.2), front = Scene.camera([3.6, 1.5, -2.6], yaw: -0.62, pitch: -0.12)
+        let rear = Scene.camera([-3.4, 1.5, -13.2], yaw: 2.5, pitch: -0.12)
+        let shots = [("lot", CarStyle.civic, lot)] + CarStyle.allCases.flatMap { style in
+            [("\(style) front", style, front), ("\(style) rear", style, rear)]
+        }
+        return shots.map { name, style, camera in
+            carBase(name).with {
+                $0.scene.cars.demo = .none
+                $0.scene.cars.cars = 4
+                $0.scene.cars.style = style
+                $0.solid = false
+            }.from(camera).still(at: 2)
+        }
     }
 
     /// The cars' steps moving: 1, 4 and 8 cars on autopilot laps.

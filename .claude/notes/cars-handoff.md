@@ -189,6 +189,43 @@ phase 1's tip. Node-beam (BeamNG-style) cars that drive, dent and break. The pla
   set (worlds with cars), and the kernel's change is behind the car vertex bit.
 - 8 cars over the cost target; the window hand test (keys, HUD with damage lines, the dust in motion).
 
+## Detailed models in place of the pack (on `claude/car-collisions`, after phase 3's WIP commit)
+
+- The user downloaded four detailed Sketchfab models (KOElkast1007's, "Sketchfab Standard" as tagged) and asked for
+  them in place of the generic pack, every mesh drawn. They chose Git LFS, knowing the models carry parts that look to
+  come from BeamNG.drive (tyres, engines, gauges); the README's credit says so.
+- `CarStyle` is now the four: `.civic`, `.karoq`, `.panamera`, `.santaFe`, with their makers' mechanics in
+  `CarSpec.preset` (up to 8 gears now: `CarTune.gears`, `CarDrivetrain.ratio`).
+- `CarPack.entries`: per model its file, the variants to leave out (`exclude`, `preferLHD`), its rims' and tyres'
+  node names, its paint's, glass's and lamps' material names. Parts by node name for all of them (`partNames`), windows
+  by `windowNames`. `Tools/cars/inspect.py` prints a model's tree to write an entry. Loaded lazily per style
+  (`CarPack.model(style)`), once.
+- `CarModel` is a list of meshes with material, role (paint, other, lamp, window, lamp glass, glass), part and window.
+- `CarSpec.fitted` measures all of the model; `CarSpec.spans` puts the doors, hood and tailgate where the model's are
+  (`CarBlueprint.buildParts`); mirrors from the mirror nodes (the Karoq has none: the old search on the paint).
+- `CarSurface`: a mesh on a named part follows only that part's triangles; the rest the body's. A pane per window, the
+  lamps per corner, a lamp's glass with its corner's lamp (it folds, the lamp darkens). Nearest hull triangles through
+  a grid (`HullGrid`).
+- `Scene.addCarMaterials`: every material of the model is one run; the per-triangle offsets are model material
+  indices (paint as clear coat, glass as this renderer's). Textures keyed by file and image.
+- Parked cars cost no skinning or refit: `PhysicsGPU.noteStillCars` compares each car's nodes (and damage bytes) with
+  where they were when last drawn (0.2 mm); after two still frames the soft-mesh kernels skip its vertex range and
+  `PrimitiveRefit.skipping` its structures.
+- Tests: the model tests pass (fit, panels on the body, named parts on their parts, embedding 0.5-1.7 s a model);
+  0-100 km/h Civic 7.0-7.3 s, Karoq 9.8-10.3, Panamera 5.0, Santa Fe 6.8-7.0; Civic braking 35 m. `CarContactTests`
+  run on the Panamera (the nearest to the old sedan); only `testTyresStandOnBodies` fails (as at the WIP commit).
+- Loose parts (the user's window test, Oct 22): a part rested on its body by `.compression` supports that only
+  pushed, so between its hinges and latch a door's strip of nodes swung out (235 mm in a slalom and a bump:
+  `testPartsStayOnTheBodyWhileDriving`); the detailed doors ride on that strip, so they looked loose. Now
+  `CarBeamKind.support`: both ways, flows past the panel yield, never breaks, let go when its part tears (`letGo`).
+  0.8 mm in the same run. It also fixed P3's contact determinism (one core vs all cores, which failed for some old
+  styles at the WIP commit) and the head-on symmetry: the flapping parts were what differed.
+- Load time: embedding the panels was 3.9 of the scene's 4.9 s. `CarSurface.cached` (`CarSurfaceCache.swift`) keeps
+  each car's in `GeneratedCache`, named by a hash of the model's meshes and the blueprint (spec, nodes, hull, parts):
+  read back in 0.02 s; 137 MB for the four. A change of how `CarSurface` embeds takes `CarSurface.version` + 1.
+- `GLTFLoader`: a number too small for a Float (the Santa Fe's `-8.4e-53`) made JSONDecoder throw: flushed to 0 and
+  decoded again.
+
 ## Next phases
 
 - **P3 — car against car and the world:**

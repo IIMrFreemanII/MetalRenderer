@@ -29,7 +29,7 @@ final class CarContactTests: XCTestCase {
     }
 
     /// A world with a floor and cars of `spec`, each placed by its transform and moving at its velocity.
-    private func world(_ cars: [(float4x4, SIMD3<Float>)], spec: CarSpec = .preset(.sedan)) -> PhysicsWorld {
+    private func world(_ cars: [(float4x4, SIMD3<Float>)], spec: CarSpec = .preset(.panamera)) -> PhysicsWorld {
         let w = PhysicsWorld(substeps: 16)
         w.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
         for (k, (place, velocity)) in cars.enumerated() {
@@ -126,7 +126,7 @@ final class CarContactTests: XCTestCase {
         let crate = s.addSDFShape(SDFShape(.box(halfExtents: [0.4, 0.4, 0.4], rounding: 0.02)))
         let first = w.bodies.count
         for k in 0..<3 { s.addBody(sdf: crate, 0, translate([Float(k) * 0.82 - 0.82, 0.4, 6]), density: 300, friction: 0.6, restitution: 0.05) }
-        w.addCar(CarBlueprint(.preset(.sedan)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 30 / 3.6])
+        w.addCar(CarBlueprint(.preset(.civic)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 30 / 3.6])
         w.finish()
         run(w, 2)
         let moved = (first..<first + 3).map { w.bodies[$0].position.z - 6 }
@@ -142,7 +142,7 @@ final class CarContactTests: XCTestCase {
         let w = s.physicsWorld()
         let deck = w.bodies.count
         s.addBody(sdf: s.addSDFShape(SDFShape(.box(halfExtents: [1.5, 0.1, 4]))), 0, translate([0, 0.1, 1]), density: 150, friction: 0.9, restitution: 0)
-        w.addCar(CarBlueprint(.preset(.sedan)), transform: translate([0, 0.2, 0]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
+        w.addCar(CarBlueprint(.preset(.civic)), transform: translate([0, 0.2, 0]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
         w.finish()
         run(w, 1)
         let loads = w.carSystem.wheels.map(\.load).reduce(0, +), weight = w.carSystem.cars[0].mass * 9.81
@@ -167,7 +167,7 @@ final class CarContactTests: XCTestCase {
         let f = s.addFractured("bricks", shape: SDFShape(.box(halfExtents: [1.6, 0.88, 0.11])), recipe: r, transform: translate([0, 0.88, 7]),
                                material: 0, interior: 0, anchor: .ground(0))
         let w = s.physicsWorld()
-        w.addCar(CarBlueprint(.preset(.sedan)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 40 / 3.6])
+        w.addCar(CarBlueprint(.preset(.civic)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 40 / 3.6])
         w.finish()
         run(w, 2.5)
         var free = 0

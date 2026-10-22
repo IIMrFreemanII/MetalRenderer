@@ -173,6 +173,14 @@ package enum GLTFLoader {
 
     // MARK: Loading
 
+    /// `json` with every number of an exponent below -37 (under a Float's least normal) written as 0.
+    static func flushingTinyNumbers(_ json: Data) -> Data {
+        let text = String(decoding: json, as: UTF8.self)
+        let tiny = try! NSRegularExpression(pattern: "-?[0-9]+(\\.[0-9]+)?[eE]-(3[8-9]|[4-9][0-9]|[0-9]{3,})")
+        let flushed = tiny.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "0")
+        return Data(flushed.utf8)
+    }
+
     package static func load(_ url: URL) throws -> GLTFModel {
         let file = try Data(contentsOf: url, options: .mappedIfSafe)
         // A clone without git-lfs checks out the pointer text in place of the model.
@@ -186,7 +194,13 @@ package enum GLTFLoader {
         } else {
             json = file
         }
-        let doc = try JSONDecoder().decode(Document.self, from: json)
+        let doc: Document
+        do {
+            doc = try JSONDecoder().decode(Document.self, from: json)
+        } catch DecodingError.dataCorrupted {
+            // A number too small for a Float (an exporter's -8e-53 in a matrix), which JSONDecoder refuses: zero.
+            doc = try JSONDecoder().decode(Document.self, from: GLTFLoader.flushingTinyNumbers(json))
+        }
         guard doc.asset.version.hasPrefix("2") else { throw GLTFError.unsupported("glTF version \(doc.asset.version)") }
         if let required = doc.extensionsRequired?.filter({ !supportedRequired.contains($0) }), !required.isEmpty {
             throw GLTFError.unsupported("required extensions \(required.joined(separator: ", "))")

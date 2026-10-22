@@ -289,7 +289,7 @@ package struct CarBlueprint {
     // MARK: The engine
 
     private mutating func buildEngine() {
-        let mid = spec.style == .coupe ? spec.frontAxle - 0.4 : spec.frontAxle - 0.05
+        let mid = spec.frontAxle - 0.05
         let height = spec.sill + 0.06 + (min(spec.topHeight(mid), spec.cowl) - spec.sill) * 0.42
         let centre = SIMD3<Float>(0, height, mid), half = SIMD3<Float>(0.28, 0.2, 0.26)
         for k in 0..<8 {
@@ -313,9 +313,9 @@ package struct CarBlueprint {
 
     /// The parts that can come off: the bumpers (an end below the belt line and the panels behind it, on six clips),
     /// the hood and the trunk lid (the top in front of the windshield and behind the rear window: two hinges at the
-    /// glass's end, a latch at the other), the doors (the side between the wheel arches below the belt line: two hinges
-    /// at the front, a latch at the back; four on a long cabin, two on a short one or a coupe), the mirrors (where the
-    /// model has them: CarSpec.mirror).
+    /// glass's end, a latch at the other), the doors (the side below the belt line: two hinges at the front, a latch at
+    /// the back), the mirrors (where the model has them: CarSpec.mirror). Where the model's parts are (CarSpec.spans),
+    /// or, without them, where the stations put them.
     private mutating func buildParts() {
         let n = stations.count
         let low = [Slot.sillL, .beltR, .sillR, .floorR, .floorMid, .floorL].map(\.rawValue)
@@ -332,36 +332,49 @@ package struct CarBlueprint {
                     holds: clips.map { (rings[behind][$0.rawValue], 4e3) })
         }
         let middles = (0..<(n - 1)).map { (stations[$0] + stations[$0 + 1]) / 2 }
-        let hood = middles.indices.filter { middles[$0] > spec.windshieldBase + 0.02 }
+        let spans = spec.spans
+        let hood = middles.indices.filter { middles[$0] > (spans?.hood ?? spec.windshieldBase) + 0.02 }
         if hood.count >= 2 {
             let under = hullTags.indices.filter { hullTags[$0].y >= 0 && hood.contains(hullTags[$0].x) && top.contains(hullTags[$0].y) }
             addPart(.hood, side: 0, mass: 14, under: under,
                     holds: [(rings[hood[0]][Slot.topL.rawValue], 10e3), (rings[hood[0]][Slot.topR.rawValue], 10e3), (rings[n - 1][Slot.crown.rawValue], 6e3)])
         }
-        // (A pickup's bed has no lid; a hatchback's tailgate is its rear window's.)
-        let trunk = middles.indices.filter { middles[$0] < spec.rearWindowBase - 0.02 }
-        if trunk.count >= 2 && spec.style != .pickup {
+        // (A model's lid where it is, if it has one: a hatchback's or an SUV's tailgate is short along the body.)
+        let lid = spans.map { $0.trunk } ?? spec.rearWindowBase
+        let trunk = lid.map { lid in middles.indices.filter { middles[$0] < lid - 0.02 } } ?? []
+        if trunk.count >= (spans == nil ? 2 : 1) {
             let under = hullTags.indices.filter { hullTags[$0].y >= 0 && trunk.contains(hullTags[$0].x) && top.contains(hullTags[$0].y) }
             let hinge = trunk[trunk.count - 1] + 1
             addPart(.trunk, side: 0, mass: 12, under: under,
                     holds: [(rings[hinge][Slot.topL.rawValue], 10e3), (rings[hinge][Slot.topR.rawValue], 10e3), (rings[0][Slot.crown.rawValue], 6e3)])
         }
-        // The doors, between the wheel arches and in front of the rear window's base.
-        let zFront = spec.frontAxle - spec.wheelRadius - 0.12, zRear = max(spec.rearAxle + spec.wheelRadius + 0.12, spec.rearWindowBase - 0.1)
-        let inside = stations.indices.filter { stations[$0] >= zRear && stations[$0] <= zFront }
-        if let ka = inside.first, let kb = inside.last, kb - ka >= 2 {
-            let two = spec.style == .coupe || spec.style == .sport || zFront - zRear < 1.7 || kb - ka < 4
-            let km = two ? max(ka, kb - 4) : (ka + kb) / 2
-            var doors: [(CarPartKind, Range<Int>)] = [(.frontDoor, km..<kb)]
-            if !two { doors.append((.rearDoor, ka..<km)) }
-            for (kind, segments) in doors {
-                for side: Float in [1, -1] {
-                    let slot = side > 0 ? Slot.sillL : .beltR, sill = side > 0 ? Slot.sillL : .sillR, belt = side > 0 ? Slot.beltL : .beltR
-                    let under = hullTags.indices.filter { hullTags[$0].y == slot.rawValue && segments.contains(hullTags[$0].x) }
-                    let hinge = segments.upperBound, latch = segments.lowerBound
-                    addPart(kind, side: side, mass: kind == .frontDoor ? 20 : 17, under: under,
-                            holds: [(rings[hinge][sill.rawValue], 18e3), (rings[hinge][belt.rawValue], 18e3), (rings[latch][belt.rawValue], 8e3)])
-                }
+        // The doors: the model's where they are; otherwise between the wheel arches and in front of the rear window's base,
+        // four on a long cabin, two on a short one.
+        var doors: [(CarPartKind, Range<Int>)] = []
+        if let spans, let front = spans.frontDoor {
+            let kb = nearestStation(front.y), km = min(nearestStation(front.x), kb - 1)
+            doors.append((.frontDoor, km..<kb))
+            if let rear = spans.rearDoor {
+                let ka = min(nearestStation(rear.x), km - 1)
+                if ka >= 0 { doors.append((.rearDoor, ka..<km)) }
+            }
+        } else {
+            let zFront = spec.frontAxle - spec.wheelRadius - 0.12, zRear = max(spec.rearAxle + spec.wheelRadius + 0.12, spec.rearWindowBase - 0.1)
+            let inside = stations.indices.filter { stations[$0] >= zRear && stations[$0] <= zFront }
+            if let ka = inside.first, let kb = inside.last, kb - ka >= 2 {
+                let two = zFront - zRear < 1.7 || kb - ka < 4
+                let km = two ? max(ka, kb - 4) : (ka + kb) / 2
+                doors.append((.frontDoor, km..<kb))
+                if !two { doors.append((.rearDoor, ka..<km)) }
+            }
+        }
+        for (kind, segments) in doors where !segments.isEmpty && segments.lowerBound >= 0 {
+            for side: Float in [1, -1] {
+                let slot = side > 0 ? Slot.sillL : .beltR, sill = side > 0 ? Slot.sillL : .sillR, belt = side > 0 ? Slot.beltL : .beltR
+                let under = hullTags.indices.filter { hullTags[$0].y == slot.rawValue && segments.contains(hullTags[$0].x) }
+                let hinge = segments.upperBound, latch = segments.lowerBound
+                addPart(kind, side: side, mass: kind == .frontDoor ? 20 : 17, under: under,
+                        holds: [(rings[hinge][sill.rawValue], 18e3), (rings[hinge][belt.rawValue], 18e3), (rings[latch][belt.rawValue], 8e3)])
             }
         }
         if let m = spec.mirror {
@@ -372,7 +385,8 @@ package struct CarBlueprint {
     /// A part of `kind` over the body's hull triangles `under`: a twin of each of their nodes `partGap` outside it,
     /// their triangles' edges and the beams across each edge two of them share (its panel, which bends), held to the
     /// body at `holds` (a body node and its attachment's strength, shared by its beams: to it and the three body nodes
-    /// nearest it) and resting on it elsewhere (a beam to its body node that only pushes).
+    /// nearest it) and resting on it elsewhere (a support to its body node, which holds it both ways: one that only
+    /// pushed let a door's middle swing out 20 cm in a slalom).
     private mutating func addPart(_ kind: CarPartKind, side: Float, mass: Float, under: [Int], holds: [(node: Int, strength: Float)]) {
         guard !under.isEmpty else { return }
         let p = parts.count + 1
@@ -408,7 +422,7 @@ package struct CarBlueprint {
         for v in corners {
             let t = twin[v]!
             guard let strength = holding[v] else {
-                beams.append(Beam(a: t, b: v, kind: .compression, zone: .panel, part: p))
+                beams.append(Beam(a: t, b: v, kind: .support, zone: .panel, part: p))
                 continue
             }
             let to = [v] + bodyNeighbours(v).prefix(3)

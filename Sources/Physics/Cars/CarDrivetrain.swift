@@ -20,7 +20,7 @@ extension CarSolver {
 
     /// The ratio from the engine to the wheels in gear `gear` (negative in reverse; 0 in neutral).
     @inline(__always) package static func ratio(_ t: CarTune, _ gear: Int32) -> Float {
-        gear > 0 ? t.gears[Int(min(gear, 7)) - 1] * t.finalDrive : gear < 0 ? -t.reverse * t.finalDrive : 0
+        gear > 0 ? t.gears[Int(min(gear, 8)) - 1] * t.finalDrive : gear < 0 ? -t.reverse * t.finalDrive : 0
     }
 
     @inline(__always) package static func carForces(_ c: Int, _ b: CarBuffers, _ p: GPUPhysicsParams, sub: Int) {

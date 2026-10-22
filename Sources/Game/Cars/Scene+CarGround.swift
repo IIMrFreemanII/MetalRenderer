@@ -143,7 +143,7 @@ extension Scene {
                 place = translate([at.x, 0, at.y]) * float4x4(simd_quatf(angle: atan2(tangent.x, tangent.y), axis: [0, 1, 0]))
             }
             guard let car = addCar(spec, place, velocity: velocity, bounds: Scene.carGroundBounds, name: "\(spec.style.title) \(k + 1)") else {
-                print("Cars: no model for \(spec.style.title): the car pack (\(CarPack.file) in Assets, Git LFS) isn't there")
+                print("Cars: no model for \(spec.style.title): \(CarPack.entry(spec.style).file) in Assets (Git LFS) isn't there")
                 continue
             }
             rig.cars.append(car)

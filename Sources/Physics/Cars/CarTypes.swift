@@ -44,6 +44,9 @@ package enum CarBeamKind: UInt32 {
     case spring
     /// A steering tie rod: its rest length is the steering's (CarBeamLimit.steer).
     case steer
+    /// What a part rests on its body by (CarBlueprint.addPart): it holds both ways and bends past its yield, as a
+    /// plastic beam does, but never breaks; it lets go when its part comes off (CarSolver.letGo).
+    case support
 }
 
 /// Where a beam is, for its strengths (CarBlueprint): the crumple zones front and rear, the cabin, the floor's rails,
@@ -408,7 +411,7 @@ package struct CarSystem {
 package struct CarTune {
     package var rpm = SIMD8<Float>()
     package var torque = SIMD8<Float>()
-    /// Forward gears (up to 7), then 0s.
+    /// Forward gears (up to 8), then 0s.
     package var gears = SIMD8<Float>()
     package var gearCount: Int32 = 0
     package var reverse: Float = 0
@@ -441,8 +444,8 @@ package struct CarTune {
             rpm[k] = rpm[curve.count - 1] + Float(k - curve.count + 1)
             torque[k] = 0
         }
-        for (k, g) in s.gears.prefix(7).enumerated() { gears[k] = g }
-        gearCount = Int32(min(s.gears.count, 7))
+        for (k, g) in s.gears.prefix(8).enumerated() { gears[k] = g }
+        gearCount = Int32(min(s.gears.count, 8))
         reverse = s.reverse
         finalDrive = s.finalDrive
         idle = s.idle * .pi / 30

@@ -2,17 +2,34 @@ import EngineCore
 import Foundation
 import simd
 
-/// A car's look from a model (CarPack): its body's meshes in car space (CarSpec's: x its left, y up, z forward, the
-/// origin on the ground midway between its axles), and its four wheels.
+/// A car's look from its model (CarPack): its meshes in car space (CarSpec's: x its left, y up, z forward, the origin on
+/// the ground midway between its axles), each with its glTF material, what it is (paint, glass, a lamp...), the part it
+/// is on (a door, the hood: by its node's name) and the window it is (a pane of its own); and its four wheels.
 package struct CarModel {
-    /// A mesh in car space (a wheel's: in its own, standing along y about its centre, as Scene.addCar turns it), its
-    /// material (the pack's `materials`).
+    /// What a mesh is: the paint (drawn as a clear coat), a lamp (it lights, and goes dark when broken), a window, a
+    /// lamp's glass (it breaks with the lamp it is nearest), other glass (a mirror's), or anything else (trim, the
+    /// interior, the engine, the underbody).
+    package enum Role: UInt8 {
+        case paint, other, lamp, window, lampGlass, glass
+
+        package var isGlass: Bool { self == .window || self == .lampGlass || self == .glass }
+    }
+
+    /// A mesh in car space (a wheel's: in its own, standing along y about its centre, as Scene.addCar turns it).
     package struct Mesh {
         package var positions: [SIMD3<Float>] = []
         package var normals: [SIMD3<Float>] = []
         package var uvs: [SIMD2<Float>] = []
         package var indices: [UInt32] = []
+        /// Its glTF material (the model's `materials`).
         package var material: Int = -1
+        package var role = Role.other
+        /// The part it is on (CarBlueprint.Part's kind and side, +1 left), nil: the body.
+        package var part: CarPartKind?
+        package var side: Float = 0
+        /// Its node's name; a window's: its pane (its place among the model's windows).
+        package var node = ""
+        package var window = -1
     }
     package struct Wheel {
         package var centre: SIMD3<Float>
@@ -22,67 +39,118 @@ package struct CarModel {
     }
 
     package var style: CarStyle
-    /// The paint (the body's shell, its trim and its details in one texture), the lamps, the glass.
-    package var paint = Mesh()
-    package var lamps = Mesh()
-    package var glass = Mesh()
+    package var meshes: [Mesh] = []
     /// Front left, front right, rear left, rear right (CarBlueprint.corners' order).
     package var wheels: [Wheel] = []
+    /// How many windows (panes) its meshes name.
+    package var windows = 0
+
+    /// The positions of its meshes whose role passes `roles`.
+    package func positions(_ roles: (Role) -> Bool) -> [SIMD3<Float>] { meshes.filter { roles($0.role) }.flatMap(\.positions) }
+    /// ...of those on part `kind` (and `side`, if given).
+    package func positions(of kind: CarPartKind, side: Float? = nil) -> [SIMD3<Float>] {
+        meshes.filter { m in m.part == kind && (side.map { m.side == $0 } ?? true) }.flatMap(\.positions)
+    }
 }
 
-/// A pack of car models (a glTF file: Assets/Cars, `file`) and how its nodes are cars: which node is each style's
-/// body (its paint, glass and lamps its children's meshes, named `_Body_0`, `_Glass_0`, `_Optics_0`), and which way
-/// its front is in that node's own space; its wheels are the root's nodes named `Wheel_`, each the car's whose
-/// footprint it is in.
+/// The car models (glTF files in Assets/Cars), one a car (CarStyle), and how each file's nodes are a car: which are its
+/// wheels' rims and tyres, which variants it carries to leave out, which materials are its paint, glass and lamps. Its
+/// parts are found by the names every one of them uses (`partNames`): `door_FL`, `hood`, `tailgate`, `bumper_F`...;
+/// its windows by theirs (`windowNames`).
 ///
-/// A car's frame comes from its shape (a body's node isn't always square with it): its forward along the longer side
-/// of its footprint (the principal axis of its paint's vertices on the ground), toward the end its node's hint says,
-/// then squared with its wheels (the front axle's middle less the rear's); its origin on the ground (under its wheels)
-/// between its axles.
+/// A car's frame comes from its shape: its forward along the longer side of its paint's footprint (the principal axis
+/// of its vertices on the ground), toward its front (`front`, in the file's space), squared with its wheels (the front
+/// axle's middle less the rear's); its origin on the ground (under its wheels) between its axles.
 package enum CarPack {
-    /// "Generic passenger car pack" by Comrade1280 (Sketchfab, CC BY 4.0: README, "Cars").
-    package static let file = "Cars/generic_passenger_car_pack.glb"
+    /// A model's file and how to read it.
+    package struct Entry {
+        package var style: CarStyle
+        package var file: String
+        /// The credit (README, "Cars").
+        package var title: String
+        package var source: String
+        /// Node names to leave out (another variant of a part, an old copy), and whether a node with a twin named
+        /// `<its name>_LHD` gives way to it (a model of both left- and right-hand drive).
+        package var exclude: String
+        package var preferLHD = false
+        /// The wheels' rims' and tyres' node names; the paint's, glass's and lamps' material names (regular expressions).
+        package var rims: String
+        package var tyres: String
+        package var paint: String
+        package var glass: String
+        package var lamps: String
+        package var front = SIMD3<Float>(0, 0, 1)
+    }
 
-    /// Each style's body node, and its front in the node's space.
-    package static let bodies: [(style: CarStyle, node: String, front: SIMD3<Float>)] = [
-        (.sedan, "Sedan Body", [0, -1, 0]), (.hatchback, "Hatchback Body", [0, -1, 0]), (.pickup, "Pickup Body", [0, -1, 0]),
-        (.coupe, "Coupe Body", [1, 0, 0]), (.wagon, "Wagon Body", [0, -1, 0]), (.compact, "Compact Body", [0, -1, 0]),
-        (.minivan, "minivan body", [0, -1, 0]), (.sport, "Sport body", [0, -1, 0]), (.suv, "SUV Body", [0, -1, 0]),
-        (.offroad, "Offroad Body", [0, -1, 0]),
+    /// The four cars (KOElkast1007's, Sketchfab: README, "Cars").
+    package static let entries: [Entry] = [
+        Entry(style: .civic, file: "Cars/honda_civic_type_r.glb", title: "Honda Civic Type-R",
+              source: "https://sketchfab.com/3d-models/honda-civic-type-r-6bc1e361969849eb99b45c933fb85e2f",
+              exclude: "_OLD$", preferLHD: true, rims: "_wheel_a", tyres: "_tires_19x9", paint: "^CivicTypeR_paint", glass: "^CivicTypeR_glass",
+              lamps: "^CivicTypeR_(lowhighbeam|fog|running_[LR]|signal_[LR]|taillight|reverse|brake|redfog)$"),
+        Entry(style: .karoq, file: "Cars/skoda_karoq.glb", title: "Skoda Karoq",
+              source: "https://sketchfab.com/3d-models/skoda-karoq-4806b6917fe3465882c50fc28f9b990d",
+              exclude: "^$", rims: "^karoq_wheel_", tyres: "^tire_01a", paint: "^karoq_color$", glass: "^karoq_glass$",
+              lamps: "^karoq_(taillight|chmsl|signal_[LR]|drl_signal_[LR]|reverselight|headlight|highbeam)$"),
+        Entry(style: .panamera, file: "Cars/porsche_panamera.glb", title: "Porsche Panamera",
+              source: "https://sketchfab.com/3d-models/porsche-panamera-a4045a52962f4301b34a839b9c4ed9b9",
+              exclude: "^pan_(?!wheel).*\\\\.00[0-9]$|^pan_engine_3\\\\.0$", rims: "^pan_wheel", tyres: "^tire_01a", paint: "^pan_paint",
+              glass: "^(sunburst_glass|pan_lightglass)", lamps: "^pan_(tail|rev|red|signal_[LR]1?|break|linz2?|hod)(\\\\.00[0-9])?$"),
+        Entry(style: .santaFe, file: "Cars/hyundai_santa_fe_2024.glb", title: "2024 Hyundai Santa Fe",
+              source: "https://sketchfab.com/3d-models/2024-hyundai-santa-fe-a1ee29b80c844b13ba56ac7e28971a53",
+              exclude: "_wide$|_(i6|v8)(_turbo)?$|^santafek_header_i4$|^cubedel$|^Cube\\\\.002$", rims: "^santafek_whe", tyres: "^santafek_tire",
+              paint: "^santafek_body$", glass: "^santafek_glass", lamps: "^santafek_(led2?|orange|re1?|red|stop|reverse|[LR])$"),
     ]
 
-    /// The pack's models and materials (loaded once, from Assets), nil when it isn't there (a clone without git-lfs,
-    /// METALRENDERER_CARPACK=0): a scene then has no cars.
-    package static let shared: (models: [CarStyle: CarModel], gltf: GLTFModel, url: URL)? = {
-        guard ProcessInfo.processInfo.environment["METALRENDERER_CARPACK"] != "0" else { return nil }
-        let url = Assets.directory.appendingPathComponent(file)
+    /// The parts by the names the models give them (a mesh is on one when a node on its path matches): what the
+    /// blueprint's parts are (CarBlueprint.Part), their side (+1 left).
+    package static let partNames: [(pattern: String, kind: CarPartKind, side: Float)] = [
+        ("_door(glass|panel)?_FL", .frontDoor, 1), ("_door(glass|panel)?_FR", .frontDoor, -1),
+        ("_door(glass|panel)?_RL", .rearDoor, 1), ("_door(glass|panel)?_RR", .rearDoor, -1),
+        ("_hood", .hood, 0), ("_tailgate", .trunk, 0), ("_bumper_F", .frontBumper, 0), ("_bumper_R", .rearBumper, 0),
+        ("_mirror_L", .mirror, 1), ("_mirror_R", .mirror, -1),
+    ]
+    /// A glass mesh whose node is named so is a window (a pane of its own); a lamp's glass otherwise, or a mirror's or
+    /// the dashboard's (`plainGlass`).
+    package static let windowNames = "windshield|backlight|doorglass|sideglass|tailgateglass|sunroof|window"
+    package static let plainGlass = "mirror|dash"
+
+    /// The entry for `style`.
+    package static func entry(_ style: CarStyle) -> Entry { entries.first { $0.style == style }! }
+
+    /// Style `style`'s model and its file (loaded once, from Assets), nil when it isn't there (a clone without git-lfs,
+    /// METALRENDERER_CARPACK=0): a scene then has no car of that style.
+    package static func model(_ style: CarStyle) -> (model: CarModel, gltf: GLTFModel, url: URL)? {
+        lock.lock()
+        defer { lock.unlock() }
+        if let known = loaded[style] { return known }
+        let found = load(entry(style))
+        loaded[style] = .some(found)
+        return found
+    }
+
+    nonisolated(unsafe) private static var loaded: [CarStyle: (model: CarModel, gltf: GLTFModel, url: URL)?] = [:]
+    private static let lock = NSLock()
+
+    /// Whether the models may be loaded at all (METALRENDERER_CARPACK=0: none).
+    package static var enabled: Bool { ProcessInfo.processInfo.environment["METALRENDERER_CARPACK"] != "0" }
+
+    private static func load(_ e: Entry) -> (model: CarModel, gltf: GLTFModel, url: URL)? {
+        guard enabled else { return nil }
+        let url = Assets.directory.appendingPathComponent(e.file)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
             let gltf = try GLTFLoader.load(url)
-            let models = CarPack.models(gltf)
-            return models.isEmpty ? nil : (models, gltf, url)
+            guard let model = model(gltf, e) else { return nil }
+            return (model, gltf, url)
         } catch {
-            print("Car pack: \(error)")
+            print("Cars: \(e.file): \(error)")
             return nil
         }
-    }()
-
-    /// The cars in `gltf`, by style (those whose body and four wheels were found).
-    package static func models(_ gltf: GLTFModel) -> [CarStyle: CarModel] {
-        // The wheels: the meshes under each node named Wheel_, in model space.
-        var wheelParts: [Int: [Int]] = [:]
-        for (k, path) in gltf.partNodes.enumerated() {
-            if let w = path.first(where: { gltf.nodeNames[$0].hasPrefix("Wheel_") }) { wheelParts[w, default: []].append(k) }
-        }
-        let wheels = wheelParts.sorted { $0.key < $1.key }.map { $0.value }
-        var out: [CarStyle: CarModel] = [:]
-        for entry in bodies {
-            guard let node = gltf.nodeNames.firstIndex(of: entry.node) else { continue }
-            let parts = gltf.partNodes.indices.filter { gltf.partNodes[$0].contains(node) }
-            if let model = model(gltf, entry.style, parts: parts, front: entry.front, wheels: wheels) { out[entry.style] = model }
-        }
-        return out
     }
+
+    /// Whether `name` matches regular expression `pattern`.
+    private static func matches(_ name: String, _ pattern: String) -> Bool { name.range(of: pattern, options: .regularExpression) != nil }
 
     /// Part `k`'s positions in model space.
     private static func positions(_ gltf: GLTFModel, _ k: Int) -> [SIMD3<Float>] {
@@ -90,11 +158,31 @@ package enum CarPack {
         return gltf.meshes[gltf.parts[k].mesh].positions.map { PhysicsMath.xyz(t * SIMD4($0, 1)) }
     }
 
-    private static func model(_ gltf: GLTFModel, _ style: CarStyle, parts: [Int], front hint: SIMD3<Float>, wheels: [[Int]]) -> CarModel? {
-        func part(_ suffix: String) -> Int? { parts.first { gltf.nodeNames[gltf.partNodes[$0].last!].hasSuffix(suffix) } }
-        guard let paint = part("_Body_0") else { return nil }
-        // Its forward on the ground: the principal axis of its paint's footprint, toward the hint's end.
-        let points = positions(gltf, paint)
+    /// The car in `gltf` as entry `e` reads it (nil without paint or four wheels).
+    package static func model(_ gltf: GLTFModel, _ e: Entry) -> CarModel? {
+        let names = Set(gltf.nodeNames)
+        func left(out path: [Int]) -> Bool {
+            path.contains { n in
+                let name = gltf.nodeNames[n]
+                return matches(name, e.exclude) || (e.preferLHD && !name.hasSuffix("_LHD") && names.contains(name + "_LHD"))
+            }
+        }
+        let kept = gltf.parts.indices.filter { !left(out: gltf.partNodes[$0]) }
+        func material(_ k: Int) -> String {
+            let m = gltf.meshes[gltf.parts[k].mesh].material ?? -1
+            return gltf.materials.indices.contains(m) ? gltf.materials[m].name : ""
+        }
+        func path(_ k: Int) -> [String] { gltf.partNodes[k].map { gltf.nodeNames[$0] } }
+        let isRim = { (k: Int) in path(k).contains { matches($0, e.rims) } }, isTyre = { (k: Int) in path(k).contains { matches($0, e.tyres) } }
+        let wheelParts = kept.filter { isRim($0) || isTyre($0) }
+        let bodyParts = kept.filter { !isRim($0) && !isTyre($0) }
+        let paintParts = bodyParts.filter { matches(material($0), e.paint) }
+        guard !paintParts.isEmpty else {
+            print("Cars: \(e.file): no paint (\(e.paint))")
+            return nil
+        }
+        // Its forward on the ground: the principal axis of its paint's footprint, toward its front.
+        let points = paintParts.flatMap { positions(gltf, $0) }
         let middle = points.reduce(SIMD3<Float>(), +) / Float(points.count)
         var xx: Float = 0, xz: Float = 0, zz: Float = 0
         for p in points {
@@ -105,45 +193,44 @@ package enum CarPack {
         }
         let angle = 0.5 * atan2(2 * xz, xx - zz)
         var forward = SIMD3<Float>(cos(angle), 0, sin(angle))
-        var hinted = PhysicsMath.xyz(gltf.parts[paint].transform * SIMD4(hint, 0))
-        hinted.y = 0
-        if dot(forward, hinted) < 0 { forward = -forward }
+        if dot(forward, e.front) < 0 { forward = -forward }
         let up = SIMD3<Float>(0, 1, 0)
         var left = cross(up, forward)
-        // Its wheels: those whose centres are within its footprint.
-        let along = points.map { dot($0 - middle, forward) }, across = points.map { dot($0 - middle, left) }
-        let length = (along.min()!, along.max()!), width = (across.min()!, across.max()!)
-        var found: [(centre: SIMD3<Float>, parts: [Int])] = []
-        for w in wheels {
-            let all = w.flatMap { positions(gltf, $0) }
-            let lo = all.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }
-            let hi = all.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1) }
-            let c = (lo + hi) / 2, a = dot(c - middle, forward), s = dot(c - middle, left)
-            if a > length.0 && a < length.1 && s > width.0 - 0.1 && s < width.1 + 0.1 { found.append((c, w)) }
+        // Its wheels: rims and tyres grouped by the corner they are at.
+        var corners: [[Int]] = [[], [], [], []]
+        var boxes = [(lo: SIMD3<Float>, hi: SIMD3<Float>)](repeating: (SIMD3(repeating: .infinity), SIMD3(repeating: -.infinity)), count: 4)
+        for k in wheelParts {
+            let all = positions(gltf, k)
+            let lo = all.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }, hi = all.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+            let c = (lo + hi) / 2 - middle
+            let corner = (dot(c, forward) > 0 ? 0 : 2) + (dot(c, left) > 0 ? 0 : 1)
+            corners[corner].append(k)
+            boxes[corner] = (simd_min(boxes[corner].lo, lo), simd_max(boxes[corner].hi, hi))
         }
-        guard found.count == 4 else {
-            print("Car pack: \(style.title): \(found.count) wheels in its footprint")
+        guard corners.allSatisfy({ !$0.isEmpty }) else {
+            print("Cars: \(e.file): wheels at \(corners.map(\.count)) corners")
             return nil
         }
+        let centres = boxes.map { ($0.lo + $0.hi) / 2 }
         // Squared with the wheels: front and rear by where they are along it, left and right across.
-        found.sort { dot($0.centre, forward) > dot($1.centre, forward) }
-        let frontMid = (found[0].centre + found[1].centre) / 2, rearMid = (found[2].centre + found[3].centre) / 2
+        let frontMid = (centres[0] + centres[1]) / 2, rearMid = (centres[2] + centres[3]) / 2
         var axis = frontMid - rearMid
         axis.y = 0
         forward = normalize(axis)
         left = cross(up, forward)
         let centre = (frontMid + rearMid) / 2
-        // Car space: the origin between the axles, on the ground under the wheels.
+        // Car space: the origin between the axles, on the ground under the wheels (a tyre's bottom).
         var radius: Float = 0
         var wheelSize: [(radius: Float, width: Float)] = []
-        for w in found {
-            let all = w.parts.flatMap { positions(gltf, $0) }
-            let r = all.map { simd_length(SIMD2(dot($0 - w.centre, up), dot($0 - w.centre, forward))) }.max()!
-            let a = all.map { dot($0 - w.centre, left) }
+        for (k, parts) in corners.enumerated() {
+            let all = parts.filter(isTyre).flatMap { positions(gltf, $0) }
+            let tyre = all.isEmpty ? parts.flatMap { positions(gltf, $0) } : all
+            let r = tyre.map { simd_length(SIMD2(dot($0 - centres[k], up), dot($0 - centres[k], forward))) }.max()!
+            let a = tyre.map { dot($0 - centres[k], left) }
             wheelSize.append((r, a.max()! - a.min()!))
             radius = max(radius, r)
         }
-        let ground = found.map { $0.centre.y }.reduce(0, +) / 4 - radius
+        let ground = centres.map(\.y).reduce(0, +) / 4 - radius
         let origin = SIMD3<Float>(centre.x, ground, centre.z)
         let toCar = simd_float3x3(rows: [left, up, forward])
         func mesh(_ k: Int, about pivot: SIMD3<Float>? = nil) -> CarModel.Mesh {
@@ -166,19 +253,35 @@ package enum CarPack {
             }
             return m
         }
-        var model = CarModel(style: style)
-        model.paint = mesh(paint)
-        if let k = part("_Optics_0") { model.lamps = mesh(k) }
-        if let k = part("_Glass_0") { model.glass = mesh(k) }
-        // The wheels in CarBlueprint's corners' order: front left (+x), front right, rear left, rear right.
-        let corners = found.enumerated().map { (k, w) in (k, toCar * (w.centre - origin)) }
-        let ordered = corners.sorted { a, b in
-            let fa = a.1.z > 0, fb = b.1.z > 0
-            return fa != fb ? fa : a.1.x > b.1.x
+        var model = CarModel(style: e.style)
+        var windows: [String: Int] = [:]
+        for k in bodyParts {
+            var m = mesh(k)
+            let nodes = path(k), mat = material(k)
+            m.node = nodes.last ?? ""
+            if let rule = partNames.first(where: { r in nodes.contains { matches($0, r.pattern) } }) {
+                (m.part, m.side) = (rule.kind, rule.side)
+            }
+            if matches(mat, e.paint) {
+                m.role = .paint
+            } else if matches(mat, e.lamps) {
+                m.role = .lamp
+            } else if matches(mat, e.glass) {
+                if let window = nodes.last(where: { matches($0, windowNames) }) {
+                    m.role = .window
+                    if windows[window] == nil { windows[window] = windows.count }
+                    m.window = windows[window]!
+                } else {
+                    m.role = nodes.contains { matches($0, plainGlass) } ? .glass : .lampGlass
+                }
+            }
+            model.meshes.append(m)
         }
-        for (k, c) in ordered {
-            model.wheels.append(CarModel.Wheel(centre: c, radius: wheelSize[k].radius, width: wheelSize[k].width,
-                                               meshes: found[k].parts.map { mesh($0, about: c) }))
+        model.windows = windows.count
+        // The wheels in CarBlueprint's corners' order: front left (+x), front right, rear left, rear right.
+        for (k, parts) in corners.enumerated() {
+            let c = toCar * (centres[k] - origin)
+            model.wheels.append(CarModel.Wheel(centre: c, radius: wheelSize[k].radius, width: wheelSize[k].width, meshes: parts.map { mesh($0, about: c) }))
         }
         return model
     }

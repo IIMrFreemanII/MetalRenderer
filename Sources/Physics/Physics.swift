@@ -194,6 +194,9 @@ package final class PhysicsWorld {
     package var softEmbeds: [GPUSoftEmbed] = []
     package var softRings: [SIMD2<UInt32>] = []
     package var softBodies: [SIMD2<UInt32>] = []
+    /// The cars' drawn panels (Physics+Cars addCarSurface): each one's car, its first soft vertex, how many, its soft
+    /// body (Scene.softMeshes' index).
+    package var carSurfaces: [SIMD4<Int32>] = []
 
     /// Hair (PhysicsHair.swift): the guide strands and their vertices (and the vertices' start), the groups of strands
     /// drawn around them, and the breeze.

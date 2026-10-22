@@ -114,7 +114,7 @@ package struct CarSettings: Equatable, Codable {
         package var title: String { ["None", "Into the wall", "Laps"][rawValue] }
     }
     /// The player's car, and how many cars there are (the player's, and the other styles parked in turn).
-    package var style = CarStyle.sedan
+    package var style = CarStyle.civic
     package var cars = 4
     package var demo = Demo.none
     /// The wall demo's speed (km/h).
@@ -126,7 +126,7 @@ package struct CarSettings: Equatable, Codable {
     package static let speedRange: ClosedRange<Float> = 20...150
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(style: CarStyle = CarStyle.sedan, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true) {
+    package init(style: CarStyle = CarStyle.civic, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true) {
         self.style = style
         self.cars = cars
         self.demo = demo

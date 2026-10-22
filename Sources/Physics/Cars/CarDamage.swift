@@ -204,7 +204,7 @@ extension CarSolver {
 
     /// Car `s`'s part `p` (1 + its place) let go: the supports it rested on the body by broken.
     @inline(__always) package static func letGo(_ p: Int, _ s: CarState, _ b: CarBuffers) {
-        for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) where b.beams[k].part == p && b.beams[k].kind == CarBeamKind.compression.rawValue {
+        for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) where b.beams[k].part == p && b.beams[k].kind == CarBeamKind.support.rawValue {
             b.beams[k].info |= CarBeam.brokenBit
         }
     }

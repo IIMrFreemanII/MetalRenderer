@@ -198,6 +198,7 @@ extension PhysicsWorld {
     @discardableResult
     package func addCarSurface(_ part: CarSurface.Part, car: Int, hull: [SIMD3<Int32>], vertexBase: Int) -> Int {
         let body = softBodies.count, s = carSystem.cars[car], base = Int32(s.firstNode)
+        carSurfaces.append(SIMD4(Int32(car), Int32(softVertices.count), Int32(part.embedding.count), Int32(body)))
         for (v, follows) in part.embedding.enumerated() {
             let ring = UInt32(softRings.count) << 5 | UInt32(part.rings[v].count)
             precondition(part.rings[v].count < 32 && softRings.count < 1 << 27, "a ring of 32 triangles or more")

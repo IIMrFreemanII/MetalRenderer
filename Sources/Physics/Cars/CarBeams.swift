@@ -110,7 +110,8 @@ extension CarSolver {
         b.lambdas[k] += lambda
         b.particles[ia].position = SIMD4(xa + n * (lambda * wa), qa.position.w)
         b.particles[ib].position = SIMD4(xb - n * (lambda * wb), qb.position.w)
-        guard kind == CarBeamKind.plastic.rawValue && first && (beam.info >> 8) & 0xFF != CarBeamZone.arm.rawValue else { return }
+        guard kind == CarBeamKind.plastic.rawValue || kind == CarBeamKind.support.rawValue, first, (beam.info >> 8) & 0xFF != CarBeamZone.arm.rawValue
+        else { return }
         flow(k, &beam, stretch / alpha, b)
         b.beams[k] = beam
     }

@@ -779,10 +779,12 @@ package final class PhysicsGPU {
         dispatch(enc, pipelines[.physicsParticlePose], particleCount)
     }
 
-    /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from.
+    /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from. And which
+    /// cars are still (`stillCars`).
     package func upload(slot: Int, _ drawn: PhysicsStepper.Drawn) {
         if !uploads.isEmpty {
             drawn.particles.withUnsafeBytes { uploads[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+            if world.hasCars { noteStillCars(drawn.particles) }
         }
         if !hairUploads.isEmpty {
             drawn.hairVertices.withUnsafeBytes { hairUploads[slot].vertices.contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
@@ -814,22 +816,72 @@ package final class PhysicsGPU {
     package func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer, damage: MTLBuffer? = nil) {
         guard hasSoftBodies else { return }
         precondition(damage != nil || !world.hasCars, "a world with cars and no damage buffer")
-        var n = UInt32(world.softVertices.count)
+        // (A still car's vertices are where its last frame put them: only the rest's.)
+        var ranges: [SIMD2<UInt32>] = [], next = 0
+        for s in world.carSurfaces where stillCars.contains(Int(s.x)) {
+            if Int(s.y) > next { ranges.append(SIMD2(UInt32(next), UInt32(Int(s.y) - next))) }
+            next = Int(s.y + s.z)
+        }
+        if world.softVertices.count > next { ranges.append(SIMD2(UInt32(next), UInt32(world.softVertices.count - next))) }
+        guard !ranges.isEmpty else { return }
         enc.setComputePipelineState(pipelines[.physicsSoftMesh])
-        enc.setBytes(&n, length: 4, index: 0)
         enc.setBuffer(simulates ? particles[0] : uploads[slot], offset: 0, index: 1)
         enc.setBuffer(softVertices, offset: 0, index: 2)
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(softEmbeds, offset: 0, index: 4)
         enc.setBuffer(simulates ? bodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
         enc.setBuffer(damage ?? positions, offset: 0, index: 6)   // (no car's vertex writes to it without cars)
-        dispatch(enc, pipelines[.physicsSoftMesh], Int(n))
+        for var r in ranges {
+            enc.setBytes(&r, length: 8, index: 0)
+            dispatch(enc, pipelines[.physicsSoftMesh], Int(r.y))
+        }
         enc.setComputePipelineState(pipelines[.physicsSoftNormals])
         enc.setBuffer(softVertices, offset: 0, index: 1)
         enc.setBuffer(softRings, offset: 0, index: 2)
         enc.setBuffer(normals, offset: 0, index: 4)
-        dispatch(enc, pipelines[.physicsSoftNormals], Int(n))
+        for var r in ranges {
+            enc.setBytes(&r, length: 8, index: 0)
+            dispatch(enc, pipelines[.physicsSoftNormals], Int(r.y))
+        }
     }
+
+    /// The cars whose panels stay as they were drawn this frame (their nodes within `stillReach` of where they were
+    /// when their panels were last drawn, their damage and breaks the same, for two frames: the second leaves their
+    /// last-frame positions where they are, for the motion vectors). The CPU's cars only (`simulates`: none).
+    package private(set) var stillCars: Set<Int> = []
+    private var carReference: [[SIMD4<Float>]] = [], carSettled: [Int] = []
+    package static let stillReach: Float = 2e-4
+
+    private func noteStillCars(_ particles: [GPUPhysicsParticle]) {
+        let cars = world.carSystem.cars
+        if carReference.count != cars.count {
+            carReference = [[SIMD4<Float>]](repeating: [], count: cars.count)
+            carSettled = [Int](repeating: 0, count: cars.count)
+        }
+        stillCars = []
+        for (c, car) in cars.enumerated() {
+            let first = Int(car.firstNode), n = Int(car.nodeCount)
+            var moved = carReference[c].count != n
+            if !moved {
+                for k in 0..<n {
+                    let p = particles[first + k], r = carReference[c][k]
+                    if p.info.z != r.w.bitPattern || simd_reduce_max(simd_abs(PhysicsMath.xyz(p.position) - PhysicsMath.xyz(r))) > PhysicsGPU.stillReach {
+                        moved = true
+                        break
+                    }
+                }
+            }
+            carSettled[c] = moved ? 0 : carSettled[c] + 1
+            if carSettled[c] >= 2 {
+                stillCars.insert(c)
+            } else {
+                carReference[c] = (first..<(first + n)).map { SIMD4(PhysicsMath.xyz(particles[$0].position), Float(bitPattern: particles[$0].info.z)) }
+            }
+        }
+    }
+
+    /// The soft bodies (Scene.softMeshes' indices) still this frame: the still cars' panels, whose structures stay.
+    package var stillSoftBodies: [Int] { world.carSurfaces.filter { stillCars.contains(Int($0.x)) }.map { Int($0.w) } }
 
     /// The liquids' surfaces into the scene's vertex and index buffers, ahead of the structures' builds.
     package func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {

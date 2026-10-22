@@ -870,7 +870,7 @@ package struct SceneBuffers {
             primitiveRefit = PrimitiveRefit(structures: refitted.map { structures[$0.index]! }, descriptors: refitted.map(\.descriptor),
                                             scratch: scratch, scratchOffsets: offsets,
                                             rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
-                                            rebuiltMeshes: rebuilt.map(\.index))
+                                            rebuiltMeshes: rebuilt.map(\.index), refittedMeshes: refitted.map(\.index))
         }
         if !displaced.isEmpty {
             guard let scratch = device.makeBuffer(length: displaced.map(\.scratch).max()!, options: .storageModePrivate) else {
