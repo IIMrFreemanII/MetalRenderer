@@ -4,7 +4,7 @@
 #   profile.sh [-b binary] [-o outdir] [-t seconds] <mode> "<setting>" [KEY=VALUE …] [-- profile.py options]
 #
 #   <mode>, <setting>  METALRENDERER_BENCH and METALRENDERER_BENCH_ONLY (Benchmark+Modes.swift)
-#   -b  binary (default <repo>/.build/release/MetalRenderer: profile release, `swift build -c release` first)
+#   -b  binary (default <repo>/.build/release/MetalRenderer: profile release, `Tools/release.sh` first)
 #   -o  folder for the .trace and its export (default: a new folder under $TMPDIR)
 #   -t  time limit for the recording (default: until the benchmark quits)
 #   KEY=VALUE  more METALRENDERER_* settings, e.g. METALRENDERER_API=metal4
@@ -42,7 +42,7 @@ while [[ $# -gt 0 && $1 != "--" ]]; do
   envs+=(--env "$1"); shift
 done
 [[ $# -gt 0 ]] && shift   # the --
-[[ -x $bin ]] || { echo "profile.sh: $bin not found; run swift build -c release" >&2; exit 1; }
+[[ -x $bin ]] || { echo "profile.sh: $bin not found; run Tools/release.sh" >&2; exit 1; }
 
 out=${out:-"${TMPDIR:-/tmp}/metalrenderer-profile-$(date +%Y%m%d-%H%M%S)"}
 mkdir -p "$out"

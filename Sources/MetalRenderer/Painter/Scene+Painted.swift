@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -5,7 +6,7 @@ import simd
 /// per material its mesh's triangles name, so a several-material mesh keeps its offsets) that read one texture set
 /// through the texture slots the renderer fills (PainterSession: the document's layers composited), at the UVs of
 /// its layout (UVAtlas: its own UVs, or the painter's unwrap), three per triangle in `Scene.paintUVs`.
-struct PaintedObject {
+package struct PaintedObject {
     var instance: Int
     var mesh: Int
     var document: String
@@ -35,7 +36,7 @@ struct PaintedObject {
 extension Scene {
     /// Instance `i` can be painted: an ordinary mesh's (not virtual geometry, a plant's assembly, an SDF shape, a
     /// borrowed tile mesh, a leaf card or swaying cover, nor a displaced copy), in a scene that isn't the open world.
-    func paintable(_ i: Int) -> Bool {
+    package func paintable(_ i: Int) -> Bool {
         guard instances.indices.contains(i), worldPlace == nil else { return false }
         let inst = instances[i]
         guard inst.mesh >= 0, inst.virtualMesh < 0, inst.assembly < 0, inst.sdf < 0, inst.isGeometry else { return false }
@@ -46,14 +47,14 @@ extension Scene {
 
     /// Instance `i` as the scene makes it, said in full: its mesh's triangles and its material's values (what a saved
     /// assignment must still match).
-    func paintFingerprint(_ i: Int) -> String {
+    package func paintFingerprint(_ i: Int) -> String {
         let inst = instances[i]
         return PaintMesh(scene: self, mesh: inst.mesh).fingerprint + "-" + MaterialAssignments.fingerprint(materials[inst.material])
     }
 
     /// The scene's paint (SceneSettings.paintAssignments), and the painter workshop's object with its document: each
     /// instance that still is what it was painted as gets its painted materials. Warnings for the stale ones.
-    func applyPaintAssignments() {
+    package func applyPaintAssignments() {
         guard worldPlace == nil else { return }
         var entries = PaintAssignments.resolve(settings.paintAssignments).entries(settings)
         if let s = paintSubject, paintable(s) {
@@ -76,7 +77,7 @@ extension Scene {
     /// Instance `i` painted with `name`'s document: its materials, its texture set's slots (white pixels until the
     /// renderer composites it), its layout.
     @discardableResult
-    func paint(_ i: Int, document name: String) -> PaintedObject? {
+    package func paint(_ i: Int, document name: String) -> PaintedObject? {
         guard paintable(i), !painted.contains(where: { $0.instance == i }) else { return nil }
         let doc = PaintDocuments.shared.document(name)
         let inst = instances[i]
@@ -120,7 +121,7 @@ extension Scene {
     }
 
     /// A mesh's layout at `resolution`, from the cache (GeneratedCache) or made and put there.
-    static func paintAtlas(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
+    package static func paintAtlas(_ mesh: PaintMesh, resolution: Int) -> UVAtlas {
         let name = "painter-\(mesh.fingerprint)-\(resolution).sect", key = "painter atlas v\(UVUnwrap.version)"
         let cornerID = SectionFile.id("corn"), chartID = SectionFile.id("chrt"), infoID = SectionFile.id("info")
         if let file = GeneratedCache.load(name, key: key), let corners: [SIMD2<Float>] = file.array(cornerID),

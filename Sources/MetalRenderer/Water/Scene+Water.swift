@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -79,7 +80,7 @@ extension Scene {
     /// The open world's water around this scene (World+Water.swift): the sea's sheet over the scene's tiles where any
     /// of their ground is under it, the rivers' ribbons and the lakes' sheets that are in them (the scene's
     /// coordinates: `anchor` is the world's place of its origin); and where it all is, for the water map.
-    func addWorldWater(_ world: World, tiles: [SIMD2<Int>], anchor: SIMD2<Double>) {
+    package func addWorldWater(_ world: World, tiles: [SIMD2<Int>], anchor: SIMD2<Double>) {
         guard !WaterSystem.off, !tiles.isEmpty else { return }
         section("Water")
         let side = Double(World.tileSize), w = world.water

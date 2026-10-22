@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import simd
 
@@ -5,7 +6,7 @@ import simd
 /// children spawn from, and the steps (`encodeSteps`). Written once but for the counters the kernels keep and each
 /// step's parameters, which the CPU writes per frame slot (a replay can take hundreds of steps in one frame: more
 /// than Metal 4's inline constants hold).
-final class ParticlesGPU {
+package final class ParticlesGPU {
     /// The system it runs; the VFX editor's edits put another of the same layout in its place (`adopt`).
     private(set) var system: ParticleSystem
     private(set) var emitters: MTLBuffer

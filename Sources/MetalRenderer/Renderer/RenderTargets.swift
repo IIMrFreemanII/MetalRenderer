@@ -1,24 +1,11 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
 
-enum RendererError: Error, CustomStringConvertible {
-    case missingFunction(String)
-    case resourceCreation(String)
-    case unsupported(String)
-
-    var description: String {
-        switch self {
-        case .missingFunction(let name): return "Shader function '\(name)' not found in the shaders"
-        case .resourceCreation(let what): return "Failed to create \(what)"
-        case .unsupported(let what): return "This GPU doesn't support \(what), which the renderer needs"
-        }
-    }
-}
-
 /// All screen-sized textures. Recreated when the render resolution changes.
-final class RenderTargets {
+package final class RenderTargets {
     let width: Int
     let height: Int
     let normalDepth: [MTLTexture]   // [2], ping-ponged: current + previous frame. xyz = normal, w = view depth (half: ~0.1% depth error)
@@ -149,7 +136,7 @@ final class ShadowTargets {
 }
 
 /// The volumetric fog's froxel grid: 8x8 traced pixels per froxel, `slices` exponential depth slices.
-final class FogTargets {
+package final class FogTargets {
     let renderWidth: Int, renderHeight: Int
     let columns: Int, rows: Int, slices: Int
     let scatter: [MTLTexture]     // [2], ping-ponged: rgb = in-scattered light per metre, a = extinction (fogInjectKernel)
@@ -180,7 +167,7 @@ final class FogTargets {
 
 /// Temporal AA without upscaling (Post.metal taaResolveKernel), at the traced resolution: the composite's light, and
 /// the resolved light of this frame and the last, by FramePlan.cur.
-final class TAATargets {
+package final class TAATargets {
     let width: Int, height: Int
     let input: MTLTexture
     let history: [MTLTexture]
@@ -202,7 +189,7 @@ final class TAATargets {
 }
 
 /// The lens and the finish (Shaders/Post.metal), at the output resolution.
-final class PostTargets {
+package final class PostTargets {
     let width: Int, height: Int
     let color: MTLTexture       // the composite's light, when MetalFX doesn't upscale it (FLAG_POST)
     let dof: MTLTexture         // after the depth of field
@@ -237,7 +224,7 @@ final class PostTargets {
 }
 
 /// ReSTIR DI's per-pixel state (Shaders/RestirDI.metal).
-final class RestirTargets {
+package final class RestirTargets {
     let width: Int, height: Int, chains: Int
     let reservoir: [MTLTexture]   // [2] rgba32Uint arrays (element, uv, W, M | flags; a slice per chain), ping-ponged
     let temporal: MTLTexture      // restirTemporalKernel's reservoirs
@@ -266,7 +253,7 @@ final class RestirTargets {
 
 /// ReSTIR GI's per-pixel state (Shaders/RestirGI.metal). A reservoir is two textures: rgba32F (x_s, W) and rgba32Uint
 /// (normal, light, M | age | flags).
-final class RestirGITargets {
+package final class RestirGITargets {
     let width: Int, height: Int
     let reservoir: [(a: MTLTexture, b: MTLTexture)]   // [2], ping-ponged: the final reservoirs, next frame's history
     let temporal: (a: MTLTexture, b: MTLTexture)      // restirGITemporalKernel's reservoirs

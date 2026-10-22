@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import MetalFX
 import QuartzCore
@@ -14,7 +15,7 @@ import QuartzCore
 /// the slot into two drawables and presents them. Taken during the frame, as the frames without interpolation take
 /// theirs, the drawables held the frame up: two of the layer's three were still on their way to the screen, so the
 /// GPU waited for a picture to be shown before it started the next frame (a 40 ms frame came every 70 ms).
-final class FrameInterpolator {
+package final class FrameInterpolator {
     let inputWidth: Int
     let inputHeight: Int
     let outputWidth: Int
@@ -123,7 +124,7 @@ final class FrameInterpolator {
 
     /// Copies finished frames' slots into the layer's drawables and presents them, off the render thread: it waits for
     /// the drawables there, while the next frame renders. Its own (Metal 3) queue: a blit and the presents.
-    final class Presenter {
+    package final class Presenter {
         private let queue: MTLCommandQueue
         private let layer: CAMetalLayer
         private let thread = DispatchQueue(label: "frame interpolation presenter")
@@ -160,7 +161,7 @@ final class FrameInterpolator {
 }
 
 /// What the frame interpolator reads besides its own pictures.
-struct InterpolateInputs {
+package struct InterpolateInputs {
     let targets: RenderTargets
     let view: Upscaler.View
     let jitter: SIMD2<Float>

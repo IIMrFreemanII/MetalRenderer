@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -7,29 +8,29 @@ extension Renderer {
     // MARK: - Render thread
 
     /// Starts making frames on the render thread (main thread, once, after `init` and the `on…` callbacks are set).
-    func startRenderThread() {
+    package func startRenderThread() {
         perform { $0.publishOutline() }   // the first scene's (the others' when they are installed)
         renderThread.start { [weak self] in self?.drawFrame() ?? false }
     }
 
     /// Stops the frames, once the one being encoded is committed (main thread, at quit).
-    func stopRenderThread() { renderThread.stop() }
+    package func stopRenderThread() { renderThread.stop() }
 
     /// Runs `work` on the render thread before its next frame. Any thread.
-    func perform(_ work: @escaping (Renderer) -> Void) {
+    package func perform(_ work: @escaping (Renderer) -> Void) {
         renderThread.perform { [weak self] in if let self { work(self) } }
     }
 
     /// Applies the controller's settings edit number `update` (render thread). The settings go back with that number
     /// even if the edit changes nothing, so the panel knows its edits are all in.
-    func applySettings(update: Int, _ change: (inout RenderSettings) -> Void) {
+    package func applySettings(update: Int, _ change: (inout RenderSettings) -> Void) {
         settingsUpdate = update
         let before = settings
         change(&settings)
         if settings == before { publishSettings() }
     }
 
-    func publishSettings() { onSettings?(settings, settingsUpdate, persistSettings) }
+    package func publishSettings() { onSettings?(settings, settingsUpdate, persistSettings) }
 
     /// One frame: the scene's next state and its upload, the frame's plan, the stages the plan asks for, their
     /// encoding, the output, and what the frame leaves for the next one. Each step is a function below. Returns false
@@ -126,7 +127,7 @@ extension Renderer {
     // MARK: - Frame setup
 
     /// The traced size and the size the drawable shows.
-    struct FrameSize {
+    package struct FrameSize {
         let width: Int, height: Int, outWidth: Int, outHeight: Int
         var upscaling: Bool { outWidth > width }
     }
@@ -284,7 +285,7 @@ extension Renderer {
 
     /// The open world's scene is one with its cities' lights from a little before the sun sets until a little after
     /// it has risen (`SceneSettings.worldLit`).
-    func setWorldLights() {
+    package func setWorldLights() {
         if settings.scene.kind.isWorld { settings.scene.worldLit = Heavens(at: dayTime).sunElevation < World.lightsReady }
     }
 
@@ -293,7 +294,7 @@ extension Renderer {
 
     /// A settings change that moved the day: a hold turned on or off keeps the day where it is, and a day that jumped
     /// draws its sky again at once, and drops what the frames before had gathered of the light if it went far.
-    func dayChanged(from old: RenderSettings) {
+    package func dayChanged(from old: RenderSettings) {
         guard settings.scene.kind == old.scene.kind, let cycle = settings.scene.kind.dayCycle else { return }
         settings.keepDay(from: old, animTime: animTime)
         let moved = abs(settings.dayTime(animTime: animTime) - old.dayTime(animTime: animTime)) / cycle
@@ -312,7 +313,7 @@ extension Renderer {
     }
 
     /// The wind on the plants this frame (Shaders/Foliage.metal).
-    var windFrame: WindFrame {
+    package var windFrame: WindFrame {
         let f = settings.foliage, a = f.windDirection * .pi / 180
         return WindFrame(wind: SIMD4(cos(a), sin(a), f.wind, f.gusts), time: animTime, previousTime: previousAnimTime, lodBias: f.lod,
                          leafFall: Scene.leafFall(season: f.season))
@@ -330,7 +331,7 @@ extension Renderer {
     /// tells the render thread when it is done; the structure it built is swapped in at a frame's start, and the next
     /// may start once no frame in flight traces the structure it builds into: `maxFramesInFlight - 1` frames after a
     /// swap.
-    struct VoxelLevels {
+    package struct VoxelLevels {
         weak var owner: VoxelLOD?
         var running = false
         var ready = false
@@ -340,12 +341,12 @@ extension Renderer {
     }
     /// A rebuild once the view has moved this far (m), at most this often (s): METALRENDERER_VOXEL_STEP / _INTERVAL.
     /// The grid the camera is placed on for the plants' sway reach (WindFrame.sway), in metres.
-    static let swayStep: Float = 2
+    package static let swayStep: Float = 2
     private static let voxelStep = Float(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_STEP"] ?? "") ?? 1
     private static let voxelInterval = Double(ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_INTERVAL"] ?? "") ?? 0.25
     /// METALRENDERER_VOXEL_ASYNC=1: benchmarks rebuild in the background too, as the app does (its pictures then
     /// depend on how long the builds take).
-    static let voxelAsync = ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_ASYNC"] == "1"
+    package static let voxelAsync = ProcessInfo.processInfo.environment["METALRENDERER_VOXEL_ASYNC"] == "1"
 
     /// Swaps in a finished rebuild of the voxel levels and starts the next if the view moved (or the bias changed).
     /// Benchmarks rebuild here and wait: their pictures don't depend on how long a build takes.
@@ -390,7 +391,7 @@ extension Renderer {
 
     /// Everything one frame does, decided once from the settings, the scene and what the last frame left, before
     /// anything is encoded. The stage builders read this, and none of the renderer's state that changes with a frame.
-    struct FramePlan {
+    package struct FramePlan {
         let size: FrameSize
         let slot: Int                           // the frame-in-flight slot its buffers come from
         let cur: Int                            // this frame's side of the ping-pong textures...
@@ -461,7 +462,7 @@ extension Renderer {
 
     /// Reference "Path traced": pathTraceKernel adds `params.samples.y` paths per pixel to the mean of `samples.x` in
     /// `accum` (none once it has max samples), and the frame is that mean tone mapped.
-    struct PathTracePlan {
+    package struct PathTracePlan {
         let accum: MTLTexture
         var params = GPUPathTraceParams()
         var fog = GPUFogParams()

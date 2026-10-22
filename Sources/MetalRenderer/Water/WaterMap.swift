@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -13,10 +14,10 @@ enum WaterMap {
 
     /// One level drawn: the world's x, z of texel (0, 0)'s corner, its metres a texel, and its texels.
     struct Level {
-        var origin: SIMD2<Double>
-        var cell: Double
-        var surface: [SIMD2<Float>]   // (level or `dry`, ground)
-        var info: [UInt32]            // RGBA8: flow x, flow z (v / 8 + 0.5), look / 255, turbulence
+        package var origin: SIMD2<Double>
+        package var cell: Double
+        package var surface: [SIMD2<Float>]   // (level or `dry`, ground)
+        package var info: [UInt32]            // RGBA8: flow x, flow z (v / 8 + 0.5), look / 255, turbulence
     }
 
     /// Where level `k`'s square goes for a camera at `at` (the world's x, z): centred on it, snapped to 64 texels.

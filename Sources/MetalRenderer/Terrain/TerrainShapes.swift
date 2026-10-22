@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -16,7 +17,7 @@ package struct TerrainShapes {
         var blend: Float
         var protect = false
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(lo: SIMD2<Float>, hi: SIMD2<Float>, corner: Float = 0, level: Float, blend: Float, protect: Bool = false) {
             self.lo = lo
             self.hi = hi
@@ -121,7 +122,7 @@ package struct TerrainShapes {
         flats.contains { $0.protect && Float(x) >= $0.lo.x && Float(x) <= $0.hi.x && Float(z) >= $0.lo.y && Float(z) <= $0.hi.y }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(flats: [Flat] = [], bowls: [Bowl] = [], channels: [Channel] = []) {
         self.flats = flats
         self.bowls = bowls

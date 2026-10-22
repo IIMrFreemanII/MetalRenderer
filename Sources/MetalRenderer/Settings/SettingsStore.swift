@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// Keeps the app's `RenderSettings` between launches (UserDefaults, as JSON). Benchmarks never load or save them.
@@ -6,11 +7,11 @@ import Foundation
 /// removed ones are ignored. A field that no longer decodes (an enum case since removed, a changed type) takes its
 /// default, and the others are kept.
 /// `METALRENDERER_SETTINGS=default` starts from the defaults without reading the saved copy (later changes still save).
-enum SettingsStore {
+package enum SettingsStore {
     private static let key = "renderSettings"
     private static var pending: DispatchWorkItem?
 
-    static func load(over defaults: RenderSettings) -> RenderSettings? {
+    package static func load(over defaults: RenderSettings) -> RenderSettings? {
         guard ProcessInfo.processInfo.environment["METALRENDERER_SETTINGS"] != "default",
               let data = UserDefaults.standard.data(forKey: key),
               let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -49,7 +50,7 @@ enum SettingsStore {
     }
 
     /// Saves `s` half a second after the last change (sliders send many).
-    static func save(_ s: RenderSettings) {
+    package static func save(_ s: RenderSettings) {
         pending?.cancel()
         let work = DispatchWorkItem { write(s) }
         pending = work
@@ -57,14 +58,14 @@ enum SettingsStore {
     }
 
     /// Writes a pending save now (at quit).
-    static func flush() {
+    package static func flush() {
         guard let work = pending, !work.isCancelled else { return }
         work.perform()
         work.cancel()
     }
 
     /// `METALRENDERER_DUMP_SETTINGS=1`: prints the settings as JSON (to compare two launches, e.g. after Copy as Env).
-    static func dumpIfRequested(_ s: RenderSettings) {
+    package static func dumpIfRequested(_ s: RenderSettings) {
         guard ProcessInfo.processInfo.environment["METALRENDERER_DUMP_SETTINGS"] == "1" else { return }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -78,7 +79,7 @@ enum SettingsStore {
 
     /// The settings in `json`, each field that doesn't decode set to its value in `defaults` (the defaults' JSON) in
     /// turn: nil only if one at an array's index, or more than a few, don't.
-    static func decode(_ json: [String: Any], defaults: [String: Any]) -> RenderSettings? {
+    package static func decode(_ json: [String: Any], defaults: [String: Any]) -> RenderSettings? {
         var json = json
         for _ in 0..<32 {
             guard let data = try? JSONSerialization.data(withJSONObject: json) else { return nil }
@@ -112,7 +113,7 @@ enum SettingsStore {
         return out
     }
 
-    static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
+    package static func merge(_ base: [String: Any], _ over: [String: Any]) -> [String: Any] {
         var out = base
         for (k, v) in over {
             if let b = base[k] as? [String: Any], let o = v as? [String: Any] { out[k] = merge(b, o) } else { out[k] = v }

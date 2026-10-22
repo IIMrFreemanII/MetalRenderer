@@ -1,21 +1,22 @@
+import EngineCore
 import Metal
 import MetalFX
 
 /// What the running GPU and system can do, asked once at launch (`App.swift`). The settings panel disables the
 /// options that need something missing, `RenderSettings.clamped(to:)` swaps them for ones that work, and the
 /// benchmark skips the settings that need them.
-struct Capabilities: Equatable {
-    var metalRayTracing = true      // Metal's acceleration structures and intersector: the renderer needs them
-    var hardwareRayTracing = true   // ... traversed by ray-tracing hardware (Apple9: M3, A17 Pro and later), not in software
-    var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26): the upscaler
-    var frameInterpolator = true    // MetalFX frame interpolator (macOS 26): an in-between picture each frame
-    var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
+package struct Capabilities: Equatable {
+    package var metalRayTracing = true      // Metal's acceleration structures and intersector: the renderer needs them
+    package var hardwareRayTracing = true   // ... traversed by ray-tracing hardware (Apple9: M3, A17 Pro and later), not in software
+    package var metalFXDenoiser = true      // MetalFX denoising scaler (macOS 26): the upscaler
+    package var frameInterpolator = true    // MetalFX frame interpolator (macOS 26): an in-between picture each frame
+    package var metal4 = true               // Metal 4's command queue, argument tables and compiler (macOS 26)
     /// Metal 4's acceleration structures, for Metal ray tracing on Metal 4. Metal has no query for it, only a validation
     /// error ("this device does not support Metal 4 ray tracing", M1 Max); the M4 Max, with ray-tracing hardware, has it.
-    var metal4RayTracing = true
+    package var metal4RayTracing = true
 
     /// The running device's. Everything until `main` sets it: tests have no device.
-    static var current = Capabilities()
+    package static var current = Capabilities()
 
     package init() {}
 
@@ -46,7 +47,7 @@ struct Capabilities: Equatable {
     }
 
     /// One line for the launch log.
-    var summary: String {
+    package var summary: String {
         func mark(_ on: Bool) -> String { on ? "yes" : "no" }
         let rt = !metalRayTracing ? "no" : hardwareRayTracing ? "hardware" : "software"
         return "Metal ray tracing: \(rt), MetalFX denoiser: \(mark(metalFXDenoiser)), frame interpolator: \(mark(frameInterpolator)), "
@@ -56,7 +57,7 @@ struct Capabilities: Equatable {
 
 extension RenderSettings {
     /// What these settings need that `caps` lacks, as text ("MetalFX denoiser"); nil when they can run as they are.
-    func missing(in caps: Capabilities) -> String? {
+    package func missing(in caps: Capabilities) -> String? {
         var needs: [String] = []
         if !caps.metalRayTracing { needs.append("Metal ray tracing") }
         if upscaleFactor > 1 && !caps.metalFXDenoiser { needs.append("the MetalFX denoiser") }
@@ -70,7 +71,7 @@ extension RenderSettings {
 
     /// The settings with every option that `caps` lacks swapped for the default one, and what was swapped. (Metal ray
     /// tracing has no stand-in: the renderer refuses a GPU without it.)
-    func clamped(to caps: Capabilities) -> (settings: RenderSettings, notes: [String]) {
+    package func clamped(to caps: Capabilities) -> (settings: RenderSettings, notes: [String]) {
         var s = self, notes: [String] = []
         if s.upscaleFactor > 1 && !caps.metalFXDenoiser {
             s.upscaleFactor = 0

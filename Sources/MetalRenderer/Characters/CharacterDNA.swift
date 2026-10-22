@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// A character as data: everything that makes one person different from another, and nothing else. The character
@@ -7,19 +8,19 @@ import Foundation
 /// `morphs` and `bones` are the user's offsets on top of what the macros give, each -1...1. Saved as JSON
 /// (CharacterStore); decoding fills what a file doesn't have with defaults, so files of older builds still load.
 package struct CharacterDNA: Codable, Equatable {
-    static let currentFormat = 1
+    package static let currentFormat = 1
 
-    var format = CharacterDNA.currentFormat
+    package var format = CharacterDNA.currentFormat
     package var id = "custom"
-    var name = "Custom"
+    package var name = "Custom"
     /// The built-in it was made from, if any.
-    var basedOn: String?
-    var seed: UInt64 = 0
+    package var basedOn: String?
+    package var seed: UInt64 = 0
     package var macro = Macro()
     /// Morph offsets by name (CharacterMorphs' targets), -1...1; absent = 0.
-    var morphs: [String: Float] = [:]
+    package var morphs: [String: Float] = [:]
     /// Bone group length offsets by name (CharacterParams.boneGroups), -1...1; absent = 0.
-    var bones: [String: Float] = [:]
+    package var bones: [String: Float] = [:]
     package var look = Look()
     package var hair = Hair()
 
@@ -40,23 +41,23 @@ package struct CharacterDNA: Codable, Equatable {
 
     package struct Look: Codable, Equatable {
         /// Skin: how dark (eumelanin, 0 = very fair ... 1 = very dark) and how red (blood, haemoglobin).
-        var melanin: Float = 0.3
-        var redness: Float = 0.35
-        var roughness: Float = 0.5
+        package var melanin: Float = 0.3
+        package var redness: Float = 0.35
+        package var roughness: Float = 0.5
         /// The irises: 0 = dark brown ... 0.4 hazel ... 0.65 green ... 1 = light blue.
-        var eyes: Float = 0.2
+        package var eyes: Float = 0.2
         /// The skin's marks (SkinTextures), each 0...1: freckles; makeup on the cheeks, the eyelids and the lips.
         package var freckles: Float = 0
-        var blush: Float = 0
-        var eyeShadow: Float = 0
-        var lipstick: Float = 0
+        package var blush: Float = 0
+        package var eyeShadow: Float = 0
+        package var lipstick: Float = 0
         /// The hair's colour: how dark (eumelanin, 0 = platinum ... 1 = black), how red (pheomelanin), and how grey
         /// beyond what age greys it.
         package var hairMelanin: Float = 0.6
         package var hairRed: Float = 0.15
-        var grey: Float = 0
+        package var grey: Float = 0
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(melanin: Float = 0.3, redness: Float = 0.35, roughness: Float = 0.5, eyes: Float = 0.2, freckles: Float = 0, blush: Float = 0, eyeShadow: Float = 0, lipstick: Float = 0, hairMelanin: Float = 0.6, hairRed: Float = 0.15, grey: Float = 0) {
             self.melanin = melanin
             self.redness = redness
@@ -76,18 +77,18 @@ package struct CharacterDNA: Codable, Equatable {
     /// shorter than the style's (-1...1), how curly (0...1); the beard (CharacterHair.beards' ids); the brows' density.
     package struct Hair: Codable, Equatable {
         package var style = "short"
-        var length: Float = 0
-        var curl: Float = 0
+        package var length: Float = 0
+        package var curl: Float = 0
         package var beard = "none"
-        var brows: Float = 0.6
+        package var brows: Float = 0.6
     }
 
     /// The morph offset `name` (0 if unset).
-    func morph(_ name: String) -> Float { morphs[name] ?? 0 }
-    func bone(_ name: String) -> Float { bones[name] ?? 0 }
+    package func morph(_ name: String) -> Float { morphs[name] ?? 0 }
+    package func bone(_ name: String) -> Float { bones[name] ?? 0 }
 
     /// Every value in range, zero offsets dropped (so equal characters compare and hash equal).
-    func sanitized() -> CharacterDNA {
+    package func sanitized() -> CharacterDNA {
         var d = self
         d.format = CharacterDNA.currentFormat
         d.macro.sex = min(max(d.macro.sex, 0), 1)
@@ -112,9 +113,9 @@ package struct CharacterDNA: Codable, Equatable {
     }
 
     /// A short fingerprint of everything in it (FNV-1a over its sorted JSON).
-    var key: String { CharacterDNA.fingerprint(self) }
+    package var key: String { CharacterDNA.fingerprint(self) }
 
-    static func fingerprint<T: Encodable>(_ value: T) -> String {
+    package static func fingerprint<T: Encodable>(_ value: T) -> String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = (try? encoder.encode(value)) ?? Data()

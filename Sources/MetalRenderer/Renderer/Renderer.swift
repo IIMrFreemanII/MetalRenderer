@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -6,160 +7,160 @@ import simd
 /// Makes the frames, on its own thread (`RenderThread`): once that runs, everything here belongs to it. The main thread
 /// talks to it through `RendererController`, which posts work with `perform` and gets values back.
 package final class Renderer: NSObject {
-    static let maxFramesInFlight = 3
+    package static let maxFramesInFlight = 3
     /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
     /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
     /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
-    var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
+    package var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
-    let device: MTLDevice
+    package let device: MTLDevice
     /// The GPU it draws with (the Material Designer bakes on it). Any thread.
-    var metalDevice: MTLDevice { device }
-    let queue: MTLCommandQueue
-    weak var surface: RenderSurface?
+    package var metalDevice: MTLDevice { device }
+    package let queue: MTLCommandQueue
+    package weak var surface: RenderSurface?
     package var scene = Scene()
     /// The shaders' entry file: at the top of the sources (`SourceTree.target`), or
     /// `METALRENDERER_SHADERS=<path to a Shaders.metal>`, which lets one binary run another copy of the shaders (an A/B
     /// of a shader change without a second build).
-    let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
+    package let shaderURL = ProcessInfo.processInfo.environment["METALRENDERER_SHADERS"].map { URL(fileURLWithPath: $0) }
         ?? SourceTree.target.appendingPathComponent("Shaders.metal")
 
     /// Every compute pipeline, for the tracer and the light types of the scene being drawn (Pipelines.swift). Replaced
     /// whole, between two frames, by a scene load or a shader reload that built the next set in the background.
-    var pipelines: Pipelines!
-    var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
-    let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
-    var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
-    var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
+    package var pipelines: Pipelines!
+    package var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
+    package let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
+    package var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
+    package var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
-    var sceneBuffers: SceneBuffers!
-    var positionBuffer: MTLBuffer { sceneBuffers.positions }
-    var normalBuffer: MTLBuffer { sceneBuffers.normals }
-    var indexBuffer: MTLBuffer { sceneBuffers.indices }
-    var meshBuffer: MTLBuffer { sceneBuffers.meshes }
+    package var sceneBuffers: SceneBuffers!
+    package var positionBuffer: MTLBuffer { sceneBuffers.positions }
+    package var normalBuffer: MTLBuffer { sceneBuffers.normals }
+    package var indexBuffer: MTLBuffer { sceneBuffers.indices }
+    package var meshBuffer: MTLBuffer { sceneBuffers.meshes }
     /// Per slot: animated light proxies change their materials' emission while older frames are still being drawn.
-    var materialBuffers: [MTLBuffer] { sceneBuffers.materials }
+    package var materialBuffers: [MTLBuffer] { sceneBuffers.materials }
     /// For what is built off the frames (a scene's structures): the frames' queue runs its command buffers in order,
     /// and a frame would wait behind a build.
-    lazy var buildQueue: MTLCommandQueue = {
+    package lazy var buildQueue: MTLCommandQueue = {
         let q = device.makeCommandQueue()!
         q.label = "builds"
         return q
     }()
-    var materialsPending: [Range<Int>?] = []   // per slot: the materials changed since it was last written
-    var lightTrianglesPending: [Range<Int>?] = []   // ...and the light table's triangles (the open world's dusk)
-    var frameDataWritten: [Bool] = []          // per slot: a frame's instances and lights have been written to it
+    package var materialsPending: [Range<Int>?] = []   // per slot: the materials changed since it was last written
+    package var lightTrianglesPending: [Range<Int>?] = []   // ...and the light table's triangles (the open world's dusk)
+    package var frameDataWritten: [Bool] = []          // per slot: a frame's instances and lights have been written to it
     /// This frame's instance and light records, kept from frame to frame: only what moves or flickers is rewritten, then
     /// each goes to the slot's buffer in one copy. (Writing the records straight into the shared buffers costs the GPU
     /// 0.35 ms a frame with 16384 moving lights: they stay in the CPU's caches. A large memcpy doesn't leave them there.)
-    var lightStage: [GPULight] = []
-    var stageComplete = false                  // the stage holds every record
-    var uvBuffer: MTLBuffer { sceneBuffers.uvs }
-    var triangleMaterialBuffer: MTLBuffer { sceneBuffers.triangleMaterials }   // Scene.triangleMaterials (meshes of several materials)
-    var emissiveBuffer: MTLBuffer { sceneBuffers.emissive }                    // emissive-mesh lights' triangles (MSL EmissiveTriangle)
-    var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
-    var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
+    package var lightStage: [GPULight] = []
+    package var stageComplete = false                  // the stage holds every record
+    package var uvBuffer: MTLBuffer { sceneBuffers.uvs }
+    package var triangleMaterialBuffer: MTLBuffer { sceneBuffers.triangleMaterials }   // Scene.triangleMaterials (meshes of several materials)
+    package var emissiveBuffer: MTLBuffer { sceneBuffers.emissive }                    // emissive-mesh lights' triangles (MSL EmissiveTriangle)
+    package var materialTextures: [MTLTexture] = []   // Scene.textures, decoded (MaterialTextures.swift)
+    package var textureTables: [MTLBuffer] = []       // per slot, their MTLResourceIDs (MSL MaterialTexture array):
                                                       // a slot's own, as a procedural material's bake replaces its texture
                                                       // in the slots one by one (applyProcedural)
-    var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
-    var shadingResources: [MTLResource] = []
+    package var shadingArgs: [MTLBuffer] = []         // per slot, MSL SceneShading: materials, UVs, textures, streaming (buffer 7)
+    package var shadingResources: [MTLResource] = []
     /// Procedural materials (Scene+Procedural): per slot their extras (MSL MaterialExtra) and the instances' alpha tests
     /// (TraceScene.opacity), written when the scene's `extrasVersion` has moved on; the bakes' textures by their slot in
     /// the table (the latest, and per frame slot what its table holds: what its frames declare), the table entries a slot
     /// has still to take, and the textures replaced, kept until no frame in flight can read them.
-    var extrasBuffers: [MTLBuffer] = []
-    var opacityBuffers: [MTLBuffer] = []
-    var extrasWritten: [Int] = []
-    var procParamBuffers: [MTLBuffer] = []
-    var procParamsWritten: [Int] = []
-    var proceduralTextures: [UInt32: MTLTexture] = [:]
-    var slotTextures: [[UInt32: MTLTexture]] = []
-    var tablePending: [[UInt32: MTLTexture]] = []
-    var retiredTextures: [(frame: UInt32, texture: MTLTexture)] = []
+    package var extrasBuffers: [MTLBuffer] = []
+    package var opacityBuffers: [MTLBuffer] = []
+    package var extrasWritten: [Int] = []
+    package var procParamBuffers: [MTLBuffer] = []
+    package var procParamsWritten: [Int] = []
+    package var proceduralTextures: [UInt32: MTLTexture] = [:]
+    package var slotTextures: [[UInt32: MTLTexture]] = []
+    package var tablePending: [[UInt32: MTLTexture]] = []
+    package var retiredTextures: [(frame: UInt32, texture: MTLTexture)] = []
     /// Per procedural material, the bake's key its textures are; per graph name in the catalog shown, its key.
-    var proceduralApplied: [Int: String] = [:]
-    var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
-    var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
+    package var proceduralApplied: [Int: String] = [:]
+    package var proceduralKeys: (catalog: String, keys: [String: String]) = ("", [:])
+    package var srgbViews: [ObjectIdentifier: MTLTexture] = [:]
     /// The Material Painter's GPU side (Renderer+Painter.swift): per painted object its session (texture set, layers).
-    var painter = PainterGPU()
+    package var painter = PainterGPU()
     /// A benchmark's painting still to do (Benchmark.Config.Event.paint), a step a frame.
-    var painterScript: [PainterStep] = []
+    package var painterScript: [PainterStep] = []
     /// The Terrain Editor's side (Renderer+Terrain.swift): sculpt mode, the brush, the sectors' buffers' revisions.
-    var terrain = TerrainGPU()
+    package var terrain = TerrainGPU()
     /// The scene's water on the GPU (Renderer+Water.swift): its map, waves and per-frame record; nil without water.
-    var water: WaterSystem?
+    package var water: WaterSystem?
     /// Its status, when it changes (on the render thread).
-    var onTerrain: ((TerrainStatus) -> Void)?
+    package var onTerrain: ((TerrainStatus) -> Void)?
     /// A benchmark's terrain edits still to do (Benchmark.Config.Event.terrain), frames to wait, the changes undone.
-    var terrainScript: [TerrainStep] = []
-    var terrainScriptWait = 0
-    var terrainUndone = Set<Int>()
+    package var terrainScript: [TerrainStep] = []
+    package var terrainScriptWait = 0
+    package var terrainUndone = Set<Int>()
     /// The displaced meshes' records (Scene.displaceVertices, displaceMembers), and per displacing material the height
     /// its meshes were last moved by (and the surface's values then), and the materials whose meshes wait to be moved.
-    var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
-    var displaceSource: [Int: (height: MTLTexture, surface: MatSurface)] = [:]
-    var displacePending = Set<Int>()
-    var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
-    var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
-    var feedbackDummy: MTLBuffer!
-    var primitiveAS: [MTLAccelerationStructure] { sceneBuffers.primitives }
-    var primitiveASResources: [MTLResource] = []
-    var namedPrimitives: [String: MTLAccelerationStructure] { sceneBuffers?.namedPrimitives ?? [:] }
-    var namedBlocks: [String: MeshBlock] { sceneBuffers?.namedBlocks ?? [:] }
-    var namedInstanceBlocks: [String: InstanceBlock] { sceneBuffers?.namedInstanceBlocks ?? [:] }
+    package var displaceBuffers: (vertices: MTLBuffer, members: MTLBuffer)?
+    package var displaceSource: [Int: (height: MTLTexture, surface: MatSurface)] = [:]
+    package var displacePending = Set<Int>()
+    package var textureStreamer: TextureStreamer?     // full-resolution textures, streamed per mip (sparse)
+    package var staticMinLod: MTLBuffer!              // without streaming: every level resident (zeros)
+    package var feedbackDummy: MTLBuffer!
+    package var primitiveAS: [MTLAccelerationStructure] { sceneBuffers.primitives }
+    package var primitiveASResources: [MTLResource] = []
+    package var namedPrimitives: [String: MTLAccelerationStructure] { sceneBuffers?.namedPrimitives ?? [:] }
+    package var namedBlocks: [String: MeshBlock] { sceneBuffers?.namedBlocks ?? [:] }
+    package var namedInstanceBlocks: [String: InstanceBlock] { sceneBuffers?.namedInstanceBlocks ?? [:] }
     /// The crowd's pose slots, if the scene has a crowd: the skinning, then their structures' refit.
-    var crowdSkinner: CrowdSkinner?
+    package var crowdSkinner: CrowdSkinner?
     /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
-    var physicsGPU: PhysicsGPU?
+    package var physicsGPU: PhysicsGPU?
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
-    var particlesGPU: ParticlesGPU?
+    package var particlesGPU: ParticlesGPU?
     /// With fractured objects stepped on the CPU: the dust's ring of breaks (PhysicsGPU.breakRing's layout), written
     /// here from the steps' PhysicsWorld.breakLog, and how many of those it has had.
-    var cpuBreakRing: MTLBuffer?
-    var cpuBreaksTaken = 0
+    package var cpuBreakRing: MTLBuffer?
+    package var cpuBreaksTaken = 0
     /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
-    var vfxSetup: VFXCompiler.Setup {
+    package var vfxSetup: VFXCompiler.Setup {
         VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
                           lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4)
     }
-    var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
-    var particlesVersion = 0
+    package var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
+    package var particlesVersion = 0
     /// The VFX editor's gizmos (VFX/VFXGizmos.swift): what they show, the selected emitter's handle (where it was last
     /// drawn), the drag of one of its arrows (its axis, and how far along it the cursor was), and where a drag goes.
     /// `METALRENDERER_GIZMOS=<effect>[/<emitter>]`: the gizmos from the start (offscreen pictures of them).
-    var gizmoTarget: VFXGizmos.Target? = ProcessInfo.processInfo.environment["METALRENDERER_GIZMOS"].map {
+    package var gizmoTarget: VFXGizmos.Target? = ProcessInfo.processInfo.environment["METALRENDERER_GIZMOS"].map {
         let parts = $0.split(separator: "/", maxSplits: 1).map(String.init)
         return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
     }
-    var gizmoHandle: SIMD3<Float>?
+    package var gizmoHandle: SIMD3<Float>?
     /// The placed object's arrow dragged (Renderer+Placement.swift).
-    var placementDrag: PlacementDrag?
-    var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
-    var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
-    var gizmoViewSize = SIMD2<Float>(1280, 800)
+    package var placementDrag: PlacementDrag?
+    package var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
+    package var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    package var gizmoViewSize = SIMD2<Float>(1280, 800)
     /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
-    var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    package var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
     /// The Material Painter's status, when it changes (Renderer+Painter.swift; on the render thread).
-    var onPainter: ((PainterStatus) -> Void)?
+    package var onPainter: ((PainterStatus) -> Void)?
     /// A pen's pressure for the next press or drag (1 for a mouse).
-    var penPressure: Float = 1
+    package var penPressure: Float = 1
     /// The VFX editor's last edit that needs new code (VFXLive.swift), until its library is compiled.
-    var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
-    var particlesCamera = SIMD4<Float>.zero
-    var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
+    package var pendingEffects: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String])?
+    package var particlesCamera = SIMD4<Float>.zero
+    package var primitiveRefit: PrimitiveRefit? { sceneBuffers.primitiveRefit }
     /// The scene's virtual geometry, if it has any: what its instances' descriptors name, and its tables.
-    var virtualTracing: VirtualTracing?
+    package var virtualTracing: VirtualTracing?
     /// Per slot: the wind, time, leaf fall and sway its plants' descriptors were last written for (WindFrame.plantKey).
-    var plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
+    package var plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
     /// What the ray-tracing kernels get at buffer 1 (MSL TraceScene), per slot.
-    var traceScene: TraceSceneArgs!
+    package var traceScene: TraceSceneArgs!
     /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
-    var builtAPI = RenderAPI.metal3
-    var metal4Storage: AnyObject?       // Metal4Frame, made the first time Metal 4 is asked for
+    package var builtAPI = RenderAPI.metal3
+    package var metal4Storage: AnyObject?       // Metal4Frame, made the first time Metal 4 is asked for
     @available(macOS 26.0, *)
-    var metal4: Metal4Frame? {
+    package var metal4: Metal4Frame? {
         if metal4Storage == nil {
             metal4Storage = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
                                         layer: (surface as? LayerSurface)?.layer)
@@ -167,101 +168,101 @@ package final class Renderer: NSObject {
         return metal4Storage as? Metal4Frame
     }
     /// Metal 4's compiler for `api` `.metal4` (pipelines, MetalFX's scalers), nil for Metal 3. Render thread.
-    func compiler(for api: RenderAPI) -> AnyObject? {
+    package func compiler(for api: RenderAPI) -> AnyObject? {
         guard api == .metal4, #available(macOS 26.0, *) else { return nil }
         return metal4?.compiler
     }
-    var blueNoiseTexture: MTLTexture!   // the blue-noise tile (zeros until `blueNoiseReady`)
+    package var blueNoiseTexture: MTLTexture!   // the blue-noise tile (zeros until `blueNoiseReady`)
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
-    static func lightMapSize(lightCount: Int) -> Int {
+    package static func lightMapSize(lightCount: Int) -> Int {
         lightCount <= 16 ? 128 : max(32, Int(128 * (16 / Double(lightCount)).squareRoot()) / 8 * 8)
     }
     /// The walkable interiors' box for the GPU (Uniforms / GPUFogParams interiorLo, interiorHi; empty: lo > hi). In it
     /// GI's hits see the sun through a shadow ray and the fog's sky light is occluded: the sun's light map, over the
     /// whole scene, has texels metres wide, sees no wall or ceiling, and lit every room inside as if the sun shone on
     /// its walls.
-    static func interiorBox(_ scene: Scene) -> (lo: SIMD4<Float>, hi: SIMD4<Float>) {
+    package static func interiorBox(_ scene: Scene) -> (lo: SIMD4<Float>, hi: SIMD4<Float>) {
         guard let box = scene.interiorBox else { return (SIMD4(1, 1, 1, 0), SIMD4(-1, -1, -1, 0)) }
         return (SIMD4(box.lo, 1), SIMD4(box.hi, 1))
     }
-    var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
-    var blueNoiseReady = false
+    package var lightMap: MTLTexture!           // per-light distance maps (texture array), see lightMapKernel
+    package var blueNoiseReady = false
     // Volumetric fog (Shaders/Fog.metal), allocated when first turned on.
-    var fogNoiseTexture: MTLTexture?    // tiling 3D density noise (FogNoise)
-    var fogNoisePending = false         // being generated in the background
-    var fogGrid: FogTargets?            // froxel grid at the current render resolution
-    var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
-    var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
-    var taaTargetsCache: TAATargets?     // temporal AA without upscaling, at the traced resolution...
-    var taaHistory = false               // ...and the last frame left its resolved light in them
-    var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
-    var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
-    var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
-    var dummy2D: MTLTexture!
-    var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
+    package var fogNoiseTexture: MTLTexture?    // tiling 3D density noise (FogNoise)
+    package var fogNoisePending = false         // being generated in the background
+    package var fogGrid: FogTargets?            // froxel grid at the current render resolution
+    package var fogReference: MTLTexture?       // per-pixel reference march (benchmark references)
+    package var postTargetsCache: PostTargets?   // the lens and the finish, at the current output resolution
+    package var taaTargetsCache: TAATargets?     // temporal AA without upscaling, at the traced resolution...
+    package var taaHistory = false               // ...and the last frame left its resolved light in them
+    package var fogLastFrame: UInt32?           // the frame that last wrote the froxel grid, and its far distance:
+    package var fogLastFar: Float = 0           //   history is reprojected only from the frame just before
+    package var dummy3D: MTLTexture!            // bound in place of the fog textures while fog is off
+    package var dummy2D: MTLTexture!
+    package var dummyArray: MTLTexture!         // in place of the sky texture with a constant sky
     // Sky and clouds (Shaders/Sky.metal), allocated when first used.
-    var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
-    var cloudShadowMap: MTLTexture?     // clouds' transmittance toward the sun over the ground around the scene
-    var cloudShape: MTLTexture?         // 128^3 Perlin-Worley + Worley octaves (cloudNoiseKernel)
-    var cloudDetail: MTLTexture?        // 32^3 Worley octaves
-    var cloudNoiseReady = false         // the noise and the atmosphere's tables have been drawn
-    var transmittanceLUT: MTLTexture?   // atmosphere transmittance to its top, by height and angle
-    var multiScatterLUT: MTLTexture?    // atmosphere multiple scattering, by height and sun angle
-    var skyMean: MTLBuffer?             // the sky's mean radiance per hemisphere (skyMeanKernel), for the next frame
-    var skyImage: (path: String, exposure: Float, image: SkyImage, texture: MTLTexture)?
-    var skyImageFailed: String?         // a path that didn't load (not retried every frame)
-    var skyImageLoading = false         // one is being decoded in the background
-    var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
-    var skyActive = false               // this frame uses the sky texture
+    package var skyMap: MTLTexture?             // [0] upper, [1] lower hemisphere (equal-area squares), mipmapped
+    package var cloudShadowMap: MTLTexture?     // clouds' transmittance toward the sun over the ground around the scene
+    package var cloudShape: MTLTexture?         // 128^3 Perlin-Worley + Worley octaves (cloudNoiseKernel)
+    package var cloudDetail: MTLTexture?        // 32^3 Worley octaves
+    package var cloudNoiseReady = false         // the noise and the atmosphere's tables have been drawn
+    package var transmittanceLUT: MTLTexture?   // atmosphere transmittance to its top, by height and angle
+    package var multiScatterLUT: MTLTexture?    // atmosphere multiple scattering, by height and sun angle
+    package var skyMean: MTLBuffer?             // the sky's mean radiance per hemisphere (skyMeanKernel), for the next frame
+    package var skyImage: (path: String, exposure: Float, image: SkyImage, texture: MTLTexture)?
+    package var skyImageFailed: String?         // a path that didn't load (not retried every frame)
+    package var skyImageLoading = false         // one is being decoded in the background
+    package var skyParams = GPUSkyParams()      // this frame's (also written into the shading arguments)
+    package var skyActive = false               // this frame uses the sky texture
     package var skyRefreshed: (sky: SkySettings, scene: Int)?   // what the sky texture was fully drawn for
-    var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
+    package var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
     /// (16-byte aligned), then the extras', the programs' parameters' and the water's addresses.
-    static let shadingSkyOffset = 56, shadingParamsOffset = 80
-    static let shadingExtrasOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // MaterialExtra's address (MATERIAL_EXTRAS)
-    static let shadingProcParamsOffset = shadingExtrasOffset + 8   // the programs' parameters (PROCEDURAL_CODE)
-    static let shadingWaterOffset = shadingExtrasOffset + 16   // WaterScene's address (WATER), or 0
-    static let shadingArgsLength = shadingExtrasOffset + 32   // 304 (16-byte aligned): the shader asserts it
+    package static let shadingSkyOffset = 56, shadingParamsOffset = 80
+    package static let shadingExtrasOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // MaterialExtra's address (MATERIAL_EXTRAS)
+    package static let shadingProcParamsOffset = shadingExtrasOffset + 8   // the programs' parameters (PROCEDURAL_CODE)
+    package static let shadingWaterOffset = shadingExtrasOffset + 16   // WaterScene's address (WATER), or 0
+    package static let shadingArgsLength = shadingExtrasOffset + 32   // 304 (16-byte aligned): the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)
-    var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
-    var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
-    var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
-    var restirGrid: RestirTargets?
-    var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
-    var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
-    var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
-    var lightTree: LightTree?               // the path tracer's many lights: built on its first such frame in a scene
-    var lightTreeRefitFrame: UInt32 = 0
-    var lightTreeBuffers: [MTLBuffer?] = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
-    var lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)   // what each slot's holds
-    var restirGIGrid: RestirGITargets?
-    var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
-    var instanceAS: [MTLAccelerationStructure] {
+    package var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
+    package var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
+    package var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
+    package var restirGrid: RestirTargets?
+    package var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
+    package var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
+    package var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
+    package var lightTree: LightTree?               // the path tracer's many lights: built on its first such frame in a scene
+    package var lightTreeRefitFrame: UInt32 = 0
+    package var lightTreeBuffers: [MTLBuffer?] = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
+    package var lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)   // what each slot's holds
+    package var restirGIGrid: RestirGITargets?
+    package var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
+    package var instanceAS: [MTLAccelerationStructure] {
         sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
             ?? sceneBuffers.instanceStructures
     }
-    var instanceScratch: [MTLBuffer] { sceneBuffers.instanceScratch }
-    var instanceASBuilt = Set<Int>()
+    package var instanceScratch: [MTLBuffer] { sceneBuffers.instanceScratch }
+    package var instanceASBuilt = Set<Int>()
     /// Per slot: its instances' descriptors changed this frame (something moved, a cut, the wind), so its top-level
     /// structure is updated. One that stays as it is isn't refitted for nothing (a forest without wind).
-    var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
-    let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
+    package var instanceASStale = [Bool](repeating: true, count: Renderer.maxFramesInFlight)
+    package let frameSemaphore = DispatchSemaphore(value: Renderer.maxFramesInFlight)
     /// Auto exposure's histograms (PostSettings.autoExposure: AutoExposure.swift).
-    lazy var exposureMeter = AutoExposure(device: device, framesInFlight: Renderer.maxFramesInFlight)
+    package lazy var exposureMeter = AutoExposure(device: device, framesInFlight: Renderer.maxFramesInFlight)
 
-    var targets: RenderTargets?
+    package var targets: RenderTargets?
 
     // State
     package var camera = Camera()
-    var prevCamera = Camera()
-    var frameIndex: UInt32 = 0
-    var animTime: Float = 0
-    var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
-    var lastTime = CACurrentMediaTime()
-    var frameDt: Float = 1.0 / 60   // this frame's step of the clock (simulate): auto exposure eases by it
+    package var prevCamera = Camera()
+    package var frameIndex: UInt32 = 0
+    package var animTime: Float = 0
+    package var previousAnimTime: Float = 0            // a frame ago: what moves by the clock alone (the wind) reprojects with it
+    package var lastTime = CACurrentMediaTime()
+    package var frameDt: Float = 1.0 / 60   // this frame's step of the clock (simulate): auto exposure eases by it
     /// User-adjustable settings, shared by the keyboard shortcuts and the settings panel.
-    var settings = RenderSettings() {
+    package var settings = RenderSettings() {
         didSet {
             guard settings != oldValue else { return }
             // What this GPU can't run (from the environment, saved settings or a key) falls back to what it can.
@@ -280,78 +281,78 @@ package final class Renderer: NSObject {
             publishSettings()
         }
     }
-    var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
+    package var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
     /// The last of the controller's settings edits applied (`applySettings`), sent back with the settings.
-    var settingsUpdate = 0
+    package var settingsUpdate = 0
     /// GPU pass timings for the settings panel (GPUProfiler): per frame, then averaged over the stats interval.
-    var profilePasses = false
-    var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
+    package var profilePasses = false
+    package var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
     /// The Debug window is open: the stats tick brings its `DebugInfo`, and every frame its times (`onFrameTime`).
-    var debugActive = false
+    package var debugActive = false
     // What the renderer tells the main thread (RendererController), all called on the render thread. Set before the
     // render thread starts.
     /// After every settings change (edits, keyboard shortcuts, scene loads, fallbacks): the settings, the last edit
     /// applied, and whether to save them.
-    var onSettings: ((_ settings: RenderSettings, _ update: Int, _ persist: Bool) -> Void)?
+    package var onSettings: ((_ settings: RenderSettings, _ update: Int, _ persist: Bool) -> Void)?
     /// Twice a second, when the stats (fps, GPU time, `statsLine`) are refreshed.
-    var onTick: ((RendererStatus) -> Void)?
+    package var onTick: ((RendererStatus) -> Void)?
     /// A scene installed: its outline (the Project Graph's).
-    var onOutline: ((SceneOutline) -> Void)?
+    package var onOutline: ((SceneOutline) -> Void)?
     /// Every frame once its GPU work is done, while `debugActive`: the CPU time since the previous frame started and
     /// the GPU time, both in ms. For the Debug window's graph.
-    var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
+    package var onFrameTime: ((_ cpuMs: Double, _ gpuMs: Double) -> Void)?
     /// Called once, when the first frame has been drawn.
-    var onFirstFrame: (() -> Void)?
+    package var onFirstFrame: (() -> Void)?
     /// What is loading in the background and how far it is, for the loading overlay (any thread reads it). The app
     /// reports to it; benchmarks don't.
-    let loadActivity = LoadActivity()
-    var loadJob: LoadJob?                   // the scene load running in the background
+    package let loadActivity = LoadActivity()
+    package var loadJob: LoadJob?                   // the scene load running in the background
     /// After a scene is installed: until when texture levels and virtual geometry pages count as loading (until they
     /// settle; while the camera moves later they stream on without showing).
-    var settlingStreams: (from: Double, until: Double)?
-    var streamsPublished = 0.0
+    package var settlingStreams: (from: Double, until: Double)?
+    package var streamsPublished = 0.0
     /// Where frames are made, and what runs `perform`'s work (RenderThread.swift).
-    let renderThread = RenderThread()
+    package let renderThread = RenderThread()
     /// What "Reset to Defaults" restores (differs from RenderSettings() on GPUs without MetalFX).
-    private(set) var defaultSettings = RenderSettings()
+    package private(set) var defaultSettings = RenderSettings()
     /// Resolution, fps and GPU time, refreshed twice a second.
-    var statsLine = ""
-    var upscaler: Upscaler?           // MetalFX's denoising scaler, while upscaling
-    var upscalerReset = true          // drop the upscaler's history on the next frame
-    var interpolator: FrameInterpolator?   // MetalFX's frame interpolator, while upscaling with it on
-    var interpolating = false         // the last frame presented an in-between picture (Auto's switch)
+    package var statsLine = ""
+    package var upscaler: Upscaler?           // MetalFX's denoising scaler, while upscaling
+    package var upscalerReset = true          // drop the upscaler's history on the next frame
+    package var interpolator: FrameInterpolator?   // MetalFX's frame interpolator, while upscaling with it on
+    package var interpolating = false         // the last frame presented an in-between picture (Auto's switch)
     /// The solid look's targets (its colour and sun, its normal, depth and AO, its objects' ids: solidTraceKernel's)
     /// while it is on, and the scene's material flags (Scene.materialFlags) as the kernel reads them.
-    var solidTargetsStore: [MTLTexture] = []
-    var solidFlagsStore: MTLBuffer?
-    var solidFlagsCopyStore: [UInt8] = []
+    package var solidTargetsStore: [MTLTexture] = []
+    package var solidFlagsStore: MTLBuffer?
+    package var solidFlagsCopyStore: [UInt8] = []
     /// Presents interpolated frames' pictures once they are done (FrameInterpolator.Presenter): the window's layer only.
-    lazy var presenter = (surface as? LayerSurface).flatMap { FrameInterpolator.Presenter(device: device, layer: $0.layer) }
+    package lazy var presenter = (surface as? LayerSurface).flatMap { FrameInterpolator.Presenter(device: device, layer: $0.layer) }
     /// The GPU's time a frame, smoothed: Auto's switch and how long each picture is held. Not the time between frames,
     /// which the holds themselves stretch (the frames wait for drawables): held for half of that, they slowed down
     /// until each was held five refreshes.
-    var smoothedGPUMs = 0.0
-    var supersampling = false         // benchmark reference: jitter + average the final colour
-    var colorAccum: MTLTexture?
-    var colorAccumCount: UInt32 = 0
-    var prevJitter = SIMD2<Float>(repeating: 0)
+    package var smoothedGPUMs = 0.0
+    package var supersampling = false         // benchmark reference: jitter + average the final colour
+    package var colorAccum: MTLTexture?
+    package var colorAccumCount: UInt32 = 0
+    package var prevJitter = SIMD2<Float>(repeating: 0)
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
-    var benchmarkAccumulating = false
-    var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
-    var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
-    var accumCount: UInt32 = 0
-    var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
+    package var benchmarkAccumulating = false
+    package var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
+    package var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
+    package var accumCount: UInt32 = 0
+    package var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?
     /// This frame's reference picture (Reference in the settings, or a benchmark's): what is averaged over frames.
-    var referenceMode: ReferenceMode { benchmarkAccumulating ? .accumulated : settings.reference.mode }
+    package var referenceMode: ReferenceMode { benchmarkAccumulating ? .accumulated : settings.reference.mode }
     /// Raw frames of the frame's own passes are averaged instead of denoised (a benchmark's reference, or Reference
     /// "Accumulated passes").
-    var accumulating: Bool { referenceMode == .accumulated }
+    package var accumulating: Bool { referenceMode == .accumulated }
     // Reference "Path traced": pathTraceKernel's running mean, the paths in it per pixel, and the view it was made from.
-    var pathTraceAccum: MTLTexture?
+    package var pathTraceAccum: MTLTexture?
     /// What liquidKernel leaves the trace and liquidApplyKernel (Shaders/Liquid.metal): per pixel the bent ray (its
     /// origin, w = 1 where it is bent; its direction, w = how far the liquid is), what comes through and the reflection.
     /// Water's (waterKernel, Shaders/Water.metal) the same, w = 2 and up, and its own light in `scatter`.
-    struct LiquidTargets {
+    package struct LiquidTargets {
         let ray: MTLTexture
         let direction: MTLTexture
         let through: MTLTexture
@@ -361,99 +362,99 @@ package final class Renderer: NSObject {
         /// surface's distance): half of them are traced a frame, the others taken from the last frame's.
         let reflections: [MTLTexture]
     }
-    var liquidTextures: LiquidTargets?
-    var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
-    var particleHazeTexture: MTLTexture?
-    var pathTraceCount: UInt32 = 0
-    var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
-    var referenceView: [SIMD4<Float>] = []
-    var lightProxies: MTLBuffer?        // makeLightProxies
-    var lightProxyCount = 0
+    package var liquidTextures: LiquidTargets?
+    package var particleLayerTexture: (color: MTLTexture, depth: MTLTexture)?
+    package var particleHazeTexture: MTLTexture?
+    package var pathTraceCount: UInt32 = 0
+    package var referenceEpoch: UInt32 = 0      // which average this is: a new one draws new samples (its seed)
+    package var referenceView: [SIMD4<Float>] = []
+    package var lightProxies: MTLBuffer?        // makeLightProxies
+    package var lightProxyCount = 0
     private(set) lazy var upscaleSupported = Capabilities.current.metalFXDenoiser
-    lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
+    package lazy var maxUpscale = CGFloat(Upscaler.maxScale(on: device))
     /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
-    var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
-    var historyValid = false
+    package var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
+    package var historyValid = false
     /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF and the shadow denoiser stay off.
-    var neuralDenoise: Bool { upscaler != nil }
+    package var neuralDenoise: Bool { upscaler != nil }
     /// This project's denoisers (SVGF, the shadow denoiser) are on.
-    var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
-    var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
+    package var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
+    package var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     package var heldKeys = Set<String>()
     /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
-    static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
+    package static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
     /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).
-    static let arrowTurnSpeed: Float = 400
+    package static let arrowTurnSpeed: Float = 400
     package var shiftHeld = false
     /// The mouse holds a body: the cursor (0...1 across and down) and the grab plane's distance along the view.
-    var holding: (cursor: SIMD2<Float>, depth: Float)?
+    package var holding: (cursor: SIMD2<Float>, depth: Float)?
     /// What the camera turns about (the scene view's pivot, `pivot`): the point it looks at, and how far it is from it.
     /// The workshops frame theirs on what they show; elsewhere navigation sets it (nil: 8 m in front).
-    var orbit: (target: SIMD3<Float>, distance: Float)?
+    package var orbit: (target: SIMD3<Float>, distance: Float)?
     /// The scene view's mouse (SceneNavigation.swift): what a drag does, chosen when its button went down, and where
     /// the cursor last was; the right button held (W A S D Q E fly only then); Command held (Option-Command-drag pans).
-    enum NavDrag { case orbit, look, pan, dolly }
-    var navDrag: NavDrag?
-    var rightDrag: NavDrag?
-    var navCursor: SIMD2<Float>?
-    var rightHeld = false
+    package enum NavDrag { case orbit, look, pan, dolly }
+    package var navDrag: NavDrag?
+    package var rightDrag: NavDrag?
+    package var navCursor: SIMD2<Float>?
+    package var rightHeld = false
     /// The left button looks around: pressed on nothing that took the press (a stroke, a handle, a body).
-    var leftLook = false
+    package var leftLook = false
     /// A button that looks around is held: W A S D Q E fly, the scroll wheel sets their speed.
-    var lookHeld: Bool { rightHeld || leftLook || scene.behaviour?.captured == true }
-    var commandHeld = false
+    package var lookHeld: Bool { rightHeld || leftLook || scene.behaviour?.captured == true }
+    package var commandHeld = false
     /// Walk mode (V): the walker the camera is the eyes of, what it walks among, and what it is told.
-    var walker: Walker?
+    package var walker: Walker?
     /// The frame something last moved in, and each slot's last top-level refit (`writeFrameData`).
-    var lastMotionFrame = 0
-    var slotRefitFrame = [Int](repeating: -1, count: 8)
-    var walkGrid: ColliderGrid?
-    var walkRemainder: Float = 0
-    var crouchHeld = false, jumpPending = false
-    var lastLiftY: [Float] = []
-    var walkMessage: String?
-    var clickAt: SIMD2<Float>?
+    package var lastMotionFrame = 0
+    package var slotRefitFrame = [Int](repeating: -1, count: 8)
+    package var walkGrid: ColliderGrid?
+    package var walkRemainder: Float = 0
+    package var crouchHeld = false, jumpPending = false
+    package var lastLiftY: [Float] = []
+    package var walkMessage: String?
+    package var clickAt: SIMD2<Float>?
     /// Click-to-pick (the Material Designer's): armed, the next click (not a drag) is picked: its ray traced at the end
     /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
-    var pickArmed = false
-    var pickRequest: SIMD2<Float>?
-    var pickPending: Int?
-    var pickBuffer: MTLBuffer?
+    package var pickArmed = false
+    package var pickRequest: SIMD2<Float>?
+    package var pickPending: Int?
+    package var pickBuffer: MTLBuffer?
     /// The pick is a plain click's: what it finds is selected (`selectedInView`), not told to `onMaterialPicked`.
-    var pickSelects = false
-    var onMaterialPicked: ((MaterialPick?) -> Void)?
+    package var pickSelects = false
+    package var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// A click in the view selected instance `i` (nil: nothing, the sky); the Project Graph selects its node.
-    var onSelectedInView: ((Int?) -> Void)?
+    package var onSelectedInView: ((Int?) -> Void)?
     /// The camera's yaw and pitch, each frame they change (the scene gizmo).
-    var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
-    var sentAngles: SIMD2<Float>?
+    package var onCameraTurned: ((_ yaw: Float, _ pitch: Float) -> Void)?
+    package var sentAngles: SIMD2<Float>?
     /// The time on the scene's day clock (`dayTime`), when it has moved a minute of the day (the day bar).
-    var onDayTime: ((Float) -> Void)?
-    var sentDayTime: Float?
+    package var onDayTime: ((Float) -> Void)?
+    package var sentDayTime: Float?
     /// The view's width over its height, for the cursor's ray.
-    var viewAspect: Float = 1.6
-    let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
+    package var viewAspect: Float = 1.6
+    package let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
 
     // Stats
-    var gpuMs: Double = 0
-    var firstFrameDrawn = false
-    lazy var profiler = GPUProfiler(device: device, framesInFlight: Renderer.maxFramesInFlight)
-    var passTimeOrder: [String] = [], passTimeSums: [String: Double] = [:]
-    var passTimeFrameMs = 0.0, passTimeFrames = 0
-    var fpsFrames = 0
-    var fpsTime = CACurrentMediaTime()
-    var fps: Double = 0
-    var lastDrawTime: CFTimeInterval?
-    var frameIntervalMs = 0.0           // CPU time between the starts of the last two frames
-    var frameIntervalSum = 0.0, frameIntervalCount = 0
-    var cpuMs = 0.0                     // frameIntervalMs averaged over the stats interval
+    package var gpuMs: Double = 0
+    package var firstFrameDrawn = false
+    package lazy var profiler = GPUProfiler(device: device, framesInFlight: Renderer.maxFramesInFlight)
+    package var passTimeOrder: [String] = [], passTimeSums: [String: Double] = [:]
+    package var passTimeFrameMs = 0.0, passTimeFrames = 0
+    package var fpsFrames = 0
+    package var fpsTime = CACurrentMediaTime()
+    package var fps: Double = 0
+    package var lastDrawTime: CFTimeInterval?
+    package var frameIntervalMs = 0.0           // CPU time between the starts of the last two frames
+    package var frameIntervalSum = 0.0, frameIntervalCount = 0
+    package var cpuMs = 0.0                     // frameIntervalMs averaged over the stats interval
     /// The CPU's own work in `draw` (simulation, uploads, encoding; not the waits for a frame slot or the drawable),
     /// averaged over the stats interval. The frame interval is GPU-bound and hides it.
-    var encodeMs = 0.0, encodeSum = 0.0, encodeCount = 0
+    package var encodeMs = 0.0, encodeSum = 0.0, encodeCount = 0
     // The ray queries' counters (Debug window, RT_STATS): summed per frame, averaged per stats interval.
-    var traversalSum = TraversalStats(), traversalFrames = 0
-    var traversalLast: [UInt32]?
-    var traversal: (stats: TraversalStats, frames: Int)?
+    package var traversalSum = TraversalStats(), traversalFrames = 0
+    package var traversalLast: [UInt32]?
+    package var traversal: (stats: TraversalStats, frames: Int)?
 
     /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
     package init(device: MTLDevice, surface: RenderSurface) throws {
@@ -514,22 +515,22 @@ package final class Renderer: NSObject {
 
     // MARK: - What the painter (Renderer+Painter.swift) reads of the renderer
 
-    var renderTargetsForPainter: RenderTargets? { targets }
-    var materialTexturesForPainter: [MTLTexture] { materialTextures }
-    func resetReferenceForPainting() { resetReference() }
+    package var renderTargetsForPainter: RenderTargets? { targets }
+    package var materialTexturesForPainter: [MTLTexture] { materialTextures }
+    package func resetReferenceForPainting() { resetReference() }
     package func cursorRayForPainter(_ cursor: SIMD2<Float>) -> SIMD3<Float> { cursorRay(cursor) }
     /// The render's size in pixels, and its pixels per point of the view (a brush's size is in points).
-    var renderSizeForPainter: SIMD2<Float> {
+    package var renderSizeForPainter: SIMD2<Float> {
         guard let t = targets else { return SIMD2(1280, 800) }
         return SIMD2(Float(t.width), Float(t.height))
     }
-    var renderPixelsPerPoint: Float { renderSizeForPainter.y / max(painter.viewPoints.y, 1) }
-    var orbitForPainter: (target: SIMD3<Float>, distance: Float)? {
+    package var renderPixelsPerPoint: Float { renderSizeForPainter.y / max(painter.viewPoints.y, 1) }
+    package var orbitForPainter: (target: SIMD3<Float>, distance: Float)? {
         get { orbit }
         set { orbit = newValue }
     }
     /// The camera turned to look at `p` (from where it is), then placed on its orbit.
-    func lookAtForPainter(_ p: SIMD3<Float>) {
+    package func lookAtForPainter(_ p: SIMD3<Float>) {
         let d = p - camera.position
         guard simd_length(d) > 1e-4 else { return }
         let n = simd_normalize(d)
@@ -537,17 +538,17 @@ package final class Renderer: NSObject {
         camera.yaw = atan2(n.x, -n.z)
         placeOrbitingCamera()
     }
-    func placeOrbitForPainter() { placeOrbitingCamera() }
+    package func placeOrbitForPainter() { placeOrbitingCamera() }
 
     /// The ray from the camera through `cursor` (0...1 across and down), unjittered.
-    func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {
+    package func cursorRay(_ cursor: SIMD2<Float>) -> SIMD3<Float> {
         let t = tan(camera.fovY / 2)
         return normalize(camera.forward + camera.right * ((2 * cursor.x - 1) * t * viewAspect) + camera.up * ((1 - 2 * cursor.y) * t))
     }
 
     /// The held body's target this frame: under the cursor, on the plane facing the camera at the grab's depth (so it
     /// follows the camera as it moves too).
-    func moveGrab() {
+    package func moveGrab() {
         guard let holding, scene.physics != nil, scene.physicsGrab.target.w > 0 else { return }
         let direction = cursorRay(holding.cursor)
         let along = holding.depth / max(dot(direction, camera.forward), 0.1)
@@ -556,49 +557,49 @@ package final class Renderer: NSObject {
 
     // MARK: - Setup: state
 
-    var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
-    var streaming = Streaming()
+    package var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
+    package var streaming = Streaming()
 
     // MARK: - Procedural materials: state
 
-    var pendingInstanceEdits: [Set<Int>] = []
-    var stillRefitPending = false
+    package var pendingInstanceEdits: [Set<Int>] = []
+    package var stillRefitPending = false
 
     // MARK: - Interiors on demand: state
 
-    var interiorWanted: (key: String?, since: Double)?
-    var lastCameraPosition: SIMD3<Float>?
+    package var interiorWanted: (key: String?, since: Double)?
+    package var lastCameraPosition: SIMD3<Float>?
 
     // MARK: - The selection, and where the camera flies: state
 
     /// The camera flying (0.6 s, eased) to what the Project Graph showed or F framed, or (`about`) turning about the
     /// pivot to the scene gizmo's view; where it turns about when there; the target asked for before its scene was in.
-    var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double, seconds: Double, about: Bool)?
-    var pendingFrame: FrameTarget?
+    package var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double, seconds: Double, about: Bool)?
+    package var pendingFrame: FrameTarget?
     /// What is selected in the view (a click, the Project Graph): its instances, and the box round them now (drawn
     /// while it is selected); Shift-F's lock: where the box's centre was last frame (the camera follows it).
-    var selection: (target: FrameTarget, box: AABB)?
-    var pivotLock: SIMD3<Float>?
+    package var selection: (target: FrameTarget, box: AABB)?
+    package var pivotLock: SIMD3<Float>?
 
     // MARK: - Frame setup: state
 
-    var voxelLevels = VoxelLevels()
-    let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
+    package var voxelLevels = VoxelLevels()
+    package let voxelQueue = DispatchQueue(label: "voxel levels", qos: .utility)
 
     // MARK: - GI techniques: state
 
     /// The encoder `bindScene` last declared the scene's resources in (Metal 4: the frame; kept so its address can't
     /// be another's; dropped when the frame is committed).
-    var sceneDeclaredIn: AnyObject?
+    package var sceneDeclaredIn: AnyObject?
 
     // MARK: - Benchmark: state
 
-    var benchmarkFired = Set<Int>()
-    var benchmarkBody: SIMD3<Float>?
-    let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
+    package var benchmarkFired = Set<Int>()
+    package var benchmarkBody: SIMD3<Float>?
+    package let shaderQueue = DispatchQueue(label: "MetalRenderer.shaders", qos: .userInitiated)   // reloads, one at a time
 
     // MARK: - Input (from RendererController): state
 
-    var controlHeld = false
-    var optionHeld = false
+    package var controlHeld = false
+    package var optionHeld = false
 }

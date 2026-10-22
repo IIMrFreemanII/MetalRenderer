@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -13,12 +14,12 @@ package struct FleshFigure {
 
     package struct Bone {
         package var role: Role
-        var body: Int
+        package var body: Int
         /// Its SDF shape (a single primitive at its origin) and where that is at rest.
         package var shape: SDFShape
         package var rest: float4x4
         /// The body's pose at rest (centre of mass, rotation): what its pins' rest points are in.
-        var restPose: (position: SIMD3<Float>, rotation: SIMD4<Float>)
+        package var restPose: (position: SIMD3<Float>, rotation: SIMD4<Float>)
         /// The bone along its length at rest (from its joint to the next), and how thick it is there.
         package var from: SIMD3<Float>
         package var to: SIMD3<Float>
@@ -28,7 +29,7 @@ package struct FleshFigure {
         /// The bone it hangs from (-1: none): its joint with it is at its `from`.
         package var parent = -1
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(role: Role, body: Int, shape: SDFShape, rest: float4x4, restPose: (position: SIMD3<Float>, rotation: SIMD4<Float>), from: SIMD3<Float>, to: SIMD3<Float>, thickness: Float, rigid: Bool, parent: Int = -1) {
             self.role = role
             self.body = body
@@ -63,7 +64,7 @@ package struct FleshFigure {
         1 + b.shape.distance(PhysicsMath.xyz(b.rest.inverse * SIMD4(p, 1))).d / b.thickness
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(bones: [Bone]) {
         self.bones = bones
     }
@@ -92,11 +93,11 @@ package struct CharacterRig {
     ]
 
     package struct Bone {
-        var joint: Int
+        package var joint: Int
         package var role: FleshFigure.Role
         package var shape: SDFShape
         /// The shape's placement relative to its joint's bind pose (so that the pose's joint carries it).
-        var offset: float4x4
+        package var offset: float4x4
         package var from: SIMD3<Float>
         package var to: SIMD3<Float>
         package var thickness: Float

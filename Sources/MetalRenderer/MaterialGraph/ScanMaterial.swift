@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -10,11 +11,11 @@ import UniformTypeIdentifiers
 /// compressions macOS can't, Poly Haven's DWA). What is missing is made from the height: the normal, the occlusion.
 /// The Designer's "Import Scanned Material…" (MaterialEditorModel.importScan); the built-in scans
 /// (MaterialLibrary+Scans.swift) are graphs of the same shape.
-enum ScanMaterial {
-    enum Map: String, CaseIterable { case albedo, normal, roughness, height, ao, metallic, opacity, arm }
+package enum ScanMaterial {
+    package enum Map: String, CaseIterable { case albedo, normal, roughness, height, ao, metallic, opacity, arm }
 
     /// The maps found in a download: each one's file, and whether the normal is DirectX's (green flipped).
-    struct Maps: Equatable {
+    package struct Maps: Equatable {
         var files: [Map: URL] = [:]
         var normalDirectX = false
     }
@@ -36,10 +37,10 @@ enum ScanMaterial {
         for (m, names) in table { for n in names { w[n] = m } }
         return w
     }()
-    static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "exr", "tif", "tiff"]
+    package static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "exr", "tif", "tiff"]
 
     /// The map a file is, and whether it is a DirectX normal (nil: not a map: a preview, the .blend).
-    static func map(of file: URL) -> (Map, directX: Bool)? {
+    package static func map(of file: URL) -> (Map, directX: Bool)? {
         guard imageExtensions.contains(file.pathExtension.lowercased()) else { return nil }
         let name = file.deletingPathExtension().lastPathComponent.lowercased()
         let t = name.split { !$0.isLetter && !$0.isNumber }.map(String.init)
@@ -54,7 +55,7 @@ enum ScanMaterial {
 
     /// The maps in `folder` and below. Of two files for one map: the OpenGL normal before the DirectX one, then PNG,
     /// EXR, TIFF, JPEG (the most bits first).
-    static func detect(in folder: URL) -> Maps {
+    package static func detect(in folder: URL) -> Maps {
         let rank = ["png": 0, "exr": 1, "tif": 2, "tiff": 2, "jpg": 3, "jpeg": 3]
         var best: [Map: (URL, directX: Bool, rank: Int)] = [:]
         let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])?
@@ -72,7 +73,7 @@ enum ScanMaterial {
     }
 
     /// A download's name as a material's: `rock_wall_17_4k.blend.zip` is "Rock Wall 17".
-    static func suggestedName(for source: URL) -> String {
+    package static func suggestedName(for source: URL) -> String {
         var name = source.lastPathComponent
         while let dot = name.lastIndex(of: "."), ["zip", "blend", "gltf", "usdc", "usda"].contains(name[name.index(after: dot)...].lowercased()) {
             name = String(name[..<dot])
@@ -85,7 +86,7 @@ enum ScanMaterial {
     }
 
     /// The side of one repeat a download says (an `info.json` with "metres", as Tools/textures/fetch.py writes), if any.
-    static func metres(in folder: URL) -> Float? {
+    package static func metres(in folder: URL) -> Float? {
         let files = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil)?.compactMap { $0 as? URL } ?? []
         for f in files where f.lastPathComponent == "info.json" {
             if let data = try? Data(contentsOf: f), let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -99,7 +100,7 @@ enum ScanMaterial {
     /// Bitmap nodes into the outputs: `paths` each map's file (relative to Assets/, or absolute). Without a normal map,
     /// the normal is made from the height; without an occlusion map, the occlusion. A packed ARM map (glTF's: occlusion,
     /// roughness, metallic) fills what has no map of its own. `metres`: the side of one repeat.
-    static func graph(name: String, paths: [Map: String], normalDirectX: Bool = false, metres: Float, size: Int) -> MaterialGraph {
+    package static func graph(name: String, paths: [Map: String], normalDirectX: Bool = false, metres: Float, size: Int) -> MaterialGraph {
         var b = MatBuilder(name, size: size)
         func bitmap(_ m: Map, grey: Bool) -> MatBuilder.Ref? {
             paths[m].map { b.node(.bitmap, ["path": .text($0), "channel": .choice(grey ? "luminance" : "color")], id: m.rawValue) }
@@ -136,18 +137,18 @@ enum ScanMaterial {
 
     // MARK: - Importing
 
-    struct Imported {
-        let graph: MaterialGraph
+    package struct Imported {
+        package let graph: MaterialGraph
         /// The folder the maps were copied into.
-        let folder: URL
+        package let folder: URL
         /// What was found but not used (a map that couldn't be read), to say.
-        let skipped: [String]
+        package let skipped: [String]
     }
 
     /// Copies the maps of `source` (a .zip, or a folder) into `texturesRoot/<slug of name>/` (a new folder: an earlier
     /// import's stays as it is, so no bake's cache of it goes stale) and makes their graph. Throws if no colour map is
     /// found. Bitmap paths are relative to Assets/ when the folder is in it.
-    static func install(from source: URL, name: String, metres: Float, texturesRoot: URL) throws -> Imported {
+    package static func install(from source: URL, name: String, metres: Float, texturesRoot: URL) throws -> Imported {
         let fm = FileManager.default
         var folder = source
         var unpacked: URL?
@@ -199,7 +200,7 @@ enum ScanMaterial {
     }
 
     /// `url`'s path as a Bitmap node names it: relative to Assets/ when it is in it.
-    static func assetPath(_ url: URL) -> String {
+    package static func assetPath(_ url: URL) -> String {
         let root = Scene.assetsDirectory.standardizedFileURL.resolvingSymlinksInPath().path + "/"
         let path = url.standardizedFileURL.resolvingSymlinksInPath().path
         return path.hasPrefix(root) ? String(path.dropFirst(root.count)) : path
@@ -227,7 +228,7 @@ enum ScanMaterial {
 
     /// An EXR as a 16-bit PNG (values clamped to 0…1): its R, G, B as a colour, or its one channel (Y, or whichever) as a
     /// grey; `srgb`: the values are linear colours, written as sRGB (a colour map: the graph works in sRGB values).
-    static func convertEXR(_ exr: URL, to png: URL, srgb: Bool) throws {
+    package static func convertEXR(_ exr: URL, to png: URL, srgb: Bool) throws {
         let image = try EXRImage.read(exr)
         let w = image.width, h = image.height
         let rgb = ["R", "G", "B"].compactMap { image.channel($0) }

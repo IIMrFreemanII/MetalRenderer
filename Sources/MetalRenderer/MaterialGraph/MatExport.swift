@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import ImageIO
 import Metal
@@ -7,15 +8,15 @@ import UniformTypeIdentifiers
 /// A baked graph's textures as files: each output channel a PNG (8 or 16 bits a channel) or an EXR (32-bit float),
 /// named `<graph>_<channel>`; and the packed occlusion-roughness-metallic too (`_orm`, glTF's layout). Read back from
 /// the engine's images at the graph's size.
-enum MatExport {
-    enum Format: String, CaseIterable {
+package enum MatExport {
+    package enum Format: String, CaseIterable {
         case png8 = "PNG 8-bit", png16 = "PNG 16-bit", exr = "EXR 32-bit"
-        var suffix: String { self == .exr ? "exr" : "png" }
+        package var suffix: String { self == .exr ? "exr" : "png" }
     }
 
     /// Writes the outputs of `result` into `folder`; the files written.
     @discardableResult
-    static func write(_ result: MatResult, engine: MatEngine, to folder: URL, format: Format, packedORM: Bool = true) throws -> [URL] {
+    package static func write(_ result: MatResult, engine: MatEngine, to folder: URL, format: Format, packedORM: Bool = true) throws -> [URL] {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let plan = result.plan
         let base = VFXEffect.slug(plan.name)
@@ -36,7 +37,7 @@ enum MatExport {
     }
 
     /// `pixels` (side × side, RGBA floats, values as the graph has them) as an image file.
-    static func write(_ pixels: [SIMD4<Float>], side: Int, grey: Bool, srgb: Bool, format: Format, to url: URL) throws {
+    package static func write(_ pixels: [SIMD4<Float>], side: Int, grey: Bool, srgb: Bool, format: Format, to url: URL) throws {
         let channels = grey ? 1 : 4
         let space = grey ? CGColorSpace(name: CGColorSpace.linearGray)! : CGColorSpace(name: srgb ? CGColorSpace.sRGB : CGColorSpace.linearSRGB)!
         let image: CGImage?

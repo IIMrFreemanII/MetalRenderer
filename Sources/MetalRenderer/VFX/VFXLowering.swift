@@ -1,9 +1,10 @@
+import EngineCore
 import Foundation
 import simd
 
 /// An effect a scene placed (Scene.addEffect): where, and what its names bind to in the scene (a Mesh block's mesh
 /// and material).
-struct VFXInstance {
+package struct VFXInstance {
     var effect: VFXEffect
     var place: VFXPlacement
     var meshes: [String: (mesh: Int, material: Int)] = [:]
@@ -13,12 +14,12 @@ struct VFXInstance {
 /// values say, the descriptor every kernel reads), and, if its graph asks for more than that, a program
 /// (VFXProgram) the VFX library runs for it. Nothing here fails: what can't be done is left out and said in
 /// `diagnostics` (the editor shows them).
-enum VFXLowering {
-    struct Result {
-        let system: ParticleSystem
-        let diagnostics: [String]
+package enum VFXLowering {
+    package struct Result {
+        package let system: ParticleSystem
+        package let diagnostics: [String]
         /// Per instance, its emitters' places in the system, its colliders' and its fields'.
-        let emitters: [[Int]]
+        package let emitters: [[Int]]
     }
 
     static func system(_ instances: [VFXInstance], colliders sceneColliders: [(name: String, collider: ParticleCollider)] = [])

@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -9,7 +10,7 @@ extension Renderer {
     /// The Material Designer's edit (`settings.scene.materials`, a catalog's key): baked in place when every
     /// procedural material's graph keeps its channels (what the scene was made for: its opacity decides how it is
     /// traced, its textures' slots are there); otherwise the scene is made again, as for any other change.
-    func editMaterials() {
+    package func editMaterials() {
         var same = settings.scene
         same.materials = scene.settings.materials
         guard same == scene.settings else { return }
@@ -39,12 +40,12 @@ extension Renderer {
     }
 
     /// What `slot`'s table holds of the procedural materials' bakes (what its frames declare).
-    func proceduralResources(slot: Int) -> [MTLResource] { Array(slotTextures[slot].values) }
+    package func proceduralResources(slot: Int) -> [MTLResource] { Array(slotTextures[slot].values) }
 
     /// The procedural materials as their graphs are now: each whose graph's key isn't the one it shows gets its bake's
     /// textures and values (a benchmark bakes it there and then; the app asks for it and takes it a frame when it is
     /// ready). Then `slot`'s table and extras catch up, and textures no frame can read any more go.
-    func updateProcedural(slot: Int) {
+    package func updateProcedural(slot: Int) {
         if !scene.procedural.isEmpty {
             let key = scene.settings.materials
             if proceduralKeys.catalog != key { proceduralKeys = (key, [:]) }
@@ -102,7 +103,7 @@ extension Renderer {
     /// The displaced meshes whose material's height (or its displacement's values) changed: their vertices moved from
     /// where they were (MaterialShaders/MatDisplace.metal), then their structures built again, and the top level's
     /// (every slot's, as it comes).
-    func encodeDisplacement(passes: FrameEncoder) {
+    package func encodeDisplacement(passes: FrameEncoder) {
         guard !displacePending.isEmpty, let buffers = displaceBuffers, var build = sceneBuffers.displacedBuild,
               let pipeline = try? MatCompiler.shared.state("matDisplace", device: device) else { return }
         defer { displacePending = [] }
@@ -135,7 +136,7 @@ extension Renderer {
 
     /// Instances moved for good (Scene.moveInstances: a terrain's scatter, what stands on it): their records and
     /// descriptors written again, the top level refitted. A still scene's are one set for every slot: written once.
-    func writeInstanceEdits(slot: Int, still: Bool) {
+    package func writeInstanceEdits(slot: Int, still: Bool) {
         let edits = scene.takeInstanceEdits()
         while pendingInstanceEdits.count < Renderer.maxFramesInFlight { pendingInstanceEdits.append([]) }
         if !edits.isEmpty { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s].formUnion(edits) } }
@@ -153,7 +154,7 @@ extension Renderer {
     /// The terrain's sectors the brushes changed (Renderer+Terrain.swift): their new vertices copied into their
     /// buffers, their structures built again, the top level's after them (a still scene's refitted, another's built
     /// again in every slot as it comes); the reference starts over.
-    func encodeTerrain(slot: Int, passes: FrameEncoder) {
+    package func encodeTerrain(slot: Int, passes: FrameEncoder) {
         guard let work = prepareTerrainFrame(slot: slot, buffers: sceneBuffers), !work.meshes.isEmpty, var build = sceneBuffers.terrainBuild else {
             // (Instances moved for good in a still scene: its one top level refitted.)
             if stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
@@ -169,7 +170,7 @@ extension Renderer {
     }
 
     /// An RGBA8 texture's sRGB view (made once a texture).
-    func srgbView(_ t: MTLTexture) -> MTLTexture {
+    package func srgbView(_ t: MTLTexture) -> MTLTexture {
         if let v = srgbViews[ObjectIdentifier(t)] { return v }
         let v = t.makeTextureView(pixelFormat: .rgba8Unorm_srgb) ?? t
         srgbViews[ObjectIdentifier(t)] = v
@@ -182,7 +183,7 @@ extension Renderer {
 
     /// Texture slot `index` (Scene.textures) holds `t` from now on: each frame slot's table takes it as it is next
     /// written; what it held goes once no frame in flight can read it.
-    func installTexture(_ t: MTLTexture, slot index: UInt32) {
+    package func installTexture(_ t: MTLTexture, slot index: UInt32) {
         guard proceduralTextures[index] !== t else { return }
         if let old = proceduralTextures[index] { retiredTextures.append((frameIndex, old)) }
         proceduralTextures[index] = t
@@ -243,7 +244,7 @@ extension Renderer {
     }
 
     /// The pending edit's system in the particles' place, with its code's `kernels`, replayed from the start.
-    func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
+    package func adoptEffects(_ pending: (system: ParticleSystem, effects: [VFXInstance], owners: [String], notes: [String]),
                               kernels: ParticleKernels?) {
         pendingEffects = nil
         guard let gpu = particlesGPU else { return }
@@ -259,7 +260,7 @@ extension Renderer {
     }
 
     /// What the VFX editor shows of the scene's effects (nil: it has none).
-    func effectsStatus() -> VFXStatus? {
+    package func effectsStatus() -> VFXStatus? {
         guard let gpu = particlesGPU else { return nil }
         var s = VFXStatus()
         let system = gpu.system
@@ -280,7 +281,7 @@ extension Renderer {
     }
 
     /// What the VFX editor's gizmos show (nil: none).
-    func setGizmos(_ target: VFXGizmos.Target?) {
+    package func setGizmos(_ target: VFXGizmos.Target?) {
         gizmoTarget = target
         if target?.emitter == nil { gizmoHandle = nil }
     }
@@ -293,14 +294,14 @@ extension Renderer {
 
     /// The gizmos over the finished frame `output` (Shaders/Gizmo.metal).
     /// Arms click-to-pick (the controller's, for the Material Designer).
-    func armPick() { pickArmed = true }
-    func disarmPick() {
+    package func armPick() { pickArmed = true }
+    package func disarmPick() {
         pickArmed = false
         if !pickSelects { pickRequest = nil }
     }
 
     /// The pick's ray, traced this frame (one thread: pickKernel): its answer is read when this slot is next written.
-    func encodePick(_ plan: FramePlan, passes: FrameEncoder) {
+    package func encodePick(_ plan: FramePlan, passes: FrameEncoder) {
         guard let cursor = pickRequest else { return }
         pickRequest = nil
         if pickBuffer == nil {
@@ -319,7 +320,7 @@ extension Renderer {
     }
 
     /// A pick traced in `slot`'s last frame (which is done): what it found.
-    func readPick(slot: Int) {
+    package func readPick(slot: Int) {
         guard pickPending == slot, let buffer = pickBuffer else { return }
         pickPending = nil
         let v = buffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: 3)
@@ -339,7 +340,7 @@ extension Renderer {
                                        albedo: SIMD3(v[1].x, v[1].y, v[1].z), position: SIMD3(v[2].x, v[2].y, v[2].z)))
     }
 
-    func encodeGizmos(_ outputs: [MTLTexture], slot: Int, passes: FrameEncoder) {
+    package func encodeGizmos(_ outputs: [MTLTexture], slot: Int, passes: FrameEncoder) {
         guard let output = outputs.first else { return }
         // The brushes, what the graph showed, the placed object's arrows.
         var segments = painterRingSegments() + terrainRingSegments() + selectionSegments() + placementSegments()
@@ -374,7 +375,7 @@ extension Renderer {
     }
 
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
-    func rebuildScene(resetCamera: Bool) {
+    package func rebuildScene(resetCamera: Bool) {
         loading = nil   // a scene still loading is for settings this one replaces
         do {
             let reuse = settings.scene == scene.settings ? scene : nil
@@ -387,7 +388,7 @@ extension Renderer {
     }
 
     /// Swaps in a prepared scene. Waits for in-flight frames, since they still read the old buffers.
-    func install(_ prepared: PreparedScene, resetCamera: Bool) {
+    package func install(_ prepared: PreparedScene, resetCamera: Bool) {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let oldAPI = builtAPI, oldPipelines = pipelines
@@ -493,7 +494,7 @@ extension Renderer {
     }
 
     /// The scene's outline to the Project Graph and its file.
-    func publishOutline() {
+    package func publishOutline() {
         guard OutlineStore.writes else { return }
         let outline = scene.makeOutline()
         onOutline?(outline)
@@ -501,7 +502,7 @@ extension Renderer {
     }
 
     /// What shading reads besides the scene's buffers: the textures and their table, and each slot's arguments.
-    func createShadingResources(textures: [MTLTexture]?) throws {
+    package func createShadingResources(textures: [MTLTexture]?) throws {
         // The materials are the scene's as the buffers were made; what has changed since goes to every slot.
         materialsPending = [Range<Int>?](repeating: scene.takeMaterialsDirty(), count: Renderer.maxFramesInFlight)
         materialTextures = try textures ?? MaterialTextures.load(scene.textures, device: device, queue: queue)
@@ -583,7 +584,7 @@ extension Renderer {
     /// The tile comes from the cache file. Without one (the first launch) generating it takes about half a second:
     /// the app does that in the background and samples with white noise until the tile is in (`blueNoiseReady`);
     /// a benchmark waits for it.
-    func createBlueNoiseTexture() throws {
+    package func createBlueNoiseTexture() throws {
         if let values = benchmark != nil ? BlueNoise.tile() : BlueNoise.cached() {
             blueNoiseTexture = try Renderer.blueNoiseTexture(device, values: values)
             blueNoiseReady = true
@@ -603,7 +604,7 @@ extension Renderer {
     }
 
     /// 1-texel stand-ins for optional textures, so every texture a kernel declares is bound.
-    func createDummyTextures() throws {
+    package func createDummyTextures() throws {
         let d3 = MTLTextureDescriptor()
         d3.textureType = .type3D
         d3.pixelFormat = .rgba16Float
@@ -647,7 +648,7 @@ extension Renderer {
 
     /// The fog's noise, made the first time fog is on: in the background (nil until it is ready, so the fog shows a
     /// few frames late), or right here in a benchmark.
-    func fogNoise() -> MTLTexture? {
+    package func fogNoise() -> MTLTexture? {
         if let fogNoiseTexture { return fogNoiseTexture }
         if benchmark != nil {
             fogNoiseTexture = Renderer.fogNoiseTexture(device)
@@ -667,14 +668,14 @@ extension Renderer {
         return nil
     }
 
-    func fogTargets(width: Int, height: Int) -> FogTargets? {
+    package func fogTargets(width: Int, height: Int) -> FogTargets? {
         if let g = fogGrid, g.renderWidth == width, g.renderHeight == height { return g }
         fogGrid = try? FogTargets(device: device, renderWidth: width, renderHeight: height, slices: FogSettings.slices)
         fogLastFrame = nil
         return fogGrid
     }
 
-    func taaTargets(width: Int, height: Int) -> TAATargets? {
+    package func taaTargets(width: Int, height: Int) -> TAATargets? {
         if let t = taaTargetsCache, t.width == width, t.height == height { return t }
         taaTargetsCache = nil   // (the old ones go first)
         taaTargetsCache = try? TAATargets(device: device, width: width, height: height)
@@ -682,13 +683,13 @@ extension Renderer {
         return taaTargetsCache
     }
 
-    func postTargets(width: Int, height: Int) -> PostTargets? {
+    package func postTargets(width: Int, height: Int) -> PostTargets? {
         if let t = postTargetsCache, t.width == width, t.height == height { return t }
         postTargetsCache = try? PostTargets(device: device, width: width, height: height)
         return postTargetsCache
     }
 
-    func fogReferenceTexture(width: Int, height: Int) -> MTLTexture? {
+    package func fogReferenceTexture(width: Int, height: Int) -> MTLTexture? {
         if let t = fogReference, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -700,7 +701,7 @@ extension Renderer {
 
     /// This frame's fog parameters for the shaders (flags 0 while fog is off).
     /// `requireGrid`: none without the froxel grid (the frame's fog); the path tracer reads the medium alone.
-    func makeFogParams(grid: FogTargets?, historyValid: Bool, requireGrid: Bool = true) -> GPUFogParams {
+    package func makeFogParams(grid: FogTargets?, historyValid: Bool, requireGrid: Bool = true) -> GPUFogParams {
         var p = GPUFogParams()
         let f = settings.fog
         guard f.enabled, grid != nil || !requireGrid else { return p }

@@ -1,19 +1,20 @@
+import EngineCore
 import Foundation
 
 /// Effects saved as JSON: `Assets/Effects/<name>.vfx.json`, an effect a file, `{"format": 1, "effect": {...}}`. A file
 /// named as a built-in effect is (campfire, rain, grinder, magic, rubble...) replaces it in every scene that places
 /// it; any other is an effect of its own (the VFX stage shows it). The folder is `METALRENDERER_EFFECTS` if set
 /// (`builtin`: none, the built-in effects only), or `Effects` in the assets folder.
-enum VFXStore {
-    static let format = 1
-    static let suffix = ".vfx.json"
+package enum VFXStore {
+    package static let format = 1
+    package static let suffix = ".vfx.json"
 
-    struct File: Codable {
-        var format = VFXStore.format
-        var effect: VFXEffect
+    package struct File: Codable {
+        package var format = VFXStore.format
+        package var effect: VFXEffect
     }
 
-    static var folder: URL? {
+    package static var folder: URL? {
         switch ProcessInfo.processInfo.environment["METALRENDERER_EFFECTS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
@@ -21,16 +22,16 @@ enum VFXStore {
         }
     }
 
-    static func url(_ name: String, in folder: URL) -> URL { folder.appendingPathComponent(VFXEffect.slug(name) + suffix) }
+    package static func url(_ name: String, in folder: URL) -> URL { folder.appendingPathComponent(VFXEffect.slug(name) + suffix) }
 
-    static func encode(_ effect: VFXEffect) throws -> Data {
+    package static func encode(_ effect: VFXEffect) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.nonConformingFloatEncodingStrategy = .convertToString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
         return try encoder.encode(File(effect: effect))
     }
 
-    static func decode(_ data: Data) throws -> VFXEffect {
+    package static func decode(_ data: Data) throws -> VFXEffect {
         let decoder = JSONDecoder()
         decoder.nonConformingFloatDecodingStrategy = .convertFromString(positiveInfinity: "inf", negativeInfinity: "-inf", nan: "nan")
         let file = try decoder.decode(File.self, from: data)
@@ -39,7 +40,7 @@ enum VFXStore {
     }
 
     /// The folder's effects, by name.
-    static func load(from folder: URL? = VFXStore.folder) -> VFXCatalog {
+    package static func load(from folder: URL? = VFXStore.folder) -> VFXCatalog {
         guard let folder, let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return VFXCatalog() }
         var catalog = VFXCatalog()
         for name in names.sorted() where name.hasSuffix(suffix) {
@@ -54,12 +55,12 @@ enum VFXStore {
         return catalog
     }
 
-    static func save(_ effect: VFXEffect, in folder: URL) throws {
+    package static func save(_ effect: VFXEffect, in folder: URL) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         try encode(effect).write(to: url(effect.name, in: folder), options: .atomic)
     }
 
-    static func remove(_ name: String, in folder: URL) throws {
+    package static func remove(_ name: String, in folder: URL) throws {
         let file = url(name, in: folder)
         if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
     }
@@ -70,9 +71,9 @@ enum VFXStore {
 /// launch), "builtin" none, otherwise a key of the registry the editor fills (each edit a catalog of its own, so a
 /// scene built in the background reads the one it was asked for).
 package struct VFXCatalog: Equatable {
-    var effects: [String: VFXEffect] = [:]
+    package var effects: [String: VFXEffect] = [:]
 
-    static let launch = VFXStore.load()
+    package static let launch = VFXStore.load()
 
     private static let lock = NSLock()
     private static var registry: [String: VFXCatalog] = [:]
@@ -95,7 +96,7 @@ package struct VFXCatalog: Equatable {
         return key
     }
 
-    static func resolve(_ key: String) -> VFXCatalog {
+    package static func resolve(_ key: String) -> VFXCatalog {
         switch key {
         case "": return launch
         case "builtin": return VFXCatalog()
@@ -105,7 +106,7 @@ package struct VFXCatalog: Equatable {
         }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(effects: [String: VFXEffect] = [:]) {
         self.effects = effects
     }

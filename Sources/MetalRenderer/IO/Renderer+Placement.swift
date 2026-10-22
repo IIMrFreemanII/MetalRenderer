@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,7 +10,7 @@ import simd
 /// object makes the scene again.
 extension Renderer {
     /// The arrows' drag: its axis, the object, where along the axis the cursor was, and what it does.
-    struct PlacementDrag {
+    package struct PlacementDrag {
         enum Mode { case move, turn, scale }
         var axis: Int
         var object: Int
@@ -18,7 +19,7 @@ extension Renderer {
     }
 
     /// The placed object the selection is, if it is one.
-    var placedSelection: Int? {
+    package var placedSelection: Int? {
         guard let placed = scene.placed, let i = selection?.target.instances.first else { return nil }
         return placed.object(of: i)
     }
@@ -32,7 +33,7 @@ extension Renderer {
     }
 
     /// The arrows (x red, y green, z blue), drawn with the gizmos.
-    func placementSegments() -> [VFXGizmos.Segment] {
+    package func placementSegments() -> [VFXGizmos.Segment] {
         guard let (origin, length) = placementHandle() else { return [] }
         let colors: [SIMD4<Float>] = [[1, 0.3, 0.25, 1], [0.35, 0.95, 0.35, 1], [0.35, 0.55, 1, 1]]
         return (0..<3).flatMap { k -> [VFXGizmos.Segment] in
@@ -43,7 +44,7 @@ extension Renderer {
     }
 
     /// A press on an arrow starts its drag (Option: turn, Control: scale); true when it did.
-    func placementMouseDown(at cursor: SIMD2<Float>) -> Bool {
+    package func placementMouseDown(at cursor: SIMD2<Float>) -> Bool {
         guard let k = placedSelection, let (origin, length) = placementHandle(),
               let axisIndex = VFXGizmos.pick(handle: origin, cursor: cursor, camera: camera, aspect: viewAspect, size: gizmoViewSize,
                                              pixels: 10 * max(length, 1)) else { return false }
@@ -55,7 +56,7 @@ extension Renderer {
     }
 
     /// The drag: the object (and what hangs from it) moved, turned or scaled as far as the cursor went along the axis.
-    func placementMouseDragged(at cursor: SIMD2<Float>) -> Bool {
+    package func placementMouseDragged(at cursor: SIMD2<Float>) -> Bool {
         guard var drag = placementDrag, var placed = scene.placed, placed.file.objects.indices.contains(drag.object) else { return false }
         var axis = SIMD3<Float>.zero
         axis[drag.axis] = 1
@@ -78,7 +79,7 @@ extension Renderer {
     }
 
     /// The drag let go: the file written. True when there was one.
-    func placementMouseUp() -> Bool {
+    package func placementMouseUp() -> Bool {
         guard placementDrag != nil else { return false }
         placementDrag = nil
         savePlaced()
@@ -103,7 +104,7 @@ extension Renderer {
     }
 
     /// End: the selected object stands on the ground under it (the terrain, or y = 0).
-    func dropPlaced() {
+    package func dropPlaced() {
         guard let k = placedSelection, var placed = scene.placed else { return }
         let t = placed.file.objects[k].world(in: placed.file.objects)
         let x = t.columns.3.x, z = t.columns.3.z
@@ -117,7 +118,7 @@ extension Renderer {
     }
 
     /// Delete: the selected object out of the file (and what hangs from it), the scene made again.
-    func deletePlaced() {
+    package func deletePlaced() {
         guard let k = placedSelection, var placed = scene.placed else { return }
         var gone = Set([k])
         var grew = true
@@ -140,7 +141,7 @@ extension Renderer {
     }
 
     /// Command-D: a copy of the selected object beside it (along x, its width away).
-    func duplicatePlaced() {
+    package func duplicatePlaced() {
         guard let k = placedSelection, var placed = scene.placed else { return }
         var copy = placed.file.objects[k]
         let width = placed.instances[k].map { scene.worldBounds(of: $0) }.map { $0.hi.x - $0.lo.x }.max() ?? 1
@@ -152,7 +153,7 @@ extension Renderer {
     }
 
     /// Command-Shift-N: `asset` (a box) on the ground three metres in front of the camera.
-    func addPlaced(asset: String = "prefab:box") {
+    package func addPlaced(asset: String = "prefab:box") {
         var placed = scene.placed ?? PlacedFile(file: SceneFile(), instances: [], worlds: [])
         let ahead = camera.position + normalize(SIMD3(camera.forward.x, 0, camera.forward.z)) * 3
         let ground = scene.terrain?.height(ahead.x, ahead.z) ?? 0
@@ -164,7 +165,7 @@ extension Renderer {
     }
 
     /// The scene's file written as it is now (and the scene made again from it, for a new or deleted object).
-    func savePlaced(rebuild: Bool = false) {
+    package func savePlaced(rebuild: Bool = false) {
         guard let placed = scene.placed else { return }
         do {
             try placed.file.write(to: SceneFile.url(for: scene.settings.kind))

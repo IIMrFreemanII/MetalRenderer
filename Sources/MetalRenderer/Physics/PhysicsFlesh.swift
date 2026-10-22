@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -160,7 +161,7 @@ extension PhysicsWorld {
         var shortening: Float = 0.4
         var fibreCompliance: Float = 1e-6
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(spacing: Float = 0.035, density: Float = 1050, edge: Float = 2e-4, skinEdge: Float = 4e-5, volume: Float = 1e-11, damping: Float = PhysicsWorld.softLinkDamping, friction: Float = 0.8, muscleGain: Float = 1, shortening: Float = 0.4, fibreCompliance: Float = 1e-6) {
             self.spacing = spacing
             self.density = density

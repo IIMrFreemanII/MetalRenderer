@@ -1,15 +1,16 @@
+import EngineCore
 import Foundation
 import QuartzCore
 import simd
 
 /// What the character workshop's character is, for the character editor: its mesh, its height, and how long the
 /// workshop took to make it.
-struct CharacterStats: Equatable {
-    var name = ""
-    var vertices = 0
-    var triangles = 0
-    var height: Float = 0
-    var buildMs = 0.0
+package struct CharacterStats: Equatable {
+    package var name = ""
+    package var vertices = 0
+    package var triangles = 0
+    package var height: Float = 0
+    package var buildMs = 0.0
 }
 
 extension Scene {
@@ -17,7 +18,7 @@ extension Scene {
     /// `settings.characterWorkshop` asks for. The character editor makes it again at every edit (its characters from
     /// `settings.characterCatalog`): the characters are made from their DNA (CharacterBuilder) and posed by the crowd's
     /// GPU skinning, a pose slot each.
-    func buildCharacterWorkshop() {
+    package func buildCharacterWorkshop() {
         let start = CACurrentMediaTime()
         remadeOften = true
         let w = settings.characterWorkshop
@@ -111,7 +112,7 @@ extension Scene {
 
     /// `dna`'s hair (CharacterHair) on the crowd's slot `slot`, its character's instance at `transform`: a curve mesh per
     /// groom, which the crowd's skinning draws every frame (Crowd.Hair), first drawn here in the slot's pose at time 0.
-    func addHair(_ dna: CharacterDNA, slot: Int, crowd: Crowd, kit: CharacterKit, transform: float4x4, density: Float) {
+    package func addHair(_ dna: CharacterDNA, slot: Int, crowd: Crowd, kit: CharacterKit, transform: float4x4, density: Float) {
         let grooms = CharacterHair.grooms(dna, kit: kit, density: density)
         guard !grooms.isEmpty else { return }
         let part = crowd.slots[slot].part, character = crowd.characters[crowd.parts[part].character]

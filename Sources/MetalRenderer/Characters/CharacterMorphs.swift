@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -11,9 +12,9 @@ import simd
 /// X Bot's skeleton as `sexOffsets`.
 package struct CharacterMorphs {
     struct Target {
-        var name: String
-        var vertices: [UInt32]
-        var deltas: [SIMD3<Float>]
+        package var name: String
+        package var vertices: [UInt32]
+        package var deltas: [SIMD3<Float>]
     }
 
     var targets: [Target]

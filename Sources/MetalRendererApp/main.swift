@@ -1,7 +1,8 @@
-// The app's entry. The engine, AppMain included, is in the MetalRenderer library (Sources/MetalRenderer), the demo
-// scenes in the Game library (Sources/Game); the tests import both: one build of each serves all.
+// The app's entry. AppMain (the window, the panels, the editors) is in the Editors library (Sources/Editors), on the
+// engine (Sources/MetalRenderer, on Sources/EngineCore); the demo scenes are in the Game library (Sources/Game). The
+// tests import them all: one build of each serves both.
+import Editors
 import Game
-import MetalRenderer
 
 GameScenes.register()
 AppMain.run()

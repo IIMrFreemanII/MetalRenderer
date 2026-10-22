@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,7 +7,7 @@ import simd
 extension Scene {
     /// A rock's mesh: an icosphere pushed out by ridged noise, then chipped by `cuts` planes (the flat faces broken rock
     /// has), flattened, its foot level; UVs in metres across it (the scan's repeat). Its own by `seed`.
-    static func boulder(seed: UInt64, cuts: Int = 5) -> (MeshGeometry, [SIMD2<Float>]) {
+    package static func boulder(seed: UInt64, cuts: Int = 5) -> (MeshGeometry, [SIMD2<Float>]) {
         var rng = SplitMix64(seed: seed &* 0x2545_F491_4F6C_DD1D &+ 0xB0D)
         let base = icosphere(subdivisions: 4)
         let s = UInt32(truncatingIfNeeded: seed &* 7919 &+ 17)

@@ -1,19 +1,20 @@
+import EngineCore
 import Foundation
 
 /// The building styles that scenes are built with: the built-in ones (one per district, BuiltInBuildings) with any
 /// saved over them, then the custom ones; and single buildings' own plans (LotOverride, BuildingOverrides.swift).
 package struct BuildingCatalog: Equatable {
-    var styles: [BuildingStyleDef]
+    package var styles: [BuildingStyleDef]
     package var overrides: [LotOverride] = []
 
     package static let builtIn = BuildingCatalog(styles: BuiltInBuildings.all)
 
-    func style(id: String) -> BuildingStyleDef? { styles.first { $0.id == id } }
-    func isBuiltIn(_ id: String) -> Bool { BuiltInBuildings.all.contains { $0.id == id } }
+    package func style(id: String) -> BuildingStyleDef? { styles.first { $0.id == id } }
+    package func isBuiltIn(_ id: String) -> Bool { BuiltInBuildings.all.contains { $0.id == id } }
 
     /// The style a lot of `district` is built in: its district's own style, or now and then a custom style whose
     /// `districts` name that district, by the lot's seed.
-    func style(for district: CityStyle, seed: UInt64) -> BuildingStyleDef {
+    package func style(for district: CityStyle, seed: UInt64) -> BuildingStyleDef {
         let own = style(id: BuiltInBuildings.style(district).id) ?? BuiltInBuildings.style(district)
         let others = styles.filter { !isBuiltIn($0.id) && ($0.districts[district.name] ?? 0) > 0 }
         guard !others.isEmpty else { return own }
@@ -29,7 +30,7 @@ package struct BuildingCatalog: Equatable {
     }
 
     /// The built-in styles (in their order, any of them replaced by a definition of its id) and then the others.
-    func merging(_ defs: [BuildingStyleDef]) -> BuildingCatalog {
+    package func merging(_ defs: [BuildingStyleDef]) -> BuildingCatalog {
         var out = self
         for def in defs {
             if let i = out.styles.firstIndex(where: { $0.id == def.id }) { out.styles[i] = def } else { out.styles.append(def) }
@@ -38,7 +39,7 @@ package struct BuildingCatalog: Equatable {
     }
 
     /// Every style made safe to build: ids unique and not empty, numbers in reason.
-    func sanitized() -> BuildingCatalog {
+    package func sanitized() -> BuildingCatalog {
         var out = self
         var ids = Set<String>()
         for i in out.styles.indices {
@@ -72,7 +73,7 @@ package struct BuildingCatalog: Equatable {
     private static var launchCatalog: BuildingCatalog?
 
     /// What scenes are built with unless the editor says otherwise: the built-in styles with the saved files.
-    static var launch: BuildingCatalog {
+    package static var launch: BuildingCatalog {
         lock.lock()
         defer { lock.unlock() }
         if let made = launchCatalog { return made }
@@ -81,7 +82,7 @@ package struct BuildingCatalog: Equatable {
         return made
     }
 
-    static func setLaunch(_ catalog: BuildingCatalog) {
+    package static func setLaunch(_ catalog: BuildingCatalog) {
         lock.lock()
         launchCatalog = catalog
         lock.unlock()
@@ -95,7 +96,7 @@ package struct BuildingCatalog: Equatable {
         return key
     }
 
-    static func registered(_ key: String) -> BuildingCatalog? { registry.registered(key) }
+    package static func registered(_ key: String) -> BuildingCatalog? { registry.registered(key) }
 
     /// The catalog a scene's settings name: "" the launch one, "builtin" the built-in styles, otherwise a registered
     /// one (the launch one if it is no longer kept).
@@ -110,7 +111,7 @@ package struct BuildingCatalog: Equatable {
         }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(styles: [BuildingStyleDef], overrides: [LotOverride] = []) {
         self.styles = styles
         self.overrides = overrides
@@ -119,7 +120,7 @@ package struct BuildingCatalog: Equatable {
 
 extension BuildingStyleDef {
     /// Made safe to build (what a hand-edited file or a slider at its end could give).
-    func sanitized() -> BuildingStyleDef {
+    package func sanitized() -> BuildingStyleDef {
         var d = self
         func span(_ s: inout Span, _ range: ClosedRange<Float>) {
             s.lo = min(max(s.lo.isFinite ? s.lo : range.lowerBound, range.lowerBound), range.upperBound)
@@ -148,20 +149,20 @@ extension BuildingStyleDef {
 /// buildings' plans in `Assets/Buildings/overrides.json`. A file with a built-in style's id replaces that style
 /// everywhere; any other id adds one. The folder is `METALRENDERER_BUILDINGS` if set (`builtin`: none), or
 /// `Buildings` in the assets folder.
-enum BuildingStore {
-    static let format = 1
+package enum BuildingStore {
+    package static let format = 1
 
-    struct File: Codable {
-        var format = BuildingStore.format
-        var style: BuildingStyleDef
+    package struct File: Codable {
+        package var format = BuildingStore.format
+        package var style: BuildingStyleDef
     }
 
-    struct OverridesFile: Codable {
+    package struct OverridesFile: Codable {
         var format = BuildingStore.format
         var buildings: [LotOverride]
     }
 
-    static var folder: URL? {
+    package static var folder: URL? {
         switch ProcessInfo.processInfo.environment["METALRENDERER_BUILDINGS"] {
         case "builtin": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
@@ -169,8 +170,8 @@ enum BuildingStore {
         }
     }
 
-    static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("Styles").appendingPathComponent("\(id).json") }
-    static func overridesURL(in folder: URL) -> URL { folder.appendingPathComponent("overrides.json") }
+    package static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("Styles").appendingPathComponent("\(id).json") }
+    package static func overridesURL(in folder: URL) -> URL { folder.appendingPathComponent("overrides.json") }
 
     private static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
@@ -178,11 +179,11 @@ enum BuildingStore {
         return encoder
     }
 
-    static func encode(_ def: BuildingStyleDef) throws -> Data { try encoder.encode(File(style: def)) }
+    package static func encode(_ def: BuildingStyleDef) throws -> Data { try encoder.encode(File(style: def)) }
 
     /// A style file read over a plain style's defaults: a field added since it was written keeps its default (and
     /// one that is gone is ignored), as with the app's settings (SettingsStore).
-    static func decode(_ data: Data) throws -> File {
+    package static func decode(_ data: Data) throws -> File {
         guard var file = try JSONSerialization.jsonObject(with: data) as? [String: Any], let style = file["style"] as? [String: Any],
               let base = try JSONSerialization.jsonObject(with: JSONEncoder().encode(BuildingStyleDef(id: "", name: ""))) as? [String: Any] else {
             return try JSONDecoder().decode(File.self, from: data)
@@ -192,7 +193,7 @@ enum BuildingStore {
     }
 
     /// The built-in styles with the folder's files laid over them, and its single buildings.
-    static func load(from folder: URL? = BuildingStore.folder) -> BuildingCatalog {
+    package static func load(from folder: URL? = BuildingStore.folder) -> BuildingCatalog {
         guard let folder else { return .builtIn }
         var defs: [BuildingStyleDef] = []
         let styles = folder.appendingPathComponent("Styles")
@@ -220,20 +221,20 @@ enum BuildingStore {
     }
 
     /// Writes the style's file (in place of the one there).
-    static func save(_ def: BuildingStyleDef, in folder: URL) throws {
+    package static func save(_ def: BuildingStyleDef, in folder: URL) throws {
         let file = url(def.id, in: folder)
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try encode(def).write(to: file, options: .atomic)
     }
 
     /// Deletes the style's file: a built-in style is itself again; a custom one is gone.
-    static func remove(_ id: String, in folder: URL) throws {
+    package static func remove(_ id: String, in folder: URL) throws {
         let file = url(id, in: folder)
         if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
     }
 
     /// Writes the single buildings (none: the file goes).
-    static func saveOverrides(_ overrides: [LotOverride], in folder: URL) throws {
+    package static func saveOverrides(_ overrides: [LotOverride], in folder: URL) throws {
         let file = overridesURL(in: folder)
         if overrides.isEmpty {
             if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
@@ -252,14 +253,14 @@ enum BuildingStore {
         var overrides: [LotOverride]
     }
 
-    static func loadDraft() -> BuildingCatalog? {
+    package static func loadDraft() -> BuildingCatalog? {
         guard let data = UserDefaults.standard.data(forKey: draftKey),
               let draft = try? JSONDecoder().decode(Draft.self, from: data) else { return nil }
         return BuildingCatalog(styles: draft.styles, overrides: draft.overrides).sanitized()
     }
 
     /// nil: no draft (everything is saved).
-    static func saveDraft(_ catalog: BuildingCatalog?) {
+    package static func saveDraft(_ catalog: BuildingCatalog?) {
         guard let catalog, let data = try? JSONEncoder().encode(Draft(styles: catalog.styles, overrides: catalog.overrides)) else {
             UserDefaults.standard.removeObject(forKey: draftKey)
             return

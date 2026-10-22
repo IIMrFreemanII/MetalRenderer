@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,21 +10,21 @@ import simd
 struct MeshCutter {
     /// A mesh in one space: per vertex its place, normal and texture coordinate; per triangle its material offset.
     struct Mesh {
-        var positions: [SIMD3<Float>] = []
-        var normals: [SIMD3<Float>] = []
-        var uvs: [SIMD2<Float>] = []
-        var indices: [UInt32] = []
-        var materials: [UInt8] = []
-        var triangleCount: Int { indices.count / 3 }
+        package var positions: [SIMD3<Float>] = []
+        package var normals: [SIMD3<Float>] = []
+        package var uvs: [SIMD2<Float>] = []
+        package var indices: [UInt32] = []
+        package var materials: [UInt8] = []
+        package var triangleCount: Int { indices.count / 3 }
 
-        var bounds: AABB {
+        package var bounds: AABB {
             var b = AABB()
             for p in positions { b.grow(p) }
             return b
         }
 
         /// A vertex at the end, its index.
-        mutating func add(_ p: SIMD3<Float>, _ n: SIMD3<Float>, _ uv: SIMD2<Float>) -> UInt32 {
+        package mutating func add(_ p: SIMD3<Float>, _ n: SIMD3<Float>, _ uv: SIMD2<Float>) -> UInt32 {
             positions.append(p)
             normals.append(n)
             uvs.append(uv)

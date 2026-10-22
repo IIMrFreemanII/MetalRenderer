@@ -1,9 +1,10 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import simd
 
 extension ClosedRange {
-    func clamp(_ value: Bound) -> Bound { Swift.min(Swift.max(value, lowerBound), upperBound) }
+    package func clamp(_ value: Bound) -> Bound { Swift.min(Swift.max(value, lowerBound), upperBound) }
 }
 
 /// SVGF denoiser parameters. All but the pass counts and `separateSignals` reach the shaders through `Uniforms.denoise`.
@@ -19,7 +20,7 @@ package struct DenoiserSettings: Equatable, Codable {
     var luminanceSigma: Float = 2   // luminance edge-stopping, in standard deviations (lower = sharper shadows, noisier)
     var maxHistory: Float = 16      // frames of temporal accumulation (lower = less lag, noisier)
     var antiLag: Float = 0          // 0 = off; higher shortens the history faster where the lighting changes
-    var separateSignals = true      // filter direct and indirect light separately (sharper shadows, 2x the cost)
+    package var separateSignals = true      // filter direct and indirect light separately (sharper shadows, 2x the cost)
     // Shadow denoiser for direct light (up to 4 lights; see Shaders/Denoise.metal, 3b): filters each light's visibility
     // instead of the lit color, and clamps its history so moving shadows don't lag.
     package var shadowDenoiser = true
@@ -76,7 +77,7 @@ package struct RestirSettings: Equatable, Codable {
     var radius: Float = 24          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
     var visibilityReuse = false     // test the initial pick's visibility, so occluded samples aren't reused: less noise but
                                     // 10% darker (the target ignores visibility), so off
-    var splitVisibility = false     // denoise visibility (shadow denoiser) and unshadowed light (SVGF) apart, multiply back:
+    package var splitVisibility = false     // denoise visibility (shadow denoiser) and unshadowed light (SVGF) apart, multiply back:
                                     // one visibility channel can't keep coloured shadows (4% too bright), so off
     var denoiseSigma: Float = 3     // SVGF luminance edge-stopping for ReSTIR's direct light (in standard deviations)
     var denoisePasses = 4
@@ -217,7 +218,7 @@ package struct RestirGISettings: Equatable, Codable {
                                     // but 8-17% darker in the old stress hall, where neighbours saw different light)
     var radius: Float = 30          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
     var minDistance: Float = 0.02   // floor of the sample distance in the target (m): no spikes from very close samples
-    var denoise = true              // SVGF on the result
+    package var denoise = true              // SVGF on the result
     var denoiseSigma: Float = 3     // SVGF luminance edge-stopping (in standard deviations)
     var denoisePasses = 2
     var denoiseHistory: Float = 8   // SVGF history (frames)
@@ -238,7 +239,7 @@ package struct CascadeSettings: Equatable, Codable {
     var cascades = 4
     package var firstInterval: Float = 0.4  // cascade-0 ray length in meters; each cascade's interval is 4x longer
     var feedback = true             // multi-bounce: shade ray hits with last frame's indirect light where visible
-    var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
+    package var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
@@ -277,7 +278,7 @@ package struct VirtualGeometrySettings: Equatable, Codable {
     var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
-    var freeze = false
+    package var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
     static let poolOptions = [256, 512, 768, 1024, 2048]
@@ -352,7 +353,7 @@ package struct FogSettings: Equatable, Codable {
         return f
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(enabled: Bool = false, density: Float = 0.02, heightFalloff: Float = 0.1, baseHeight: Float = 0, anisotropy: Float = 0.5, ambient: Float = 1, albedo: SIMD3<Float> = SIMD3<Float>(repeating: 0.9), noise: Float = 0.4, noiseScale: Float = 6, wind: SIMD3<Float> = SIMD3<Float>(0.35, 0.05, 0.15), maxDistance: Float = 40, haze: Float = 0, volumes: Bool = true, reflections: Bool = true, lights: Bool = true) {
         self.enabled = enabled
         self.density = density
@@ -378,7 +379,7 @@ package enum SkyMode: Int, CaseIterable, Codable {
     case atmosphere         // physically based atmosphere; the sun light's colour follows it
     case image              // an HDR environment image (.hdr, .exr); its sun drives the sun light
 
-    var title: String {
+    package var title: String {
         switch self {
         case .constant: return "Constant colour"
         case .atmosphere: return "Atmosphere"
@@ -390,41 +391,41 @@ package enum SkyMode: Int, CaseIterable, Codable {
 /// The sky and its clouds. Each scene kind has a preset (`preset(for:)`).
 package struct SkySettings: Equatable, Codable {
     package var mode = SkyMode.constant
-    var imagePath: String? = nil        // .image: the environment file
-    var imageExposure: Float = 0        // .image: stops on top of the automatic scale
+    package var imagePath: String? = nil        // .image: the environment file
+    package var imageExposure: Float = 0        // .image: stops on top of the automatic scale
     package var clouds = true
-    var cloudsOverImage = false         // .image: the volumetric clouds in front of the image too
+    package var cloudsOverImage = false         // .image: the volumetric clouds in front of the image too
     package var coverage: Float = 0.35          // 0 = clear, ~0.3 scattered cumulus, 1 = overcast
     package var density: Float = 0.03           // extinction inside a cloud (1/m)
     package var cloudBase: Float = 1500         // altitude of the layer's bottom (m)
     package var cloudThickness: Float = 1500
     package var cloudScale: Float = 4000        // shape noise tile (m): smaller = smaller clouds
-    var erosion: Float = 0.35           // detail noise eating the edges
+    package var erosion: Float = 0.35           // detail noise eating the edges
     package var windSpeed: Float = 12           // m/s, blowing toward windDirection (degrees from +x toward +z)
-    var windDirection: Float = 30
+    package var windDirection: Float = 30
     package var shadows = true                  // the clouds shadow the scene
     package var shadowStrength: Float = 1
 
-    static let coverageRange: ClosedRange<Float> = 0...1
-    static let densityRange: ClosedRange<Float> = 0.005...0.1
-    static let cloudBaseRange: ClosedRange<Float> = 300...4000
-    static let windRange: ClosedRange<Float> = 0...40
-    static let cloudThicknessRange: ClosedRange<Float> = 200...4000
-    static let cloudScaleRange: ClosedRange<Float> = 500...16000
-    static let mapSize = 1024           // sky texture side, per hemisphere
-    static let shadowMapSize = 256
+    package static let coverageRange: ClosedRange<Float> = 0...1
+    package static let densityRange: ClosedRange<Float> = 0.005...0.1
+    package static let cloudBaseRange: ClosedRange<Float> = 300...4000
+    package static let windRange: ClosedRange<Float> = 0...40
+    package static let cloudThicknessRange: ClosedRange<Float> = 200...4000
+    package static let cloudScaleRange: ClosedRange<Float> = 500...16000
+    package static let mapSize = 1024           // sky texture side, per hemisphere
+    package static let shadowMapSize = 256
     /// `METALRENDERER_SKY=constant|atmosphere|<image path>` overrides every preset's mode.
-    static let override: String? = ProcessInfo.processInfo.environment["METALRENDERER_SKY"]
+    package static let override: String? = ProcessInfo.processInfo.environment["METALRENDERER_SKY"]
 
     /// The sky that suits scene `kind`: the atmosphere for the outdoor and window-lit scenes, a constant colour inside.
     /// ...and for the scene's own settings: the building workshop at night has the city's night sky.
-    static func preset(for scene: SceneSettings) -> SkySettings {
+    package static func preset(for scene: SceneSettings) -> SkySettings {
         var s = preset(for: scene.kind)
         if scene.kind == .buildings && scene.buildings.night { s = overridden(SkySettings()) }   // the night city's
         return s
     }
 
-    static func preset(for kind: SceneKind) -> SkySettings { overridden(kind.definition.sky) }
+    package static func preset(for kind: SceneKind) -> SkySettings { overridden(kind.definition.sky) }
 
     /// `s` with METALRENDERER_SKY's mode.
     private static func overridden(_ sky: SkySettings) -> SkySettings {
@@ -439,7 +440,7 @@ package struct SkySettings: Equatable, Codable {
         return s
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(mode: SkyMode = SkyMode.constant, imagePath: String? = nil, imageExposure: Float = 0, clouds: Bool = true, cloudsOverImage: Bool = false, coverage: Float = 0.35, density: Float = 0.03, cloudBase: Float = 1500, cloudThickness: Float = 1500, cloudScale: Float = 4000, erosion: Float = 0.35, windSpeed: Float = 12, windDirection: Float = 30, shadows: Bool = true, shadowStrength: Float = 1) {
         self.mode = mode
         self.imagePath = imagePath
@@ -511,7 +512,7 @@ package struct PostSettings: Equatable, Codable {
         return p
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(bloom: Float = 0, bloomThreshold: Float = 1, aperture: Float = 0, focus: Float = 0, vignette: Float = 0, grain: Float = 0, aberration: Float = 0, autoExposure: Bool = false, warmth: Float = 0, saturation: Float = 1, contrast: Float = 1) {
         self.bloom = bloom
         self.bloomThreshold = bloomThreshold
@@ -527,46 +528,35 @@ package struct PostSettings: Equatable, Codable {
     }
 }
 
-/// How frames reach the GPU. Changing it recompiles the shaders and rebuilds the scene's structures.
-package enum RenderAPI: Int, CaseIterable, Codable {
-    case metal3             // MTLCommandQueue, one compute encoder per frame
-    case metal4             // Metal 4: MTL4CommandQueue, argument tables, residency sets (macOS 26; Capabilities.metal4)
-
-    var title: String { self == .metal3 ? "Metal 3" : "Metal 4" }
-
-    /// `METALRENDERER_API=metal4|metal3` picks the starting API (benchmarks: for every setting).
-    static let initial: RenderAPI = ProcessInfo.processInfo.environment["METALRENDERER_API"] == "metal4" ? .metal4 : .metal3
-}
-
 /// Everything the settings panel and the keyboard shortcuts can change.
 /// Generated plants (the forest, the valley's trees). The wind turns their limbs and boughs about bones (plants as
 /// assemblies; baked plants stand still).
 package struct FoliageSettings: Equatable, Codable {
     package var wind: Float = 0                 // 0 = still ... 1 = a strong wind
-    var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
-    var gusts: Float = 0.7              // 0 = steady ... 1 = it comes in waves
+    package var windDirection: Float = 25       // where it blows to, degrees from +x toward +z
+    package var gusts: Float = 0.7              // 0 = steady ... 1 = it comes in waves
     /// Far plants are traced as voxels (FoliageVoxels) from where a voxel is this many traced pixels: 0 = never.
     /// At 2 the forest's far trees change over about 90 m out, where they cost less as voxels than as triangles.
     package var lod: Float = 2
     /// How far from the camera the plants' limbs move in the wind, in metres (0 = everywhere). Farther plants still lean
     /// as a whole; their limbs' structures stand at rest and aren't refitted every frame. At 20 m the moving forest is
     /// 7-16% faster than with every limb moving (M1 Max, Metal 3); from above, where every crown is farther, only whole trees lean.
-    var swayReach: Float = 20
+    package var swayReach: Float = 20
     /// The time of year: 0 = spring, 0.3 = summer, 0.5...0.8 = the leaves turn and fall, 1 = winter.
-    var season: Float = 0.3
+    package var season: Float = 0.3
     /// How much of the light leaves let through, as a share of each species' own: 0 = opaque leaves.
     package var translucency: Float = 1
 
-    static let windRange: ClosedRange<Float> = 0...1
-    static let directionRange: ClosedRange<Float> = -180...180
-    static let gustRange: ClosedRange<Float> = 0...1
-    static let lodRange: ClosedRange<Float> = 0...4
-    static let swayRange: ClosedRange<Float> = 0...200
-    static let seasonRange: ClosedRange<Float> = 0...1
-    static let translucencyRange: ClosedRange<Float> = 0...1
+    package static let windRange: ClosedRange<Float> = 0...1
+    package static let directionRange: ClosedRange<Float> = -180...180
+    package static let gustRange: ClosedRange<Float> = 0...1
+    package static let lodRange: ClosedRange<Float> = 0...4
+    package static let swayRange: ClosedRange<Float> = 0...200
+    package static let seasonRange: ClosedRange<Float> = 0...1
+    package static let translucencyRange: ClosedRange<Float> = 0...1
 
     /// A breeze where there are plants.
-    static func preset(for kind: SceneKind) -> FoliageSettings {
+    package static func preset(for kind: SceneKind) -> FoliageSettings {
         var f = FoliageSettings()
         if kind.hasPlants { f.wind = 0.4 }
         if kind == .plants { f.lod = 0 }   // the workshop's plants are never voxels
@@ -585,45 +575,45 @@ package struct RenderSettings: Equatable, Codable {
     package var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
     package var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     package var paused = false
-    var viewMode = 0
+    package var viewMode = 0
     /// Solid shading, like Blender's viewport: every surface flat grey under a fixed studio light, one camera ray a
     /// pixel and nothing else (no shadows, GI, reflections, fog, sky, denoisers, MetalFX or lens). For iterating on
     /// scenes and physics fast (Renderer: FramePlan.solid, Shaders/Output.metal solidKernel).
     package var solid = false
     /// What solid shading draws (Shaders/Output.metal solidTraceKernel, solidResolveKernel).
-    var solidLook = SolidLook()
+    package var solidLook = SolidLook()
     /// `solid` was turned on by entering a scene in the solid look (applySceneDefaults turns it back when leaving).
-    var solidFromScene = false
+    package var solidFromScene = false
     package var reference = ReferenceSettings()   // a converged picture instead of the realtime one (session state: off at launch)
     package var denoiser = DenoiserSettings()
     package var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     package var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
-    var directLight = DirectLightMode.initial
+    package var directLight = DirectLightMode.initial
     package var restir = RestirSettings()
     package var restirGI = RestirGISettings()
-    var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
-    var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
+    package var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
+    package var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
     package var cascades = CascadeSettings()
     package var scene = SceneSettings()
     package var api = RenderAPI.initial
     package var virtualGeometry = VirtualGeometrySettings()
-    var specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
-    var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
-    var fog = FogSettings.preset(for: .cornell)
-    var sky = SkySettings.preset(for: .cornell)
+    package var specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
+    package var textureBudgetMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024   // streamed textures
+    package var fog = FogSettings.preset(for: .cornell)
+    package var sky = SkySettings.preset(for: .cornell)
     package var foliage = FoliageSettings.preset(for: .cornell)
     package var post = PostSettings()
     // Camera and animation
     package var exposure: Float = 0            // stops (EV) before the tone curve
     package var toneMap = ToneMap.aces
-    var fovDegrees: Float = 60         // vertical field of view
-    var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
-    var timeScale: Float = 1           // animation speed (Pause stops it too)
+    package var fovDegrees: Float = 60         // vertical field of view
+    package var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
+    package var timeScale: Float = 1           // animation speed (Pause stops it too)
     package var timeOfDay: Float = 0           // scenes with a day cycle: offset into it, as a fraction of it
     /// The day is held where `timeOfDay` puts it (the day bar, DayClock): `timeOfDay` is then the time of the day
     /// itself, as a fraction of the cycle, and the rest of the scene goes on moving.
-    var dayHeld = false
+    package var dayHeld = false
     /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
     package var particleScale: Float = 1
 
@@ -643,7 +633,7 @@ package struct RenderSettings: Equatable, Codable {
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on
     /// Reset to Defaults): the GI method, the night market's light count, the fog, the sky and the lens (the showcase's
     /// model brings its own fog and lens), and the physics scene's look (leaving it, the defaults again).
-    mutating func applySceneDefaults(from defaults: RenderSettings) {
+    package mutating func applySceneDefaults(from defaults: RenderSettings) {
         giMode = defaults.giMode
         // A scene in the solid look (the demolition's: the look is the user's again when they leave it).
         let solidScene = scene.kind.definition.solid
@@ -670,15 +660,15 @@ package struct RenderSettings: Equatable, Codable {
         if let image { sky.mode = .image; sky.imagePath = image.imagePath; sky.imageExposure = image.imageExposure }
     }
 
-    static let exposureRange: ClosedRange<Float> = -4...4
-    static let fovRange: ClosedRange<Float> = 30...110
-    static let moveSpeedRange: ClosedRange<Float> = 0.5...100
-    static let timeScaleRange: ClosedRange<Float> = 0...4
-    static let manyLightReuseRange = 0...8
-    static let textureBudgetOptions = [256, 512, 1024, 2048, 4096]
-    static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
-    static let renderScaleStep: CGFloat = 0.125
-    static let bounceRange = 1...8
+    package static let exposureRange: ClosedRange<Float> = -4...4
+    package static let fovRange: ClosedRange<Float> = 30...110
+    package static let moveSpeedRange: ClosedRange<Float> = 0.5...100
+    package static let timeScaleRange: ClosedRange<Float> = 0...4
+    package static let manyLightReuseRange = 0...8
+    package static let textureBudgetOptions = [256, 512, 1024, 2048, 4096]
+    package static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
+    package static let renderScaleStep: CGFloat = 0.125
+    package static let bounceRange = 1...8
     package static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
@@ -686,14 +676,14 @@ package struct RenderSettings: Equatable, Codable {
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
     /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
-    static func showsLight(_ mode: Int) -> Bool {
+    package static func showsLight(_ mode: Int) -> Bool {
         ![3, 4, 5].contains(mode) && !(7...13).contains(mode)
     }
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     package static let geometryViews = 8...13
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(renderScale: CGFloat = 0.5, upscaleFactor: CGFloat = 3, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, restir: RestirSettings = RestirSettings(), restirGI: RestirGISettings = RestirGISettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), api: RenderAPI = RenderAPI.initial, virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings(), exposure: Float = 0, toneMap: ToneMap = ToneMap.aces, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
         self.renderScale = renderScale
         self.upscaleFactor = upscaleFactor

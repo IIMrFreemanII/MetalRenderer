@@ -1,8 +1,9 @@
+import EngineCore
 import Foundation
 import simd
 
 /// Which part of the open world a scene holds (Scene.worldPlace).
-struct WorldPlace {
+package struct WorldPlace {
     var world: World
     /// The world's place that is the scene's origin (x, z): the scene's coordinates are metres from it. A tile's
     /// corner (`anchorTile`'s).
@@ -69,7 +70,7 @@ extension World {
 extension Scene {
     /// `METALRENDERER_WORLD_GROUPS=0`: a tile's trees are the scene's own instances, made again with every scene (as
     /// they were before the tiles had groups: for comparing).
-    static let groupsTrees = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_GROUPS"] != "0"
+    package static let groupsTrees = ProcessInfo.processInfo.environment["METALRENDERER_WORLD_GROUPS"] != "0"
 
     /// The tiles of the last scene, by what they were made for: the next scene shares most of them.
     private static var keptTiles: [String: WorldTile] = [:]

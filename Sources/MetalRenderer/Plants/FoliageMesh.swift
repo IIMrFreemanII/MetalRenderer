@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,20 +7,20 @@ import simd
 extension Foliage {
     /// Wood first, then leaves: the leaves' vertices and triangles are the tails of the arrays.
     package struct Mesh {
-        var positions: [SIMD3<Float>]
-        var normals: [SIMD3<Float>]
-        var uvs: [SIMD2<Float>]             // wood: around (mirrored, no seam) and along; leaves: 0...1 across, base to tip
-        var indices: [UInt32]
-        var leafVertex: Int                 // vertices from here on are leaves'
-        var leafIndex: Int                  // indices from here on
-        var bounds: AABB
-        var cutout = false                  // the leaves are cards: cut out by their species' card sheet
+        package var positions: [SIMD3<Float>]
+        package var normals: [SIMD3<Float>]
+        package var uvs: [SIMD2<Float>]             // wood: around (mirrored, no seam) and along; leaves: 0...1 across, base to tip
+        package var indices: [UInt32]
+        package var leafVertex: Int                 // vertices from here on are leaves'
+        package var leafIndex: Int                  // indices from here on
+        package var bounds: AABB
+        package var cutout = false                  // the leaves are cards: cut out by their species' card sheet
 
-        var triangles: Int { indices.count / 3 }
-        var leafTriangles: Int { (indices.count - leafIndex) / 3 }
+        package var triangles: Int { indices.count / 3 }
+        package var leafTriangles: Int { (indices.count - leafIndex) / 3 }
     }
 
-    struct MeshSize {
+    package struct MeshSize {
         var vertices = 0
         var indices = 0
 
@@ -28,7 +29,7 @@ extension Foliage {
     }
 
     /// Writes a mesh's arrays in order. Nothing grows: the arrays have their final size.
-    struct MeshWriter {
+    package struct MeshWriter {
         let positions: UnsafeMutablePointer<SIMD3<Float>>
         let normals: UnsafeMutablePointer<SIMD3<Float>>
         let uvs: UnsafeMutablePointer<SIMD2<Float>>
@@ -63,7 +64,7 @@ extension Foliage {
     }
 
     /// A mesh of exactly `size`, written by `fill`, which returns where the leaves start (vertex, index).
-    static func build(_ size: MeshSize, _ fill: (inout MeshWriter) -> (Int, Int)) -> Mesh {
+    package static func build(_ size: MeshSize, _ fill: (inout MeshWriter) -> (Int, Int)) -> Mesh {
         var positions = [SIMD3<Float>](repeating: .zero, count: size.vertices)
         var normals = [SIMD3<Float>](repeating: .zero, count: size.vertices)
         var uvs = [SIMD2<Float>](repeating: .zero, count: size.vertices)
@@ -98,11 +99,11 @@ extension Foliage {
     /// The realistic look's bark (realism high): trunks and thick limbs with more rings and sides, pushed out by the
     /// bark scan's height (0...1 at the tube's own UVs, which the bark texture is sampled at), `relief` metres from its
     /// lowest to its highest.
-    struct Bark {
-        var height: TextureSet.HeightField
-        var relief: Float
+    package struct Bark {
+        package var height: TextureSet.HeightField
+        package var relief: Float
         /// Rings between two nodes and sides per side, for a stem of `level` (nil: as it is).
-        func detail(level: UInt8, footRadius: Float, radial: UInt8) -> (rings: Int, sides: Int)? {
+        package func detail(level: UInt8, footRadius: Float, radial: UInt8) -> (rings: Int, sides: Int)? {
             guard level <= 1, footRadius > 0.03, radial >= 3 else { return nil }
             return level == 0 ? (3, 3) : (2, 2)
         }
@@ -110,7 +111,7 @@ extension Foliage {
 
     /// The nodes a stem is meshed through: its own, or with `bark`'s detail more between them (Catmull-Rom through
     /// the nodes, the radius between them straight), and its sides.
-    static func stemNodes(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, bark: Bark?) -> (nodes: [SIMD4<Float>], sides: Int)? {
+    package static func stemNodes(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, bark: Bark?) -> (nodes: [SIMD4<Float>], sides: Int)? {
         let node = nodes + Int(s.first), n = Int(s.count)
         guard let bark, let d = bark.detail(level: s.level, footRadius: node[0].w, radial: s.radial) else { return nil }
         var out: [SIMD4<Float>] = []
@@ -128,7 +129,7 @@ extension Foliage {
         return (out, min(Int(s.radial) * d.sides, 32))
     }
 
-    static func stemSize(_ s: Stem, bark: Bark? = nil, nodes: UnsafePointer<SIMD4<Float>>? = nil) -> MeshSize {
+    package static func stemSize(_ s: Stem, bark: Bark? = nil, nodes: UnsafePointer<SIMD4<Float>>? = nil) -> MeshSize {
         if let nodes, let fine = stemNodes(s, nodes: nodes, bark: bark) {
             let rings = fine.nodes.count - 1, per = fine.sides
             return MeshSize(vertices: rings * per + 1, indices: ((rings - 1) * per * 2 + per) * 3)
@@ -138,7 +139,7 @@ extension Foliage {
         return MeshSize(vertices: rings * per + 1, indices: ((rings - 1) * strips * 2 + strips) * 3)
     }
 
-    static func write(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, up: SIMD3<Float>, bark: Bark? = nil, into w: inout MeshWriter) {
+    package static func write(_ s: Stem, nodes: UnsafePointer<SIMD4<Float>>, up: SIMD3<Float>, bark: Bark? = nil, into w: inout MeshWriter) {
         if let fine = stemNodes(s, nodes: nodes, bark: bark), let bark {
             var t = s
             t.first = 0
@@ -212,7 +213,7 @@ extension Foliage {
 
     // MARK: - Leaves
 
-    static func leafSize(_ shape: LeafShape) -> MeshSize {
+    package static func leafSize(_ shape: LeafShape) -> MeshSize {
         switch shape {
         case .kite: return MeshSize(vertices: 4, indices: 6)
         case .blade: return MeshSize(vertices: 6, indices: 12)
@@ -220,7 +221,7 @@ extension Foliage {
         }
     }
 
-    static func write(_ a: LeafAnchor, shape: LeafShape, fold: Float, into w: inout MeshWriter) {
+    package static func write(_ a: LeafAnchor, shape: LeafShape, fold: Float, into w: inout MeshWriter) {
         let d = a.direction, n = a.normal
         let side = cross(d, n)                          // unit: the direction and the normal are
         let half = side * (a.width * 0.5)
@@ -259,7 +260,7 @@ extension Foliage {
 
     /// The stems `stems` of a skeleton (nil: all) as tubes, then the leaves. `allLeaves`: the stems count as leaves
     /// too (a fern's stalks are as green as its fronds).
-    static func mesh(_ skeleton: Skeleton, stems: [Int]?, leaves: [LeafAnchor], shape: LeafShape, fold: Float,
+    package static func mesh(_ skeleton: Skeleton, stems: [Int]?, leaves: [LeafAnchor], shape: LeafShape, fold: Float,
                      up: SIMD3<Float>, allLeaves: Bool, bark: Bark? = nil) -> Mesh {
         var wood = MeshSize()
         skeleton.nodes.withUnsafeBufferPointer { nodes in
@@ -283,7 +284,7 @@ extension Foliage {
     }
 
     /// All the stems of a skeleton as tubes, then `cards` (two triangles each, in the order given).
-    static func cardMesh(_ skeleton: Skeleton, cards: [Card], up: SIMD3<Float>) -> Mesh {
+    package static func cardMesh(_ skeleton: Skeleton, cards: [Card], up: SIMD3<Float>) -> Mesh {
         var wood = MeshSize()
         for s in skeleton.stems { wood = wood + stemSize(s) }
         let side = 1 / Float(FoliageTextures.cardCells)
@@ -310,7 +311,7 @@ extension Foliage {
 
     /// A square patch of grass blades around the origin (many blades to a mesh: a blade is never an instance of its
     /// own). Blades stand in tufts, lean and bend their own way, and start a little under the ground. All leaves.
-    static func grassPatch(seed: UInt64, size: Float = 2, blades: Int = 800) -> Mesh {
+    package static func grassPatch(seed: UInt64, size: Float = 2, blades: Int = 800) -> Mesh {
         var rng = SplitMix64(seed: seed)
         let tall = rng.range(0.7, 1.3)
         var tufts: [SIMD2<Float>] = []
@@ -358,7 +359,7 @@ extension Foliage {
     // MARK: - Flatten
 
     /// An assembly baked into two meshes in plant space: the wood of every part, and the leaves of every part.
-    static func flatten(_ plant: Plant, palette: [Mesh]) -> (wood: Mesh, leaves: Mesh) {
+    package static func flatten(_ plant: Plant, palette: [Mesh]) -> (wood: Mesh, leaves: Mesh) {
         var woodSize = MeshSize(), leafSize = MeshSize()
         for part in plant.parts {
             let m = part.shared ? palette[part.mesh] : plant.meshes[part.mesh]
@@ -401,7 +402,7 @@ extension Foliage {
 
     /// What is wrong with a mesh (nothing, one hopes): the tests and METALRENDERER_FOLIAGE_TEST run this over
     /// everything the library makes. A degenerate triangle would shade with a NaN normal (traceSurface).
-    static func problems(_ m: Mesh) -> [String] {
+    package static func problems(_ m: Mesh) -> [String] {
         var out: [String] = []
         let count = m.positions.count
         if m.normals.count != count || m.uvs.count != count { out.append("attribute counts differ") }
@@ -438,7 +439,7 @@ extension Foliage {
 extension Foliage {
     /// `METALRENDERER_FOLIAGE_TEST=<seed>`: builds the library, times each stage, checks every mesh and prints what a
     /// plant of each species costs. No window, no GPU.
-    static func runTest(seed: UInt64) {
+    package static func runTest(seed: UInt64) {
         func ms(_ body: () -> Void) -> Double {
             let start = DispatchTime.now().uptimeNanoseconds
             body()

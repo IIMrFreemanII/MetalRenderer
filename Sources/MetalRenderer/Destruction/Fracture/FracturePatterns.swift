@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -22,7 +23,7 @@ package enum FractureMaterial: Int, Codable, CaseIterable {
     }
 
     /// kg/m^3 (lighter than the real thing, so that a cannonball moves a wall's chunks).
-    var density: Float {
+    package var density: Float {
         switch self {
         case .concrete: return 1300
         case .stone: return 1500
@@ -35,7 +36,7 @@ package enum FractureMaterial: Int, Codable, CaseIterable {
     }
 
     /// The impact (N s) per m^2 of a piece's size (its volume^(2/3)) that breaks it into its children.
-    var toughness: Float {
+    package var toughness: Float {
         switch self {
         case .concrete: return 420
         case .stone: return 520
@@ -48,7 +49,7 @@ package enum FractureMaterial: Int, Codable, CaseIterable {
     }
 
     /// ...and at least its mass times this (m/s): a small piece isn't broken by one of its size dropped on it.
-    var breakSpeed: Float {
+    package var breakSpeed: Float {
         switch self {
         case .concrete: return 4
         case .stone: return 5
@@ -73,8 +74,8 @@ package enum FractureMaterial: Int, Codable, CaseIterable {
         }
     }
 
-    var friction: Float { self == .glass ? 0.35 : self == .wood ? 0.6 : 0.7 }
-    var restitution: Float { self == .glass ? 0.15 : 0.08 }
+    package var friction: Float { self == .glass ? 0.35 : self == .wood ? 0.6 : 0.7 }
+    package var restitution: Float { self == .glass ? 0.15 : 0.08 }
 
     /// Its dust's colour (linear) and how much it makes; glass makes none, only glints.
     package var dust: (colour: SIMD3<Float>, amount: Float) {
@@ -90,7 +91,7 @@ package enum FractureMaterial: Int, Codable, CaseIterable {
     }
 
     /// The pattern it breaks in, by default.
-    var pattern: FracturePattern {
+    package var pattern: FracturePattern {
         switch self {
         case .concrete, .stone, .plaster, .metal: return .voronoi
         case .brick: return .bricks
@@ -111,7 +112,7 @@ package enum FracturePattern: String, Codable, CaseIterable {
     /// A pane's radial cracks and rings round a point, then each shard across.
     case radial
 
-    var title: String {
+    package var title: String {
         switch self {
         case .voronoi: return "Voronoi"
         case .splinters: return "Splinters"
@@ -123,27 +124,27 @@ package enum FracturePattern: String, Codable, CaseIterable {
 
 /// How one object is fractured: what the Fracture Editor edits and saves (FractureStore), what a scene builds from.
 package struct FractureRecipe: Codable, Equatable {
-    var material: FractureMaterial
+    package var material: FractureMaterial
     package var pattern: FracturePattern
     package var seed: UInt64 = 1
     /// Pieces per piece at each level (the first: the object's pieces). At most `maxLevels`.
     package var counts: [Int]
     /// Scales the material's toughness (breaking into children) and strength (welds).
-    var toughness: Float = 1
-    var strength: Float = 1
+    package var toughness: Float = 1
+    package var strength: Float = 1
     /// Splinters: the grain's direction (shape space) and how much longer than wide a splinter is.
-    var grain: SIMD3<Float> = [1, 0, 0]
-    var stretch: Float = 4
+    package var grain: SIMD3<Float> = [1, 0, 0]
+    package var stretch: Float = 4
     /// Bricks: a brick's size (along the wall, up, through it); the wall's length is along x and its height along y.
     package var brick: SIMD3<Float> = [0.24, 0.075, 0.115]
     /// Radial: where the cracks start (shape space) and how many sectors and rings.
     package var centre: SIMD3<Float> = .zero
     /// How much the sites crowd towards `centre` (0: evenly; 1: most near it), Chaos's clustered Voronoi.
-    var clustering: Float = 0
+    package var clustering: Float = 0
     /// How rough a cell's faces are: each site is jittered by this share of its spacing.
-    var jitter: Float = 0.9
+    package var jitter: Float = 0.9
 
-    static let maxLevels = 3
+    package static let maxLevels = 3
 
     package static func defaults(_ material: FractureMaterial) -> FractureRecipe {
         switch material {

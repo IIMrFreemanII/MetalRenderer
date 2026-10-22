@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -31,7 +32,7 @@ extension Scene {
     /// A loose piece of furniture (Scene+Interiors.swift): an instance of `mesh` (drawn as it is) that the physics moves
     /// as a box of `halfExtents` round the mesh's origin, `mass` kg. The box is the physics' alone: nothing draws it.
     @discardableResult
-    func addMeshBody(_ mesh: Int, _ material: Int, _ transform: float4x4, halfExtents: SIMD3<Float>, mass: Float, friction: Float = 0.55) -> Int {
+    package func addMeshBody(_ mesh: Int, _ material: Int, _ transform: float4x4, halfExtents: SIMD3<Float>, mass: Float, friction: Float = 0.55) -> Int {
         let i = addInstance(mesh, material, transform)
         instances[i].simulated = true
         let world = physicsWorld()
@@ -44,7 +45,7 @@ extension Scene {
     }
 
     /// A box the physics' bodies meet (a wall, a floor, a cupboard), from `lo` to `hi`; nothing draws it.
-    func addStaticBox(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, friction: Float = 0.6) {
+    package func addStaticBox(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>, friction: Float = 0.6) {
         let world = physicsWorld()
         world.setVolumes(sdfVolumes)
         let half = simd_max((hi - lo) / 2, SIMD3(repeating: 0.005))
@@ -132,7 +133,7 @@ extension Scene {
     }
 
     /// The soft bodies' drawn vertices: where their meshes' last-frame vertices are (once `finishDeforming` put them).
-    func finishSoftBodies() {
+    package func finishSoftBodies() {
         guard let physics, !softMeshes.isEmpty else { return }
         for v in physics.softVertices.indices {
             physics.softVertices[v].info.y = meshes[softMeshes[Int(physics.softVertices[v].info.z)]].prevOffset
@@ -184,7 +185,7 @@ extension Scene {
 
     /// The liquids' surfaces: where their meshes' vertices, indices and last-frame vertices are (once
     /// `finishDeforming` put them).
-    func finishLiquids() {
+    package func finishLiquids() {
         guard let physics else { return }
         for (system, m, first) in liquidMeshes {
             physics.fluid!.systems[system].surface.mesh.x = UInt32(first)   // (its indices are the buffer's, as every mesh's)
@@ -206,7 +207,7 @@ extension Scene {
     }
 
     /// Generated plants were placed (Flora): see `hasPlants`.
-    func notePlants() { hasPlants = true }
+    package func notePlants() { hasPlants = true }
 
     /// A metallic-roughness material with a specular lobe (the gallery's floor and plinths).
     /// A generated character's run of materials (CharacterBuilder.materials), its first returned: an instance of the
@@ -232,7 +233,7 @@ extension Scene {
 
     /// The skin's textures for `dna` (SkinTextures, over the kit's chart): colour, roughness and normals, drawn only
     /// when no cache has them (a remade workshop asks again at every edit).
-    func addSkinTextures(_ dna: CharacterDNA, kit: CharacterKit) -> SIMD3<UInt32> {
+    package func addSkinTextures(_ dna: CharacterDNA, kit: CharacterKit) -> SIMD3<UInt32> {
         let marks = SkinTextures.Marks(dna), wrinkles = SkinTextures.wrinkles(age: dna.macro.age)
         let size = SkinChart.defaultSize
         let colour = addGeneratedTexture(name: "skin-colour", width: size, height: size, key: marks.key, srgb: false) {
@@ -257,7 +258,7 @@ extension Scene {
 
     /// A liquid (Shaders/Liquid.metal), for instances with `maskLiquid`: its absorption in the albedo's colour, its index
     /// of refraction in its alpha, its roughness in the emission's alpha.
-    func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {
+    package func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {
         hasLiquid = true
         return addMaterial(GPUMaterial(albedo: SIMD4(look.absorption, look.ior), emission: SIMD4(.zero, look.roughness), params: SIMD4(0, 1, 0, 0)))
     }
@@ -283,7 +284,7 @@ extension Scene {
 
     /// Room for this much more geometry (a builder that knows how much it is about to add): an array that grows by
     /// itself doubles, and ends up to twice as large as what it holds.
-    func reserveGeometry(vertices: Int, indices count: Int, instances more: Int = 0) {
+    package func reserveGeometry(vertices: Int, indices count: Int, instances more: Int = 0) {
         positions.reserveCapacity(positions.count + vertices)
         normals.reserveCapacity(normals.count + vertices)
         uvs.reserveCapacity(uvs.count + vertices)
@@ -309,7 +310,7 @@ extension Scene {
         return materials.count - 1
     }
 
-    func addLeafMaterial(_ material: LeafMaterial) { leafMaterials.append(material) }
+    package func addLeafMaterial(_ material: LeafMaterial) { leafMaterials.append(material) }
 
     /// A texture made here rather than read from a model (FoliageTextures): the index a material names it by. The
     /// streamer keeps one cache file for all of a scene kind's, named by their pixels, so a change remakes it.
@@ -344,12 +345,12 @@ extension Scene {
     /// half a million instances' structure). On an M4 Max
     /// the assemblies' third level of instancing made every ray that meets a plant cost about twice as much: whole
     /// frames 14-15% faster baked, for about 100 MB more of ray-tracing structures.
-    static func bakesPlants(_ settings: SceneSettings, leafFall: Float) -> Bool {
+    package static func bakesPlants(_ settings: SceneSettings, leafFall: Float) -> Bool {
         settings.kind.isWorld && leafFall == 0 && !settings.leafCards && !settings.voxelBoxes
     }
 
     /// The share of the deciduous plants' leaves that have fallen at `season` (the plants' variants drop them).
-    static func leafFall(season: Float) -> Float {
+    package static func leafFall(season: Float) -> Float {
         let t = min(max((season - 0.62) / 0.33, 0), 1)
         return t * t * (3 - 2 * t)
     }
@@ -357,7 +358,7 @@ extension Scene {
     /// The leaves at `season`: 0 = spring (fresh, light), 0.3 = summer, from 0.5 they turn, each material in its own
     /// time, and by winter (1) what is left is brown; evergreens stay as they are. `translucency` scales how much
     /// light every leaf lets through (0 = none: opaque leaves). Only the materials change (the renderer uploads the range).
-    func setLeaves(season s: Float, translucency: Float = 1) {
+    package func setLeaves(season s: Float, translucency: Float = 1) {
         guard leafState != SIMD2(s, translucency), !leafMaterials.isEmpty else { return }
         leafState = SIMD2(s, translucency)
         func smooth(_ a: Float, _ b: Float, _ x: Float) -> Float { let t = min(max((x - a) / (b - a), 0), 1); return t * t * (3 - 2 * t) }
@@ -384,7 +385,7 @@ extension Scene {
     /// picked stays what it is when it is on.)
     /// The same goes into the light table's triangles (`GPUTriangleInfo.radianceLum`), which say how bright a light
     /// is to whoever picks one among many: a light that is off is not picked.
-    func setCityLights(sunElevation: Float) {
+    package func setCityLights(sunElevation: Float) {
         // Above and below the heights between which lights come on, nothing changes.
         let degree = Float.pi / 180, elevation = min(max(sunElevation, -9 * degree), 4 * degree)
         guard cityLightsElevation != elevation, !cityLights.isEmpty else { return }
@@ -409,7 +410,7 @@ extension Scene {
 
     /// Which of the light table's triangles each city light has: its material's mesh lights'. They start as their
     /// lights do, off.
-    func bindCityLights() {
+    package func bindCityLights() {
         guard !cityLights.isEmpty, !meshLights.isEmpty else { return }
         let index = Dictionary(uniqueKeysWithValues: cityLights.enumerated().map { ($1.material, $0) })
         cityLightRadiance = lightTable.triangles.map(\.radianceLum)
@@ -422,7 +423,7 @@ extension Scene {
     }
 
     /// The light table's triangles changed since the last call (`setCityLights`), for the renderer to write again.
-    func takeLightTrianglesDirty() -> Range<Int>? {
+    package func takeLightTrianglesDirty() -> Range<Int>? {
         defer { lightTrianglesDirty = nil }
         return lightTrianglesDirty
     }

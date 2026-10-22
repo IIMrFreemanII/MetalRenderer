@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -6,7 +7,7 @@ import simd
 extension Renderer {
     // MARK: - Setup
 
-    func makeBuffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
+    package func makeBuffer<T>(_ array: [T], _ label: String) throws -> MTLBuffer {
         let length = max(MemoryLayout<T>.stride * array.count, 16)
         let buffer: MTLBuffer? = array.withUnsafeBytes { raw in
             guard let base = raw.baseAddress, raw.count > 0 else {
@@ -21,7 +22,7 @@ extension Renderer {
 
     /// The slow, CPU-heavy part of a scene switch (loading models, building BVHs, decoding textures). Thread-safe, so
     /// interactive switches run it in the background while the old scene keeps rendering.
-    struct PreparedScene {
+    package struct PreparedScene {
         let scene: Scene
         let api: RenderAPI
         let textures: [MTLTexture]
@@ -32,19 +33,19 @@ extension Renderer {
         let shaderGeneration: Int   // ...built from this generation of the shaders
     }
     /// A scene that has been replaced and what it was drawn with, on their way out (`install`).
-    final class Replaced {
+    package final class Replaced {
         var parts: PreparedScene?
         package init(_ parts: PreparedScene) { self.parts = parts }
     }
 
     /// What the open world's streaming cost while a benchmark measured: each scene made around another tile (in the
     /// background, then installed between two frames), and the longest frame, start to start.
-    struct Streaming {
-        var preparedMs: [Double] = []
-        var installedMs: [Double] = []
-        var longestFrameMs = 0.0
+    package struct Streaming {
+        package var preparedMs: [Double] = []
+        package var installedMs: [Double] = []
+        package var longestFrameMs = 0.0
 
-        func summary(_ buffers: SceneBuffers) -> String {
+        package func summary(_ buffers: SceneBuffers) -> String {
             func median(_ v: [Double]) -> Double { v.sorted()[v.count / 2] }
             let m = buffers.megabytes
             return String(format: "Streaming: %d scenes, made in %.0f ms (median), installed in %.1f ms (the slowest %.1f), the longest frame %.1f ms; "
@@ -55,7 +56,7 @@ extension Renderer {
     }
 
     /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
-    var virtualGeometryChanged: Bool {
+    package var virtualGeometryChanged: Bool {
         let hasModels = scene.settings.kind.definition.loadsModels || !scene.settings.extraModels.isEmpty
         let poolChanged = virtualTracing?.clusters.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
         return hasModels && (scene.usesVirtualGeometry != settings.virtualGeometry.enabled || poolChanged)
@@ -63,7 +64,7 @@ extension Renderer {
 
     /// A still scene's plants (the open world's) name the variants of the season they were built for: another season
     /// is another scene. So is one whose leaves start or stop falling: the open world's plants are baked without.
-    var plantSeasonChanged: Bool {
+    package var plantSeasonChanged: Bool {
         guard let buffers = sceneBuffers, buffers.still else { return false }
         let fall = Scene.leafFall(season: settings.foliage.season)
         if scene.hasPlants && !scene.settings.bakedPlants
@@ -73,7 +74,7 @@ extension Renderer {
 
     /// What a scene load reads from the renderer, copied on the render thread: `prepareScene` runs in the background while
     /// the panel and the keyboard keep changing `settings` and a shader reload may replace the pipelines.
-    struct LoadOptions {
+    package struct LoadOptions {
         var virtualGeometry: Bool
         var poolMB: Int
         var textureBudgetMB: Int
@@ -91,7 +92,7 @@ extension Renderer {
         /// stay as they are streamed. By the sources' identities.
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
     }
-    var loadOptions: LoadOptions {
+    package var loadOptions: LoadOptions {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
                     traversalStats: TraceSceneArgs.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
@@ -116,7 +117,7 @@ extension Renderer {
     /// The pipelines for `api`, `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
     /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
     /// light types differ.
-    func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
+    package func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
                                procedural: String, current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
         let sameCode = current.procedural == procedural
         if current.stats == stats && current.api == api && current.lightTypes == lightTypes && sameCode { return nil }
@@ -134,7 +135,7 @@ extension Renderer {
     }
 
     /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
-    func keepPipelines(_ made: Pipelines, generation: Int) {
+    package func keepPipelines(_ made: Pipelines, generation: Int) {
         pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation,
                                                        procedural: made.procedural), made)
     }
@@ -148,7 +149,7 @@ extension Renderer {
     /// `current`: the scene being drawn, reused when only the API changes; `instances` is then the render thread's copy
     /// of its instances (the frame loop keeps animating the scene while this runs).
     /// `load`: the load to report the steps to (the loading overlay).
-    func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
+    package func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
                               options: LoadOptions, load: LoadJob? = nil) throws -> PreparedScene {
         let virtual = options.virtualGeometry
         // Generated plants are assemblies (unless SceneSettings.bakedPlants, or the open world's: Scene.bakesPlants); baked
@@ -193,13 +194,13 @@ extension Renderer {
                              buffers: buffers, pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
-    static let flightOverride: (velocity: SIMD3<Float>, turn: Int)? = {
+    package static let flightOverride: (velocity: SIMD3<Float>, turn: Int)? = {
         let parts = (ProcessInfo.processInfo.environment["METALRENDERER_FLIGHT"] ?? "").split(separator: ",").compactMap { Float($0) }
         return parts.count >= 3 ? (SIMD3(parts[0], parts[1], parts[2]), parts.count > 3 ? Int(parts[3]) : 0) : nil
     }()
 
     /// Starts preparing `settings.scene` / `settings.api` in the background; `install` swaps it in when done.
-    func startLoadingScene() {
+    package func startLoadingScene() {
         let wanted = (scene: settings.scene, api: settings.api)
         if let loading, loading == wanted { return }
         // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
@@ -258,7 +259,7 @@ extension Renderer {
     }
 
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
-    func createSceneResources(_ prepared: PreparedScene? = nil) throws {
+    package func createSceneResources(_ prepared: PreparedScene? = nil) throws {
         builtAPI = prepared?.api ?? settings.api
         virtualTracing = nil
         plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
@@ -350,7 +351,7 @@ extension Renderer {
     /// The VFX editor's edit (`settings.scene.effects`, a catalog's key): run in the scene's particles' place when only
     /// the effects differ and their layout stays (VFXLive.swift): their values at once, new code once it compiles (the
     /// old running meanwhile). Otherwise the scene is made again, as for any other change of its settings.
-    func editEffects() {
+    package func editEffects() {
         var same = settings.scene
         same.effects = scene.settings.effects
         guard same == scene.settings else { return }

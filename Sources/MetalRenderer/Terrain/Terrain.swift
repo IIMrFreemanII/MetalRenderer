@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,7 +7,7 @@ import simd
 /// the mesh's own triangles, so what is planted with it stands on the ground exactly.
 package struct Terrain {
     package let size: Float                     // metres across
-    let cells: Int                      // per side
+    package let cells: Int                      // per side
     package let relief: Float                   // about the height of the highest hills
     package private(set) var heights: [Float]   // (cells + 1) squared, rows along z
 
@@ -66,7 +67,7 @@ package struct Terrain {
     }
 
     /// `octaves` of noise, each twice as fine and half as strong.
-    static func fbm(_ p: SIMD2<Float>, octaves: Int, seed: UInt32) -> Float {
+    package static func fbm(_ p: SIMD2<Float>, octaves: Int, seed: UInt32) -> Float {
         var sum: Float = 0, amplitude: Float = 1, q = p
         for o in 0..<octaves {
             sum += amplitude * noise(q, seed: seed &+ UInt32(o))
@@ -92,7 +93,7 @@ package struct Terrain {
         return low + (high - low) * u.y
     }
 
-    static func fbm(_ x: Double, _ y: Double, octaves: Int, seed: UInt32) -> Float {
+    package static func fbm(_ x: Double, _ y: Double, octaves: Int, seed: UInt32) -> Float {
         var sum: Float = 0, amplitude: Float = 1, qx = x, qy = y
         for o in 0..<octaves {
             sum += amplitude * noise(qx, qy, seed: seed &+ UInt32(o))
@@ -134,7 +135,7 @@ package struct Terrain {
     }
 
     /// The mesh: smooth normals from the neighbouring heights, UVs 0...1 across it (x, z).
-    func mesh() -> Foliage.Mesh {
+    package func mesh() -> Foliage.Mesh {
         let n = cells + 1, step = cell, half = size / 2
         let size = Foliage.MeshSize(vertices: n * n, indices: cells * cells * 6)
         return heights.withUnsafeBufferPointer { h in

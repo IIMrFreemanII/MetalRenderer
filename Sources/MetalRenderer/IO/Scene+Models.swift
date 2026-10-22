@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -5,11 +6,8 @@ import simd
 extension Scene {
     // MARK: - glTF models
 
-    /// Where the Gallery scene finds its models: `METALRENDERER_ASSETS`, or `Assets/` next to `Package.swift`.
-    package static let assetsDirectory: URL = {
-        if let dir = ProcessInfo.processInfo.environment["METALRENDERER_ASSETS"] { return URL(fileURLWithPath: dir) }
-        return SourceTree.packageRoot.appendingPathComponent("Assets")
-    }()
+    /// Where the Gallery scene finds its models (Assets.directory, in the core).
+    package static var assetsDirectory: URL { Assets.directory }
 
     /// The glTF files in `assetsDirectory`, sorted by name. `METALRENDERER_GALLERY="owl|demon"` keeps the files whose names
     /// contain one of these strings (quicker test runs).
@@ -76,7 +74,7 @@ extension Scene {
     }
 
     /// `model`'s materials (and their textures) one after another; the first's index.
-    func addModelMaterials(_ model: GLTFModel, url: URL) -> Int {
+    package func addModelMaterials(_ model: GLTFModel, url: URL) -> Int {
         var textureIndex: [Int: UInt32] = [:]   // image * 2 + srgb -> index into `textures`
         func texture(_ ref: GLTFModel.TextureRef?, srgb: Bool) -> UInt32 {
             guard let ref else { return .max }
@@ -103,7 +101,7 @@ extension Scene {
     /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,
     /// so / 683 lm/W gives watts per steradian / square metre; this scale then puts them on the scale of the scenes'
     /// lights (a 100 W bulb's 135 cd comes out a little dimmer than the gallery's lights).
-    static let gltfLightScale: Float = 20
+    package static let gltfLightScale: Float = 20
 
     /// Adds `model`'s punctual lights at `transform` (following `animation` if given): points as small sphere lights,
     /// spots as spot lights, directional lights as suns.
@@ -135,7 +133,7 @@ extension Scene {
     }
 
     /// A model the user opened or dropped (`SceneSettings.extraModels`), 1.6 m tall at its position.
-    func addExtraModel(_ extra: ExtraModel) {
+    package func addExtraModel(_ extra: ExtraModel) {
         do {
             let model = try GLTFLoader.load(URL(fileURLWithPath: extra.path))
             addModel(model, url: URL(fileURLWithPath: extra.path),

@@ -102,17 +102,23 @@ by_name() {
 # Suites for a Swift source, by its feature folder. Fails when the folder has none.
 by_folder() {
   case $1 in
+    # The editors (Sources/Editors, a module of its own: the editors' UI on the engine's models)
+    Sources/Editors/VFX/*.swift) add VFXEditorTests ;;
+    Sources/Editors/Terrain/*.swift) add TerrainEditorTests ;;
+    Sources/Editors/MaterialGraph/*.swift) add MaterialEditorTests ;;
+    Sources/Editors/Painter/*.swift) add PainterTests ;;
+    Sources/Editors/Plants/*.swift) add PlantEditorTests ;;
+    Sources/Editors/Buildings/*.swift) add BuildingEditorTests ;;
+    Sources/Editors/Characters/*.swift) add CharacterEditorTests ;;
+    Sources/Editors/ProjectGraph/*.swift) add ProjectGraphTests ;;
     Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
-    Sources/MetalRenderer/VFX/Editor/*.swift) add VFXEditorTests ;;
     Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
     Sources/MetalRenderer/Water/*.swift) add WaterTests ;;
     Sources/MetalRenderer/Terrain/TerrainWater.swift) add WaterTests TerrainDocumentTests ;;
-    Sources/MetalRenderer/Terrain/Editor/*.swift) add TerrainEditorTests ;;
     Sources/MetalRenderer/Terrain/*.swift) add TerrainDocumentTests TerrainEditorTests ;;
     Sources/MetalRenderer/ProjectGraph/*.swift) add ProjectGraphTests ;;
     Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
     Sources/MetalRenderer/Painter/*.swift) add PainterTests ;;
-    Sources/MetalRenderer/MaterialGraph/Editor/*.swift) add MaterialEditorTests ;;
     Sources/MetalRenderer/MaterialGraph/*.swift) add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
     *) return 1 ;;
   esac
@@ -147,7 +153,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
       Sources/MetalRenderer/MaterialShaders/*.metal|Sources/MetalRenderer/ShadersMaterial*.metal)
         add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
-      Sources/MetalRenderer/*.swift|Sources/Game/*.swift)
+      Sources/*.swift)   # every module's: EngineCore, MetalRenderer, Editors, Game
         # By the file's name first, then by its folder; in a bash case, * also matches /.
         by_name "$name" || by_folder "$f" || uncovered+=("$f") ;;
       Package.swift) add MetalRendererTests ;;

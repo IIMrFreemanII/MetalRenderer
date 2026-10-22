@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -20,7 +21,7 @@ struct WindowStyle {
 }
 
 /// What stands along the edge of a balcony.
-enum Balustrade: CaseIterable { case bars, glass, solid }
+package enum Balustrade: CaseIterable { case bars, glass, solid }
 
 /// What closes a building's top.
 package enum RoofKind: CaseIterable {

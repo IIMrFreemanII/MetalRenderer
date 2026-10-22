@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,14 +10,14 @@ package struct SkinnedCharacter: Equatable {
     /// per second. The last key repeats the first, so a loop is `keyCount - 1` keys long.
     package struct Clip: Equatable {
         package var name: String
-        var keyCount: Int
-        var rate: Float
-        var rotations: [SIMD4<Float>]      // keyCount x joints, quaternions (xyzw)
-        var root: [SIMD4<Float>]           // keyCount: the root joint's translation, with the clip's travel taken out
-        var velocity: SIMD3<Float>         // the travel that was taken out (m/s, in the character's space)
+        package var keyCount: Int
+        package var rate: Float
+        package var rotations: [SIMD4<Float>]      // keyCount x joints, quaternions (xyzw)
+        package var root: [SIMD4<Float>]           // keyCount: the root joint's translation, with the clip's travel taken out
+        package var velocity: SIMD3<Float>         // the travel that was taken out (m/s, in the character's space)
 
-        var loopKeys: Int { max(keyCount - 1, 1) }
-        var duration: Float { Float(loopKeys) / rate }
+        package var loopKeys: Int { max(keyCount - 1, 1) }
+        package var duration: Float { Float(loopKeys) / rate }
     }
 
     /// The mesh at one level of detail: bind-pose vertices, triangles, and each vertex's joints and weights.
@@ -28,9 +29,9 @@ package struct SkinnedCharacter: Equatable {
         package var skin: [GPUSkinVertex]
         /// Each vertex's at full detail (`coarser`'s levels keep some of its vertices): a generated character's levels
         /// are gathered from its full mesh through it (CharacterBuilder).
-        var source: [UInt32] = []
+        package var source: [UInt32] = []
         /// Each triangle's material, as an offset from its instance's (Scene.addMesh); empty: one material.
-        var materials: [UInt8] = []
+        package var materials: [UInt8] = []
         package var triangleCount: Int { indices.count / 3 }
     }
 
@@ -813,7 +814,7 @@ enum CharacterImporter {
 }
 
 private extension SIMD4 where Scalar == Double {
-    var xyz: SIMD3<Double> { SIMD3(x, y, z) }
+    package var xyz: SIMD3<Double> { SIMD3(x, y, z) }
 }
 
 // MARK: - The library and its cache
@@ -986,7 +987,7 @@ package struct CharacterLibrary {
         return library
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(characters: [SkinnedCharacter] = []) {
         self.characters = characters
     }

@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import ImageIO
 import Metal

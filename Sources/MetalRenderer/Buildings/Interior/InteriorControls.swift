@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -5,33 +6,33 @@ import simd
 /// or off, and their switches), the lifts (InteriorLifts.swift) and the walker's flashlight. The scene's instances
 /// and lights read it in their poses (Scene.update); the renderer moves it on before each frame (`advance`) and
 /// tells it what the walker does (`use`). Only the render thread touches it.
-final class InteriorControls {
+package final class InteriorControls {
     struct Door {
         /// The hinge's foot (the world), the leaf's direction from it when shut (x, z, unit), and which way it opens
         /// (+1: turning the leaf counter-clockwise seen from above).
-        var hinge: SIMD3<Float>
-        var along: SIMD2<Float>
-        var turn: Float
-        var width: Float
-        var height: Float
-        var thickness: Float = 0.04
+        package var hinge: SIMD3<Float>
+        package var along: SIMD2<Float>
+        package var turn: Float
+        package var width: Float
+        package var height: Float
+        package var thickness: Float = 0.04
         /// How open it is (0 shut ... 1 at 90 degrees), and where it is going.
-        var open: Float
-        var target: Float
+        package var open: Float
+        package var target: Float
         /// It opens as the walker comes up to it, and (if it opened so) shuts a while after.
-        var auto = true
-        var autoOpened = false
-        var openedAt: Float = -100
+        package var auto = true
+        package var autoOpened = false
+        package var openedAt: Float = -100
 
         /// The leaf's frame now: x along it from the hinge, y up, z across.
-        var frame: float4x4 {
+        package var frame: float4x4 {
             let angle = turn * open * .pi / 2 * 0.95
             let a = atan2(along.y, along.x) + angle
             let u = SIMD2(cos(a), sin(a))
             return float4x4(columns: (SIMD4(u.x, 0, u.y, 0), SIMD4(0, 1, 0, 0), SIMD4(-u.y, 0, u.x, 0), SIMD4(hinge, 1)))
         }
         /// The leaf as boxes the walker meets (a few, along it: a turned box isn't axis-aligned).
-        var colliders: [Interior.Collider] {
+        package var colliders: [Interior.Collider] {
             let f = frame
             var out: [Interior.Collider] = []
             let pieces = 4

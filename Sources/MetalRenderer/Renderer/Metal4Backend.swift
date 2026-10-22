@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import MetalFX
 import QuartzCore
@@ -17,7 +18,7 @@ import QuartzCore
 /// 26.5). Streamed textures (TextureStreamer) are placement-sparse here: residency sets take no sparse heap, and the
 /// queue maps their tiles between the frame's command buffers (`streamTextures`).
 @available(macOS 26.0, *)
-final class Metal4Frame: FrameEncoder, ComputePass {
+package final class Metal4Frame: FrameEncoder, ComputePass {
     let queue: MTL4CommandQueue
     /// Compiles the pipelines (Pipelines).
     let compiler: MTL4Compiler
@@ -137,7 +138,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// interlude) takes longer the more it holds (nothing below about 2,400 allocations, 60-90 ms past 3,000, the GPU
     /// idle), so a camera move whose virtual geometry left thousands of retired BLASes in it until the next sweep
     /// stalled (the Storeroom's: a p95 of 70-90 ms, 4 ms with this).
-    func release(_ resources: [MTLResource]) {
+    package func release(_ resources: [MTLResource]) {
         for resource in resources {
             guard let entry = resident.removeValue(forKey: ObjectIdentifier(resource)) else { continue }
             residency.removeAllocation(entry.allocation)
@@ -212,7 +213,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // MARK: - FrameEncoder
 
-    func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
+    package func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
         let wasSerial = self.serial
         guard encoder(name, newBuffer: true) != nil else { return nil }
         self.serial = !concurrent && (serial || !overlap)
@@ -220,7 +221,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         return self
     }
 
-    func endCompute() {
+    package func endCompute() {
         guard let enc else { return }
         enc.endEncoding()
         self.enc = nil
@@ -235,7 +236,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// water's: every frame) get theirs from mipKernels in the frame's own encoder, one level after another; others
     /// (the clouds' 3D noise, made once) through the Metal 3 queue, in an interlude: each one left the GPU idle about
     /// 0.15 ms between the Metal 4 work before it and the blit.
-    func generateMipmaps(_ textures: [MTLTexture], pass: String) {
+    package func generateMipmaps(_ textures: [MTLTexture], pass: String) {
         if let kernels = mipKernels, textures.allSatisfy({ $0.textureType == .type2D || $0.textureType == .type2DArray }) {
             guard let enc = compute(pass, serial: true) else { return }
             for texture in textures {
@@ -260,7 +261,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    func updateTLAS(_ u: TLASUpdate, pass: String) {
+    package func updateTLAS(_ u: TLASUpdate, pass: String) {
         guard let enc = encoder(pass, newBuffer: true) else { return }
         serial = true
         ([u.structure, u.scratch, u.instances] as [MTLAllocation]).forEach(keep)
@@ -280,7 +281,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// builds or refits are too, except PrimitiveWork4's (the plants' variants, the particles' boxes). Those are
     /// encoded in the frame's own encoder, side by side: through the Metal 3 queue the forest's 231 refits ran one
     /// after another (11 ms on an M4 Max, 0.13 here).
-    func updatePrimitives(_ work: PrimitiveWork, pass: String) {
+    package func updatePrimitives(_ work: PrimitiveWork, pass: String) {
         if let work = work as? PrimitiveWork4, work.encodes4 {
             guard let enc = encoder(pass, newBuffer: true) else { return }
             serial = true
@@ -297,7 +298,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         }
     }
 
-    func copyBuffers(_ copies: [BufferCopy], pass: String) {
+    package func copyBuffers(_ copies: [BufferCopy], pass: String) {
         guard !copies.isEmpty, let enc = encoder(pass, newBuffer: true) else { return }
         serial = true
         order(.blit)
@@ -311,7 +312,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     /// The mapping updates go to the queue, between the command buffers so far and the ones after them (whose encoders
     /// wait for them, `queueStages`); the uploads into the new tiles follow in a command buffer of their own.
-    func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {
+    package func streamTextures(_ streamer: TextureStreamer, frame: UInt32, slot: Int, framesInFlight: Int) {
         let work = streamer.update(frame: frame, slot: slot, framesInFlight: framesInFlight)
         if !work.mappings.isEmpty {
             endCompute()
@@ -339,7 +340,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     /// Metal 4's scaler (macOS 27) in the frame's command buffer: it waits for the frame's work so far through
     /// `upscaleFence`, and the next encoder (its queue barrier) for it. Metal 3's between two of the frame's command
     /// buffers, in an interlude (see Upscaler.init).
-    func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
+    package func upscale(_ upscaler: Upscaler, _ inputs: UpscaleInputs, pass: String) {
         guard upscaler.metal4 else {
             interlude(pass) { upscaler.encode(into: $0, inputs) }
             return
@@ -352,11 +353,11 @@ final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     /// The Metal 3 interpolator too, with the copy of the frame's picture (one interlude).
-    func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String) {
+    package func interpolate(_ interpolator: FrameInterpolator, _ inputs: InterpolateInputs, slot: Int, pass: String) {
         interlude(pass) { interpolator.encode(into: $0, inputs, slot: slot) }
     }
 
-    func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
+    package func capture(_ texture: MTLTexture, into buffer: MTLBuffer) {
         guard let enc = encoder("capture", newBuffer: true) else { return }
         keep(texture)
         keep(buffer)
@@ -367,7 +368,7 @@ final class Metal4Frame: FrameEncoder, ComputePass {
                  destinationBytesPerRow: w * 4, destinationBytesPerImage: w * 4 * h)
     }
 
-    func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {
+    package func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void) {
         endCompute()
         cmd?.endCommandBuffer()
         cmd = nil
@@ -455,10 +456,10 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // MARK: - ComputePass
 
-    func setComputePipelineState(_ state: MTLComputePipelineState) { enc?.setComputePipelineState(state) }
+    package func setComputePipelineState(_ state: MTLComputePipelineState) { enc?.setComputePipelineState(state) }
 
     /// Metal 4 has no inline constants: they go into the slot's constants buffer, and their address into the table.
-    func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {
+    package func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) {
         let buffer = constants[slot]
         let offset = (constantsCursor + 15) & ~15
         precondition(offset + length <= buffer.length, "the frame's constants outgrew their buffer")
@@ -467,23 +468,23 @@ final class Metal4Frame: FrameEncoder, ComputePass {
         table.setAddress(buffer.gpuAddress + UInt64(offset), index: index)
     }
 
-    func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) {
+    package func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) {
         guard let buffer else { return }
         keep(buffer)
         table.setAddress(buffer.gpuAddress + UInt64(offset), index: index)
     }
 
-    func setTexture(_ texture: MTLTexture?, index: Int) {
+    package func setTexture(_ texture: MTLTexture?, index: Int) {
         guard let texture else { return }
         keep(texture)
         table.setTexture(texture.gpuResourceID, index: index)
     }
 
-    func setTextures(_ textures: [MTLTexture?], range: Range<Int>) {
+    package func setTextures(_ textures: [MTLTexture?], range: Range<Int>) {
         for (texture, index) in zip(textures, range) { setTexture(texture, index: index) }
     }
 
-    func setAccelerationStructure(_ accelerationStructure: MTLAccelerationStructure?, bufferIndex: Int) {
+    package func setAccelerationStructure(_ accelerationStructure: MTLAccelerationStructure?, bufferIndex: Int) {
         guard let accelerationStructure else { return }
         keep(accelerationStructure)
         table.setResource(accelerationStructure.gpuResourceID, bufferIndex: bufferIndex)
@@ -491,25 +492,25 @@ final class Metal4Frame: FrameEncoder, ComputePass {
 
     // What Metal 3 is told a kernel reaches through an argument buffer: here it only has to be resident, which one
     // declaration a frame keeps it (`keep` notes the frame it was last used in).
-    var declarationScope: AnyObject { self }
-    func useResource(_ resource: MTLResource, usage: MTLResourceUsage) { keep(resource) }
-    func useResources(_ resources: [MTLResource], usage: MTLResourceUsage) { resources.forEach(keep) }
-    func useHeap(_ heap: MTLHeap) { keep(heap) }
+    package var declarationScope: AnyObject { self }
+    package func useResource(_ resource: MTLResource, usage: MTLResourceUsage) { keep(resource) }
+    package func useResources(_ resources: [MTLResource], usage: MTLResourceUsage) { resources.forEach(keep) }
+    package func useHeap(_ heap: MTLHeap) { keep(heap) }
 
     /// Stages that overlap (`overlap`) set their own barriers, as on Metal 3's concurrent encoder.
-    func memoryBarrier(scope: MTLBarrierScope) { barrier() }
+    package func memoryBarrier(scope: MTLBarrierScope) { barrier() }
 
-    func dispatchThreads(_ threadsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
+    package func dispatchThreads(_ threadsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
         order(.dispatch)
         enc?.dispatchThreads(threadsPerGrid: threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
     }
 
-    func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
+    package func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
         order(.dispatch)
         enc?.dispatchThreadgroups(threadgroupsPerGrid: threadgroupsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
     }
 
-    func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize) {
+    package func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize) {
         keep(indirectBuffer)
         order(.dispatch)
         enc?.dispatchThreadgroups(indirectBuffer: indirectBuffer.gpuAddress + UInt64(indirectBufferOffset),

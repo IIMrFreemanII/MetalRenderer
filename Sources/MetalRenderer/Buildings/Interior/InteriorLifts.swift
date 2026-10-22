@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -5,25 +6,25 @@ import simd
 /// a floor, and the buttons that call it (one by each landing door; inside it, the number keys). It goes where it is
 /// called in turn: shuts its doors, moves at up to 1.5 m/s (easing in and out), opens them, waits.
 struct Lift {
-    enum State { case idle, closing, moving, opening, waiting }
+    package enum State { case idle, closing, moving, opening, waiting }
 
-    struct Button {
-        var position: SIMD3<Float>
-        var floor: Int
+    package struct Button {
+        package var position: SIMD3<Float>
+        package var floor: Int
     }
 
     /// The shaft's inside (x, z: the world), the floors' heights, and the side its doors are on (x, z, unit: out of the
     /// shaft).
-    var shaft: CityPlan.Rect
-    var floors: [Float]
-    var doorSide: SIMD2<Float>
-    var doorWidth: Float = 1.0
-    var buttons: [Button] = []
+    package var shaft: CityPlan.Rect
+    package var floors: [Float]
+    package var doorSide: SIMD2<Float>
+    package var doorWidth: Float = 1.0
+    package var buttons: [Button] = []
     /// Where the cab's floor is, the floor it stands at (or last left), how open its doors are (0...1).
-    var y: Float
-    var at: Int
-    var doors: Float = 1
-    var state = State.waiting
+    package var y: Float
+    package var at: Int
+    package var doors: Float = 1
+    package var state = State.waiting
     private var queue: [Int] = []
     private var from: Float = 0
     private var progress: Float = 0
@@ -37,7 +38,7 @@ struct Lift {
         at = 0
     }
 
-    mutating func call(_ floor: Int) {
+    package mutating func call(_ floor: Int) {
         let f = min(max(floor, 0), floors.count - 1)
         if f == at && state != .moving { state = .opening; return }
         if !queue.contains(f) { queue.append(f) }
@@ -45,7 +46,7 @@ struct Lift {
 
     /// Someone standing at `feet`: in the cab, or in the doorway of the floor it stands at with its doors open, the
     /// doors stay open (a call keeps them open too, until it is that call's turn).
-    mutating func hold(_ feet: SIMD3<Float>) {
+    package mutating func hold(_ feet: SIMD3<Float>) {
         guard state == .waiting, doors > 0, floors.indices.contains(at) else { return }
         let (lo, hi) = doorway(at)
         let p = SIMD2(feet.x, feet.z), near = 0.6 as Float
@@ -55,7 +56,7 @@ struct Lift {
     }
 
     /// Moves it on by `dt`; whether anything moved.
-    mutating func advance(_ dt: Float) -> Bool {
+    package mutating func advance(_ dt: Float) -> Bool {
         switch state {
         case .waiting, .idle:
             waited += dt
@@ -98,11 +99,11 @@ struct Lift {
     }
 
     /// The cab's inside, a little inside the shaft.
-    var cab: CityPlan.Rect { CityPlan.Rect(lo: shaft.lo + SIMD2(0.08, 0.08), hi: shaft.hi - SIMD2(0.08, 0.08)) }
+    package var cab: CityPlan.Rect { CityPlan.Rect(lo: shaft.lo + SIMD2(0.08, 0.08), hi: shaft.hi - SIMD2(0.08, 0.08)) }
 
     /// What the walker meets: the cab's floor and its three walls (the door side open), and each landing's door
     /// panel unless the cab stands there with its doors open.
-    var colliders: [Interior.Collider] {
+    package var colliders: [Interior.Collider] {
         let c = cab
         var out = [Interior.Collider(lo: SIMD3(c.lo.x, y - 0.15, c.lo.y), hi: SIMD3(c.hi.x, y, c.hi.y))]
         let t: Float = 0.06
@@ -121,7 +122,7 @@ struct Lift {
     }
 
     /// Floor `k`'s landing door: the box of its panels.
-    func doorway(_ k: Int) -> (lo: SIMD3<Float>, hi: SIMD3<Float>) {
+    package func doorway(_ k: Int) -> (lo: SIMD3<Float>, hi: SIMD3<Float>) {
         let mid = (shaft.lo + shaft.hi) / 2 + doorSide * ((doorSide.x != 0 ? shaft.size.x : shaft.size.y) / 2)
         let across = SIMD2(-doorSide.y, doorSide.x) * doorWidth / 2
         let a = mid - across, b = mid + across
@@ -129,5 +130,5 @@ struct Lift {
     }
 
     /// The landing door of floor `k`: how far it has slid open (0...1).
-    func landing(_ k: Int) -> Float { k == at && abs(y - floors[k]) < 0.01 ? doors : 0 }
+    package func landing(_ k: Int) -> Float { k == at && abs(y - floors[k]) < 0.01 ? doors : 0 }
 }

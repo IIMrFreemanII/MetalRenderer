@@ -1,0 +1,77 @@
+import Foundation
+import ImageIO
+import Metal
+
+/// Decodes the scene's material images into mipmapped textures. Images are decoded at no more than `maxSize`
+/// pixels on a side (ImageIO thumbnails, decoded in parallel), so 4K maps cost a quarter of the memory.
+/// Pixels are drawn into RGBA8 in the image's own colour space, so data maps (normals, metallic-roughness) keep
+/// their raw values; colour maps get an sRGB texture format and are linearized by the sampler.
+package enum MaterialTextures {
+    static let maxSize = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_SIZE"] ?? "") ?? 2048
+
+    /// `load`: the load to report the decoded images to.
+    package static func load(_ sources: [TextureSource], device: MTLDevice, queue: MTLCommandQueue,
+                     load: LoadJob? = nil) throws -> [MTLTexture] {
+        guard !sources.isEmpty else { return [] }
+        let start = CFAbsoluteTimeGetCurrent()
+        let step = load?.step("Textures", total: sources.count, detail: "decoding")
+        defer { step?.finish() }
+        var decoded = [(pixels: MTLBuffer, width: Int, height: Int)?](repeating: nil, count: sources.count)
+        decoded.withUnsafeMutableBufferPointer { slots in
+            DispatchQueue.concurrentPerform(iterations: sources.count) { i in
+                defer { step?.advance() }
+                if let raw = sources[i].raw {   // generated: the pixels as they are
+                    guard let buffer = sources[i].rawPixels.withUnsafeBytes({ device.makeBuffer(bytes: $0.baseAddress!, length: $0.count, options: .storageModeShared) })
+                    else { return }
+                    slots[i] = (buffer, raw.width, raw.height)
+                    return
+                }
+                guard let src = CGImageSourceCreateWithData(sources[i].data as CFData, nil) else { return }
+                let options: [CFString: Any] = [kCGImageSourceCreateThumbnailFromImageAlways: true,
+                                                kCGImageSourceThumbnailMaxPixelSize: maxSize,
+                                                kCGImageSourceCreateThumbnailWithTransform: false]
+                guard let image = CGImageSourceCreateThumbnailAtIndex(src, 0, options as CFDictionary) else { return }
+                let w = image.width, h = image.height
+                guard let buffer = device.makeBuffer(length: w * h * 4, options: .storageModeShared) else { return }
+                var space = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+                if space.model != .rgb { space = CGColorSpace(name: CGColorSpace.sRGB)! }   // e.g. greyscale images
+                guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                          space: space,
+                                          bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+                else { return }
+                ctx.interpolationQuality = .none
+                ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))   // memory order R G B x
+                slots[i] = (buffer, w, h)   // its own slot: no lock
+            }
+        }
+
+        guard let cmd = queue.makeCommandBuffer(), let blit = cmd.makeBlitCommandEncoder() else {
+            throw RendererError.resourceCreation("texture upload command buffer")
+        }
+        var textures: [MTLTexture] = []
+        var bytes = 0
+        for (i, source) in sources.enumerated() {
+            guard let d = decoded[i] else { throw RendererError.resourceCreation("decoding texture \(source.name)") }
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: source.srgb ? .rgba8Unorm_srgb : .rgba8Unorm,
+                                                                width: d.width, height: d.height, mipmapped: true)
+            desc.usage = .shaderRead
+            desc.storageMode = .private
+            guard let texture = device.makeTexture(descriptor: desc) else {
+                throw RendererError.resourceCreation("texture \(source.name)")
+            }
+            texture.label = source.name
+            blit.copy(from: d.pixels, sourceOffset: 0, sourceBytesPerRow: d.width * 4, sourceBytesPerImage: d.width * d.height * 4,
+                      sourceSize: MTLSize(width: d.width, height: d.height, depth: 1),
+                      to: texture, destinationSlice: 0, destinationLevel: 0, destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
+            blit.generateMipmaps(for: texture)
+            textures.append(texture)
+            bytes += d.width * d.height * 4 * 4 / 3
+        }
+        blit.endEncoding()
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        print(String(format: "Textures: %d decoded (max %d px), %.0f MB, in %.1f s", textures.count, maxSize,
+                     Double(bytes) / 1_048_576, CFAbsoluteTimeGetCurrent() - start))
+        return textures
+    }
+}

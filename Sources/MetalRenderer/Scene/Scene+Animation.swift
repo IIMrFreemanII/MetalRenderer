@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -6,7 +7,7 @@ extension Scene {
     // MARK: - Animation
 
     /// Poses everything at time `t`; suns and the sky colour follow `dayTime` instead (Time of day offsets it).
-    func update(time t: Float, dayTime: Float? = nil) {
+    package func update(time t: Float, dayTime: Float? = nil) {
         let day = dayTime ?? t
         var changed = false
         // Through the array's buffer: `instances[i].animation` copied the whole instance (~290 bytes) out of the
@@ -117,7 +118,7 @@ extension Scene {
     }
 
     /// The rigid bodies' and particles' instances where the physics has them.
-    func placeBodies() {
+    package func placeBodies() {
         guard let physics else { return }
         for b in physics.bodies.indices { setTransform(Int(physics.bodies[b].info.z), physics.transform(b)) }
         for p in physics.particles.indices where physics.particles[p].info.x != PhysicsWorld.none {   // (a cloth's vertex has none)
@@ -126,7 +127,7 @@ extension Scene {
     }
 
     /// ...where the stepper's latest steps left them (PhysicsStepper.Drawn).
-    func placeBodies(_ drawn: PhysicsStepper.Drawn) {
+    package func placeBodies(_ drawn: PhysicsStepper.Drawn) {
         guard let physics else { return }
         let fractured = physics.fractures
         for b in drawn.bodies.indices {
@@ -143,7 +144,7 @@ extension Scene {
 
     /// The body the mouse holds: the stepper's copy (sent with each frame's steps) when it steps the world, the
     /// world's own otherwise.
-    var physicsGrab: GPUPhysicsGrab {
+    package var physicsGrab: GPUPhysicsGrab {
         get { physicsStepper?.grab ?? physics?.grab ?? GPUPhysicsGrab() }
         set {
             if let physicsStepper { physicsStepper.grab = newValue } else { physics?.grab = newValue }
@@ -166,7 +167,7 @@ extension Scene {
 
     /// Where the CPU's steps broke pieces (PhysicsWorld.breakLog, breakSteps, breakTotal), for the dust: the stepper's
     /// latest, or the world's.
-    var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
+    package var physicsBreaks: (log: [GPUBreakEvent], steps: [Int], total: Int)? {
         if let physicsStepper {
             let drawn = physicsStepper.latest
             return (drawn.breakLog, drawn.breakSteps, drawn.breakTotal)
@@ -182,7 +183,7 @@ extension Scene {
 
     /// ...where the GPU had them (`poses`: position, rotation per body): the CPU's copy, for what reads it here
     /// (bounds, moving lights). The frame's records are the GPU's own (PhysicsGPU.encodePose).
-    func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
+    package func placeBodies(poses: UnsafeBufferPointer<SIMD4<Float>>) {
         guard let physics else { return }
         // What picking sees: over the last frame's copy (made anew only when the count changes).
         if physics.drawnPoses.count == poses.count {
@@ -205,7 +206,7 @@ extension Scene {
     }
 
     /// The renderer runs the physics on the GPU from now on, from the start up to where it is.
-    func runPhysicsOnGPU() {
+    package func runPhysicsOnGPU() {
         guard let physics else { return }
         physicsOnGPU = true
         physicsPending = (physics.stepIndex, true)
@@ -213,14 +214,14 @@ extension Scene {
 
     /// The particles' steps to encode this frame, `limit` at most (the rest wait for the next frames), and whether
     /// from the start (a new scene, or time run back).
-    func takeParticleSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+    package func takeParticleSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
         let taken = (steps: min(particlesPending.steps, limit), restart: particlesPending.restart)
         particlesPending = (particlesPending.steps - taken.steps, false)
         return taken
     }
 
     /// The renderer made the particles' buffers anew: it replays them from the start up to where they are.
-    func replayParticles() {
+    package func replayParticles() {
         guard let particles else { return }
         particlesPending = (particles.stepIndex, true)
     }
@@ -246,9 +247,9 @@ extension Scene {
     /// one it replaces) from `effects`, as `key` names them (SceneSettings.effects), so the scene isn't made again.
     /// Without `system` only the key: the edit's code compiles meanwhile.
     /// The Material Designer's edit, baked in place (Renderer.editMaterials): its graphs' catalog's key.
-    func adoptMaterials(_ key: String) { settings.materials = key }
+    package func adoptMaterials(_ key: String) { settings.materials = key }
 
-    func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
+    package func adoptEffects(_ key: String, system: ParticleSystem?, effects: [VFXInstance], owners: [String], notes: [String]) {
         settings.effects = key
         guard let system else { return }   // the running ones until their new code is ready (Renderer.editEffects)
         particles = system
@@ -258,7 +259,7 @@ extension Scene {
     }
 
     /// The steps to encode this frame (the renderer's), `limit` at most: the rest wait for the next frames.
-    func takePhysicsSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
+    package func takePhysicsSteps(limit: Int = .max) -> (steps: Int, restart: Bool) {
         let taken = (steps: min(physicsPending.steps, limit), restart: physicsPending.restart)
         physicsPending = (physicsPending.steps - taken.steps, false)
         return taken
@@ -271,7 +272,7 @@ extension Scene {
 
     /// Instances put elsewhere for good (a terrain's scatter and what stands on it, after a brush moved the ground: no
     /// motion between frames). `record`: the renderer writes their records again (takeInstanceEdits).
-    func moveInstances(_ moves: [(Int, float4x4)], record: Bool) {
+    package func moveInstances(_ moves: [(Int, float4x4)], record: Bool) {
         for (i, m) in moves where instances.indices.contains(i) {
             setTransform(i, m)
             instances[i].prevTransform = m
@@ -280,35 +281,35 @@ extension Scene {
     }
 
     /// The instances moved for good since the last call (moveInstances), which are then forgotten.
-    func takeInstanceEdits() -> Set<Int> {
+    package func takeInstanceEdits() -> Set<Int> {
         defer { instanceEdits = [] }
         return instanceEdits
     }
 
 
     /// The instances whose transform changes from frame to frame.
-    var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
+    package var movingInstances: [Int] { animated?.instances ?? Array(instances.indices) }
 
     /// The range of materials changed since the last call (nil: none), which is then forgotten.
     /// Material `i` changed (a procedural one's bake): the renderer copies it to every slot.
-    func markMaterialDirty(_ i: Int) {
+    package func markMaterialDirty(_ i: Int) {
         materialsDirty = materialsDirty.map { min($0.lowerBound, i)..<max($0.upperBound, i + 1) } ?? i..<(i + 1)
     }
 
     /// Material `i` replaced (a procedural one's values as its graph's bake gives them).
-    func setMaterial(_ i: Int, _ m: GPUMaterial) {
+    package func setMaterial(_ i: Int, _ m: GPUMaterial) {
         guard materials.indices.contains(i) else { return }
         materials[i] = m
         markMaterialDirty(i)
     }
 
-    func takeMaterialsDirty() -> Range<Int>? {
+    package func takeMaterialsDirty() -> Range<Int>? {
         defer { materialsDirty = nil }
         return materialsDirty
     }
 
     /// Unit direction perpendicular to `n`: horizontal if possible.
-    static func perpendicular(_ n: SIMD3<Float>) -> SIMD3<Float> {
+    package static func perpendicular(_ n: SIMD3<Float>) -> SIMD3<Float> {
         let h = cross(SIMD3<Float>(0, 1, 0), n)
         return length(h) > 1e-4 ? normalize(h) : normalize(cross(SIMD3<Float>(1, 0, 0), n))
     }
@@ -320,7 +321,7 @@ extension Scene {
     }
 
     /// Rect lights: width axis (unit), normal, height axis.
-    static func rectFrame(_ pose: LightPose) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
+    package static func rectFrame(_ pose: LightPose) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
         let n = normalize(pose.direction)
         var t = pose.tangent.map { normalize($0 - n * dot($0, n)) } ?? perpendicular(n)
         if !t.x.isFinite { t = perpendicular(n) }
@@ -342,7 +343,7 @@ extension Scene {
     }
 
     /// An instance's bounds in its own space: its mesh's, virtual mesh's or assembly's.
-    func localBounds(of inst: Instance) -> (SIMD3<Float>, SIMD3<Float>) {
+    package func localBounds(of inst: Instance) -> (SIMD3<Float>, SIMD3<Float>) {
         inst.virtualMesh >= 0 ? (virtualMeshes[inst.virtualMesh].bounds.lo, virtualMeshes[inst.virtualMesh].bounds.hi)
             : inst.assembly >= 0 ? (assemblies[inst.assembly].bounds.lo, assemblies[inst.assembly].bounds.hi)
             : inst.sdf >= 0 ? (sdfBounds[inst.sdf].lo, sdfBounds[inst.sdf].hi) : meshBounds[inst.mesh]
@@ -350,7 +351,7 @@ extension Scene {
 
     /// Axis-aligned bounds of all geometry at the current animation time (the scene sphere),
     /// from each instance's transformed mesh bounds.
-    func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
+    package func bounds() -> (SIMD3<Float>, SIMD3<Float>) {
         var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
         for inst in instances where inst.isGeometry {
             let (a, b) = localBounds(of: inst)

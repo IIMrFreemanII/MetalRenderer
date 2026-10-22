@@ -27,7 +27,7 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
 * Swift edits need a build; shader edits don't (the binary compiles the shaders at launch). `render.sh` uses the
   dev build (`Tools/build.sh`: the debug configuration with `-O`, in `.build-dev`, a one-file edit rebuilds in about
   12 s) and rebuilds it when a Swift source is newer than the binary. It draws the same images as release, bit for
-  bit. Timings to quote come from release (`swift build -c release`, the `performance` skill).
+  bit. Timings to quote come from release (`Tools/release.sh`, the `performance` skill).
 
 ## Render something: `scripts/render.sh`
 

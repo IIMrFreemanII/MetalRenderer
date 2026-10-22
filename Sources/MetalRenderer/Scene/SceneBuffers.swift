@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import simd
 
@@ -6,7 +7,7 @@ import simd
 /// scene made around the next tile takes the blocks of the one being drawn (`SceneBuffers.Options.blocks`) and fills
 /// only the ones that are new, and a block goes when the last scene that has it does. A hit reaches its vertices
 /// through its address in the mesh table (`GPUMesh.block`, STREAMED in the shaders).
-final class MeshBlock {
+package final class MeshBlock {
     let name: String
     /// `vertexCount` positions, as many normals, as many UVs, `indexCount` indices into them, and a material offset
     /// (a byte) per triangle: one after the other (fetchHitVertices in Shaders/Surface.metal reads them so).
@@ -56,7 +57,7 @@ final class MeshBlock {
 /// (`descriptors`). (A structure per block under the scene's traces at half the speed.) The block's records are in a
 /// buffer of the block's own; an instance is named by the block's number and its place in the block (`id`), in every
 /// scene, and a hit finds its record through the scene's table of the blocks' addresses (TILED in the shaders).
-final class InstanceBlock {
+package final class InstanceBlock {
     let name: String
     /// Its number among the blocks alive (1...): the high bits of its instances' ids. 0 is a scene's own instances.
     let number: Int
@@ -176,8 +177,8 @@ final class InstanceBlock {
 /// A mesh with a name (`Scene.meshNames`: an open world's tile, a generated plant) is the same triangles in every
 /// scene that has it, so its structure outlives the scene: the next scene's `Options.known` hands it over, and only
 /// the meshes that are new are built. A borrowed mesh's vertices outlive the scene the same way (`MeshBlock`).
-struct SceneBuffers {
-    struct Options {
+package struct SceneBuffers {
+    package struct Options {
         var api: RenderAPI
         var slots: Int
         /// Metal's per-mesh structures: built for fast intersection (macOS 26), compacted.

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -6,12 +7,12 @@ extension Scene {
     // MARK: - Emissive-mesh lights
 
     /// A light that comes with a borrowed mesh, made already: sampled as the scene's own emissive instances are.
-    func addMeshLight(_ light: BorrowedLight) { borrowedLights.append(light) }
+    package func addMeshLight(_ light: BorrowedLight) { borrowedLights.append(light) }
 
     /// Every geometry instance with an emissive material becomes a mesh light (after the analytic lights, which
     /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
-    func buildMeshLights() {
+    package func buildMeshLights() {
         // (A borrowed mesh's lights may be off as the scene is made: the open world's by day.)
         guard !borrowedLights.isEmpty || materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
         emissiveTriangles.reserveCapacity(borrowedLights.reduce(0) { $0 + $1.range.count })

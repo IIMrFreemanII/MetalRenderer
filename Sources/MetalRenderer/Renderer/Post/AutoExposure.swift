@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 
 /// Auto exposure (PostSettings.autoExposure): the tone-map pass adds one pixel in 8 x 8 of the frame's light to a
@@ -5,7 +6,7 @@ import Metal
 /// histogram's middle (the mean between its 40th and 92nd percentiles, so the sky and the deepest shade don't pull)
 /// sets the exposure that puts it at middle grey, which the exposure eases toward (an eye's, by the clock's step: a
 /// benchmark's fixed one gives the same pictures every run). Ring of histograms, one per frame in flight and one more.
-final class AutoExposure {
+package final class AutoExposure {
     static let bins = 64, logMin: Float = -14, logMax: Float = 10
     /// What the histogram's middle is exposed to (middle grey, a little under for a camera's look).
     static let key: Float = 0.16

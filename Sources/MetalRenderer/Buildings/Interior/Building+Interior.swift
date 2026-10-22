@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -49,15 +50,15 @@ package struct Interior {
     /// A door's leaf (the lot's frame): its hinge's foot, the leaf's direction from it when shut, which way it
     /// opens (+1 counter-clockwise seen from above), its size, and whether it starts open.
     struct Door {
-        var hinge: SIMD3<Float>
-        var along: SIMD2<Float>
-        var turn: Float
-        var width: Float
-        var height: Float
-        var glazed: Bool
-        var open: Bool
-        var storey: Int
-        var color: SIMD3<Float>
+        package var hinge: SIMD3<Float>
+        package var along: SIMD2<Float>
+        package var turn: Float
+        package var width: Float
+        package var height: Float
+        package var glazed: Bool
+        package var open: Bool
+        package var storey: Int
+        package var color: SIMD3<Float>
     }
     /// A lift's shaft (the lot's frame): its inside, the side its doors are on, its floors' heights.
     struct LiftShaft {
@@ -70,10 +71,10 @@ package struct Interior {
     /// An axis-aligned box the walker can't pass (glass is one too).
     package struct Collider: Equatable {
         package enum Kind: UInt8 { case solid, glass, stair, furniture }
-        var lo: SIMD3<Float>, hi: SIMD3<Float>
-        var kind = Kind.solid
+        package var lo: SIMD3<Float>, hi: SIMD3<Float>
+        package var kind = Kind.solid
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(lo: SIMD3<Float>, hi: SIMD3<Float>, kind: Kind = Kind.solid) {
             self.lo = lo
             self.hi = hi
@@ -113,11 +114,11 @@ enum InteriorBuilder {
 
     /// The finishes of a building's rooms: drawn once for it from its style.
     struct Finishes {
-        let paints: [SIMD3<Float>]
-        let wood: SIMD3<Float>, tile: SIMD3<Float>, carpet: SIMD3<Float>, ceiling: SIMD3<Float>, door: SIMD3<Float>
-        let concrete = SurfaceMaterial(color: [0.52, 0.51, 0.49], surface: .concrete)
-        let step: SurfaceMaterial
-        let frame: SurfaceMaterial
+        package let paints: [SIMD3<Float>]
+        package let wood: SIMD3<Float>, tile: SIMD3<Float>, carpet: SIMD3<Float>, ceiling: SIMD3<Float>, door: SIMD3<Float>
+        package let concrete = SurfaceMaterial(color: [0.52, 0.51, 0.49], surface: .concrete)
+        package let step: SurfaceMaterial
+        package let frame: SurfaceMaterial
 
         package init(_ style: BuildingStyle, seed: UInt64) {
             let i = style.def.interior, d = StyleDraw(seed: seed ^ 0x1A7E_810F)
@@ -131,7 +132,7 @@ enum InteriorBuilder {
             frame = SurfaceMaterial(color: door * 0.95)
         }
 
-        func wall(_ room: PlanRoom, seed: UInt64) -> SurfaceMaterial {
+        package func wall(_ room: PlanRoom, seed: UInt64) -> SurfaceMaterial {
             switch room.type {
             case .bath, .wc, .toilets: return SurfaceMaterial(color: tile, surface: .paving, roughness: 0.4, specular: true)
             case .hall, .storage, .lift: return SurfaceMaterial(color: [0.62, 0.61, 0.58], surface: .concrete)
@@ -145,7 +146,7 @@ enum InteriorBuilder {
             }
         }
 
-        func floor(_ type: RoomType) -> SurfaceMaterial {
+        package func floor(_ type: RoomType) -> SurfaceMaterial {
             switch type {
             case .living, .bedroom, .study, .dining, .entrance, .landing: return SurfaceMaterial(color: wood, roughness: 0.55, specular: true)
             case .office, .openOffice, .meeting: return SurfaceMaterial(color: carpet)
@@ -154,7 +155,7 @@ enum InteriorBuilder {
             case .hall, .storage, .backroom, .stairs, .lift: return concrete
             }
         }
-        var ceilingMaterial: SurfaceMaterial { SurfaceMaterial(color: ceiling, surface: .plaster) }
+        package var ceilingMaterial: SurfaceMaterial { SurfaceMaterial(color: ceiling, surface: .plaster) }
     }
 
     /// Makes one building's interior.

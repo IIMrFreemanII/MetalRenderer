@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,31 +7,37 @@ import simd
 /// (Assets/Plants/<id>.json, PlantStore.swift), which replace a built-in one of the same id or add a species.
 extension Foliage {
     /// What a species is to the scenes that place it.
-    enum Role: String, CaseIterable, Codable {
+    package enum Role: String, CaseIterable, Codable {
         case tree           // stands on its own; an assembly where the scene has them
         case bush           // under the trees, in patches
         case groundCover    // ferns and grass: meshes that lean in the wind by themselves
     }
 
     /// A species whose plants are patches of grass blades (Foliage.grassPatch), not grown from its recipe.
-    struct GrassPatch: Codable, Equatable {
-        var size: Float = 2
-        var blades = 800
+    package struct GrassPatch: Codable, Equatable {
+        package var size: Float = 2
+        package var blades = 800
     }
 
     /// The boughs every tree of the species hangs: `count` meshes, every other one `short` times as long.
-    struct Palette: Codable, Equatable {
-        var count = 6
-        var short: Float = 0.8
+    package struct Palette: Codable, Equatable {
+        package var count = 6
+        package var short: Float = 0.8
     }
 
     /// A level's child count at an age: `max(minimum, count x factor)`, rounded down.
-    struct CountRule: Codable, Equatable {
-        var level: Int
-        var factor: Float
-        var minimum: Int
+    package struct CountRule: Codable, Equatable {
+        package var level: Int
+        package var factor: Float
+        package var minimum: Int
 
-        func apply(_ count: Int) -> Int {
+        package init(level: Int, factor: Float, minimum: Int) {
+            self.level = level
+            self.factor = factor
+            self.minimum = minimum
+        }
+
+        package func apply(_ count: Int) -> Int {
             // (The built-in factors are 3/4, 7/10 and 9/20 of whole counts: what the products' float errors are
             // rounded past, never across.)
             max(minimum, Int(Double(count) * Double(factor) + 1e-3))
@@ -38,18 +45,18 @@ extension Foliage {
     }
 
     /// How a younger plant differs from the mature recipe.
-    struct AgeRule: Codable, Equatable {
-        var trunkLength: Float = 1          // level 0's length, of the mature one's
-        var counts: [CountRule] = []
-        var maxLevels: Int? = nil           // keeps only the first levels
-        var trunkSegments: Int? = nil
-        var trunkRadial: Int? = nil
-        var limbRadial: Int? = nil          // level 1's sides
-        var ratio: Float = 1                // of the mature radius ratio
-        var boughScale: Float = 1           // of the mature boughs' sizes
-        var carve: Carve? = nil             // in place of the mature one
+    package struct AgeRule: Codable, Equatable {
+        package var trunkLength: Float = 1          // level 0's length, of the mature one's
+        package var counts: [CountRule] = []
+        package var maxLevels: Int? = nil           // keeps only the first levels
+        package var trunkSegments: Int? = nil
+        package var trunkRadial: Int? = nil
+        package var limbRadial: Int? = nil          // level 1's sides
+        package var ratio: Float = 1                // of the mature radius ratio
+        package var boughScale: Float = 1           // of the mature boughs' sizes
+        package var carve: Carve? = nil             // in place of the mature one
 
-        func apply(_ r: inout Recipe) {
+        package func apply(_ r: inout Recipe) {
             r.levels[0].length *= trunkLength
             if let s = trunkSegments { r.levels[0].segments = s }
             if let s = trunkRadial { r.levels[0].radial = s }
@@ -62,22 +69,22 @@ extension Foliage {
         }
     }
 
-    struct Ages: Codable, Equatable {
-        var young = AgeRule()
-        var sapling = AgeRule()
+    package struct Ages: Codable, Equatable {
+        package var young = AgeRule()
+        package var sapling = AgeRule()
         /// Seeded variants of each age, by `Age.rawValue` (sapling, young, mature).
-        var variants = [0, 0, 3]
+        package var variants = [0, 0, 3]
     }
 
     /// Colours and textures. Colours are linear RGB; a leaf shade is picked per placed plant.
-    struct Look: Codable, Equatable {
-        var bark: SIMD3<Float>
-        var leaves: [SIMD3<Float>]
-        var autumn: SIMD3<Float>? = nil     // nil: the leaves stay as they are
-        var translucency: Float = 0.35
-        var barkTexture = FoliageTextures.Kind.roughBark
-        var leafTexture = FoliageTextures.Kind.leaf
-        var evergreen = false               // keeps its leaves: no leaf fall
+    package struct Look: Codable, Equatable {
+        package var bark: SIMD3<Float>
+        package var leaves: [SIMD3<Float>]
+        package var autumn: SIMD3<Float>? = nil     // nil: the leaves stay as they are
+        package var translucency: Float = 0.35
+        package var barkTexture = FoliageTextures.Kind.roughBark
+        package var leafTexture = FoliageTextures.Kind.leaf
+        package var evergreen = false               // keeps its leaves: no leaf fall
     }
 
     package struct SpeciesDef: Codable, Equatable {
@@ -86,19 +93,19 @@ extension Foliage {
         /// What the library's seeds are made from: the built-ins' places in the catalog, a custom species' own number
         /// (from 100, fixed when it is made), so that no species' plants change when another is added or deleted.
         package var seedIndex: Int
-        var role: Role
-        var grass: GrassPatch? = nil
+        package var role: Role
+        package var grass: GrassPatch? = nil
         package var recipe: Recipe                  // the mature plant
         package var bough: Recipe? = nil            // nil: no palette (its plants are one mesh)
-        var palette = Palette()
-        var ages = Ages()
-        var look: Look
+        package var palette = Palette()
+        package var ages = Ages()
+        package var look: Look
         package var habitat = Habitat()
-        var stemsAreLeaves = false          // the stems are leaf material (fern fronds)
-        var basedOn: String? = nil          // a custom species: the one it was copied from
+        package var stemsAreLeaves = false          // the stems are leaf material (fern fronds)
+        package var basedOn: String? = nil          // a custom species: the one it was copied from
 
-        var paletteSize: Int { bough == nil || grass != nil ? 0 : palette.count }
-        func variants(_ age: Age) -> Int { ages.variants.indices.contains(age.rawValue) ? ages.variants[age.rawValue] : 0 }
+        package var paletteSize: Int { bough == nil || grass != nil ? 0 : palette.count }
+        package func variants(_ age: Age) -> Int { ages.variants.indices.contains(age.rawValue) ? ages.variants[age.rawValue] : 0 }
 
         /// The recipe of its plants of an age.
         package func recipe(_ age: Age) -> Recipe {
@@ -113,7 +120,7 @@ extension Foliage {
 
         /// A bough of its palette: grown lying along +Y with +Z toward the sky, about a metre long. The graft
         /// distributor scales it, so its leaves shrink with it.
-        func boughRecipe(variant: Int) -> Recipe? {
+        package func boughRecipe(variant: Int) -> Recipe? {
             guard var r = bough else { return nil }
             if variant % 2 != 0 { r.levels[0].length *= palette.short }   // the palette has longer and shorter boughs
             return r
@@ -156,7 +163,7 @@ extension FoliageTextures.Kind: Codable {
         self = kind
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
         try c.encode(name)
     }
@@ -165,12 +172,12 @@ extension FoliageTextures.Kind: Codable {
 /// The species plants are grown from, in order: a species is its place here (Foliage.Species). The built-in ones
 /// come first, in their order, whatever replaces them.
 package struct PlantCatalog: Equatable {
-    var species: [Foliage.SpeciesDef]
+    package var species: [Foliage.SpeciesDef]
 
     package subscript(_ s: Foliage.Species) -> Foliage.SpeciesDef { species[s.rawValue] }
     package var all: [Foliage.Species] { species.indices.map(Foliage.Species.init(rawValue:)) }
     package var count: Int { species.count }
-    func species(id: String) -> Foliage.Species? { species.firstIndex { $0.id == id }.map(Foliage.Species.init(rawValue:)) }
+    package func species(id: String) -> Foliage.Species? { species.firstIndex { $0.id == id }.map(Foliage.Species.init(rawValue:)) }
 
     /// The bushes and ground cover, in the order they are scattered (Habitat.order).
     package var covers: [Foliage.Species] {
@@ -179,4 +186,9 @@ package struct PlantCatalog: Equatable {
     }
 
     package static let builtIn = PlantCatalog(species: Foliage.builtInSpecies)
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(species: [Foliage.SpeciesDef]) {
+        self.species = species
+    }
 }

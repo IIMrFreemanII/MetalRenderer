@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -5,9 +6,9 @@ import simd
 /// node's image. It reads the pixel's position (0...1), the image's size, the node's seed, and its inputs sampled
 /// anywhere (Sample). Made into Metal (MatFunctionCode.metal: the kernel's body, compiled at run time by MatCompiler)
 /// and into closures the CPU runs (the tests check the two agree), from one walk.
-struct MatFunction: Codable, Equatable, Hashable {
-    var nodes: [MatFnNode] = []
-    var links: [MatLink] = []
+package struct MatFunction: Codable, Equatable, Hashable {
+    package var nodes: [MatFnNode] = []
+    package var links: [MatLink] = []
 
     package init(nodes: [MatFnNode] = [], links: [MatLink] = []) {
         self.nodes = nodes
@@ -16,18 +17,18 @@ struct MatFunction: Codable, Equatable, Hashable {
     }
 
     /// Input 0 at the pixel: what a new pixel processor starts as.
-    static var passThrough: MatFunction {
+    package static var passThrough: MatFunction {
         MatFunction(nodes: [MatFnNode(.position, id: "position", at: [-420, 0]),
                             MatFnNode(.sample, id: "sample", at: [-220, 0]),
                             MatFnNode(.result, id: "result", at: [0, 0])],
                     links: [MatLink("position", to: "sample", "uv"), MatLink("sample", to: "result", "value")])
     }
 
-    func node(_ id: String) -> MatFnNode? { nodes.first { $0.id == id } }
-    func link(into id: String, _ input: String) -> MatLink? { links.first { $0.to == id && $0.input == input } }
-    var result: MatFnNode? { nodes.first { $0.kind == .result } }
+    package func node(_ id: String) -> MatFnNode? { nodes.first { $0.id == id } }
+    package func link(into id: String, _ input: String) -> MatLink? { links.first { $0.to == id && $0.input == input } }
+    package var result: MatFnNode? { nodes.first { $0.kind == .result } }
 
-    mutating func normalizeIDs() {
+    package mutating func normalizeIDs() {
         var used = Set<String>()
         for k in nodes.indices {
             if nodes[k].id.isEmpty || used.contains(nodes[k].id) { nodes[k].id = VFXEffect.unique(nodes[k].kind.rawValue, used) }
@@ -35,7 +36,7 @@ struct MatFunction: Codable, Equatable, Hashable {
         }
     }
 
-    func upstream(of id: String) -> Set<String> {
+    package func upstream(of id: String) -> Set<String> {
         var found = Set<String>(), stack = [id]
         while let n = stack.popLast() {
             for l in links where l.to == n && !found.contains(l.from) {
@@ -48,11 +49,11 @@ struct MatFunction: Codable, Equatable, Hashable {
 }
 
 /// A function's node: its kind, the values of its unwired inputs, where the editor draws it.
-struct MatFnNode: Codable, Equatable, Hashable, Identifiable {
-    var id = ""
-    var kind: MatFnKind
-    var params: [String: MatParam] = [:]
-    var at = SIMD2<Float>.zero
+package struct MatFnNode: Codable, Equatable, Hashable, Identifiable {
+    package var id = ""
+    package var kind: MatFnKind
+    package var params: [String: MatParam] = [:]
+    package var at = SIMD2<Float>.zero
 
     package init(_ kind: MatFnKind, _ params: [String: MatParam] = [:], id: String = "", at: SIMD2<Float> = .zero) {
         self.kind = kind
@@ -61,27 +62,27 @@ struct MatFnNode: Codable, Equatable, Hashable, Identifiable {
         self.at = at
     }
 
-    func param(_ name: String) -> MatParam { params[name] ?? kind.spec.pin(name)?.value ?? .float(0) }
+    package func param(_ name: String) -> MatParam { params[name] ?? kind.spec.pin(name)?.value ?? .float(0) }
 }
 
 /// What a function's wire carries: 1 to 4 floats.
-enum MatFnType: Int, Codable, CaseIterable {
+package enum MatFnType: Int, Codable, CaseIterable {
     case float = 1, vec2, vec3, vec4
 
-    var metal: String { self == .float ? "float" : "float\(rawValue)" }
-    var title: String { self == .float ? "float" : "vec\(rawValue)" }
-    static func wider(_ a: MatFnType, _ b: MatFnType) -> MatFnType { a.rawValue >= b.rawValue ? a : b }
+    package var metal: String { self == .float ? "float" : "float\(rawValue)" }
+    package var title: String { self == .float ? "float" : "vec\(rawValue)" }
+    package static func wider(_ a: MatFnType, _ b: MatFnType) -> MatFnType { a.rawValue >= b.rawValue ? a : b }
 }
 
 /// A function node's input: its default (what an unwired one is), what is wired into it (nil: a value only; generic:
 /// whatever comes, the node's output following the widest).
-struct MatFnPinSpec {
-    let name: String
+package struct MatFnPinSpec {
+    package let name: String
     let value: MatParam
-    var type: MatFnType? = .float
-    var generic = false
-    var span: ClosedRange<Float>?
-    var choices: [String] = []
+    package var type: MatFnType? = .float
+    package var generic = false
+    package var span: ClosedRange<Float>?
+    package var choices: [String] = []
 
     package init(_ name: String, _ value: MatParam = .float(0), _ type: MatFnType? = .float, generic: Bool = false,
          span: ClosedRange<Float>? = nil, choices: [String] = []) {
@@ -94,16 +95,16 @@ struct MatFnPinSpec {
     }
 }
 
-struct MatFnSpec {
-    let title: String
-    let family: String
-    let inputs: [MatFnPinSpec]
+package struct MatFnSpec {
+    package let title: String
+    package let family: String
+    package let inputs: [MatFnPinSpec]
     /// A fixed type, or nil: its generic inputs' widest.
-    let output: MatFnType?
-    func pin(_ name: String) -> MatFnPinSpec? { inputs.first { $0.name == name } }
+    package let output: MatFnType?
+    package func pin(_ name: String) -> MatFnPinSpec? { inputs.first { $0.name == name } }
 }
 
-enum MatFnKind: String, Codable, CaseIterable {
+package enum MatFnKind: String, Codable, CaseIterable {
     // Inputs
     case position, size, seed, float, vector2, color
     // Sampling
@@ -120,7 +121,7 @@ enum MatFnKind: String, Codable, CaseIterable {
     // The function's value
     case result
 
-    var spec: MatFnSpec {
+    package var spec: MatFnSpec {
         typealias P = MatFnPinSpec
         func g(_ name: String, _ v: Float = 0) -> P { P(name, .float(v), .float, generic: true) }
         func unary(_ title: String) -> MatFnSpec { MatFnSpec(title: title, family: "Math", inputs: [g("a")], output: nil) }
@@ -189,7 +190,7 @@ struct MatFnExpr {
 }
 
 /// What the CPU's expressions read: the pixel, the image's size, the seed, the inputs (a function of the UV).
-struct MatFnEnv {
+package struct MatFnEnv {
     var uv = SIMD2<Float>.zero
     var size = SIMD2<Float>(1, 1)
     var seed: Float = 0
@@ -199,7 +200,7 @@ struct MatFnEnv {
 extension MatFunction {
     /// The Metal function's body (`return` a float4 from `uv`, `size`, `seed` and `sampleInput(i, uv)`) and the CPU's
     /// closure, or why it can't be made (no Result, a loop).
-    func code() throws -> (metal: String, eval: (MatFnEnv) -> SIMD4<Float>) {
+    package func code() throws -> (metal: String, eval: (MatFnEnv) -> SIMD4<Float>) {
         guard let result else { throw MatError("the function has no Result node") }
         var lines: [String] = []
         var made: [String: MatFnExpr] = [:]
@@ -425,14 +426,14 @@ extension MatFunction {
     }
 
     /// A float as Metal: finite, with a point.
-    static func literal(_ f: Float) -> String {
+    package static func literal(_ f: Float) -> String {
         guard f.isFinite else { return f > 0 ? "INFINITY" : f < 0 ? "-INFINITY" : "0.0" }
         let s = "\(f)"
         return s.contains(".") || s.contains("e") ? s : s + ".0"
     }
 
     /// The Random node's value (MSL matRandom, line for line): a hash of the point and the salt, 0..<1.
-    static func random(_ p: SIMD2<Float>, _ salt: Float) -> Float {
+    package static func random(_ p: SIMD2<Float>, _ salt: Float) -> Float {
         var h = UInt32(bitPattern: Int32(truncatingIfNeeded: Int((p.x * 4096).rounded(.down))))
         h = h &* 0x27d4_eb2d ^ UInt32(bitPattern: Int32(truncatingIfNeeded: Int((p.y * 4096).rounded(.down)))) &* 0x1656_67b1
         h ^= UInt32(bitPattern: Int32(truncatingIfNeeded: Int(salt.rounded(.down)))) &* 0x9e37_79b9

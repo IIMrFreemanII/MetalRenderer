@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -10,7 +11,7 @@ extension Renderer {
     /// The city's building the camera is in or nearest (within reach, not far above it): its interior is made, in the
     /// background (SceneSettings.interior); left behind, it is dropped. It waits a moment and while the camera flies
     /// fast, so that passing by doesn't make one.
-    func chooseInterior() {
+    package func chooseInterior() {
         let now = CACurrentMediaTime()
         let p = camera.position, flat = SIMD2(p.x, p.z)
         let speed = lastCameraPosition.map { length($0 - p) } ?? 0

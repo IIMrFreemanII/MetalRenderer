@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -7,42 +8,42 @@ import simd
 /// and what it paints with (its values, or a stencil's colour). `PaintStrokeDabs` turns a stroke's points into dabs.
 package struct PaintBrush: Codable, Equatable {
     package var size: Float = 40               // radius, in the view's points
-    var hardness: Float = 0.6          // 0: soft all the way in, 1: a hard edge
-    var opacity: Float = 1             // the most a stroke lays down
+    package var hardness: Float = 0.6          // 0: soft all the way in, 1: a hard edge
+    package var opacity: Float = 1             // the most a stroke lays down
     package var flow: Float = 0.6              // what each dab adds of what is left to that
     package var spacing: Float = 0.15          // between dabs, a share of the diameter
     package var stamp = -1                     // PaintStamps' layer; -1 round
-    var angle: Float = 0               // the stamp's turn (degrees)
-    var followStroke = false           // ...along the stroke's direction
+    package var angle: Float = 0               // the stamp's turn (degrees)
+    package var followStroke = false           // ...along the stroke's direction
     package var angleJitter: Float = 0         // degrees either way
-    var sizeJitter: Float = 0          // a share of the size, less
+    package var sizeJitter: Float = 0          // a share of the size, less
     package var scatter: Float = 0             // dabs moved off the stroke by up to this share of the diameter
-    var aspect: Float = 1              // the tip squashed (1 round)
-    var pressureSize = true
-    var pressureOpacity = false
+    package var aspect: Float = 1              // the tip squashed (1 round)
+    package var pressureSize = true
+    package var pressureOpacity = false
     package var symmetry = Symmetry.none
     package var values = PaintValues()
     package var channels: Set<PaintChannel> = [.color, .roughness, .metallic]
     package var eraser = false
     /// A stencil laid over the view: its colour is what is painted (and its alpha masks it).
-    var stencil = Stencil()
+    package var stencil = Stencil()
 
     package enum Symmetry: Int, Codable, CaseIterable, Identifiable {
         case none, x, y, z
         package var id: Int { rawValue }
-        var title: String { self == .none ? "Off" : "\(self)".uppercased() }
+        package var title: String { self == .none ? "Off" : "\(self)".uppercased() }
     }
 
     package struct Stencil: Codable, Equatable {
-        var enabled = false
-        var image = ""                 // a file's path, or "graph:<name>" (its base colour)
-        var offset = SIMD2<Float>(0, 0)   // the view's share
-        var scale: Float = 1
-        var rotation: Float = 0        // degrees
-        var opacity: Float = 0.5       // shown over the view
+        package var enabled = false
+        package var image = ""                 // a file's path, or "graph:<name>" (its base colour)
+        package var offset = SIMD2<Float>(0, 0)   // the view's share
+        package var scale: Float = 1
+        package var rotation: Float = 0        // degrees
+        package var opacity: Float = 0.5       // shown over the view
 
         /// Screen pixels to the stencil's UV for a view of `screen` pixels: centred, as wide as the view x scale.
-        func frame(screen: SIMD2<Float>) -> simd_float3x3 {
+        package func frame(screen: SIMD2<Float>) -> simd_float3x3 {
             let s = max(scale, 1e-3) * screen.x
             let c = cos(rotation * .pi / 180), n = sin(rotation * .pi / 180)
             let centre = screen / 2 + offset * screen
@@ -54,7 +55,7 @@ package struct PaintBrush: Codable, Equatable {
         }
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(size: Float = 40, hardness: Float = 0.6, opacity: Float = 1, flow: Float = 0.6, spacing: Float = 0.15, stamp: Int = -1, angle: Float = 0, followStroke: Bool = false, angleJitter: Float = 0, sizeJitter: Float = 0, scatter: Float = 0, aspect: Float = 1, pressureSize: Bool = true, pressureOpacity: Bool = false, symmetry: Symmetry = Symmetry.none, values: PaintValues = PaintValues(), channels: Set<PaintChannel> = [.color, .roughness, .metallic], eraser: Bool = false, stencil: Stencil = Stencil()) {
         self.size = size
         self.hardness = hardness
@@ -142,9 +143,9 @@ struct PaintStrokeDabs {
 }
 
 /// The brush's tips (R8, `side` squared, a layer each): the built-in ones, made here, then any a graph was baked into.
-final class PaintStamps {
-    static let side = 256
-    static let builtIn = ["Soft noise", "Scratches", "Splatter", "Leaf", "Grunge", "Dots", "Square"]
+package final class PaintStamps {
+    package static let side = 256
+    package static let builtIn = ["Soft noise", "Scratches", "Splatter", "Leaf", "Grunge", "Dots", "Square"]
 
     private(set) var names: [String] = PaintStamps.builtIn
     private var pixels: [[UInt8]]
@@ -155,7 +156,7 @@ final class PaintStamps {
 
     /// A stamp from a picture (a graph's bake read back: its luminance), as the next layer; its index.
     @discardableResult
-    func add(_ name: String, grey: [UInt8]) -> Int {
+    package func add(_ name: String, grey: [UInt8]) -> Int {
         if let i = names.firstIndex(of: name) { pixels[i] = grey; version += 1; return i }
         names.append(name)
         pixels.append(grey)
@@ -164,7 +165,7 @@ final class PaintStamps {
     }
 
     /// The array texture, made again after a change.
-    func array(_ device: MTLDevice) -> MTLTexture? {
+    package func array(_ device: MTLDevice) -> MTLTexture? {
         if made == version, let texture { return texture }
         let n = PaintStamps.side
         let d = MTLTextureDescriptor()
@@ -186,7 +187,7 @@ final class PaintStamps {
     }
 
     /// A built-in stamp's pixels (white = paint), within its circle.
-    static func make(_ kind: Int) -> [UInt8] {
+    package static func make(_ kind: Int) -> [UInt8] {
         let n = side
         var out = [UInt8](repeating: 0, count: n * n)
         var rng: UInt64 = 0x1234_5678 &+ UInt64(kind) &* 0x9E37_79B9

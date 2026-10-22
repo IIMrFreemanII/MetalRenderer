@@ -1,10 +1,11 @@
+import EngineCore
 import Foundation
 import simd
 
 /// A mesh as the Material Painter sees it: its own vertices (object space, a character's bind pose), its triangles,
 /// and the UVs it came with. The painter unwraps it (UVUnwrap) when those aren't fit to paint into (UVCheck), and its
 /// texture set is laid out by the unwrap's corner UVs.
-struct PaintMesh {
+package struct PaintMesh {
     var positions: [SIMD3<Float>]
     var normals: [SIMD3<Float>]
     var uvs: [SIMD2<Float>]          // per vertex: the mesh's own (zeros: it has none)

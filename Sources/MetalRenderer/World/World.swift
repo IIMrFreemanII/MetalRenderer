@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -99,11 +100,11 @@ package struct World {
     // MARK: - Cities
 
     package struct City: Equatable {
-        var cell: SIMD2<Int>
+        package var cell: SIMD2<Int>
         package var center: SIMD2<Double>       // a multiple of 16 m, so its streets lie on the ground's cells
         package var radius: Float               // of what is built
         package var level: Float                // its ground's height
-        var seed: UInt64
+        package var seed: UInt64
         /// Its roads to the cities of the cells east, west, south and north of its own: those of them that have one.
         package var highways: [Highway] = []
     }
@@ -207,7 +208,7 @@ package struct World {
     }
 
     enum Ground {
-        static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6, sand = 7
+        package static let litter = 0, moss = 1, meadow = 2, rock = 3, wheat = 4, crop = 5, ploughed = 6, sand = 7
     }
 
     /// The ground's materials (`ground`'s indices). They name the ground's detail texture, or a sown field's rows,
@@ -242,15 +243,15 @@ package struct World {
 
     /// A plant in a tile: where it stands (metres from the tile's corner; y the world's), turned and scaled, and which
     /// plant of the world's library it is. 32 bytes, as the tile's file holds it.
-    struct Placement: Equatable {
-        var x: Float, y: Float, z: Float
-        var yaw: Float
-        var size: Float
-        var species: UInt16
-        var plant: UInt16               // its index in its species' set (Foliage.SpeciesSet.plants)
-        var shade: UInt16               // which of the species' leaf colours
-        var pad: UInt16 = 0
-        var pad1: UInt32 = 0
+    package struct Placement: Equatable {
+        package var x: Float, y: Float, z: Float
+        package var yaw: Float
+        package var size: Float
+        package var species: UInt16
+        package var plant: UInt16               // its index in its species' set (Foliage.SpeciesSet.plants)
+        package var shade: UInt16               // which of the species' leaf colours
+        package var pad: UInt16 = 0
+        package var pad1: UInt32 = 0
     }
 
     /// The library's plants by species and age, as their indices: all the placing needs to know of it.

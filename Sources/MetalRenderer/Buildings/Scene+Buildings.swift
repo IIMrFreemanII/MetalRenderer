@@ -1,29 +1,30 @@
+import EngineCore
 import Foundation
 import QuartzCore
 import simd
 
 /// What the building workshop's building is, for the building editor: its storeys, rooms and doors, its triangles
 /// outside and in, its lights and props, and how long it took to make.
-struct BuildingStats: Equatable {
-    var style = ""
-    var storeys = 0
-    var rooms = 0
-    var doors = 0
-    var shellTriangles = 0
-    var interiorTriangles = 0
-    var lights = 0
-    var props = 0
-    var height: Float = 0
-    var buildMs = 0.0
+package struct BuildingStats: Equatable {
+    package var style = ""
+    package var storeys = 0
+    package var rooms = 0
+    package var doors = 0
+    package var shellTriangles = 0
+    package var interiorTriangles = 0
+    package var lights = 0
+    package var props = 0
+    package var height: Float = 0
+    package var buildMs = 0.0
     /// Hand edits that found nothing to change.
-    var orphaned = 0
+    package var orphaned = 0
 }
 
 extension Scene {
     /// The building workshop: one building on its lot, inside and out, as `settings.buildings` says; or a single
     /// building of a city (pinned), or the building between two neighbours, or beside the editor's variations of it.
     /// The building editor rebuilds it at every edit (its styles from `settings.buildingCatalog`), so it is small.
-    func buildBuildingWorkshop() {
+    package func buildBuildingWorkshop() {
         let start = CACurrentMediaTime()
         remadeOften = true
         let p = settings.buildings
@@ -144,7 +145,7 @@ extension Scene {
     }
 
     /// The city lot `ref` names, if its city still has it: rebuilds the city's plan (cheap) to find it.
-    static func cityLot(_ ref: LotRef) -> (lot: CityPlan.Lot, city: CitySettings)? {
+    package static func cityLot(_ ref: LotRef) -> (lot: CityPlan.Lot, city: CitySettings)? {
         let words = ref.context.split(separator: " ")
         guard words.count == 4, words[0] == "city", let seed = Int(words[1]), let blocks = Int(words[2]),
               let style = CityStyle(name: String(words[3])) else { return nil }
@@ -168,7 +169,7 @@ package struct WalkArea {
     var building: Building
     var at: float4x4
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(rect: CityPlan.Rect, building: Building, at: float4x4) {
         self.rect = rect
         self.building = building

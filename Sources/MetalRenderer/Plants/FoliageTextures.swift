@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -8,19 +9,15 @@ import simd
 /// (linear), and the material's colour is divided by that, so a plant keeps the brightness its colour gives it,
 /// and its far voxels, which take the colour alone, match its triangles.
 package enum FoliageTextures {
-    /// RGBA8 pixels, sRGB-encoded, rows from v = 0.
-    package struct Image {
-        var width: Int
-        var height: Int
-        var pixels: [UInt8]
-    }
+    /// RGBA8 pixels, sRGB-encoded, rows from v = 0 (GeneratedImage, in the core).
+    package typealias Image = GeneratedImage
 
     /// Every detail texture's mean, linear (GENERATED_TEXTURE_MEAN in Shaders/Surface.metal).
-    static let mean: Float = 0.7
+    package static let mean: Float = 0.7
 
-    enum Kind: Int, CaseIterable {
+    package enum Kind: Int, CaseIterable {
         case roughBark, birchBark, leaf, needle, grass
-        var name: String { "\(self)" }
+        package var name: String { "\(self)" }
     }
 
     /// Of what `make` and the scenes' own generated textures draw (the forest's ground): the caches name a texture
@@ -28,7 +25,7 @@ package enum FoliageTextures {
     /// (FoliageTests holds each texture's hash and fails otherwise).
     package static let version = 1
 
-    static func size(_ kind: Kind) -> (width: Int, height: Int) {
+    package static func size(_ kind: Kind) -> (width: Int, height: Int) {
         switch kind {
         case .roughBark, .birchBark: return (256, 256)
         case .leaf: return (128, 128)
@@ -37,7 +34,7 @@ package enum FoliageTextures {
         }
     }
 
-    static func make(_ kind: Kind) -> Image {
+    package static func make(_ kind: Kind) -> Image {
         let (w, h) = size(kind)
         switch kind {
         case .roughBark:
@@ -75,7 +72,7 @@ package enum FoliageTextures {
     }
 
     /// A leaf's detail at u across it (the midrib at 0.5) and v from its base to its tip.
-    static func leafShade(_ u: Float, _ v: Float) -> SIMD3<Float> {
+    package static func leafShade(_ u: Float, _ v: Float) -> SIMD3<Float> {
         let side = abs(u - 0.5) * 2
         let rib = max(0, 1 - side / 0.08)
         let along = (v * 6 - side * 2.2 + 8).truncatingRemainder(dividingBy: 1)
@@ -90,20 +87,20 @@ package enum FoliageTextures {
     /// its own square of the sheet, the twig running up the middle from the bottom edge. `alpha`: one byte per pixel,
     /// 255 where there is leaf or twig; the traversal tests it (Shaders/Intersect.metal), and the colours are an
     /// ordinary texture.
-    struct CardSheet {
+    package struct CardSheet {
         var image: Image
         var alpha: [UInt8]
         var coverage: Float                 // the share of a card that is there
     }
-    static let cardCells = 2
-    static let cardSheetSize = 512          // CUTOUT_SIZE in Shaders/Intersect.metal
+    package static let cardCells = 2
+    package static let cardSheetSize = 512          // CUTOUT_SIZE in Shaders/Intersect.metal
 
     /// A card's width and height (metres) for a twig `twig` long with these leaves: what one square of the sheet shows.
-    static func cardSize(_ leaf: Foliage.LeafRecipe, twig: Float) -> SIMD2<Float> {
+    package static func cardSize(_ leaf: Foliage.LeafRecipe, twig: Float) -> SIMD2<Float> {
         SIMD2(2 * leaf.length * sin(min(leaf.angle, 1.25)) + leaf.width, twig + 0.9 * leaf.length)
     }
 
-    static func cardSheet(_ leaf: Foliage.LeafRecipe, twig: Float, seed: UInt64) -> CardSheet {
+    package static func cardSheet(_ leaf: Foliage.LeafRecipe, twig: Float, seed: UInt64) -> CardSheet {
         struct Leaf { var base: SIMD2<Float>; var along: SIMD2<Float>; var length: Float; var half: Float }
         let size = cardSize(leaf, twig: twig), cell = cardSheetSize / cardCells
         // Each square's leaves, in metres: x across from the twig, y up it. Left and right in turn; some point toward
@@ -179,7 +176,7 @@ package enum FoliageTextures {
     }
 
     /// Every kind as a PNG in `folder` (METALRENDERER_FOLIAGE_TEST with METALRENDERER_FOLIAGE_TEXTURES=<folder>), to look at.
-    static func writePNGs(to folder: URL) throws {
+    package static func writePNGs(to folder: URL) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var images = Kind.allCases.map { ($0.name, make($0)) }
         // The card sheets too, black where a card is cut away.
@@ -237,7 +234,7 @@ package enum FoliageTextures {
 
     /// Value noise, about -0.5...0.5, one lattice cell per unit, repeating every `px` cells along x and `py` along y,
     /// so that a texture of whole periods tiles.
-    static func noise(_ x: Float, _ y: Float, _ px: Int, _ py: Int, _ seed: UInt32) -> Float {
+    package static func noise(_ x: Float, _ y: Float, _ px: Int, _ py: Int, _ seed: UInt32) -> Float {
         let fx = floor(x), fy = floor(y)
         let ix = Int(fx), iy = Int(fy)
         @inline(__always) func wrap(_ i: Int, _ p: Int) -> UInt32 { UInt32(truncatingIfNeeded: ((i % p) + p) % p) }

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -24,7 +25,7 @@ import simd
 /// Its meshes are chunks: a chunk's triangles name their materials by a byte, an index into the chunk's own list
 /// (a city tile has more than 256 materials: it is several chunks). Window glass is in chunks of its own.
 package struct WorldTile {
-    struct Chunk {
+    package struct Chunk {
         var positions: Stored<SIMD3<Float>>
         var normals: Stored<SIMD3<Float>>
         var uvs: Stored<SIMD2<Float>>
@@ -50,30 +51,30 @@ package struct WorldTile {
 
     /// A light of the tile: the triangles of a chunk that have one of its materials, an emissive one, as a mesh
     /// light (Scene.MeshLight). 64 bytes, as the tile's file holds it.
-    struct Light {
-        var chunk: UInt32
-        var material: UInt32            // in the chunk's list
-        var first: UInt32, count: UInt32   // its triangles among `emissive`
-        var center: SIMD4<Float>        // of the triangles' bounding sphere; w = its radius
-        var normal: SIMD4<Float>        // their area-weighted mean normal; w = flatness
-        var power: SIMD4<Float>         // sum of emitted radiance x area
+    package struct Light {
+        package var chunk: UInt32
+        package var material: UInt32            // in the chunk's list
+        package var first: UInt32, count: UInt32   // its triangles among `emissive`
+        package var center: SIMD4<Float>        // of the triangles' bounding sphere; w = its radius
+        package var normal: SIMD4<Float>        // their area-weighted mean normal; w = flatness
+        package var power: SIMD4<Float>         // sum of emitted radiance x area
     }
 
-    let x: Int, z: Int, level: Int
-    var chunks: [Chunk] = []
+    package let x: Int, z: Int, level: Int
+    package var chunks: [Chunk] = []
     /// What each ground cell is where level: World.ground's kind, rows along z.
-    var groundKinds: Stored<UInt8> = .made([])
+    package var groundKinds: Stored<UInt8> = .made([])
     /// The ground's heights (World.height) at the tile's own samples at its level: (256 / cell) squared, rows along z
     /// (what the terrain's base is there: WorldTerrainBase).
-    var groundHeights: Stored<Float> = .made([])
-    var trees: [World.Placement] = []
-    var lights: [Light] = []
+    package var groundHeights: Stored<Float> = .made([])
+    package var trees: [World.Placement] = []
+    package var lights: [Light] = []
     /// The lights' triangles, in their chunks' coordinates: a light's one after the other.
-    var emissive: Stored<GPUEmissiveTriangle> = .made([])
+    package var emissive: Stored<GPUEmissiveTriangle> = .made([])
 
     /// From the world's origin to the tile's corner.
     package static func origin(_ x: Int, _ z: Int) -> SIMD2<Double> { SIMD2(Double(x), Double(z)) * Double(World.tileSize) }
-    var triangles: Int { chunks.reduce(0) { $0 + $1.triangles } }
+    package var triangles: Int { chunks.reduce(0) { $0 + $1.triangles } }
 
     // MARK: - Putting meshes together
 
@@ -142,7 +143,7 @@ package struct WorldTile {
 
     // MARK: - Making a tile
 
-    static func build(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
+    package static func build(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
         var tile = WorldTile(x: x, z: z, level: level)
         let origin = WorldTile.origin(x, z), side = Double(World.tileSize)
         var opaque = Assembler(glass: false), glass = Assembler(glass: true)
@@ -512,16 +513,16 @@ package struct WorldTile {
         var lo: SIMD4<Float>, hi: SIMD4<Float>
     }
     private enum Section {
-        static let chunks = SectionFile.id("chnk"), positions = SectionFile.id("posi"), normals = SectionFile.id("norm")
-        static let uvs = SectionFile.id("uvco"), indices = SectionFile.id("indx"), triangleMaterials = SectionFile.id("tmat")
-        static let materials = SectionFile.id("matl"), trees = SectionFile.id("tree")   // the plants
-        static let groundKinds = SectionFile.id("gknd"), groundHeights = SectionFile.id("ghgt")
+        package static let chunks = SectionFile.id("chnk"), positions = SectionFile.id("posi"), normals = SectionFile.id("norm")
+        package static let uvs = SectionFile.id("uvco"), indices = SectionFile.id("indx"), triangleMaterials = SectionFile.id("tmat")
+        package static let materials = SectionFile.id("matl"), trees = SectionFile.id("tree")   // the plants
+        package static let groundKinds = SectionFile.id("gknd"), groundHeights = SectionFile.id("ghgt")
         /// The tile's lights and their triangles, if it has any.
-        static let lights = SectionFile.id("lite"), emissive = SectionFile.id("emtr")
+        package static let lights = SectionFile.id("lite"), emissive = SectionFile.id("emtr")
     }
 
     /// The tile's file: one folder to a world and its settings, one below it to a level.
-    static func url(_ world: World, x: Int, z: Int, level: Int) -> URL {
+    package static func url(_ world: World, x: Int, z: Int, level: Int) -> URL {
         GeneratedCache.folder.appendingPathComponent("world-\(world.seed)-v\(World.version)").appendingPathComponent("\(level)")
             .appendingPathComponent("\(x)_\(z).tile")
     }
@@ -533,7 +534,7 @@ package struct WorldTile {
     }
 
     /// What the file was made for: the world's settings and the plants' library too.
-    static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
+    package static func key(_ world: World, x: Int, z: Int, level: Int) -> String {
         var key = "\(place(world, x: x, z: z)) level \(level)\(hasCity(world, x: x, z: z) ? ", lit \(world.lit)" : "")"
         if hasCity(world, x: x, z: z) && !world.buildings.isEmpty { key += " buildings \(world.buildings)" }
         // The tile with the building whose interior the scene has: made without it.
@@ -545,12 +546,12 @@ package struct WorldTile {
     }
 
     /// The same without the level: what a tile's trees are made for (every level has the same ones).
-    static func place(_ world: World, x: Int, z: Int) -> String {
+    package static func place(_ world: World, x: Int, z: Int) -> String {
         "tile v\(World.version) plants v\(Foliage.version) seed \(world.seed) trees \(world.treeDensity) under \(world.undergrowth) "
             + "cities \(world.cityShare) at \(x) \(z)" + (world.plants.isEmpty ? "" : " habitat \(world.plants)")
     }
 
-    func write(to url: URL, key: String) throws {
+    package func write(to url: URL, key: String) throws {
         var records: [ChunkRecord] = [], materials: [GPUMaterial] = [], vertices = 0, indices = 0
         for chunk in chunks {
             records.append(ChunkRecord(firstVertex: UInt32(vertices), vertexCount: UInt32(chunk.positions.count),
@@ -628,11 +629,11 @@ package struct WorldTile {
 
     /// A tile's level for a viewer `rings` tiles away (the larger of the two distances along the axes): the viewer's
     /// tile and its neighbours whole, coarser from 380 m and from a kilometre on; nil beyond `reach` tiles.
-    static func level(rings: Int, reach: Int = 8) -> Int? { rings <= 1 ? 0 : rings <= 4 ? 1 : rings <= reach ? 2 : nil }
+    package static func level(rings: Int, reach: Int = 8) -> Int? { rings <= 1 ? 0 : rings <= 4 ? 1 : rings <= reach ? 2 : nil }
 
     /// `METALRENDERER_WORLD_TEST=<seed>`: makes every tile a viewer at the middle of the origin's city has around
     /// them, at its level, and says what they hold and how long they took.
-    static func runTest(seed: UInt64) {
+    package static func runTest(seed: UInt64) {
         let world = World(seed: seed)
         let start = CFAbsoluteTimeGetCurrent()
         let flora = World.Flora(Foliage.library(seed: seed))
@@ -707,7 +708,7 @@ package struct WorldTile {
 
     /// The tile: from its file, or made now and written there, then taken from the file all the same (its arrays are
     /// then the file's pages). Without the cache: made, and kept as made.
-    static func make(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
+    package static func make(_ world: World, x: Int, z: Int, level: Int, flora: World.Flora) -> WorldTile {
         let url = url(world, x: x, z: z, level: level), key = key(world, x: x, z: z, level: level)
         if GeneratedCache.enabled, let stored = WorldTile(url: url, key: key, x: x, z: z, level: level) {
             GeneratedCache.used(url)

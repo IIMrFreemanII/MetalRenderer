@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -8,18 +9,18 @@ extension Interior {
     /// what is drawn, glowing `glow`; `color` spreads their power over the whole rect. One light a room, not one a
     /// panel: the many-light loops cost per light and pixel (a house by day had 66 panels, an office tower 423).
     struct Light {
-        var position: SIMD3<Float>
-        var size: SIMD2<Float>
-        var color: SIMD3<Float>
-        var storey: Int
-        var room: Int
-        var on: Bool
-        var switchID: Int
-        var day = false
-        var panels: [SIMD4<Float>] = []
-        var glow: SIMD3<Float>? = nil
+        package var position: SIMD3<Float>
+        package var size: SIMD2<Float>
+        package var color: SIMD3<Float>
+        package var storey: Int
+        package var room: Int
+        package var on: Bool
+        package var switchID: Int
+        package var day = false
+        package var panels: [SIMD4<Float>] = []
+        package var glow: SIMD3<Float>? = nil
         /// How far it lights below it and beyond its edges (Scene.Light.reach): its storey.
-        var reach: Float = 0
+        package var reach: Float = 0
     }
     /// A light switch by a room's door: where its plate is (the lot's frame) and which way it faces.
     struct Switch {

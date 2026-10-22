@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// A stack of layers kept to be dropped on any object (the Material Painter's smart materials): their masks generated
@@ -5,11 +6,11 @@ import Foundation
 /// and any saved as `Assets/Painter/Smart/<name>.smart.json`.
 package struct SmartMaterial: Codable, Equatable, Identifiable {
     package var name: String
-    var layers: [PaintLayer]
+    package var layers: [PaintLayer]
     package var id: String { name }
 
-    static let suffix = ".smart.json"
-    static var folder: URL? { PainterStore.folder?.appendingPathComponent("Smart") }
+    package static let suffix = ".smart.json"
+    package static var folder: URL? { PainterStore.folder?.appendingPathComponent("Smart") }
 
     /// Its layers with new ids (a second drop is layers of its own), named after it.
     package func instantiate() -> [PaintLayer] {
@@ -21,7 +22,7 @@ package struct SmartMaterial: Codable, Equatable, Identifiable {
         }
     }
 
-    static func fill(_ name: String, _ v: PaintValues, _ channels: Set<PaintChannel>, mask: PaintGenerator? = nil, base: Float = 1) -> PaintLayer {
+    package static func fill(_ name: String, _ v: PaintValues, _ channels: Set<PaintChannel>, mask: PaintGenerator? = nil, base: Float = 1) -> PaintLayer {
         var l = PaintLayer.fill(name, v, channels: channels)
         if let mask { l.mask = PaintMask(base: base, generator: mask) }
         return l
@@ -66,7 +67,7 @@ package struct SmartMaterial: Codable, Equatable, Identifiable {
     ]
 
     /// The built-in ones, then the saved ones (a saved one of a built-in's name replaces it).
-    static func all() -> [SmartMaterial] {
+    package static func all() -> [SmartMaterial] {
         var out = builtIn
         guard let folder, let files = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil) else { return out }
         for f in files where f.lastPathComponent.hasSuffix(suffix) {
@@ -78,11 +79,17 @@ package struct SmartMaterial: Codable, Equatable, Identifiable {
     }
 
     /// Saved under its name.
-    func save() throws {
+    package func save() throws {
         guard let folder = SmartMaterial.folder else { throw MatError("no painter folder") }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(self).write(to: folder.appendingPathComponent(PaintDocument.slug(name) + SmartMaterial.suffix), options: .atomic)
+    }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(name: String, layers: [PaintLayer]) {
+        self.name = name
+        self.layers = layers
     }
 }

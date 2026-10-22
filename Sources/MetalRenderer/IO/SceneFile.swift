@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -38,7 +39,7 @@ package struct SceneFile {
         }
 
         /// Its transform in its parent's space.
-        package var transform: float4x4 { translate(position) * float4x4(rotation) * MetalRenderer.scale(scale) }
+        package var transform: float4x4 { translate(position) * float4x4(rotation) * EngineCore.scale(scale) }
     }
 
     /// A light placed in the scene.
@@ -236,7 +237,7 @@ package struct SceneFile {
 
 extension SceneFile.Object {
     /// The object's world transform, its parents' applied (`objects`: the file's list it is in).
-    func world(in objects: [SceneFile.Object]) -> float4x4 {
+    package func world(in objects: [SceneFile.Object]) -> float4x4 {
         var t = transform, p = parent, guardSteps = objects.count
         while objects.indices.contains(p), guardSteps > 0 {
             t = objects[p].transform * t

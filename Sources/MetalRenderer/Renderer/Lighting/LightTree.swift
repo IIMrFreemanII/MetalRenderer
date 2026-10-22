@@ -1,3 +1,4 @@
+import EngineCore
 import simd
 
 /// One node of the light tree (MSL LightTreeNode): its lights' bounds, power and emission cone.
@@ -13,7 +14,7 @@ struct GPULightTreeNode {
 /// importance at the pixel (Conty Estevez & Kulla 2018, as in PBRT-v4's BVHLightSampler; a leaf weighs its light's
 /// exact unshadowed light), and the probability of any light can be computed back along its path. Built once per
 /// scene by median splits (so no path is deeper than 32), refit each frame for the lights that move or change.
-struct LightTree {
+package struct LightTree {
     static let leaf: UInt32 = 1 << 31
     static let notInTree = UInt32.max
 

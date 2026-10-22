@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 import MetalFX
 
@@ -5,7 +6,7 @@ import MetalFX
 /// every frame, and MetalFX takes the raw 1-spp light, still linear and unbounded, with the surface's albedo, normal
 /// and roughness to guide it, and returns it denoised at the output resolution. It stands in for SVGF, the shadow
 /// denoiser and an upscaler; `tonemapKernel` then writes the drawable.
-final class Upscaler {
+package final class Upscaler {
     let inputWidth: Int
     let inputHeight: Int
     let outputWidth: Int
@@ -129,8 +130,8 @@ final class Upscaler {
 
     /// The camera a frame was traced with, for the denoising scaler.
     struct View {
-        var worldToView = matrix_identity_float4x4
-        var viewToClip = matrix_identity_float4x4
+        package var worldToView = matrix_identity_float4x4
+        package var viewToClip = matrix_identity_float4x4
     }
 
     /// Sub-pixel jitter in [-0.5, 0.5) pixels from the Halton(2, 3) sequence, added to each primary ray's pixel position.

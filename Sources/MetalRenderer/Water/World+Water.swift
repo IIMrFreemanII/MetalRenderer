@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -32,11 +33,11 @@ final class WorldWater {
     /// A river's step from one lattice cell to the next downstream: its ends, its bed's height at each, half its
     /// width and its depth, and the springs that feed it.
     struct Edge {
-        var a: SIMD2<Double>, b: SIMD2<Double>
-        var bedA: Float, bedB: Float
-        var half: Float, depth: Float
-        var flow: Int
-        var level: (Float, Float) { (bedA + depth * 0.8, bedB + depth * 0.8) }
+        package var a: SIMD2<Double>, b: SIMD2<Double>
+        package var bedA: Float, bedB: Float
+        package var half: Float, depth: Float
+        package var flow: Int
+        package var level: (Float, Float) { (bedA + depth * 0.8, bedB + depth * 0.8) }
     }
     /// A river's end in a hollow: a round pond, its water's height, its radius and depth.
     struct Pond {

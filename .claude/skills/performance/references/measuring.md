@@ -4,7 +4,7 @@ Everything runs from the repo root with a release build. The binary loads the sh
 pieces in `Shaders/`) from the source folder it was built from (`#filePath`, `Renderer.shaderURL`).
 
 ```bash
-swift build -c release
+Tools/release.sh
 METALRENDERER_BENCH=<mode> .build/release/MetalRenderer
 ```
 Release compiles the module whole (about 4 min after any Swift edit). While iterating on a change, build and check it

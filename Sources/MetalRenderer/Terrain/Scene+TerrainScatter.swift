@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -31,7 +32,7 @@ final class SceneScatter {
 extension Scene {
     /// After the builder: the terrain's scatter rules' things on the ground it shows (a finite terrain whole, the open
     /// world's tiles next to the camera), and anchors for what the builder stood on it.
-    func finishTerrainScatter() {
+    package func finishTerrainScatter() {
         guard let t = terrain, let doc = TerrainDocuments.shared.document(t.name) else { return }
         let sc = SceneScatter()
         sc.rules = doc.scatter
@@ -121,7 +122,7 @@ extension Scene {
     /// After the terrain changed in the world's square `lo`...`hi` (x, z): its scatter rules' things there placed
     /// again (shown, hidden or moved), what stands on it moved up or down with it. The instances that moved.
     @discardableResult
-    func rescatter(lo: SIMD2<Double>, hi: SIMD2<Double>) -> Int {
+    package func rescatter(lo: SIMD2<Double>, hi: SIMD2<Double>) -> Int {
         guard let t = terrain, let sc = t.scatter else { return 0 }
         let s = t.field.snapshot()
         var moves: [(Int, float4x4)] = []

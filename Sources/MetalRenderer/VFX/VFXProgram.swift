@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -19,19 +20,19 @@ package final class VFXProgram {
         static let rate = Hooks(rawValue: 8)     // VFX_RATE: its rate over time (a curve)
     }
     /// Which program it is in its system (its functions' suffix: vfxSpawn3).
-    let number: Int
-    let hooks: Hooks
-    let metal: String
-    var params: [SIMD4<Float>]
+    package let number: Int
+    package let hooks: Hooks
+    package let metal: String
+    package var params: [SIMD4<Float>]
     /// Where each value is: "<node or block id>.<pin>", its first float4.
-    let slots: [String: Int]
+    package let slots: [String: Int]
     /// The rate curve's first float4 (VFX_RATE).
-    let rate: Int?
+    package let rate: Int?
     /// The attributes it keeps (Set Attribute, Get Attribute): the highest's number + 1.
-    let attributes: Int
-    let initPlan: VFXInitPlan
-    let stepPlan: VFXStepPlan
-    let outputPlan: VFXOutputPlan
+    package let attributes: Int
+    package let initPlan: VFXInitPlan
+    package let stepPlan: VFXStepPlan
+    package let outputPlan: VFXOutputPlan
 
     package init(number: Int, hooks: Hooks, metal: String, params: [SIMD4<Float>], slots: [String: Int], rate: Int?, attributes: Int,
          initPlan: VFXInitPlan, stepPlan: VFXStepPlan, outputPlan: VFXOutputPlan) {
@@ -524,7 +525,7 @@ final class VFXProgramBuilder {
 
 extension VFXProgram {
     /// MSL vfxCurve: the curve whose keys start at params[k].
-    static func curve(_ p: [SIMD4<Float>], _ k: Int, _ t: Float) -> Float {
+    package static func curve(_ p: [SIMD4<Float>], _ k: Int, _ t: Float) -> Float {
         let n = Int(p[k].x)
         guard n > 0 else { return 0 }
         let first = p[k + 1], last = p[k + n]
@@ -543,7 +544,7 @@ extension VFXProgram {
     }
 
     /// MSL vfxGradient.
-    static func gradient(_ p: [SIMD4<Float>], _ k: Int, _ t: Float) -> SIMD4<Float> {
+    package static func gradient(_ p: [SIMD4<Float>], _ k: Int, _ t: Float) -> SIMD4<Float> {
         let n = Int(p[k].x)
         guard n > 0 else { return .zero }
         if t <= p[k + 1].x { return p[k + 2] }
@@ -562,7 +563,7 @@ extension VFXProgram {
 
     /// The integral of a rate curve over its emitter's first `steps` steps from its start (MSL vfxRateIntegral): its
     /// keys over `span` steps (params[k].z), its last key's value past them; a negative value counts as none.
-    static func rateIntegral(_ p: [SIMD4<Float>], _ k: Int, _ steps: Float) -> Float {
+    package static func rateIntegral(_ p: [SIMD4<Float>], _ k: Int, _ steps: Float) -> Float {
         let n = Int(p[k].x), span = max(p[k].z, 1e-6), smooth = p[k].y > 0
         guard n > 0 else { return steps }
         let tau = min(steps / span, 1)

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,61 +10,75 @@ import simd
 /// Saved as Assets/Scenes/Overrides/<scene>.json, one file per kind of scene. The hidden and duplicated things change
 /// the scene: a registry key of them is `SceneSettings.sceneOverrides` ("" the saved ones), and a scene applies its own
 /// when it is made (Scene.applySceneOverrides). The rest never makes the scene again.
-struct SceneOverrides: Codable, Equatable {
-    struct Ref: Codable, Equatable, Hashable {
-        var id: String
-        var fingerprint: String
+package struct SceneOverrides: Codable, Equatable {
+    package struct Ref: Codable, Equatable, Hashable {
+        package var id: String
+        package var fingerprint: String
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(id: String, fingerprint: String) {
+            self.id = id
+            self.fingerprint = fingerprint
+        }
     }
 
     /// A copy of `source` moved by `offset` (in the world: the copy is `offset` times where the source is).
-    struct Duplicate: Codable, Equatable {
-        var id: String
-        var name: String
-        var source: Ref
-        var offset: [Float]
+    package struct Duplicate: Codable, Equatable {
+        package var id: String
+        package var name: String
+        package var source: Ref
+        package var offset: [Float]
 
-        var matrix: float4x4 {
+        package var matrix: float4x4 {
             guard offset.count == 16 else { return matrix_identity_float4x4 }
             return float4x4(SIMD4(offset[0], offset[1], offset[2], offset[3]), SIMD4(offset[4], offset[5], offset[6], offset[7]),
                             SIMD4(offset[8], offset[9], offset[10], offset[11]), SIMD4(offset[12], offset[13], offset[14], offset[15]))
         }
 
-        static func flat(_ m: float4x4) -> [Float] {
+        package static func flat(_ m: float4x4) -> [Float] {
             [m.columns.0, m.columns.1, m.columns.2, m.columns.3].flatMap { [$0.x, $0.y, $0.z, $0.w] }
+        }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(id: String, name: String, source: Ref, offset: [Float]) {
+            self.id = id
+            self.name = name
+            self.source = source
+            self.offset = offset
         }
     }
 
     /// One scene's.
-    struct Scope: Codable, Equatable {
-        var renames: [String: String] = [:]
+    package struct Scope: Codable, Equatable {
+        package var renames: [String: String] = [:]
         /// A node's folder in the graph (a path, "Props/Crates"), instead of where the scene has it.
-        var folders: [String: String] = [:]
-        var hidden: [Ref] = []
-        var duplicates: [Duplicate] = []
+        package var folders: [String: String] = [:]
+        package var hidden: [Ref] = []
+        package var duplicates: [Duplicate] = []
         /// The force layout's pinned nodes: x, y.
-        var pins: [String: [Float]] = [:]
+        package var pins: [String: [Float]] = [:]
 
-        var isEmpty: Bool { renames.isEmpty && folders.isEmpty && hidden.isEmpty && duplicates.isEmpty && pins.isEmpty }
+        package var isEmpty: Bool { renames.isEmpty && folders.isEmpty && hidden.isEmpty && duplicates.isEmpty && pins.isEmpty }
         /// What changes the scene.
-        var structural: Scope { Scope(hidden: hidden, duplicates: duplicates) }
+        package var structural: Scope { Scope(hidden: hidden, duplicates: duplicates) }
     }
 
-    var scopes: [String: Scope] = [:]
+    package var scopes: [String: Scope] = [:]
 
-    subscript(scope: String) -> Scope {
+    package subscript(scope: String) -> Scope {
         get { scopes[scope] ?? Scope() }
         set { scopes[scope] = newValue.isEmpty ? nil : newValue }
     }
 
     /// Only what changes scenes (the settings' key).
-    var structural: SceneOverrides {
+    package var structural: SceneOverrides {
         SceneOverrides(scopes: scopes.compactMapValues { $0.structural.isEmpty ? nil : $0.structural })
     }
 
     // MARK: - Files
 
     /// Assets/Scenes (outlines and overrides); `METALRENDERER_SCENES`: another folder, or "none" for no files.
-    static var folder: URL? {
+    package static var folder: URL? {
         switch ProcessInfo.processInfo.environment["METALRENDERER_SCENES"] {
         case "none": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
@@ -72,16 +87,16 @@ struct SceneOverrides: Codable, Equatable {
     }
 
     /// The file a scope's edits are in: its kind's.
-    static func fileName(scope: String) -> String {
+    package static func fileName(scope: String) -> String {
         String(scope.split(separator: ",").first ?? Substring(scope)) + ".json"
     }
 
     private struct File: Codable {
-        var format = 1
-        var scopes: [String: Scope]
+        package var format = 1
+        package var scopes: [String: Scope]
     }
 
-    static func load(from folder: URL?) -> SceneOverrides {
+    package static func load(from folder: URL?) -> SceneOverrides {
         guard let dir = folder?.appendingPathComponent("Overrides"),
               let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else { return SceneOverrides() }
         var out = SceneOverrides()
@@ -97,7 +112,7 @@ struct SceneOverrides: Codable, Equatable {
     }
 
     /// Writes the files of the scopes' kinds that differ from `saved` (a kind left without edits: its file goes).
-    func save(to folder: URL, comparedTo saved: SceneOverrides?) throws {
+    package func save(to folder: URL, comparedTo saved: SceneOverrides?) throws {
         let dir = folder.appendingPathComponent("Overrides")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let files = Set((scopes.keys.map(SceneOverrides.fileName) + (saved?.scopes.keys.map(SceneOverrides.fileName) ?? [])))
@@ -115,14 +130,14 @@ struct SceneOverrides: Codable, Equatable {
         }
     }
 
-    static let launch = SceneOverrides.load(from: folder)
+    package static let launch = SceneOverrides.load(from: folder)
 
     // MARK: - Registry
 
     private static let registry = CatalogRegistry<SceneOverrides>()
 
     /// `a`'s scene edits under a key for the settings (`a` holding only those: `structural`).
-    static func register(_ a: SceneOverrides) -> String {
+    package static func register(_ a: SceneOverrides) -> String {
         let s = a.structural
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
@@ -133,7 +148,7 @@ struct SceneOverrides: Codable, Equatable {
         return key
     }
 
-    static func resolve(_ key: String) -> SceneOverrides {
+    package static func resolve(_ key: String) -> SceneOverrides {
         key.isEmpty ? launch : registry.registered(key) ?? launch
     }
 }
@@ -141,7 +156,7 @@ struct SceneOverrides: Codable, Equatable {
 extension Scene {
     /// What the Project Graph's edits made of the scene: the duplicates' instances and lights (by their ids), and what
     /// was hidden (the outline still lists it, as hidden, where it was).
-    struct AppliedOverrides {
+    package struct AppliedOverrides {
         var duplicates: [(edit: SceneOverrides.Duplicate, instances: [Int], lights: [Int])] = []
         var hidden: Set<String> = []
         /// Hidden instances' transforms as they were made (they are shrunk away): the outline's bounds.
@@ -155,7 +170,7 @@ extension Scene {
     /// instance stays (other things name instances by their place) but is shrunk to nothing at its centre with no mask; a
     /// hidden light is taken out. A duplicate is a copy added after everything else, moved by its offset (an animated
     /// one moves as its source does, so far off).
-    func applySceneOverrides() {
+    package func applySceneOverrides() {
         guard worldPlace == nil else { return }
         let scope = SceneOverrides.resolve(settings.sceneOverrides)[MaterialAssignments.scope(settings)]
         guard !scope.hidden.isEmpty || !scope.duplicates.isEmpty else { return }

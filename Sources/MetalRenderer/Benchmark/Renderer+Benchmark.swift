@@ -1,4 +1,5 @@
 import AppKit
+import EngineCore
 import MetalKit
 import QuartzCore
 import simd
@@ -7,7 +8,7 @@ extension Renderer {
     // MARK: - Benchmark
 
     /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
-    func benchmarkActs(_ benchmark: Benchmark) {
+    package func benchmarkActs(_ benchmark: Benchmark) {
         let c = benchmark.current
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
             if case .paint(let steps) = e.event {
@@ -45,7 +46,7 @@ extension Renderer {
         }
     }
 
-    func applyBenchmarkConfig(_ c: Benchmark.Config) {
+    package func applyBenchmarkConfig(_ c: Benchmark.Config) {
         benchmarkFired = []
         benchmarkBody = nil
         settings = c.resolvedSettings()
@@ -71,7 +72,7 @@ extension Renderer {
         print("benchmark: \(c.name)")
     }
 
-    func advanceBenchmark(_ benchmark: Benchmark) {
+    package func advanceBenchmark(_ benchmark: Benchmark) {
         if benchmark.hold(settled: streamingSettled) { return }
         guard benchmark.advance() else { return }
         guard benchmark.isFinished else {
@@ -93,7 +94,7 @@ extension Renderer {
 
     /// How long after a scene is installed its texture levels and virtual geometry pages may show as loading at most
     /// (a texture budget too small for what the view wants never settles).
-    static let settlingStreamsSeconds = 20.0
+    package static let settlingStreamsSeconds = 20.0
 
     /// What is still coming in now that the scene is installed, for the loading overlay (`loadActivity`), ten times a
     /// second: texture levels and virtual geometry pages while a new scene settles; the sky image, the
@@ -101,7 +102,7 @@ extension Renderer {
     /// The CPU's breaks not yet had (Scene.physicsBreaks) into `cpuBreakRing`'s slots for particle steps `first` on,
     /// each in its step's, as the GPU's steps write theirs (physicsFractureEventsKernel); those of steps before `first`
     /// (the stepper's, a frame behind) in its: the dust at most a frame late. Those of later steps wait.
-    func writeCPUBreaks(first: Int, count: Int) {
+    package func writeCPUBreaks(first: Int, count: Int) {
         guard let ring = cpuBreakRing, let (log, steps, total) = scene.physicsBreaks else { return }
         if total < cpuBreaksTaken { cpuBreaksTaken = 0 }   // (the world started again)
         let stride = MemoryLayout<GPUBreakEvent>.stride, headers = PhysicsWorld.ringSlots * 16
@@ -124,7 +125,7 @@ extension Renderer {
         cpuBreaksTaken = total - (log.count - k)
     }
 
-    func publishStreams() {
+    package func publishStreams() {
         let now = CACurrentMediaTime()
         guard now - streamsPublished >= 0.1 else { return }
         streamsPublished = now
@@ -161,7 +162,7 @@ extension Renderer {
         loadActivity.setStreams(streams)
     }
 
-    func colorAccumTexture(width: Int, height: Int) -> MTLTexture? {
+    package func colorAccumTexture(width: Int, height: Int) -> MTLTexture? {
         if let t = colorAccum, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -174,7 +175,7 @@ extension Renderer {
     /// Reference "Path traced": for each of the scene's own instances, the light it is the visible shape of (its
     /// index in the lights), ~1 for the other camera-only shapes (maskLights: the motes), ~0 for geometry. A bounce
     /// ray that meets a light's shape asks this which light it met, and passes through the motes.
-    func makeLightProxies() {
+    package func makeLightProxies() {
         var map = scene.instances.map { $0.mask & Scene.maskLights != 0 ? UInt32.max - 1 : UInt32.max }
         if map.isEmpty { map = [.max] }
         for (i, light) in scene.lights.enumerated() where map.indices.contains(light.proxyInstance) {
@@ -186,7 +187,7 @@ extension Renderer {
     }
 
     /// The reference picture starts over: no frame or path of it is kept.
-    func resetReference() {
+    package func resetReference() {
         accumCount = 0
         colorAccumCount = 0
         pathTraceCount = 0
@@ -195,7 +196,7 @@ extension Renderer {
 
     /// Reference pictures in the app (not a benchmark's, which its config keeps still) start over when the view
     /// changes (the camera, the field of view, the size) or the scene moves (its clock runs).
-    func checkReferenceView(width: Int, height: Int) {
+    package func checkReferenceView(width: Int, height: Int) {
         guard referenceMode != .off && !benchmarkAccumulating else {
             referenceView = []
             return
@@ -206,7 +207,7 @@ extension Renderer {
     }
 
     /// Reference "Path traced": the paths' running mean.
-    func pathTraceTexture(width: Int, height: Int) -> MTLTexture? {
+    package func pathTraceTexture(width: Int, height: Int) -> MTLTexture? {
         if let t = pathTraceAccum, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -216,7 +217,7 @@ extension Renderer {
         return pathTraceAccum
     }
 
-    func particleLayerTarget(width: Int, height: Int) -> (color: MTLTexture, depth: MTLTexture)? {
+    package func particleLayerTarget(width: Int, height: Int) -> (color: MTLTexture, depth: MTLTexture)? {
         if let t = particleLayerTexture, t.color.width == width, t.color.height == height { return t }
         func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
@@ -231,7 +232,7 @@ extension Renderer {
         return particleLayerTexture
     }
 
-    func particleHazeTarget(width: Int, height: Int) -> MTLTexture? {
+    package func particleHazeTarget(width: Int, height: Int) -> MTLTexture? {
         if let t = particleHazeTexture, t.width == width, t.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -241,7 +242,7 @@ extension Renderer {
         return particleHazeTexture
     }
 
-    func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
+    package func liquidTargets(width: Int, height: Int) -> LiquidTargets? {
         if let t = liquidTextures, t.ray.width == width, t.ray.height == height { return t }
         func make(_ format: MTLPixelFormat, _ label: String) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
@@ -260,7 +261,7 @@ extension Renderer {
         return liquidTextures
     }
 
-    func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {
+    package func accumulationTextures(width: Int, height: Int) -> (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)? {
         if let t = accumTextures, t.direct.width == width, t.direct.height == height { return t }
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite]
@@ -272,18 +273,18 @@ extension Renderer {
         return accumTextures
     }
 
-    func setTextures(_ enc: ComputePass, _ textures: [MTLTexture]) {
+    package func setTextures(_ enc: ComputePass, _ textures: [MTLTexture]) {
         for (i, texture) in textures.enumerated() { enc.setTexture(texture, index: i) }
     }
 
     /// sRGB, so shaders and MetalFX write linear color and the GPU encodes it.
-    static let drawableFormat = MTLPixelFormat.bgra8Unorm_srgb
-    static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALRENDERER_SHADOWS"] != "0"
+    package static let drawableFormat = MTLPixelFormat.bgra8Unorm_srgb
+    package static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALRENDERER_SHADOWS"] != "0"
     /// References trace every light up to this many; above, they accumulate ReSTIR's unbiased initial sampling (no reuse).
-    static let exactReferenceLights = 1024
+    package static let exactReferenceLights = 1024
 
     /// This frame's direct-light method: Auto resolved (ReSTIR with many lights), references exact or sampled.
-    var activeDirectMode: DirectLightMode {
+    package var activeDirectMode: DirectLightMode {
         if accumulating {
             if let forced = referenceDirectMode { return forced }   // METALRENDERER_BENCH=restircheck
             return scene.lights.count > Renderer.exactReferenceLights ? .restir : .exact
@@ -295,14 +296,14 @@ extension Renderer {
     }
 
     /// The light grid's buffer for `count` reservoirs (reallocated only when the count changes: a settings change).
-    func regirGrid(count: Int) -> MTLBuffer? {
+    package func regirGrid(count: Int) -> MTLBuffer? {
         let length = max(count, 1) * MemoryLayout<GPURegirReservoir>.stride
         if let b = regirBuffer, b.length == length { return b }
         regirBuffer = device.makeBuffer(length: length, options: .storageModePrivate)
         regirBuffer?.label = "regirGrid"
         return regirBuffer
     }
-    func restirTargets(width: Int, height: Int, chains: Int) -> RestirTargets? {
+    package func restirTargets(width: Int, height: Int, chains: Int) -> RestirTargets? {
         if let r = restirGrid, r.width == width, r.height == height, r.chains == chains { return r }
         restirGrid = try? RestirTargets(device: device, width: width, height: height, chains: chains)
         restirWritten = false
@@ -310,7 +311,7 @@ extension Renderer {
     }
     /// The light tree in this frame's slot: built from this frame's light records on the path tracer's first frame with it,
     /// refit once a frame for the lights that change, and copied into the slot's buffer when that one is behind.
-    func lightTreeBuffer(slot: Int) -> (buffer: MTLBuffer, nodes: Int)? {
+    package func lightTreeBuffer(slot: Int) -> (buffer: MTLBuffer, nodes: Int)? {
         if lightTree == nil {
             lightTree = LightTree(lights: lightStage)
         } else if lightTreeRefitFrame != frameIndex {
@@ -333,18 +334,18 @@ extension Renderer {
         }
         return (buffer, tree.nodes.count)
     }
-    static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
+    package static let overlapEnabled = ProcessInfo.processInfo.environment["METALRENDERER_OVERLAP"] != "0"
     /// Reference "Path traced": METALRENDERER_PT_SOBOL=0 draws white noise instead of Owen-scrambled Sobol (A/B).
-    static let pathTraceSobol = ProcessInfo.processInfo.environment["METALRENDERER_PT_SOBOL"] != "0"
+    package static let pathTraceSobol = ProcessInfo.processInfo.environment["METALRENDERER_PT_SOBOL"] != "0"
     /// Reference "Path traced": up to this many lights (PT_LIGHT_HITS in PathTrace.metal), each is weighed at every
     /// point and bounce rays test them one by one; above, the light tree draws them and rays meet their proxies.
-    static let pathTraceLightHits = 32
+    package static let pathTraceLightHits = 32
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
-    static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
+    package static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
     /// The Metal TLAS is refit most frames (see encodeSceneUpdate), so it is built for a fast build. A quality build
     /// (`METALRENDERER_TLAS_BUILD=default`) traces no faster on an M4 Max, and one for fast intersection (`fast`,
     /// macOS 26) 5% slower with 2000 moving objects.
-    static let tlasUsage: MTLAccelerationStructureUsage = {
+    package static let tlasUsage: MTLAccelerationStructureUsage = {
         switch ProcessInfo.processInfo.environment["METALRENDERER_TLAS_BUILD"] {
         case "default": return [.refit]
         case "fast": if #available(macOS 26.0, *) { return [.preferFastIntersection, .refit] } else { return [.refit] }
@@ -354,8 +355,8 @@ extension Renderer {
     /// Metal's per-mesh structures: built for fast intersection (macOS 26) and compacted. `METALRENDERER_BLAS=default`
     /// builds them as before, `fast` or `compact` turns on one of the two, for A/B timing.
     private static let blasMode = ProcessInfo.processInfo.environment["METALRENDERER_BLAS"] ?? "fast+compact"
-    static let fastIntersectionBLAS = blasMode.contains("fast")
-    static let compactBLAS = blasMode.contains("compact")
+    package static let fastIntersectionBLAS = blasMode.contains("fast")
+    package static let compactBLAS = blasMode.contains("compact")
 
     /// Threadgroup size per kernel (8x8 unless set here), indexed by `Kernel`. `METALRENDERER_TG="trace=16x8,atrous=32x4"`
     /// overrides it for sweeps: a kernel goes by its `Kernel` case, capitals and spaces aside ("restir gi initial").
@@ -383,12 +384,12 @@ extension Renderer {
     /// Whether a frame resolves jittered frames with the temporal AA: set, without upscaling (MetalFX's scaler does it
     /// then), not in a reference picture (`accumulating`: those average their own jittered frames), and only in the
     /// views that show the light.
-    static func usesTAA(_ settings: RenderSettings, upscaling: Bool, accumulating: Bool) -> Bool {
+    package static func usesTAA(_ settings: RenderSettings, upscaling: Bool, accumulating: Bool) -> Bool {
         settings.taa && !upscaling && !accumulating && RenderSettings.showsLight(settings.viewMode)
     }
 
     /// The light grid's per-frame origin jitter, in cells ([0, 1)^3), from a hash of the frame index.
-    static func regirJitter(frame: UInt32) -> SIMD3<Float> {
+    package static func regirJitter(frame: UInt32) -> SIMD3<Float> {
         func hash(_ v: UInt32) -> UInt32 {
             let s = v &* 747796405 &+ 2891336453
             let w = ((s >> ((s >> 28) &+ 4)) ^ s) &* 277803737
@@ -398,12 +399,12 @@ extension Renderer {
         return SIMD3(Float(h0 >> 8), Float(h1 >> 8), Float(h2 >> 8)) * (1.0 / 16777216.0)
     }
 
-    func dispatch(_ enc: ComputePass, _ kernel: Kernel, width: Int, height: Int) {
+    package func dispatch(_ enc: ComputePass, _ kernel: Kernel, width: Int, height: Int) {
         enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
                             threadsPerThreadgroup: Renderer.threadgroupSizes[kernel.rawValue])
     }
 
-    func updateTitle(width: Int, height: Int, outWidth: Int, outHeight: Int) {
+    package func updateTitle(width: Int, height: Int, outWidth: Int, outHeight: Int) {
         fpsFrames += 1
         let now = CACurrentMediaTime()
         guard now - fpsTime >= 0.5 else { return }
@@ -475,7 +476,7 @@ extension Renderer {
     }
 
     /// One frame's pass timings, summed until the stats line shows their average.
-    func addPassTimes(_ times: [(name: String, ms: Double)], frameMs: Double) {
+    package func addPassTimes(_ times: [(name: String, ms: Double)], frameMs: Double) {
         guard profilePasses else { return }
         for t in times {
             if passTimeSums[t.name] == nil { passTimeOrder.append(t.name) }
@@ -488,7 +489,7 @@ extension Renderer {
     /// Recompiles the shaders and remakes every pipeline (R key, traversal counters), in the background: frames keep
     /// the old pipelines until the new set is ready, and for good if the compile fails. `done` gets the outcome (render
     /// thread).
-    func reloadShaders(then done: ((Bool) -> Void)? = nil) {
+    package func reloadShaders(then done: ((Bool) -> Void)? = nil) {
         // Without pipelines yet (the launch's compile failed, or is still running): for the scene as it was built.
         let device = device, url = shaderURL
         let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
@@ -531,7 +532,7 @@ extension Renderer {
     /// The launch's compile, in the background (the app; a benchmark compiles in `init`). Until it is done `draw`
     /// returns at once, and with it everything that needs pipelines: scene loads start there. A failure is printed
     /// and leaves the window empty; R compiles again.
-    func startCompilingShaders() {
+    package func startCompilingShaders() {
         surface?.title = "MetalRenderer — compiling shaders…"
         reloadShaders { ok in
             DispatchQueue.main.async { Launch.mark(ok ? "shaders" : "shaders (failed)") }
@@ -539,10 +540,10 @@ extension Renderer {
     }
 
     /// The ray queries' counters (RT_STATS).
-    var traversalCounters: Bool { TraceSceneArgs.statsEnabled }
+    package var traversalCounters: Bool { TraceSceneArgs.statsEnabled }
 
     /// Turns the ray queries' counters on or off: that recompiles the shaders (in the background, `done` when ready).
-    func setTraversalCounters(_ on: Bool, then done: (() -> Void)? = nil) {
+    package func setTraversalCounters(_ on: Bool, then done: (() -> Void)? = nil) {
         guard on != TraceSceneArgs.statsEnabled else { done?(); return }
         TraceSceneArgs.statsEnabled = on
         reloadShaders { [weak self] ok in
@@ -586,7 +587,7 @@ extension Renderer {
     }
 
     /// What the Debug window shows (built when it asks, on the stats tick).
-    func debugInfo() -> DebugInfo {
+    package func debugInfo() -> DebugInfo {
         var d = DebugInfo()
         d.stats = statsLine
         d.cpuMs = cpuMs
@@ -634,7 +635,7 @@ extension Renderer {
 
     /// Adds glTF models to the scene, side by side 2.5 m in front of the camera on the floor, facing it
     /// (glTF models face +Z); the scene reloads in the background. An HDR image (.hdr, .exr) becomes the sky.
-    func addModels(_ urls: [URL]) {
+    package func addModels(_ urls: [URL]) {
         if let image = urls.last(where: { SkyImage.fileExtensions.contains($0.pathExtension.lowercased()) }) {
             settings.sky.mode = .image
             settings.sky.imagePath = image.path

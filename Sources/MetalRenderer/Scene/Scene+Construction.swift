@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import ImageIO
 import simd
@@ -5,7 +6,7 @@ import simd
 extension Scene {
     // MARK: - Scene construction
 
-    func buildCornell() {
+    package func buildCornell() {
         let quad = addMesh(Scene.quadMesh(), label: "quad")
         let cube = addMesh(Scene.cubeMesh(), label: "box")
         let sphere = addMesh(Scene.icosphere(subdivisions: 3), label: "ball")
@@ -64,7 +65,7 @@ extension Scene {
     /// Lights share the shadow denoiser's 4 visibility channels by group. Up to 4 lights get one channel each;
     /// more are clustered by chromaticity (k-means, k = 4), so each channel's lights have similar colours.
     /// Lights are then sorted by group, so the shaders can walk one group's lights.
-    func assignLightGroups() {
+    package func assignLightGroups() {
         defer {
             lights.sort { $0.group < $1.group }   // stable: lights keep their order within a group
             for g in 0..<4 { lightGroupEnd[g] = UInt32(lights.filter { $0.group <= g }.count) }
@@ -152,7 +153,7 @@ extension Scene {
     /// Lets go of the vertex and index arrays, of the borrowed meshes and of the instance groups, once the renderer
     /// has them in its buffers and their structures: for a scene that is made again when anything about
     /// it changes, never built from twice (the open world's). The meshes' table, bounds and names stay.
-    func releaseGeometry() {
+    package func releaseGeometry() {
         (positions, normals, uvs, indices, triangleMaterials, borrowed) = ([], [], [], [], [], [])
         groups = []
         geometryReleased = true

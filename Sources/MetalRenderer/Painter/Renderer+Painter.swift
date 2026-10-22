@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import Metal
 import MetalKit
@@ -8,7 +9,7 @@ import simd
 package enum PaintTool: String, Codable, CaseIterable, Identifiable {
     case brush, fillObject, fillIsland, fillPolygon, fillMaterial
     package var id: String { rawValue }
-    var title: String {
+    package var title: String {
         switch self {
         case .brush: return "Brush"
         case .fillObject: return "Fill object"
@@ -20,30 +21,39 @@ package enum PaintTool: String, Codable, CaseIterable, Identifiable {
 }
 
 /// What the painter's window shows of the renderer's side (sent with every change, on the main thread).
-struct PainterStatus: Equatable {
-    struct Object: Equatable {
-        var index: Int
-        var instance: Int
-        var document: String
-        var resolution: Int
-        var triangles: Int
-        var charts: Int
-        var ownUVs: Bool
-        var baked: Bool
+package struct PainterStatus: Equatable {
+    package struct Object: Equatable {
+        package var index: Int
+        package var instance: Int
+        package var document: String
+        package var resolution: Int
+        package var triangles: Int
+        package var charts: Int
+        package var ownUVs: Bool
+        package var baked: Bool
     }
-    var objects: [Object] = []
-    var active: Int?
+    package var objects: [Object] = []
+    package var active: Int?
     /// Strokes kept for undo since the last status (their ids, in order).
-    var strokes: [Int] = []
+    package var strokes: [Int] = []
     /// The active object's layout (its corners' UVs, 3 a triangle; at most 60k triangles of it), for the 2D view.
-    var wireframe: [SIMD2<Float>] = []
-    var message = ""
+    package var wireframe: [SIMD2<Float>] = []
+    package var message = ""
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(objects: [Object] = [], active: Int? = nil, strokes: [Int] = [], wireframe: [SIMD2<Float>] = [], message: String = "") {
+        self.objects = objects
+        self.active = active
+        self.strokes = strokes
+        self.wireframe = wireframe
+        self.message = message
+    }
 }
 
 /// The Material Painter's state in the renderer: per painted object of the scene (Scene.painted, by its index there)
 /// its session (PainterSession: texture set, layers, strokes), the brush's stamps and stencil, and paint mode (which
 /// object the main view paints, with what).
-final class PainterGPU {
+package final class PainterGPU {
     var sessions: [Int: PainterSession] = [:]
     /// The sessions whose texture sets are in their slots, and the document version their materials' values follow.
     var installed: [Int: Int] = [:]
@@ -95,7 +105,7 @@ final class PainterGPU {
 extension Renderer {
     /// The scene's painted objects: a session each (its texel map made now), its texture set given its slots once,
     /// and its document as the painter has it (a new version: composited again).
-    func updatePainted() {
+    package func updatePainted() {
         guard !scene.painted.isEmpty else { return }
         let docs = PaintDocuments.shared
         for (k, object) in scene.painted.enumerated() {
@@ -136,7 +146,7 @@ extension Renderer {
         reportPainter()
     }
 
-    static let painterExport = ProcessInfo.processInfo.environment["METALRENDERER_PAINTER_EXPORT"]
+    package static let painterExport = ProcessInfo.processInfo.environment["METALRENDERER_PAINTER_EXPORT"]
 
     /// Painted object `k`'s texture set in its slots, and its materials' values as its document says.
     private func installPainted(_ k: Int, _ s: PainterSession) {
@@ -171,7 +181,7 @@ extension Renderer {
     }
 
     /// This frame's painting: each session's strokes, undo, composite (Paint.metal), ahead of the frame's shading.
-    func encodePainting(passes: FrameEncoder) {
+    package func encodePainting(passes: FrameEncoder) {
         guard !painter.sessions.isEmpty, let targets = renderTargetsForPainter else { return }
         let catalog = MaterialCatalog.resolve(scene.settings.materials)
         for (k, s) in painter.sessions {
@@ -297,7 +307,7 @@ extension Renderer {
     // MARK: - Paint mode
 
     /// Paint mode on painted object `index` (nil: off): the camera orbits it, left drags paint it.
-    func setPaintMode(_ index: Int?) {
+    package func setPaintMode(_ index: Int?) {
         painter.active = index.flatMap { scene.painted.indices.contains($0) ? $0 : nil }
         painter.strokeDabs = nil
         if let k = painter.active {
@@ -318,7 +328,7 @@ extension Renderer {
     }
 
     /// The brush, the layer it paints and what of it, the tool (the painter's window's, as they change).
-    func setPainterBrush(_ brush: PaintBrush, layer: UUID?, target: PaintTarget, tool: PaintTool) {
+    package func setPainterBrush(_ brush: PaintBrush, layer: UUID?, target: PaintTarget, tool: PaintTool) {
         painter.brush = brush
         painter.layer = layer
         painter.target = target
@@ -327,7 +337,7 @@ extension Renderer {
 
     /// A press in paint mode: a stroke begins (or a fill is made) on the active object, or (right button, Option) the
     /// camera turns about it. False: not paint mode.
-    func paintMouseDown(at cursor: SIMD2<Float>, pressure: Float, orbit: Bool) -> Bool {
+    package func paintMouseDown(at cursor: SIMD2<Float>, pressure: Float, orbit: Bool) -> Bool {
         guard let k = painter.active, let s = painter.sessions[k] else { return false }
         painter.hover = cursor
         painter.pressure = pressure
@@ -359,7 +369,7 @@ extension Renderer {
         return true
     }
 
-    func paintMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>, pressure: Float) -> Bool {
+    package func paintMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>, pressure: Float) -> Bool {
         guard let k = painter.active, let s = painter.sessions[k] else { return false }
         painter.hover = cursor
         painter.pressure = pressure
@@ -377,7 +387,7 @@ extension Renderer {
         return true
     }
 
-    func paintMouseUp() -> Bool {
+    package func paintMouseUp() -> Bool {
         guard let k = painter.active, let s = painter.sessions[k] else { return false }
         painter.orbitDrag = false
         if painter.strokeDabs != nil {
@@ -388,14 +398,14 @@ extension Renderer {
     }
 
     /// The cursor over the view (no button): the brush's ring follows it.
-    func paintMouseMoved(at cursor: SIMD2<Float>) {
+    package func paintMouseMoved(at cursor: SIMD2<Float>) {
         guard let k = painter.active else { return }
         painter.hover = cursor
         updateHover(k)
     }
 
     /// The brush larger (`step` > 0) or smaller.
-    func resizeBrush(_ step: Int) {
+    package func resizeBrush(_ step: Int) {
         painter.brush.size = min(max(painter.brush.size * (step > 0 ? 1.15 : 1 / 1.15), 1), 1000)
         reportPainter()
     }
@@ -407,7 +417,7 @@ extension Renderer {
 
     /// The ray through `cursor` against object `k`'s triangles (as it was made, moved where its instance is): the
     /// nearest hit's world point, normal and triangle.
-    func painterRay(_ cursor: SIMD2<Float>, _ k: Int) -> (position: SIMD3<Float>, normal: SIMD3<Float>, triangle: Int)? {
+    package func painterRay(_ cursor: SIMD2<Float>, _ k: Int) -> (position: SIMD3<Float>, normal: SIMD3<Float>, triangle: Int)? {
         guard let mesh = painter.meshes[k] else { return nil }
         let object = scene.painted[k]
         let t = scene.instances[object.instance].transform, inv = t.inverse
@@ -475,7 +485,7 @@ extension Renderer {
     }
 
     /// The brush's ring where the cursor meets the active object: a circle of its size on the surface's plane.
-    func painterRingSegments() -> [VFXGizmos.Segment] {
+    package func painterRingSegments() -> [VFXGizmos.Segment] {
         guard let hit = painter.hoverHit, painter.active != nil, let targets = renderTargetsForPainter else { return [] }
         let depth = max(simd_dot(hit.position - camera.position, camera.forward), 0.01)
         let pixels = painter.brush.size * renderPixelsPerPoint
@@ -517,13 +527,13 @@ extension Renderer {
     }
 
     /// Undo (`undo`) or redo stroke `id`.
-    func undoPaintStroke(_ id: Int, undo: Bool) {
+    package func undoPaintStroke(_ id: Int, undo: Bool) {
         guard let (k, record) = painter.records[id], let s = painter.sessions[k] else { return }
         s.undo(record, undo: undo)
     }
 
     /// Saves painted object `k`'s pixels into its document's package (the document's JSON is the window's to write).
-    func savePainted(_ k: Int) -> String? {
+    package func savePainted(_ k: Int) -> String? {
         guard let s = painter.sessions[k], let package = PainterStore.package(s.document.name) else { return "nothing to save" }
         do {
             try PainterPixels.save(s, to: package, device: device, queue: queue)
@@ -534,7 +544,7 @@ extension Renderer {
     }
 
     /// Exports painted object `k`'s texture set (and its mesh as GLB, unwrapped) into `folder`.
-    func exportPainted(_ k: Int, to folder: URL, format: MatExport.Format) -> String? {
+    package func exportPainted(_ k: Int, to folder: URL, format: MatExport.Format) -> String? {
         guard let s = painter.sessions[k], let mesh = painter.meshes[k] else { return "nothing to export" }
         do {
             let name = PaintDocument.slug(s.document.name)
@@ -547,7 +557,7 @@ extension Renderer {
     }
 
     /// A channel of painted object `k`'s texture set (or a layer's channel), `side` squared, as a picture.
-    func painterPicture(_ k: Int, output: String, layer: UUID? = nil, side: Int) -> CGImage? {
+    package func painterPicture(_ k: Int, output: String, layer: UUID? = nil, side: Int) -> CGImage? {
         guard let s = painter.sessions[k] else { return nil }
         let t: MTLTexture?
         if let layer {
@@ -571,7 +581,7 @@ extension Renderer {
     }
 
     /// The window's view of the painter: the painted objects, the active one, new strokes (sent when it changed).
-    func reportPainter() {
+    package func reportPainter() {
         collectStrokes()
         var st = PainterStatus()
         st.objects = scene.painted.enumerated().map { k, o in
@@ -607,7 +617,7 @@ package enum PainterStep {
 
 extension Renderer {
     /// The next step of a benchmark's painting: settings until a stroke or a fill, which waits for its frame.
-    func runPainterScript() {
+    package func runPainterScript() {
         while !painterScript.isEmpty {
             let step = painterScript.removeFirst()
             switch step {

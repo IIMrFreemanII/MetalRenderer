@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -72,16 +73,16 @@ final class VGStreamer {
     let meshes: [VirtualMesh]
 
     private struct Group {
-        var mesh: Int
-        var local: Int
-        var pageOffset: Int                  // in the mesh's pageData
-        var pageSize: Int
-        var isRoot: Bool
-        var parents: [Int]                   // global group ids
-        var poolOffset = -1                  // bytes; -1 = not resident
-        var order = 0
-        var residentChildren = 0
-        var inFlight = false
+        package var mesh: Int
+        package var local: Int
+        package var pageOffset: Int                  // in the mesh's pageData
+        package var pageSize: Int
+        package var isRoot: Bool
+        package var parents: [Int]                   // global group ids
+        package var poolOffset = -1                  // bytes; -1 = not resident
+        package var order = 0
+        package var residentChildren = 0
+        package var inFlight = false
     }
     private var groups: [Group] = []
     private var groupPage: [UInt32]          // CPU master residency table (pool offset / 16, or ~0)

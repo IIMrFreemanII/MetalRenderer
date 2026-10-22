@@ -1,9 +1,10 @@
+import EngineCore
 import Foundation
 import simd
 
 /// A painted mesh's layout in its texture set: three UVs per triangle (its corners'; a seam is where two triangles
 /// sharing a vertex give it different ones), and the island (chart) each triangle is in.
-struct UVAtlas: Equatable {
+package struct UVAtlas: Equatable {
     var corners: [SIMD2<Float>]          // 3 per triangle, in 0...1
     var chartOfTriangle: [Int32]
     var chartCount: Int

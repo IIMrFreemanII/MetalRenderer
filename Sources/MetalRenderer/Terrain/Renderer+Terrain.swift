@@ -1,39 +1,59 @@
+import EngineCore
 import Foundation
 import Metal
 import QuartzCore
 import simd
 
 /// What the Terrain Editor's window shows of the renderer's side (sent when it changes, on the render thread).
-struct TerrainStatus: Equatable {
+package struct TerrainStatus: Equatable {
     /// The scene's terrain (its document's name), if its ground is one.
-    var terrain: String?
+    package var terrain: String?
     /// Sculpt mode: the main view's left drags are the brush's.
-    var active = false
+    package var active = false
     /// The brush as the renderer has it ([ ] change it in the view).
-    var brush = TerrainBrush()
+    package var brush = TerrainBrush()
     /// Under the cursor: the world's place, its height and slope (degrees).
-    var hover: SIMD3<Double>?
-    var slope: Float = 0
+    package var hover: SIMD3<Double>?
+    package var slope: Float = 0
     /// Strokes kept for undo since the last status (their ids, in order).
-    var strokes: [Int] = []
+    package var strokes: [Int] = []
     /// Sectors waiting to be meshed again, and the last frame's work: sectors built, milliseconds of the CPU's part.
-    var pending = 0
-    var built = 0
-    var cpuMs: Double = 0
+    package var pending = 0
+    package var built = 0
+    package var cpuMs: Double = 0
     /// The field's revision (the map draws again when it changes).
-    var revision = 0
+    package var revision = 0
     /// A long job (a generator's run, erosion) under way: what it is and how far it has gone (0...1).
-    var job: String?
-    var progress: Float = 0
+    package var job: String?
+    package var progress: Float = 0
     /// Where the camera is (the world's) and which way it looks (yaw): the map shows it.
-    var camera = SIMD3<Double>.zero
-    var yaw: Float = 0
-    var message = ""
+    package var camera = SIMD3<Double>.zero
+    package var yaw: Float = 0
+    package var message = ""
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(terrain: String? = nil, active: Bool = false, brush: TerrainBrush = TerrainBrush(), hover: SIMD3<Double>? = nil, slope: Float = 0, strokes: [Int] = [], pending: Int = 0, built: Int = 0, cpuMs: Double = 0, revision: Int = 0, job: String? = nil, progress: Float = 0, camera: SIMD3<Double> = SIMD3<Double>.zero, yaw: Float = 0, message: String = "") {
+        self.terrain = terrain
+        self.active = active
+        self.brush = brush
+        self.hover = hover
+        self.slope = slope
+        self.strokes = strokes
+        self.pending = pending
+        self.built = built
+        self.cpuMs = cpuMs
+        self.revision = revision
+        self.job = job
+        self.progress = progress
+        self.camera = camera
+        self.yaw = yaw
+        self.message = message
+    }
 }
 
 /// The Terrain Editor's state in the renderer: sculpt mode, the brush, the stroke under way, which revision of the
 /// field each sector's buffer holds, and the strokes kept for undo.
-final class TerrainGPU {
+package final class TerrainGPU {
     var active = false
     var brush = TerrainBrush()
     var stroke: TerrainStroke?
@@ -70,7 +90,7 @@ final class TerrainGPU {
     var progress: Float = 0
     var cancelJob = false
     /// The last stroke's path over the ground (the world's x, z): a river's line.
-    var lastStroke: [SIMD2<Double>] = []
+    package var lastStroke: [SIMD2<Double>] = []
     /// Sectors a frame meshes and builds at most: `METALRENDERER_TERRAIN_BUDGET` (6: about 5 ms on an M1 Max).
     static let budget = ProcessInfo.processInfo.environment["METALRENDERER_TERRAIN_BUDGET"].flatMap(Int.init).map { min(max($0, 1), TerrainBuild.perFrame) } ?? 6
     /// `METALRENDERER_TERRAIN_LOG=1`: what each frame's terrain work did.
@@ -97,13 +117,13 @@ final class TerrainGPU {
 
 /// A frame's terrain work for the GPU (Renderer.encodeTerrain): bytes to copy into sectors' buffers, and the meshes
 /// whose structures are built again over them.
-struct TerrainFrameWork {
+package struct TerrainFrameWork {
     var copies: [BufferCopy] = []
     var meshes: [Int] = []
 }
 
 /// A copy from one buffer into another, in a frame (FrameEncoder.copyBuffers).
-struct BufferCopy {
+package struct BufferCopy {
     let source: MTLBuffer
     let sourceOffset: Int
     let destination: MTLBuffer
@@ -115,14 +135,14 @@ extension Renderer {
     // MARK: - Sculpt mode
 
     /// Sculpt mode on (left drags in the main view are the brush's) or off.
-    func setTerrainMode(_ on: Bool) {
+    package func setTerrainMode(_ on: Bool) {
         terrain.active = on && scene.terrain != nil
         terrain.stroke = nil
         terrain.message = scene.terrain == nil && on ? "This scene's ground isn't a terrain" : ""
         reportTerrain()
     }
 
-    func setTerrainBrush(_ brush: TerrainBrush) {
+    package func setTerrainBrush(_ brush: TerrainBrush) {
         terrain.brush = brush
     }
 
@@ -130,7 +150,7 @@ extension Renderer {
     /// held (the camera's), or the cursor isn't on the ground.
     /// `invert` (Control held): the brush's opposite (raise lowers, paint erases, protect frees); `smooth` (Shift held):
     /// the smooth brush, of the same size.
-    func terrainMouseDown(at cursor: SIMD2<Float>, pressure: Float, option: Bool, invert: Bool = false, smooth: Bool = false) -> Bool {
+    package func terrainMouseDown(at cursor: SIMD2<Float>, pressure: Float, option: Bool, invert: Bool = false, smooth: Bool = false) -> Bool {
         guard terrain.active, !option, scene.terrain != nil else { return false }
         terrain.hover = cursor
         terrain.pressure = pressure
@@ -159,7 +179,7 @@ extension Renderer {
         return true
     }
 
-    func terrainMouseDragged(at cursor: SIMD2<Float>, pressure: Float) -> Bool {
+    package func terrainMouseDragged(at cursor: SIMD2<Float>, pressure: Float) -> Bool {
         guard terrain.active, terrain.stroke != nil else { return false }
         terrain.hover = cursor
         terrain.pressure = pressure
@@ -172,7 +192,7 @@ extension Renderer {
         return true
     }
 
-    func terrainMouseUp() -> Bool {
+    package func terrainMouseUp() -> Bool {
         guard terrain.active, let stroke = terrain.stroke else { return false }
         if stroke.brush.tool.actsOnRelease, let t = scene.terrain {
             var record = terrain.record
@@ -188,14 +208,14 @@ extension Renderer {
     }
 
     /// The cursor over the view (no button): the ring follows it.
-    func terrainMouseMoved(at cursor: SIMD2<Float>) {
+    package func terrainMouseMoved(at cursor: SIMD2<Float>) {
         guard terrain.active else { return }
         terrain.hover = cursor
         updateTerrainHover()
     }
 
     /// The brush larger (`step` > 0) or smaller; with `strength`, stronger or weaker.
-    func resizeTerrainBrush(_ step: Int, strength: Bool) {
+    package func resizeTerrainBrush(_ step: Int, strength: Bool) {
         if strength {
             terrain.brush.strength = min(max(terrain.brush.strength + (step > 0 ? 0.05 : -0.05), 0.01), 1)
         } else {
@@ -205,7 +225,7 @@ extension Renderer {
     }
 
     /// What is under the cursor: where its ray meets the terrain as it is now.
-    func updateTerrainHover() {
+    package func updateTerrainHover() {
         guard let t = scene.terrain, let c = terrain.hover else { terrain.hoverHit = nil; return }
         let s = t.field.snapshot(), o = t.world(camera.position)
         guard let hit = s.raycast(origin: o, direction: cursorRayForPainter(c)) else {
@@ -218,7 +238,7 @@ extension Renderer {
     }
 
     /// The stroke's dabs (and while it is held still, the airbrush's), onto the field.
-    func applyTerrainDabs() {
+    package func applyTerrainDabs() {
         guard let t = scene.terrain, var stroke = terrain.stroke else { return }
         let now = CACurrentMediaTime()
         // Held still: the airbrush, at its rate (not a ramp, which acts once).
@@ -255,7 +275,7 @@ extension Renderer {
     }
 
     /// The stroke done: what it changed is kept for undo, and what stands on it follows it.
-    func finishTerrainStroke() {
+    package func finishTerrainStroke() {
         if let s = terrain.stroke, s.path.count > 1 { terrain.lastStroke = s.path }
         defer { terrain.stroke = nil; terrain.record = TerrainUndoRecord() }
         guard let t = scene.terrain, !terrain.record.before.isEmpty else { return }
@@ -268,7 +288,7 @@ extension Renderer {
 
     /// The ground of these tiles changed (a stroke, an undo, a job): the scatter rules' things there placed again and
     /// what stands on it moved with it; the open world's trees (its tiles' groups) made again with the scene.
-    func terrainMoved(_ tiles: Set<SIMD2<Int>>) {
+    package func terrainMoved(_ tiles: Set<SIMD2<Int>>) {
         guard let t = scene.terrain, !tiles.isEmpty else { return }
         let grid = t.field.grid
         let corners = tiles.flatMap { [grid.corner($0), grid.corner($0 &+ 1)] }
@@ -278,7 +298,7 @@ extension Renderer {
     }
 
     /// A change kept for undo (a stroke, a generator's run, an import): its id goes to the window's undo manager.
-    func keepTerrainRecord(_ record: TerrainUndoRecord) {
+    package func keepTerrainRecord(_ record: TerrainUndoRecord) {
         let id = terrain.nextRecord
         terrain.nextRecord += 1
         terrain.records[id] = record
@@ -294,7 +314,7 @@ extension Renderer {
     }
 
     /// Undo (`undo`) or redo change `id`.
-    func undoTerrain(_ id: Int, undo: Bool) {
+    package func undoTerrain(_ id: Int, undo: Bool) {
         guard let t = scene.terrain, let record = terrain.records[id] else { return }
         t.field.restore(undo ? record.before : record.after)
         terrainMoved(Set(record.before.keys))
@@ -305,7 +325,7 @@ extension Renderer {
     /// The sectors the field's edits changed since their buffers were written: meshed again (as many as the budget
     /// allows, the nearest the brush first), their bytes staged for the GPU to copy over the old. Their structures are
     /// built again by the caller (Renderer.encodeTerrain).
-    func prepareTerrainFrame(slot: Int, buffers: SceneBuffers) -> TerrainFrameWork? {
+    package func prepareTerrainFrame(slot: Int, buffers: SceneBuffers) -> TerrainFrameWork? {
         guard let t = scene.terrain else { return nil }
         applyTerrainDabs()
         adoptTerrainDocument(t)
@@ -381,7 +401,7 @@ extension Renderer {
     /// The document's edits (its layers' rules, colours, sizes) into the scene: the sectors' weights made again, the
     /// layer table and the plain layers' materials rewritten. (A layer's Material Designer graph changed makes the
     /// scene again: TerrainModel.)
-    func adoptTerrainDocument(_ t: SceneTerrain) {
+    package func adoptTerrainDocument(_ t: SceneTerrain) {
         let version = TerrainDocuments.shared.version(t.name)
         guard version != terrain.documentVersion else { return }
         let first = terrain.documentVersion < 0
@@ -418,7 +438,7 @@ extension Renderer {
     }
 
     /// A stroke through places of the world (x, z): the 2D map's, a script's.
-    func terrainStrokeWorld(_ points: [SIMD2<Double>]) {
+    package func terrainStrokeWorld(_ points: [SIMD2<Double>]) {
         guard let t = scene.terrain, let first = points.first else { return }
         let s = t.field.snapshot()
         var stroke = TerrainStroke(brush: terrain.brush, start: first, height: s.height(x: first.x, z: first.y))
@@ -439,7 +459,7 @@ extension Renderer {
     }
 
     /// The camera over a place of the world (x, z), looking down at it from `height` metres over the ground.
-    func flyTerrainCamera(to p: SIMD2<Double>, height: Float = 60) {
+    package func flyTerrainCamera(to p: SIMD2<Double>, height: Float = 60) {
         guard let t = scene.terrain else { return }
         let ground = Float(t.field.snapshot().height(x: p.x, z: p.y))
         let target = t.scene(SIMD3(p.x, Double(ground), p.y))
@@ -452,7 +472,7 @@ extension Renderer {
     }
 
     /// Heights from a picture over the region (TerrainIO), kept for undo.
-    func importTerrainHeights(_ picture: (values: [Float], width: Int, height: Int, float: Bool), region: TerrainIO.Region,
+    package func importTerrainHeights(_ picture: (values: [Float], width: Int, height: Int, float: Bool), region: TerrainIO.Region,
                               mode: TerrainIO.ImportMode) {
         guard let t = scene.terrain else { return }
         var record = TerrainUndoRecord(title: "Import heightmap")
@@ -461,7 +481,7 @@ extension Renderer {
     }
 
     /// Layer weights from pictures over the region, kept for undo.
-    func importTerrainWeights(_ pictures: [(bytes: [UInt8], width: Int, height: Int)?], region: TerrainIO.Region) {
+    package func importTerrainWeights(_ pictures: [(bytes: [UInt8], width: Int, height: Int)?], region: TerrainIO.Region) {
         guard let t = scene.terrain else { return }
         var record = TerrainUndoRecord(title: "Import splat maps")
         t.field.edit { s in TerrainIO.importWeights(&s, pictures: pictures, region: region, record: &record) }
@@ -469,7 +489,7 @@ extension Renderer {
     }
 
     /// A change made outside a stroke (an import, a generator's run): its tiles as they now are, and kept for undo.
-    func finishTerrainRecord(_ record: TerrainUndoRecord, _ t: SceneTerrain) {
+    package func finishTerrainRecord(_ record: TerrainUndoRecord, _ t: SceneTerrain) {
         guard !record.before.isEmpty else { return }
         var record = record
         let s = t.field.snapshot()
@@ -482,7 +502,7 @@ extension Renderer {
 
     /// The document's generator over a region: the heights it makes replace (or are added to) the ground's, faded
     /// into the ground around the region over `border` metres. Off the render thread; kept for undo.
-    func runTerrainGenerator(region: TerrainIO.Region, border: Float) {
+    package func runTerrainGenerator(region: TerrainIO.Region, border: Float) {
         guard let t = scene.terrain, let doc = TerrainDocuments.shared.document(t.name) else { return }
         let stack = doc.generator, grid = t.field.grid
         runTerrainJob("Generate", region: region, border: border) { heights, size, progress in
@@ -502,7 +522,7 @@ extension Renderer {
     }
 
     /// Erosion over a region, as the document's settings say. Off the render thread; kept for undo.
-    func runTerrainErosion(region: TerrainIO.Region, kind: TerrainErosion.Kind, border: Float) {
+    package func runTerrainErosion(region: TerrainIO.Region, kind: TerrainErosion.Kind, border: Float) {
         guard let t = scene.terrain, let doc = TerrainDocuments.shared.document(t.name) else { return }
         let settings = doc.erosion, cell = t.field.grid.cell
         runTerrainJob("Erode (\(kind.title.lowercased()))", region: region, border: border) { heights, size, progress in
@@ -513,7 +533,7 @@ extension Renderer {
     /// A long job: the region's heights read now, `work` run off the render thread (told the share done; false from it
     /// stops), its heights written back on the render thread (faded over `border` metres inside the region's edge).
     /// Benchmarks wait for it.
-    func runTerrainJob(_ title: String, region: TerrainIO.Region, border: Float,
+    package func runTerrainJob(_ title: String, region: TerrainIO.Region, border: Float,
                        work: @escaping ([Float], SIMD2<Int>, @escaping (Float) -> Bool) -> [Float]?) {
         guard let t = scene.terrain, terrain.job == nil else { return }
         let heights = t.field.snapshot().heights(from: region.lo, count: region.size, step: 1), field = t.field
@@ -549,11 +569,11 @@ extension Renderer {
         }
     }
 
-    func cancelTerrainJob() { terrain.cancelJob = true }
+    package func cancelTerrainJob() { terrain.cancelJob = true }
 
     /// A river's bed carved along its line: as deep as it says under the ground, never climbing from its source to
     /// its mouth, its banks sloping out to its width and fading into the ground beyond. Kept for undo.
-    func carveTerrainRiver(_ river: WaterBody) {
+    package func carveTerrainRiver(_ river: WaterBody) {
         guard let t = scene.terrain, river.points.count > 1 else { return }
         // Its bed from the ground as it is before the carving, kept with it in the document: its surface (the
         // ribbon, the water map) keeps to it afterwards, and carving it again digs no deeper.
@@ -575,7 +595,7 @@ extension Renderer {
 
     /// The brush's ring on the ground under the cursor: a circle of its radius following the ground, an inner one where
     /// its edge starts to fade; red while it takes away.
-    func terrainRingSegments() -> [VFXGizmos.Segment] {
+    package func terrainRingSegments() -> [VFXGizmos.Segment] {
         guard terrain.active, let hit = terrain.hoverHit, let t = scene.terrain else { return [] }
         let s = t.field.snapshot(), b = terrain.brush
         let take = b.tool == .lower || b.tool == .erase || b.tool == .unprotect
@@ -602,7 +622,7 @@ extension Renderer {
 
     // MARK: - Status
 
-    func reportTerrain() {
+    package func reportTerrain() {
         var st = TerrainStatus()
         st.terrain = scene.terrain?.name
         st.active = terrain.active
@@ -655,7 +675,7 @@ package enum TerrainStep {
 
 extension Renderer {
     /// The next step of a benchmark's terrain script: settings until a stroke, which waits for its frame.
-    func runTerrainScript() {
+    package func runTerrainScript() {
         if terrainScriptWait > 0 { terrainScriptWait -= 1; return }
         while !terrainScript.isEmpty {
             let step = terrainScript.removeFirst()

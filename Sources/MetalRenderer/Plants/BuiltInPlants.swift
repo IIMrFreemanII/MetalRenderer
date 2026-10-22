@@ -1,10 +1,11 @@
+import EngineCore
 import Foundation
 import simd
 
 /// The built-in species: what the grower, the foliage distributor and the graft distributor are told for each plant,
 /// at each age, and for the boughs of its palette; their colours. Lengths are metres, angles radians.
 extension Foliage {
-    static let builtInSpecies: [SpeciesDef] = [oakDef, birchDef, coniferDef, deadDef, bushDef, fernDef, grassDef]
+    package static let builtInSpecies: [SpeciesDef] = [oakDef, birchDef, coniferDef, deadDef, bushDef, fernDef, grassDef]
 
     /// How the built-in trees age: a young tree at 58% of the height, three quarters of the limbs; a sapling at 24%,
     /// two levels, less than half the limbs, on a thicker trunk mesh.

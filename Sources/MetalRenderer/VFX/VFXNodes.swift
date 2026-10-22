@@ -1,11 +1,12 @@
+import EngineCore
 import Foundation
 import simd
 
 /// What a wire carries.
-enum VFXType: String, Codable, CaseIterable {
+package enum VFXType: String, Codable, CaseIterable {
     case float, vec3, color, bool
     /// The wider of two (a float meets a vec3 as three of it).
-    static func wider(_ a: VFXType, _ b: VFXType) -> VFXType {
+    package static func wider(_ a: VFXType, _ b: VFXType) -> VFXType {
         let order: [VFXType] = [.bool, .float, .vec3, .color]
         return order[max(order.firstIndex(of: a)!, order.firstIndex(of: b)!)]
     }
@@ -13,15 +14,15 @@ enum VFXType: String, Codable, CaseIterable {
 
 /// A block's or a node's input: its name (the key of `params`), its title, its default, and what can be wired into it
 /// (nil: a value only). A generic one (`generic`) takes whatever is wired, the node's outputs following it.
-struct VFXPinSpec {
-    let name: String
-    let title: String
-    let value: VFXParam
-    var wire: VFXType?
-    var generic = false
+package struct VFXPinSpec {
+    package let name: String
+    package let title: String
+    package let value: VFXParam
+    package var wire: VFXType?
+    package var generic = false
     /// A slider's span (the editor's), and the choices of a choice.
-    var span: ClosedRange<Float>?
-    var choices: [String] = []
+    package var span: ClosedRange<Float>?
+    package var choices: [String] = []
 
     package init(_ name: String, _ title: String, _ value: VFXParam, wire: VFXType? = nil, generic: Bool = false,
          span: ClosedRange<Float>? = nil, choices: [String] = []) {
@@ -35,15 +36,15 @@ struct VFXPinSpec {
     }
 }
 
-struct VFXBlockSpec {
-    let title: String
-    let contexts: [VFXContext]
-    let pins: [VFXPinSpec]
+package struct VFXBlockSpec {
+    package let title: String
+    package let contexts: [VFXContext]
+    package let pins: [VFXPinSpec]
     /// At most one of it in an emitter (the fixed emitter's: a Gravity, a Drag...); the others (Force, Set Attribute,
     /// Kill, Trigger) may repeat and need generated code.
     var unique = true
-    let summary: String
-    func pin(_ name: String) -> VFXPinSpec? { pins.first { $0.name == name } }
+    package let summary: String
+    package func pin(_ name: String) -> VFXPinSpec? { pins.first { $0.name == name } }
 }
 
 /// The blocks, by context. Their names are the JSON's and the Swift builder's (VFXBuilder.swift).
@@ -59,14 +60,14 @@ package enum VFXBlockKind: String, Codable, CaseIterable {
     // Output: the renderer, then the look
     case billboard, mesh, trail, distortion, size, color, flipbook, orient, lighting
 
-    var isRenderer: Bool { [.billboard, .mesh, .trail, .distortion].contains(self) }
+    package var isRenderer: Bool { [.billboard, .mesh, .trail, .distortion].contains(self) }
 
-    static let shapes = ["point", "sphere", "sphere surface", "disc", "box", "ring"]
-    static let orientations = ["ray facing", "velocity", "axis", "world"]
-    static let triggers = ["death", "collision", "condition"]
-    static let attributes = ["A", "B", "C", "D"]
+    package static let shapes = ["point", "sphere", "sphere surface", "disc", "box", "ring"]
+    package static let orientations = ["ray facing", "velocity", "axis", "world"]
+    package static let triggers = ["death", "collision", "condition"]
+    package static let attributes = ["A", "B", "C", "D"]
 
-    var spec: VFXBlockSpec {
+    package var spec: VFXBlockSpec {
         typealias P = VFXPinSpec
         switch self {
         case .rate:
@@ -228,18 +229,18 @@ package enum VFXBlockKind: String, Codable, CaseIterable {
 }
 
 /// The operators' families (the editor colours their headers by them).
-enum VFXFamily: String, CaseIterable {
+package enum VFXFamily: String, CaseIterable {
     case input = "Inputs", value = "Values", math = "Math", vector = "Vector", logic = "Logic", curve = "Curves",
          noise = "Noise", attribute = "Attributes"
 }
 
-struct VFXOpSpec {
-    let title: String
-    let family: VFXFamily
-    let inputs: [VFXPinSpec]
+package struct VFXOpSpec {
+    package let title: String
+    package let family: VFXFamily
+    package let inputs: [VFXPinSpec]
     /// Its outputs: a fixed type, or nil: its generic inputs' widest.
-    let outputs: [(name: String, type: VFXType?)]
-    func pin(_ name: String) -> VFXPinSpec? { inputs.first { $0.name == name } }
+    package let outputs: [(name: String, type: VFXType?)]
+    package func pin(_ name: String) -> VFXPinSpec? { inputs.first { $0.name == name } }
 }
 
 /// The operators. Their code is VFXProgram's (Metal and the CPU's, side by side).
@@ -262,7 +263,7 @@ package enum VFXOpKind: String, Codable, CaseIterable {
     // Attributes
     case getAttribute
 
-    var spec: VFXOpSpec {
+    package var spec: VFXOpSpec {
         typealias P = VFXPinSpec
         func a(_ name: String = "a", _ v: Float = 0) -> P { P(name, name, .float(v), wire: .float, generic: true) }
         func f(_ name: String, _ title: String, _ v: Float = 0) -> P { P(name, title, .float(v), wire: .float) }
@@ -375,7 +376,7 @@ package enum VFXOpKind: String, Codable, CaseIterable {
 
 extension ParticleTextures.Kind {
     /// The name the effects' JSON and the editor use.
-    var name: String { "\(self)" }
+    package var name: String { "\(self)" }
     package init?(name: String) {
         guard let k = ParticleTextures.Kind.allCases.first(where: { "\($0)" == name }) else { return nil }
         self = k

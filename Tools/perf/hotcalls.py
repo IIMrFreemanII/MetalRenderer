@@ -19,13 +19,14 @@ Calls are `bl`s, tail calls (a `b` out of the function) and indirect calls (`blr
 
 --save-baseline writes, per function of hot-functions.txt and boundary-functions.txt, what it calls, its indirect
 calls and its size; --against fails when a function calls anything its baseline didn't (something is no longer
-inlined), makes more indirect calls, or is gone, and warns when it grew by more than 15%. Functions are matched by
+inlined) and cross-allow.txt doesn't allow, makes more indirect calls, or is gone, and warns when it grew by more
+than 15%. Functions are matched by
 their demangled names with the modules taken out, so a function that moved to another module is still itself.
 boundary-functions.txt lists the loops that call across modules by design (they are only compared, not held clean).
 
 Only each function's own body is read: a call it makes to another function of ours is listed with -v but not
 followed, so list the callees that are hot too. A pattern that matches no function fails as well (a rename left the
-list stale). Build release first: `swift build -c release`.
+list stale). Build release first: `Tools/release.sh`.
 """
 import argparse
 import collections
@@ -197,7 +198,7 @@ def main():
     ap.add_argument("-v", "--verbose", action="store_true", help="also list each function's other calls")
     args = ap.parse_args()
     if not os.path.exists(args.binary):
-        sys.exit(f"hotcalls: {args.binary} not found; run swift build -c release")
+        sys.exit(f"hotcalls: {args.binary} not found; run Tools/release.sh")
 
     modules = package_modules(repo)
     funcs = disassemble(args.binary)
@@ -304,7 +305,8 @@ def main():
                 print(f"GONE   {key}")
                 failed = True
                 continue
-            new = sorted(set(now["callees"]) - set(was["callees"]))
+            new = sorted(c for c in set(now["callees"]) - set(was["callees"])
+                         if not any(a in key and b in c for a, b in allow))   # cross-allow.txt allows it
             if new or now["indirect"] > was["indirect"]:
                 failed = True
                 print(f"NEW    {key}")

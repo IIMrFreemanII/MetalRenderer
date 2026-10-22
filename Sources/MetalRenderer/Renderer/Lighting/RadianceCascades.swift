@@ -1,3 +1,4 @@
+import EngineCore
 import Metal
 
 /// Matches `RCParams` in Shaders/RadianceCascades.metal.
@@ -19,7 +20,7 @@ struct RCPipelines {
 
 /// Radiance cascades GI: screen-space probes, world-space ray intervals, merged top-down (see Shaders/RadianceCascades.metal).
 /// Owns the per-cascade probe textures and radiance atlases for one render size and set of settings.
-final class RadianceCascades {
+package final class RadianceCascades {
     struct Cascade {
         let grid: SIMD2<Int>          // probes
         let spacing: Int              // pixels between probes

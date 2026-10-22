@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -7,12 +8,12 @@ import simd
 /// output: a card or a decal on the ground): the mud's cracked crust, a puddle, fallen leaves, a clump of grass blades,
 /// a leafy stem, and the duckweed alone (floating on the scene's water). The Mireland scene (Scene+Mireland.swift) puts them all in a swamp.
 extension MaterialLibrary {
-    static let mireland: [MaterialGraph] = [swampMud(), swampMudCracks(), swampMudPuddle(), swampGnarlyBark(), swampBirchBark(),
+    package static let mireland: [MaterialGraph] = [swampMud(), swampMudCracks(), swampMudPuddle(), swampGnarlyBark(), swampBirchBark(),
                                             swampLooseDirt(), swampDeadGrass(), swampGround(), swampLeaves(), swampGrassBlades(), swampPlant(),
                                             swampDuckweed()]
 
     /// Grey-brown mud, lumpy, with pebbles pressed in, wet and dark in its hollows, flecked with algae.
-    static func swampMud() -> MaterialGraph {
+    package static func swampMud() -> MaterialGraph {
         var b = MatBuilder("Swamp Mud")
         let lumps = b.node(.fractalSum, ["scale": .int(4), "octaves": .int(7), "roughness": .float(0.55), "mode": .choice("billow")])
         let pebbles = b.node(.tileSampler, ["columns": .int(20), "rows": .int(20), "kind": .choice("hemisphere"), "size": .float(0.55),
@@ -45,7 +46,7 @@ extension MaterialLibrary {
     }
 
     /// A crust of dried mud broken into curled plates, its cracks open (cut out: the ground shows through), its edge ragged.
-    static func swampMudCracks() -> MaterialGraph {
+    package static func swampMudCracks() -> MaterialGraph {
         var b = MatBuilder("Swamp Mud Cracks")
         let edges = b.node(.cells, ["scale": .int(7), "jitter": .float(0.9), "mode": .choice("borders"), "seed": .int(2)])
         let shade = b.node(.cells, ["scale": .int(7), "jitter": .float(0.9), "mode": .choice("cellValue"), "seed": .int(2)])
@@ -74,7 +75,7 @@ extension MaterialLibrary {
     }
 
     /// A puddle of still black water in a ring of wet mud, its edge ragged (cut out: a decal on the ground).
-    static func swampMudPuddle() -> MaterialGraph {
+    package static func swampMudPuddle() -> MaterialGraph {
         var b = MatBuilder("Swamp Mud Puddle")
         let disc = b.node(.shape, ["kind": .choice("disc"), "size": .float(0.95), "softness": .float(0.9)])
         let wobble = b.node(.fractalSum, ["scale": .int(3), "octaves": .int(5), "roughness": .float(0.5), "seed": .int(8)])
@@ -103,7 +104,7 @@ extension MaterialLibrary {
     }
 
     /// Old pale bark twisted into fibrous ridges, deep grooves between them.
-    static func swampGnarlyBark() -> MaterialGraph {
+    package static func swampGnarlyBark() -> MaterialGraph {
         var b = MatBuilder("Swamp Gnarly Bark")
         let streaks = b.node(.anisotropicNoise, ["scaleX": .int(3), "scaleY": .int(40), "smoothness": .float(0.8)])
         let upright = b.node(.transform, ["rotation": .float(0.25)], ["in": streaks])
@@ -127,7 +128,7 @@ extension MaterialLibrary {
     }
 
     /// Birch: chalk-white bark banded in greys, short dark lenticels across it, peeled patches dark brown.
-    static func swampBirchBark() -> MaterialGraph {
+    package static func swampBirchBark() -> MaterialGraph {
         var b = MatBuilder("Swamp Birch Bark")
         let bands = b.node(.anisotropicNoise, ["scaleX": .int(2), "scaleY": .int(64), "smoothness": .float(0.6)])
         let clouds = b.node(.fractalSum, ["scale": .int(6), "octaves": .int(6), "roughness": .float(0.5)])
@@ -156,7 +157,7 @@ extension MaterialLibrary {
     }
 
     /// Crumbly brown soil, clods and small pebbles in it.
-    static func swampLooseDirt() -> MaterialGraph {
+    package static func swampLooseDirt() -> MaterialGraph {
         var b = MatBuilder("Swamp Loose Dirt")
         let clods = b.node(.cells, ["scale": .int(18), "jitter": .float(1), "mode": .choice("f1"), "seed": .int(4)])
         let domes = b.node(.levels, ["inHigh": .float(0.9), "gamma": .float(0.7), "outLow": .float(1), "outHigh": .float(0)], ["in": clods])
@@ -178,7 +179,7 @@ extension MaterialLibrary {
     }
 
     /// Dead grass lying every way in layers over dark soil: straw yellow on top, darker beneath.
-    static func swampDeadGrass() -> MaterialGraph {
+    package static func swampDeadGrass() -> MaterialGraph {
         var b = MatBuilder("Swamp Dead Grass")
         func layer(_ seed: Int, _ scale: Int, _ width: Float, _ length: Float, _ top: Float) -> MatBuilder.Ref {
             let f = b.node(.fibers, ["count": .int(8), "length": .float(length), "width": .float(width), "angle": .float(0), "angleRandom": .float(1),
@@ -206,7 +207,7 @@ extension MaterialLibrary {
     }
 
     /// The swamp's water: black-green and glassy, duckweed drifting on it in rafts, twigs floating.
-    static func swampGround() -> MaterialGraph {
+    package static func swampGround() -> MaterialGraph {
         var b = MatBuilder("Swamp Ground")
         let weed = b.node(.tileSampler, ["columns": .int(80), "rows": .int(80), "kind": .choice("disc"), "size": .float(0.75),
                                          "sizeRandom": .float(0.5), "positionRandom": .float(1), "lumRandom": .float(0.35), "seed": .int(11)])
@@ -236,7 +237,7 @@ extension MaterialLibrary {
 
     /// What floats on the swamp's water (the scene's water is Water.metal's: this lies on it), Swamp Ground's duckweed
     /// rafts and twigs alone, cut out where the water is open.
-    static func swampDuckweed() -> MaterialGraph {
+    package static func swampDuckweed() -> MaterialGraph {
         var b = MatBuilder("Swamp Duckweed")
         let weed = b.node(.tileSampler, ["columns": .int(80), "rows": .int(80), "kind": .choice("disc"), "size": .float(0.75),
                                          "sizeRandom": .float(0.5), "positionRandom": .float(1), "lumRandom": .float(0.35), "seed": .int(11)])
@@ -263,7 +264,7 @@ extension MaterialLibrary {
     }
 
     /// Fallen leaves, every way up, yellow, brown and olive (cut out: a decal on the ground).
-    static func swampLeaves() -> MaterialGraph {
+    package static func swampLeaves() -> MaterialGraph {
         var b = MatBuilder("Swamp Leaves")
         let leaf = b.node(.shape, ["kind": .choice("leaf"), "size": .float(0.95), "softness": .float(0.04)])
         let leaves = b.node(.tileSampler, ["columns": .int(6), "rows": .int(6), "size": .float(1.1), "sizeRandom": .float(0.4),
@@ -284,7 +285,7 @@ extension MaterialLibrary {
     }
 
     /// A clump of grass blades fanned from one root, dark at the root, yellow-green to the tips (a card, cut out).
-    static func swampGrassBlades() -> MaterialGraph {
+    package static func swampGrassBlades() -> MaterialGraph {
         var b = MatBuilder("Swamp Grass Blades")
         let code = """
         float2 xy = float2(uv.x - 0.5, 1.0 - uv.y);
@@ -322,7 +323,7 @@ extension MaterialLibrary {
     }
 
     /// A slender stem, gently bent, its narrow pale leaves alternating up it (a card, cut out).
-    static func swampPlant() -> MaterialGraph {
+    package static func swampPlant() -> MaterialGraph {
         var b = MatBuilder("Swamp Plant")
         let code = """
         float2 xy = float2(uv.x - 0.5, 1.0 - uv.y);

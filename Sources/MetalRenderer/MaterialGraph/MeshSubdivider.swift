@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -10,11 +11,11 @@ import simd
 /// The vertices that sit at one point (a hard edge's, a UV seam's, the original mesh's doubled ones) are then a group:
 /// they move together, along the group's normal (its triangles', angle-weighted), by the average of the heights their
 /// UVs read, so the surface stays closed where its UVs or normals jump.
-struct MeshSubdivider {
-    var positions: [SIMD3<Float>]
-    var normals: [SIMD3<Float>]
-    var uvs: [SIMD2<Float>]
-    var indices: [UInt32]
+package struct MeshSubdivider {
+    package var positions: [SIMD3<Float>]
+    package var normals: [SIMD3<Float>]
+    package var uvs: [SIMD2<Float>]
+    package var indices: [UInt32]
     /// The cap was reached before every edge was short enough.
     private(set) var capped = false
 
@@ -23,10 +24,10 @@ struct MeshSubdivider {
         (self.positions, self.normals, self.uvs, self.indices) = (positions, normals, uvs, indices)
     }
 
-    var triangleCount: Int { indices.count / 3 }
+    package var triangleCount: Int { indices.count / 3 }
 
     /// The longest edge (in the mesh's units).
-    var longestEdge: Float {
+    package var longestEdge: Float {
         var longest: Float = 0
         for t in 0..<triangleCount {
             for k in 0..<3 {
@@ -38,7 +39,7 @@ struct MeshSubdivider {
 
     /// Splits the edges longer than `edge` until none is, or until a round of splits would make more than `cap`
     /// triangles (then it stops before that round: `capped`).
-    mutating func subdivide(edge: Float, cap: Int) {
+    package mutating func subdivide(edge: Float, cap: Int) {
         guard edge > 0 else { return }
         while true {
             // This round's splits: an edge's middle vertex, by its two ends.
@@ -108,15 +109,15 @@ struct MeshSubdivider {
 
     /// The vertices at one point, as groups: per vertex, where its group's members start in `members` and how many
     /// they are; the members (vertex indices); and per vertex the direction its group moves along.
-    struct Welds {
-        var start: [UInt32]
-        var count: [UInt32]
-        var members: [UInt32]
-        var direction: [SIMD3<Float>]
+    package struct Welds {
+        package var start: [UInt32]
+        package var count: [UInt32]
+        package var members: [UInt32]
+        package var direction: [SIMD3<Float>]
     }
 
     /// The groups of vertices at the same point (bit for bit: a split's middles are computed alike on both sides).
-    func welds() -> Welds {
+    package func welds() -> Welds {
         var group: [SIMD3<UInt32>: Int] = [:]
         var groupOf = [Int](repeating: 0, count: positions.count)
         var groups: [[UInt32]] = []
@@ -160,7 +161,7 @@ struct MeshSubdivider {
 
     /// UVs for a mesh without any: per triangle its positions (times `scale`: metres) along the axis it faces most, a
     /// tile a metre (as the shading's planarUV), its vertices made its own so each triangle keeps its projection.
-    static func planarUVs(_ positions: [SIMD3<Float>], _ normals: [SIMD3<Float>], _ indices: [UInt32], scale: Float)
+    package static func planarUVs(_ positions: [SIMD3<Float>], _ normals: [SIMD3<Float>], _ indices: [UInt32], scale: Float)
         -> (positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32]) {
         var p: [SIMD3<Float>] = [], n: [SIMD3<Float>] = [], uv: [SIMD2<Float>] = [], idx: [UInt32] = []
         var seen: [SIMD4<UInt32>: UInt32] = [:]   // (vertex, axis): its copy, shared by the triangles projected alike

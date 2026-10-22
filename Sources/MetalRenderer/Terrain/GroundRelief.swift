@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -7,10 +8,10 @@ import simd
 /// texture agree. Each layer's height (its scan's, 0...1) about its middle, times its relief in metres.
 package final class GroundRelief {
     package struct Layer {
-        var height: TextureSet.HeightField?
-        var scale: Float          // UV per metre, as the shader's
-        var contrast: Float
-        var relief: Float         // metres from the height's lowest to its highest
+        package var height: TextureSet.HeightField?
+        package var scale: Float          // UV per metre, as the shader's
+        package var contrast: Float
+        package var relief: Float         // metres from the height's lowest to its highest
     }
     let ground: [Layer]
     /// Layers 1...15 (index l - 1): a painted layer's, nil for one without a scan.

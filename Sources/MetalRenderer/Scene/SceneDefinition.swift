@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -25,7 +26,7 @@ package struct SceneKind: Hashable, Codable, CustomStringConvertible {
 
     /// The scenes when they were an enum, in its order: settings saved then hold a case's number, and the settings
     /// panel lists the scenes in this order.
-    static let numbered = ["cornell", "stress", "gallery", "spots", "sun", "area", "tubes", "emissive", "mixed", "fog", "valley",
+    package static let numbered = ["cornell", "stress", "gallery", "spots", "sun", "area", "tubes", "emissive", "mixed", "fog", "valley",
                            "market", "forest", "crowd", "city", "cityNight", "world", "showcase", "shapes", "physics", "ragdolls",
                            "hair", "softBodies", "muscles", "fluids", "particles", "plants", "buildings", "characters", "vfxStage",
                            "materials", "mireland", "painter", "terrain", "destruction", "demolition"]

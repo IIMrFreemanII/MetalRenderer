@@ -1,9 +1,10 @@
+import EngineCore
 import Foundation
 
 /// The thread frames are made on. Once it runs it owns the `Renderer`: the main thread (the window, the panels, input)
 /// and the background loads hand it work with `perform`, which runs between frames. So the main thread never waits
 /// for a frame, however slow frames get, and the renderer's state is only ever touched from one thread.
-final class RenderThread {
+package final class RenderThread {
     private let condition = NSCondition()
     private var pending: [() -> Void] = []
     private var stopped = false

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -9,7 +10,7 @@ import simd
 ///
 /// A cell is 32 bits: 8 of optical depth across a level 0 voxel (`depth` = 255), 8 of how much of it is leaf, 16 of
 /// its mean normal (octahedral, facing out of the crown). Three levels, each half the one before; 0 = empty.
-enum FoliageVoxels {
+package enum FoliageVoxels {
     /// Level 0 voxels along the plant's longest side. Measured in the forest: a march of 32 steps costs less than
     /// walking the plant's parts, one of 64 costs more, so a finer level would only ever be slower than triangles.
     static let resolution = 32
@@ -33,16 +34,16 @@ enum FoliageVoxels {
 
     /// What a plant's grid is made of: its meshes, placed in its space: an assembly's parts, or the parts a baked plant
     /// was flattened from.
-    struct Piece {
+    package struct Piece {
         var mesh: Foliage.Mesh
         var transform: float4x4         // into plant space
         var firstLeaf: UInt32           // the mesh's triangles from here on are leaves
         var leafCoverage: Float = 1     // the share of a leaf triangle that is there: a card's picture's (Scene.cutouts)
     }
-    struct Plant {
-        var key: String                 // what it is (its library, species and number): the cache's name for it
-        var pieces: [Piece]
-        var evergreen: Bool
+    package struct Plant {
+        package var key: String                 // what it is (its library, species and number): the cache's name for it
+        package var pieces: [Piece]
+        package var evergreen: Bool
     }
 
     /// Of `build`'s output: a change of the voxelisation makes other files in the cache.

@@ -1,9 +1,10 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
 
 /// What the virtual-geometry cut needs to know about the view each frame.
-struct VGView {
+package struct VGView {
     var camPos: SIMD3<Float>
     var pixelScale: Float       // traced height / (2 tan(fovY / 2))
     var tau: Float              // allowed error in traced pixels
@@ -11,7 +12,7 @@ struct VGView {
 }
 
 /// The wind this frame (Shaders/Foliage.metal): where it blows to, how hard, how gusty; the animation time now and a frame ago.
-struct WindFrame {
+package struct WindFrame {
     var wind = SIMD4<Float>(1, 0, 0, 0)
     var time: Float = 0
     var previousTime: Float = 0
@@ -30,7 +31,7 @@ struct WindFrame {
 
     /// What the plants' descriptors follow: the pose, the leaf fall and, in the wind, where the limbs move. A frame with
     /// the key a slot was last written for has nothing to write.
-    struct PlantKey: Equatable {
+    package struct PlantKey: Equatable {
         var pose: SIMD8<Float>
         var leafFall: Float
         var sway: SIMD4<Float>
@@ -42,7 +43,7 @@ struct WindFrame {
 /// it is for: MSL `rayMask`): 0 rays, 1 triangles and 2 boxes Metal's traversal handed to the queries' loop (every
 /// triangle counts as a candidate in those builds: Metal can't count its nodes, so the candidates are what the counters
 /// can see of its work), 3 unused.
-struct TraversalStats {
+package struct TraversalStats {
     /// MSL RAY_CAMERA ... RAY_LIGHTMAP.
     static let classes = ["camera", "shadow", "GI", "specular", "far", "light map"]
     static let counters = 4
@@ -54,9 +55,9 @@ struct TraversalStats {
     }
     /// Counter `i` over every class.
     func total(_ i: Int) -> UInt64 { (0..<Self.classes.count).reduce(0) { $0 + counts[$1 * Self.counters + i] } }
-    var rays: Double { Double(total(0)) }
+    package var rays: Double { Double(total(0)) }
     /// Counter `i` per ray.
-    func perRay(_ i: Int) -> Double { Double(total(i)) / max(rays, 1) }
+    package func perRay(_ i: Int) -> Double { Double(total(i)) / max(rays, 1) }
     /// Class `c`'s counters alone.
     func of(_ c: Int) -> TraversalStats {
         var one = TraversalStats()
@@ -79,7 +80,7 @@ struct TraversalStats {
 /// The scene as every ray-tracing kernel gets it at buffer 1 (MSL `TraceScene`, Shaders/Intersect.metal): Metal's
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
-final class TraceSceneArgs {
+package final class TraceSceneArgs {
     static let size = 224
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
@@ -114,34 +115,34 @@ final class TraceSceneArgs {
     /// pool), the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
     /// the arrays, the alpha layers).
     struct Content {
-        var tlas: MTLAccelerationStructure
-        var vgTable: MTLBuffer?
-        var clusters: MTLBuffer?
-        var pool: MTLBuffer?
-        var parts: MTLBuffer?
-        var meshes: MTLBuffer?
-        var indices: MTLBuffer?
-        var uvs: MTLBuffer?
-        var wind = WindFrame()
-        var cutouts: MTLBuffer?
-        var clusterInstance = UInt32.max
+        package var tlas: MTLAccelerationStructure
+        package var vgTable: MTLBuffer?
+        package var clusters: MTLBuffer?
+        package var pool: MTLBuffer?
+        package var parts: MTLBuffer?
+        package var meshes: MTLBuffer?
+        package var indices: MTLBuffer?
+        package var uvs: MTLBuffer?
+        package var wind = WindFrame()
+        package var cutouts: MTLBuffer?
+        package var clusterInstance = UInt32.max
         /// The particles' structures this slot (the shadow casters', the others'), their records and flipbooks
         /// (ParticlesGPU), and how many slots each covers.
-        var particleCasters: MTLAccelerationStructure?
-        var particleOthers: MTLAccelerationStructure?
-        var particleRender: MTLBuffer?
-        var particleAtlas: MTLTexture?
-        var particleCounts = SIMD2<UInt32>()
-        var particleFlags: UInt32 = 0   // MSL PARTICLES_REFLECTED
+        package var particleCasters: MTLAccelerationStructure?
+        package var particleOthers: MTLAccelerationStructure?
+        package var particleRender: MTLBuffer?
+        package var particleAtlas: MTLTexture?
+        package var particleCounts = SIMD2<UInt32>()
+        package var particleFlags: UInt32 = 0   // MSL PARTICLES_REFLECTED
         /// The trails' structure this slot, their control points and records, and (trails, control points each).
-        var particleTrails: MTLAccelerationStructure?
-        var trailPoints: MTLBuffer?
-        var trailRecords: MTLBuffer?
-        var trailShape = SIMD2<UInt32>()
-        var frame: UInt32 = 0
+        package var particleTrails: MTLAccelerationStructure?
+        package var trailPoints: MTLBuffer?
+        package var trailRecords: MTLBuffer?
+        package var trailShape = SIMD2<UInt32>()
+        package var frame: UInt32 = 0
         /// OPACITY: the instances' alpha tests (Scene.opacityRecords) and the material textures' table.
-        var opacity: MTLBuffer?
-        var textures: MTLBuffer?
+        package var opacity: MTLBuffer?
+        package var textures: MTLBuffer?
     }
 
     /// Writes `slot`'s scene (the CPU writes a slot only once the GPU is done with its last frame).

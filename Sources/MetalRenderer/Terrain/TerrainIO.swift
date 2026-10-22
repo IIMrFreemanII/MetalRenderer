@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import ImageIO
 import UniformTypeIdentifiers
@@ -7,28 +8,28 @@ import simd
 /// Heightmaps and splat maps in and out of a terrain: 16-bit grey PNGs and 32-bit float EXRs (what World Machine,
 /// Gaea and the like read and write), and RGBA PNGs of the layers' weights (four layers a picture). A region of the
 /// terrain's samples is a picture's pixels, corner to corner; a picture of another size is resampled onto it.
-enum TerrainIO {
-    enum Format: String, CaseIterable, Codable {
+package enum TerrainIO {
+    package enum Format: String, CaseIterable, Codable {
         case png16, exr
-        var fileExtension: String { self == .png16 ? "png" : "exr" }
+        package var fileExtension: String { self == .png16 ? "png" : "exr" }
     }
 
     /// How imported heights become the ground: the picture's 0...1 as `low`...`high` metres (absolute), added to the
     /// ground times `scale` metres (additive, mid-grey 0), or blended with it by `amount` (absolute heights, mixed).
-    enum ImportMode: Equatable {
+    package enum ImportMode: Equatable {
         case absolute(low: Float, high: Float)
         case additive(scale: Float)
         case blend(low: Float, high: Float, amount: Float)
     }
 
     /// A region of samples, `lo`...`hi` (inclusive).
-    struct Region: Equatable, Codable {
-        var lo: SIMD2<Int>
-        var hi: SIMD2<Int>
-        var size: SIMD2<Int> { hi &- lo &+ 1 }
+    package struct Region: Equatable, Codable {
+        package var lo: SIMD2<Int>
+        package var hi: SIMD2<Int>
+        package var size: SIMD2<Int> { hi &- lo &+ 1 }
 
         /// The whole terrain if it has an edge; else these tiles.
-        static func of(_ grid: TerrainGrid, tiles: [SIMD2<Int>]) -> Region? {
+        package static func of(_ grid: TerrainGrid, tiles: [SIMD2<Int>]) -> Region? {
             if let lo = grid.lo, let hi = grid.hi, tiles.isEmpty { return Region(lo: lo, hi: hi) }
             guard let first = tiles.first else { return nil }
             var lo = grid.firstSample(first), hi = lo &+ grid.tileCells
@@ -42,7 +43,7 @@ enum TerrainIO {
     }
 
     /// What is written beside an exported heightmap: where its pixels are and what their values mean.
-    struct Sidecar: Codable {
+    package struct Sidecar: Codable {
         var terrain: String
         var region: Region
         var cell: Float
@@ -51,9 +52,9 @@ enum TerrainIO {
         var format: Format
     }
 
-    enum Failure: Error, CustomStringConvertible {
+    package enum Failure: Error, CustomStringConvertible {
         case unreadable(String), unwritable(String), empty
-        var description: String {
+        package var description: String {
             switch self {
             case .unreadable(let s): return "can't read \(s)"
             case .unwritable(let s): return "can't write \(s)"
@@ -67,7 +68,7 @@ enum TerrainIO {
     /// The region's heights as a picture (and its sidecar, `<name>.json`): a 16-bit PNG spans its lowest to its highest
     /// height, an EXR holds metres.
     @discardableResult
-    static func exportHeights(_ s: TerrainSnapshot, terrain: String, region r: Region, to url: URL, format: Format) throws -> Sidecar {
+    package static func exportHeights(_ s: TerrainSnapshot, terrain: String, region r: Region, to url: URL, format: Format) throws -> Sidecar {
         let size = r.size
         guard size.x > 0, size.y > 0 else { throw Failure.empty }
         let h = s.heights(from: r.lo, count: size, step: 1)
@@ -92,7 +93,7 @@ enum TerrainIO {
 
     /// The region's layer weights as they show (the rules' with the paint over them): four RGBA PNGs, layers 0-3, 4-7,
     /// 8-11 and 12-15, `<stem>-layers-0-3.png` and on.
-    static func exportWeights(_ s: TerrainSnapshot, layers: [TerrainLayer], region r: Region, to stem: URL) throws -> [URL] {
+    package static func exportWeights(_ s: TerrainSnapshot, layers: [TerrainLayer], region r: Region, to stem: URL) throws -> [URL] {
         let size = r.size
         guard size.x > 0, size.y > 0 else { throw Failure.empty }
         let h = s.heights(from: r.lo &- 1, count: size &+ 2, step: 1), w = size.x + 2
@@ -137,7 +138,7 @@ enum TerrainIO {
     // MARK: - In
 
     /// A picture's first channel as floats 0...1 (EXR: as stored), rows top to bottom, and its size.
-    static func read(_ url: URL) throws -> (values: [Float], width: Int, height: Int, float: Bool) {
+    package static func read(_ url: URL) throws -> (values: [Float], width: Int, height: Int, float: Bool) {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw Failure.unreadable(url.lastPathComponent)
         }
@@ -197,7 +198,7 @@ enum TerrainIO {
     }
 
     /// A picture's RGBA as bytes, rows top to bottom.
-    static func readRGBA(_ url: URL) throws -> (bytes: [UInt8], width: Int, height: Int) {
+    package static func readRGBA(_ url: URL) throws -> (bytes: [UInt8], width: Int, height: Int) {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             throw Failure.unreadable(url.lastPathComponent)
         }
@@ -223,7 +224,7 @@ enum TerrainIO {
 
     /// Bilinear sample of a picture (rows top to bottom as read; the region's first row is the picture's first) at
     /// `u`, `v` 0...1 across and down.
-    @inline(__always) static func sample(_ p: [Float], _ w: Int, _ h: Int, _ u: Float, _ v: Float) -> Float {
+    @inline(__always) package static func sample(_ p: [Float], _ w: Int, _ h: Int, _ u: Float, _ v: Float) -> Float {
         let x = min(max(u * Float(w - 1), 0), Float(w - 1)), y = min(max(v * Float(h - 1), 0), Float(h - 1))
         let x0 = Int(x), y0 = Int(y), x1 = min(x0 + 1, w - 1), y1 = min(y0 + 1, h - 1), fx = x - Float(x0), fy = y - Float(y0)
         let a = p[y0 * w + x0] + (p[y0 * w + x1] - p[y0 * w + x0]) * fx
@@ -232,7 +233,7 @@ enum TerrainIO {
     }
 
     /// Heights from a picture over the region (as `mode` says), kept for undo in `record`; protected ground stays.
-    static func importHeights(_ s: inout TerrainSnapshot, picture: (values: [Float], width: Int, height: Int, float: Bool), region r: Region,
+    package static func importHeights(_ s: inout TerrainSnapshot, picture: (values: [Float], width: Int, height: Int, float: Bool), region r: Region,
                               mode: ImportMode, record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let size = r.size, reading = s
         guard picture.width > 1, picture.height > 1, size.x > 1, size.y > 1 else { return [] }
@@ -253,7 +254,7 @@ enum TerrainIO {
 
     /// Layer weights from up to four RGBA pictures (layers 0-3, 4-7, ...; a missing one leaves its layers out),
     /// painted over the region as they say.
-    static func importWeights(_ s: inout TerrainSnapshot, pictures: [(bytes: [UInt8], width: Int, height: Int)?], region r: Region,
+    package static func importWeights(_ s: inout TerrainSnapshot, pictures: [(bytes: [UInt8], width: Int, height: Int)?], region r: Region,
                               record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let grid = s.grid, n = grid.tileCells, size = r.size
         guard size.x > 1, size.y > 1 else { return [] }

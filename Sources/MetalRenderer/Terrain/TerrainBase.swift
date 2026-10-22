@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -96,7 +97,7 @@ package final class FlatTerrainBase: TerrainBase {
         var center: SIMD3<Float>
         var radii: SIMD3<Float>
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(center: SIMD3<Float>, radii: SIMD3<Float>) {
             self.center = center
             self.radii = radii

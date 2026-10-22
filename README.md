@@ -106,7 +106,7 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
-**Build times.** The code is two library targets: the engine (`Sources/MetalRenderer`) and the game, which holds the demo scenes (`Sources/Game`, README "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole. On an M1 Max that is about 4 minutes after an engine edit, most of it the optimiser over the whole module on one core, and 28 s after a game edit. Release builds are testable, so `swift build -c release` and `swift test -c release` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in about 14 s, and it draws the same images at the same speed. Quote release numbers.
+**Build times.** The code is library modules: the core, the engine, the editors and the game (README, "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole; on an M1 Max that is about 3 minutes after an engine edit, most of it the optimiser over the engine on one core, and half a minute after an editor's, the game's or the core's. Build release with `Tools/release.sh` (`swift build -c release`, after the modules above an `@inlinable` body that changed are marked for rebuilding). Release builds are testable, so `Tools/release.sh` and `Tools/release.sh test` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in 3–10 s, and it draws the same images at the same speed. Quote release numbers.
 
 ```bash
 Tools/build.sh                                  # builds it and prints the binary's path
@@ -115,23 +115,29 @@ Tools/build.sh test --filter 'CityTests'        # tests in it
 
 A debug build warns about any function that takes the type checker over 600 ms, or an expression over 300 ms. Give it explicit types or split it. The warnings show only for the files a build compiles, and `render.sh` keeps only errors, so look for them after a clean dev build (`Tools/build.sh 2>&1 | grep "to type-check"`).
 
-Where the time goes (M1 Max, October 2026):
+Where the time goes (M1 Max, October 2026; one module, then the modules):
 
-| Build | Clean | After an engine edit | After a game edit (a scene) |
-|---|---|---|---|
-| Dev (`Tools/build.sh`) | 75 s | 13 s | 3.6 s |
-| Dev with the tests (`--build-tests`) | +17 s | 14 s; 3.6 s after a test edit | |
-| Release | 290 s | 225 s; 252 s for an interface change | 28 s |
-| Release with the tests | +50 s | 265 s; 46 s after a test edit | |
+| Build | Clean | An engine edit | An editor's edit | The core's edit | The game's edit | An interface change |
+|---|---|---|---|---|---|---|
+| Dev (`Tools/build.sh`) | 75 → 79 s | 13 → 10 s | 13 → 4.3 s | 13 → 2.8 s | 3.6 → 3.9 s | 14 → 14 s (the core's), 28 s (the engine's) |
+| Release | 290 → 246 s | 225 → 176 s | 225 → 33 s | 225 → 22 s | 28 s | 252 → 224 s (the core's), 211 s (the engine's) |
 
-The split's own price is a clean build 6–7% longer: two modules, the engine's `package` interface written for the game.
-
-* **A game edit** (a scene's builder, its look, a benchmark mode) recompiles the game's file and its module interface. The engine isn't touched, and a release build optimises only the game's 9k lines. **An engine edit** whose interface doesn't change leaves the game as it was.
-* **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes the module's interface for the app and the tests to import: it type-checks every declaration of the 102k lines and optimises the accessors that `-enable-testing` exposes (12 s; 7 s without testing).
-* **A release edit** is about 200 s of SIL optimisation and 35 s of type checking, both on one core and spread over the whole module: the costliest file is 2% of it. Code generation already runs on every core.
+* **An edit** recompiles its module. The modules above it are compiled again only when the module's interface
+  changed (an added declaration, a changed signature), or one of its `@inlinable` bodies did.
+* **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
+  one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
+  modules above).
+* **An engine edit that changes its interface** costs more in the dev build than before (28 s against 14): the editors
+  and the game check what they use of the new interface. In release it costs less (211 s against 252): their whole
+  modules are smaller than the engine was.
+* **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes its module's interface for
+  the modules above and the tests: it type-checks every declaration of the module and optimises the accessors that
+  `-enable-testing` exposes, which is why a small module's edit is cheap.
+* **A release edit** is mostly SIL optimisation and type checking on one core, spread over its whole module. Code
+  generation already runs on every core.
 * **A new worktree** starts the dev build in the background when the session starts (`Tools/warmup.sh`, the SessionStart hook), so the first `render.sh` or `related.sh` finds it built or waits for it.
 * `Tools/perf/buildtime.sh` measures all of this on a copy of the tree (clean, no-op and one-line edits; `--rev <commit>` for a commit, `--stats` for the compiler's phases). Run it before and after a change to the build.
-* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build, a C entry point (the link still waits for the module), module emission per file, and leaf modules (only 3.5% of the code depends on nothing else). An app build without `-enable-testing` would make an edit about 4.5 s faster, but SwiftPM's debug builds always enable testability (`--disable-testable-imports` is an option of `swift test` only).
+* Tried, and no faster: no index store in the dev build, `-gline-tables-only`, cross-module optimisation off in the dev build (it is off now, for the modules' sake: it cost nothing), a C entry point (the link still waits for the module), module emission per file, and leaf modules taken off the one module as it was (only 3.5% of its code depended on nothing else; the modules came after the folders' cycles were cut). An app build without `-enable-testing` would make an edit about 4.5 s faster, but SwiftPM's debug builds always enable testability (`--disable-testable-imports` is an option of `swift test` only).
 
 ### Benchmark mode
 
@@ -2177,17 +2183,51 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 
 ## Source layout
 
-Two modules, each in a folder per feature:
+The code is in modules, each a target of `Package.swift` in a folder per feature:
 
-* **`Sources/MetalRenderer`, the engine:** the renderer and its systems (physics, plants, buildings, terrain, water,
-  the open world, particles...), the editors and their workshops, the benchmark harness, and the Cornell room.
+| Module | Folder | Holds |
+|---|---|---|
+| `EngineCore` | `Sources/EngineCore` | What every module shares and that knows no scene or renderer: maths, `SourceTree` and the assets' folder, the load activity; offline geometry (BVH, mesh builders, simplification, SDF shapes and volumes, the virtual geometry builder); file formats (glTF, EXR, cache and section files); textures (sets, streaming, generated ones); the GPU structs every module reads (`GPU/GPUTypes.swift`), compute passes, the kernels and their pipelines |
+| `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
+| `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
+| `Game` | `Sources/Game` | The demo scenes (below) |
+| `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
+
+The modules reach each other through `package` declarations (nothing is `public`). Above the core the engine, then the
+editors and the game, which know nothing of each other; the tests (`Tests/MetalRendererTests`) import them all.
+
+* **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
+  editor's or the game's edit leaves the engine as it was; an engine edit that keeps its interface leaves the editors
+  and the game.
+* **Where a file goes:** code that touches `Scene`, `Renderer` or `SceneBuffers` internals, or takes a `Scene` or a
+  `FrameEncoder`, is the engine's. What needs neither, and that more than one module uses, can be the core's. An
+  editor's UI is the editors', an editor's model of the data (what it edits, how) the engine's
+  (`VFX/VFXEffect+Editing.swift`). The engine never calls the editors: they read its reports (`RendererStatus`,
+  through `RendererController`) and send it work.
+* **Calls across modules.** No function body crosses a module unless it is `@inlinable` (`Package.swift`: no
+  cross-module optimisation, `-disable-cmo`, and in the testable release build its pass too,
+  `-sil-disable-pass=cmo`, which would still carry every small function's body into the modules above). So a function,
+  computed property or initializer of another module is a call. A helper a loop of the frame's calls per element is
+  an `@inlinable package` free function on plain types in its module (`translate`, `sdfJoin`): an `@inlinable` body
+  can't name a `package` type, and a `package` type's `@inlinable` members don't reach the modules above.
+  `Tools/perf/hotcalls.py` fails on a hot loop's call into another module, and `--against` a build of main on
+  anything a hot or a per-frame loop (`Tools/perf/boundary-functions.txt`) calls that it didn't before.
+* **An `@inlinable` body** is part of the modules that inlined it, but its edit doesn't change the module's interface,
+  so the build wouldn't rebuild them. `Tools/build.sh` and `Tools/release.sh` (the release build: use it rather than
+  `swift build -c release`) run `Tools/modules/inlinable.py` first, which compiles the modules above again when one
+  of their `@inlinable` bodies changed.
+* **Moving code between modules:** `Tools/modules/` has what did it (`moveblocks.py` moves declarations between files,
+  `addimport.py` adds the imports, `loop.sh` builds and runs `pkgfix.py`, which marks `package` what the build above
+  can't see and writes the initializers it calls, `markmembers.py` marks a type's members for SwiftUI views, whose
+  errors don't name what they can't see).
+
+The game:
+
 * **`Sources/Game`, the game:** the demo scenes. It holds their builders, what suits each scene (fog, sky, lens,
   camera, day: `GameScenes.swift`), their settings rows (`Settings/GameScenes+Rows.swift`) and the benchmark modes
   that show them (`Benchmark/`).
-  * It reaches the engine through `package` declarations: the engine's API, marked where the game uses it. Nothing
-    is `public`.
-  * A change in it recompiles only the game target. A change in the engine recompiles the engine, and the game as
-    well when the engine's interface changed.
+  * It reaches the engine through its `package` declarations, marked where the game uses them.
+  * A change in it recompiles only the game target.
 
 **How a scene is found.** A scene is a `SceneKind`, which is a name (`Scene/SceneDefinition.swift`). Its
 `SceneDefinition`, registered in `SceneRegistry`, holds its builder, its traits (`simulates`, `isCity`, `hasPlants`…)
@@ -2256,36 +2296,45 @@ git config diff.scenedump.textconv "python3 Tools/scene/scenedump.py"
 **Placing a new file:**
 
 * A new demo scene is a builder in the game's feature folder plus an entry in `GameScenes.scenes()`.
-* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder.
-* An editor sits inside its feature (`Buildings/Editor`).
+* A `Type+Feature.swift` extension (`Scene+Water`, `Renderer+Terrain`) sits in its feature's folder of the engine.
+* An editor's UI sits in the editors' folder of its feature (`Sources/Editors/Buildings`).
 
 **Shaders, assets and tests:**
 
 * The shaders stay at the engine's top: `Shaders.metal`, `Shaders/`, `ShadersVFX.metal`, `ShadersMaterial*.metal` and
   `MaterialShaders/`.
-* Code finds the shaders, the assets and the fixtures through `SourceTree` (`Util/SourceTree.swift`), not from its own
-  path.
-* The tests in `Tests/MetalRendererTests` import both modules and use the same folders.
+* Code finds the shaders, the assets and the fixtures through `SourceTree` (`EngineCore/Util/SourceTree.swift`), not
+  from its own path.
+* The tests in `Tests/MetalRendererTests` import every module and use the engine's folders.
+
+The core's folders: `Util/` (maths, catalogs, `SourceTree`, `Assets`, the load activity), `Geometry/` (BVH, mesh
+builders and shapes, simplification, clusters; `SDF/` shapes and volumes; `VirtualGeometry/`'s builder), `IO/` (glTF,
+EXR, cache and section files), `Textures/` (texture sets, streaming, generated textures) and `GPU/` (the shared GPU
+structs, compute passes, kernels and pipelines, the shader source's splicing).
 
 The engine's folders:
 
 | Folder | What is in it |
 |---|---|
-| `App/` | The window, the view, the controller, panels and overlays, the day bar, the graph editors' canvas |
-| `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store, the panel |
-| `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), pipelines, the backends; `Lighting/` and `Post/` |
+| `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store |
+| `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), the frame encoders, the backends, the surfaces, what it reports (`RendererStatus`, `DebugInfo`); `Lighting/` and `Post/` |
 | `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation, the walker |
-| `Geometry/` | BVH, meshes, simplification; `VirtualGeometry/` (Nanite-like), `SDF/` |
+| `Geometry/` | `VirtualGeometry/` (Nanite-like: streaming, the cut, tracing), `SDF/` (the scene's SDF buffers), the scene's mesh shapes |
 | `Physics/` | Rigid bodies, the CPU step (`PhysicsCPU+Broad`, `+Narrow`, `+Colours`, `+Substeps`, `+Joints`, `+Particles`), the GPU's, threads, soft bodies, hair, muscles, fluids |
-| `Destruction/` | The tools' rigs and the players; `Fracture/` (trees, patterns, cutting, the editor), `Demolition/` (its physics and player) |
-| `Buildings/` | The generator, plans, styles; `Interior/`, `City/`, `Editor/` |
-| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/`; each with its `Editor/` |
-| `Terrain/`, `Water/`, `World/` | The terrain system and its editor, water, the open world |
-| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer and its editor, the Material Painter, texture sets and streaming |
-| `Particles/`, `VFX/` | GPU particles; effects as graphs and their editor |
-| `ProjectGraph/` | Outlines, overrides, the Project Graph and its window |
+| `Destruction/` | The tools' rigs; `Fracture/` (trees, patterns, cutting), `Demolition/` (its physics) |
+| `Buildings/` | The generator, plans, styles; `Interior/`, `City/` |
+| `Plants/`, `Characters/` | Plants and their voxels; people, with `Animation/`, `Crowd/` |
+| `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
+| `MaterialGraph/`, `Painter/`, `Textures/` | The Material Designer's graphs, compiler and bakes, the Material Painter's documents and GPU side, scanned materials |
+| `Particles/`, `VFX/` | GPU particles; effects as graphs |
+| `ProjectGraph/` | Outlines, overrides, the Project Graph's model |
 | `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
-| `IO/`, `Util/` | glTF, EXR, cache and section files, glTF models in scenes; maths, catalogs, `SourceTree` |
+| `IO/` | Scene files and placing their objects, glTF models in scenes |
+
+The editors' folders: `App/` (the window, the view, the controller, panels and overlays, the day bar, the graph
+editors' canvas), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,
+`Buildings/` (with the floor plan), `Characters/`, `Terrain/`, `MaterialGraph/`, `Painter/`, `VFX/`,
+`ProjectGraph/`, `Destruction/Fracture/`.
 
 The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland),
 `Physics/Scenes/`, `Buildings/City/`, `Destruction/` (the courtyard, `Demolition/`: the office and its blueprint),

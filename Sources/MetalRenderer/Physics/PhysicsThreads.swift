@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import CPhysicsAtomics
 
@@ -498,13 +499,13 @@ struct PhysicsCellGrid {
     }
 
     struct View {
-        let keys: UnsafeBufferPointer<SIMD4<Int32>>
-        let slots: UnsafeBufferPointer<Int32>
-        let starts: UnsafeBufferPointer<Int32>
-        let items: UnsafeBufferPointer<Int32>
+        package let keys: UnsafeBufferPointer<SIMD4<Int32>>
+        package let slots: UnsafeBufferPointer<Int32>
+        package let starts: UnsafeBufferPointer<Int32>
+        package let items: UnsafeBufferPointer<Int32>
 
         /// The items in cell `k`, in the order they were added (none for an empty cell).
-        @inline(__always) func cell(_ k: SIMD4<Int32>) -> Range<Int> {
+        @inline(__always) package func cell(_ k: SIMD4<Int32>) -> Range<Int> {
             let mask = slots.count - 1
             var at = PhysicsCellGrid.hash(k) & mask
             while slots[at] >= 0 {
@@ -514,7 +515,7 @@ struct PhysicsCellGrid {
             }
             return 0..<0
         }
-        @inline(__always) func item(_ m: Int) -> Int { Int(items[m]) }
+        @inline(__always) package func item(_ m: Int) -> Int { Int(items[m]) }
     }
 
     func withView<R>(_ body: (View) throws -> R) rethrows -> R {

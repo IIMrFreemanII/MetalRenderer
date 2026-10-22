@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -8,7 +9,7 @@ import simd
 ///   and a new cut rebuilds the top-level structure over it; or
 /// * this frame's cut of clusters as boxes (VirtualGeometry, `METALRENDERER_VG_MODE=clusters`): one instance of their
 ///   own after the scene's (`extraInstances`), whose structure the frame builds; the virtual instances are masked out.
-final class VirtualTracing {
+package final class VirtualTracing {
     let blas: VirtualBLAS?
     let clusters: VirtualGeometry?
     /// The virtual instances, in their rank (GPUInstanceData.pad1 - 1).

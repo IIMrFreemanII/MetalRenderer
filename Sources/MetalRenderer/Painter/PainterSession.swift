@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -71,7 +72,7 @@ struct PaintOriginalGPU {
 }
 
 /// What a stroke paints into: a paint layer's channels, or a layer's mask (its painted part).
-enum PaintTarget: Equatable {
+package enum PaintTarget: Equatable {
     case channels(Set<PaintChannel>)
     case mask
 }

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -48,13 +49,13 @@ final class TerrainWaterField: WaterField {
     private struct Sea { var level: Float; var look: Int; var lo: SIMD2<Double>?; var hi: SIMD2<Double>? }
     private struct Lake { var lo: SIMD2<Int>; var size: SIMD2<Int>; var cells: [Bool]; var level: Float; var look: Int }
     private struct River {
-        var points: [SIMD2<Double>]
-        var beds: [Float]
-        var half: Double, depth: Float
-        var look: Int
-        var speed: [Float]        // per segment: m/s in the middle
-        var white: [Float]        // per segment: how white it runs
-        var buckets: [Int: [Int]] // segments by coarse cell (bucketSize), for the nearest one
+        package var points: [SIMD2<Double>]
+        package var beds: [Float]
+        package var half: Double, depth: Float
+        package var look: Int
+        package var speed: [Float]        // per segment: m/s in the middle
+        package var white: [Float]        // per segment: how white it runs
+        package var buckets: [Int: [Int]] // segments by coarse cell (bucketSize), for the nearest one
     }
     private static let bucketSize = 16.0
     private let snapshot: TerrainSnapshot

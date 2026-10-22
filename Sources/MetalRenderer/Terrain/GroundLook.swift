@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import QuartzCore
 import simd
@@ -8,21 +9,21 @@ import simd
 /// `terrainRealistic`, UE's height lerp). What it would be in the Terrain Editor's terms: an automatic material.
 package struct GroundLook {
     package struct Layer {
-        var set: String
+        package var set: String
         /// Without the scan: its plain colour over the generated detail texture.
-        var color: SIMD3<Float>
+        package var color: SIMD3<Float>
         /// The scan's albedo times this.
-        var tint: SIMD3<Float> = .one
+        package var tint: SIMD3<Float> = .one
         /// One repeat, metres (nil: the scan's own size).
-        var metres: Float? = nil
+        package var metres: Float? = nil
         /// How strongly its height wins over its neighbours' where they mix (0: a plain blend).
-        var contrast: Float = 1
-        var roughness: Float = 1
+        package var contrast: Float = 1
+        package var roughness: Float = 1
         /// How far its height raises and sinks the near ground with realism high, metres (nil: its scan's own:
         /// GroundRelief.relief(of:)).
-        var relief: Float? = nil
+        package var relief: Float? = nil
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(set: String, color: SIMD3<Float>, tint: SIMD3<Float> = .one, metres: Float? = nil, contrast: Float = 1, roughness: Float = 1, relief: Float? = nil) {
             self.set = set
             self.color = color
@@ -126,7 +127,7 @@ package struct GroundLook {
         return t * t * (3 - 2 * t)
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(layers: [Layer], rock: Int? = nil, slope: SIMD2<Float> = SIMD2<Float>(0.62, 0.82), lo: SIMD2<Float>, size: SIMD2<Float>, texels: Int, key: String, weights: @escaping (Float, Float) -> [Float]) {
         self.layers = layers
         self.rock = rock
@@ -140,7 +141,7 @@ package struct GroundLook {
 }
 
 /// What the shader reads of a scene's realistic ground, after its layer table (SceneTerrain.table).
-struct GroundRows {
+package struct GroundRows {
     var materials: [Int] = []
     var metres: [Float] = []
     var contrast: [Float] = []
@@ -152,7 +153,7 @@ struct GroundRows {
 
 extension Scene {
     /// The realistic ground's tiling noise (brightness, hue, roughness, break-up: RGBA), shared by every terrain.
-    func terrainMacroTexture() -> UInt32 {
+    package func terrainMacroTexture() -> UInt32 {
         addGeneratedTexture(name: "terrain-macro", width: 512, height: 512, key: "v1", srgb: false) {
             var pixels = [UInt8](repeating: 0, count: 512 * 512 * 4)
             for j in 0..<512 {
@@ -171,7 +172,7 @@ extension Scene {
     }
 
     /// A material for a realistic layer: its scan, or without it its colour over the generated detail.
-    func groundLayerMaterial(set: String, color: SIMD3<Float>, tint: SIMD3<Float> = .one, roughness: Float = 1, detail: UInt32) -> Int {
+    package func groundLayerMaterial(set: String, color: SIMD3<Float>, tint: SIMD3<Float> = .one, roughness: Float = 1, detail: UInt32) -> Int {
         if let m = addScanMaterial(set, tint: tint, roughness: roughness) { return m }
         var m = GPUMaterial(albedo: SIMD4(color / FoliageTextures.mean, 0), emission: SIMD4(.zero, 0.95 * roughness))
         m.textures.x = detail
@@ -218,7 +219,7 @@ extension Scene {
     /// that their seams with the coarse ones are only on its outside) made again fine, 0.25 m (at most 4 x 4 a cell)
     /// apart, their ground raised by `look`'s relief (GroundRelief: the shader's height lerp on the CPU). Before the
     /// renderer has the meshes: each takes its coarse mesh's place.
-    func refineTerrain(_ look: GroundLook, rows: GroundRows, maps: (FoliageTextures.Image, FoliageTextures.Image)) {
+    package func refineTerrain(_ look: GroundLook, rows: GroundRows, maps: (FoliageTextures.Image, FoliageTextures.Image)) {
         guard let t = terrain else { return }
         let started = CACurrentMediaTime()
         let reach: Float = 32
@@ -300,7 +301,7 @@ extension Scene {
     }
 
     /// The generated detail texture the plain layers' colours are multiplied by.
-    func terrainDetailTexture() -> UInt32 {
+    package func terrainDetailTexture() -> UInt32 {
         addGeneratedTexture(name: "terrain-detail", width: 512, height: 512, key: "v\(FoliageTextures.version)") {
             FoliageTextures.image(512, 512, normalized: true) { u, v in
                 let clumps = FoliageTextures.noise(u * 6, v * 6, 6, 6, 41) + 0.6 * FoliageTextures.noise(u * 17, v * 17, 17, 17, 42)

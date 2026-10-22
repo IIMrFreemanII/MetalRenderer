@@ -1,11 +1,12 @@
+import EngineCore
 import Foundation
 
 /// Variations of a species for the plant editor's Mutate: each one the species with a few of its numbers moved a
 /// little (PlantParams' `mutation` shares), at random but the same for the same seed. Shown side by side in the
 /// workshop (its layout `mutate`); the one picked replaces the species' shape.
-enum PlantMutate {
+package enum PlantMutate {
     /// `count` variations of `def`, ids "<id>~1"... (they grow from its seeds, so only the numbers differ).
-    static func mutants(of def: Foliage.SpeciesDef, count: Int = 6, seed: UInt64) -> [Foliage.SpeciesDef] {
+    package static func mutants(of def: Foliage.SpeciesDef, count: Int = 6, seed: UInt64) -> [Foliage.SpeciesDef] {
         (1...max(count, 1)).map { k in
             var rng = SplitMix64(seed: seed &+ UInt64(k) &* 0x9E37_79B9_7F4A_7C15)
             var m = def
@@ -58,7 +59,7 @@ enum PlantMutate {
     }
 
     /// `def` shaped as `mutant`: its recipes, palette and ages; still itself (its id, name, seeds, look, habitat).
-    static func pick(_ mutant: Foliage.SpeciesDef, into def: Foliage.SpeciesDef) -> Foliage.SpeciesDef {
+    package static func pick(_ mutant: Foliage.SpeciesDef, into def: Foliage.SpeciesDef) -> Foliage.SpeciesDef {
         var d = def
         d.recipe = mutant.recipe
         d.bough = mutant.bough

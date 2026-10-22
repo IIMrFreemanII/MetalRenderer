@@ -1,4 +1,5 @@
 import CoreGraphics
+import EngineCore
 import Foundation
 import simd
 
@@ -126,19 +127,19 @@ package enum EnvVariable: String, CaseIterable {
 /// (`SettingsTable.sections`); a new setting is one line there.
 package struct SettingSpec {
     /// The panel's control for it.
-    enum Control {
+    package enum Control {
         case slider(Slider)
         case checkbox(get: (RenderSettings) -> Bool, set: (inout RenderSettings, Bool) -> Void)
         case popup(titles: [String], selected: (RenderSettings) -> Int, select: (inout RenderSettings, Int) -> Void)
         case custom(Custom)
     }
-    struct Slider {
-        let range: ClosedRange<Double>                      // slider positions (log2 of the value on a log slider)
-        let ticks: Int                                      // tick marks the slider snaps to; 0 = none
-        let live: Bool                                      // false: applies when the slider is released
-        let position: (RenderSettings) -> Double
-        let move: (inout RenderSettings, Double) -> Void    // a position, rounded and clamped, into the setting
-        let text: (RenderSettings) -> String                // the value shown next to the slider
+    package struct Slider {
+        package let range: ClosedRange<Double>                      // slider positions (log2 of the value on a log slider)
+        package let ticks: Int                                      // tick marks the slider snaps to; 0 = none
+        package let live: Bool                                      // false: applies when the slider is released
+        package let position: (RenderSettings) -> Double
+        package let move: (inout RenderSettings, Double) -> Void    // a position, rounded and clamped, into the setting
+        package let text: (RenderSettings) -> String                // the value shown next to the slider
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     package enum Custom {
@@ -146,26 +147,26 @@ package struct SettingSpec {
     }
     /// The setting as text in an environment variable.
     package struct Env {
-        var variable = EnvVariable.gi
-        var key: String?                // in a key=value list; nil: the variable's whole value
-        var interactiveOnly = false     // read only outside benchmarks, whose settings choose it themselves
-        var exported = true             // false: an alias that is only read
-        let text: (RenderSettings) -> String
-        let differs: (RenderSettings, RenderSettings) -> Bool
-        let parse: (inout RenderSettings, String) -> Bool
+        package var variable = EnvVariable.gi
+        package var key: String?                // in a key=value list; nil: the variable's whole value
+        package var interactiveOnly = false     // read only outside benchmarks, whose settings choose it themselves
+        package var exported = true             // false: an alias that is only read
+        package let text: (RenderSettings) -> String
+        package let differs: (RenderSettings, RenderSettings) -> Bool
+        package let parse: (inout RenderSettings, String) -> Bool
     }
 
-    var title = ""                                  // the row's label, or its checkbox's title
-    var control: Control?                           // nil: no row (a setting with only an env name)
-    var advanced = false                            // shown only with Show advanced
-    var visible: ((RenderSettings) -> Bool)?        // nil: always
-    var enabled: ((RenderSettings) -> Bool)?        // nil: always
-    var available: ((Int) -> Bool)?                 // a popup's items this GPU can run (Capabilities); nil: all
+    package var title = ""                                  // the row's label, or its checkbox's title
+    package var control: Control?                           // nil: no row (a setting with only an env name)
+    package var advanced = false                            // shown only with Show advanced
+    package var visible: ((RenderSettings) -> Bool)?        // nil: always
+    package var enabled: ((RenderSettings) -> Bool)?        // nil: always
+    package var available: ((Int) -> Bool)?                 // a popup's items this GPU can run (Capabilities); nil: all
     package var env: Env?                                   // its `variable` is meaningful once `env(_:_:)` named it
     private var named = false
 
     /// The spec's env name, if it has one.
-    var envName: Env? { named ? env : nil }
+    package var envName: Env? { named ? env : nil }
 
     // MARK: Modifiers
 
@@ -180,18 +181,18 @@ package struct SettingSpec {
         s.named = true
         return s
     }
-    func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
+    package func advanced(_ on: Bool = true) -> SettingSpec { var s = self; s.advanced = on; return s }
     package func when(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.visible = condition; return s }
-    func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
+    package func enabled(_ condition: @escaping (RenderSettings) -> Bool) -> SettingSpec { var s = self; s.enabled = condition; return s }
     /// A slider's value shown as `text` says, from all the settings.
-    func text(_ text: @escaping (RenderSettings) -> String) -> SettingSpec {
+    package func text(_ text: @escaping (RenderSettings) -> String) -> SettingSpec {
         guard case .slider(let m)? = control else { preconditionFailure("\(title): not a slider") }
         var s = self
         s.control = .slider(Slider(range: m.range, ticks: m.ticks, live: m.live, position: m.position, move: m.move, text: text))
         return s
     }
     /// A popup's items by index: the panel greys out the ones `item` rejects.
-    func available(_ item: @escaping (Int) -> Bool) -> SettingSpec { var s = self; s.available = item; return s }
+    package func available(_ item: @escaping (Int) -> Bool) -> SettingSpec { var s = self; s.available = item; return s }
 
     // MARK: Constructors
 
@@ -206,7 +207,7 @@ package struct SettingSpec {
     }
 
     /// A setting without a row of its own: only its env name.
-    static func value<T: EnvValue>(_ path: WritableKeyPath<RenderSettings, T>) -> SettingSpec {
+    package static func value<T: EnvValue>(_ path: WritableKeyPath<RenderSettings, T>) -> SettingSpec {
         SettingSpec(env: codec(path))
     }
 
@@ -285,10 +286,10 @@ package struct SettingSpec {
 
 extension RenderSettings {
     /// Upscaling, through MetalFX's denoising scaler: it denoises the raw light, and SVGF and the shadow denoiser are off.
-    var neuralDenoiser: Bool { upscaleFactor > 1 }
+    package var neuralDenoiser: Bool { upscaleFactor > 1 }
 
     /// The denoiser's wavelet passes for the selected GI method: the panel's one slider edits whichever count applies.
-    var filterPasses: Int {
+    package var filterPasses: Int {
         get { denoiser.passes(for: giMode) }
         set { if giMode == .pathTraced { denoiser.atrousPasses = newValue } else { denoiser.techniquePasses = newValue } }
     }
@@ -296,7 +297,7 @@ extension RenderSettings {
 
 extension SkySettings {
     /// Whether clouds are drawn: over an image they have their own switch (in front of the image).
-    var cloudsShown: Bool {
+    package var cloudsShown: Bool {
         get { mode == .image ? cloudsOverImage : clouds }
         set { if mode == .image { cloudsOverImage = newValue } else { clouds = newValue } }
     }
@@ -304,14 +305,14 @@ extension SkySettings {
 
 /// Every setting, in the panel's order. See `SettingSpec`.
 package enum SettingsTable {
-    struct Section {
-        let title: String
-        var advanced = false
-        let rows: [SettingSpec]
+    package struct Section {
+        package let title: String
+        package var advanced = false
+        package let rows: [SettingSpec]
     }
 
     /// Every spec that has an env name, in table order.
-    static let named: [SettingSpec.Env] = sections.flatMap(\.rows).compactMap(\.envName)
+    package static let named: [SettingSpec.Env] = sections.flatMap(\.rows).compactMap(\.envName)
 
     private typealias S = SettingSpec
     private typealias When = (RenderSettings) -> Bool
@@ -319,7 +320,7 @@ package enum SettingsTable {
     private static func fmt<T: CVarArg>(_ format: String) -> (T) -> String { { String(format: format, $0) } }
     package static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
 
-    static let sections: [Section] = [scene, camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
+    package static let sections: [Section] = [scene, camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }

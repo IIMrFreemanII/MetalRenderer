@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -16,7 +17,7 @@ import simd
 package final class Crowd {
     /// What a slot plays: clip A, or a cross-fade from it to clip B and back every `blendPeriod` seconds, the two
     /// kept in step (both at the same point of their loops).
-    struct Motion {
+    package struct Motion {
         var clipA: Int
         var clipB: Int
         var blendPeriod: Float = 0
@@ -26,7 +27,7 @@ package final class Crowd {
     /// A character in a motion, with the pose slots that play it from different points of the loop.
     package struct State {
         package var character: Int
-        var motion: Motion
+        package var motion: Motion
         package var slots: [Int] = []
         package var travels: Bool
     }
@@ -78,7 +79,7 @@ package final class Crowd {
             return (origin + forward * s, origin + forward * (s - step))
         }
 
-        /// (As the memberwise initializer, for the game: Sources/Game.)
+        /// (As the memberwise initializer, for the modules above this one.)
         package init(instance: Int, slot: Int, origin: SIMD3<Float>, forward: SIMD3<Float>, start: Float, lane: Float, scale: Float, inverse0: SIMD3<Float>, inverse1: SIMD3<Float>, inverse2: SIMD3<Float>) {
             self.instance = instance
             self.slot = slot
@@ -97,11 +98,11 @@ package final class Crowd {
     /// how big its head is against the base's, its head's joint; `expressive`: expressions and the eyes on the viewer
     /// as well as blinks.
     package struct Face {
-        var rig: FaceRig
-        var eyes: [SIMD3<Float>]
-        var scale: Float
-        var head: Int
-        var expressive: Bool
+        package var rig: FaceRig
+        package var eyes: [SIMD3<Float>]
+        package var scale: Float
+        package var head: Int
+        package var expressive: Bool
 
         package init(rig: FaceRig, character c: SkinnedCharacter, expressive: Bool) {
             self.rig = rig
@@ -116,11 +117,11 @@ package final class Crowd {
     /// A groom's strands on one slot (CharacterHair): drawn into the scene's curve mesh `mesh` every frame after the
     /// slot's skinning (crowdHairKernel), shaped by its character's head (its size against the base's, its joint).
     struct Hair {
-        var slot: Int
-        var groom: CharacterHair.Groom
-        var mesh: Int
-        var scale: Float
-        var head: Int
+        package var slot: Int
+        package var groom: CharacterHair.Groom
+        package var mesh: Int
+        package var scale: Float
+        package var head: Int
     }
 
     package let characters: [SkinnedCharacter]

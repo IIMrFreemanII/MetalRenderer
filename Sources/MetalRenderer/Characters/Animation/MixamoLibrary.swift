@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// The Mixamo motions Tools/mixamo/download.py fetched: `METALRENDERER_MIXAMO`, or ~/MixamoAnimations, one folder per
@@ -11,12 +12,12 @@ import Foundation
 /// silent without the folder.
 struct MixamoLibrary {
     struct Entry: Decodable, Equatable {
-        var id: String
-        var name: String
-        var description: String?
-        var file: String
-        var duration: Double?
-        var loopable: Bool?
+        package var id: String
+        package var name: String
+        package var description: String?
+        package var file: String
+        package var duration: Double?
+        package var loopable: Bool?
     }
 
     /// The clips, with the file each is read from: a motion baked on several characters is listed once, from the

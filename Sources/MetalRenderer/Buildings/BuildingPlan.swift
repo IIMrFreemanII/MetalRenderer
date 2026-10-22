@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -12,7 +13,7 @@ package enum RoomType: String, Codable, CaseIterable {
     case stairs, lift
     case hall           // a warehouse's floor
 
-    var title: String {
+    package var title: String {
         switch self {
         case .openOffice: return "Open office"
         case .wc: return "WC"
@@ -23,16 +24,16 @@ package enum RoomType: String, Codable, CaseIterable {
     /// Common ground: what anyone may walk through (a home's own rooms are its unit's).
     package var isCirculation: Bool { [.corridor, .lobby, .stairs, .lift, .openOffice, .hall].contains(self) }
     /// Tiled floor and walls.
-    var isWet: Bool { [.bath, .wc, .toilets, .kitchen, .kitchenette].contains(self) }
+    package var isWet: Bool { [.bath, .wc, .toilets, .kitchen, .kitchenette].contains(self) }
     /// Lives by its windows.
-    var wantsWindow: Bool { [.living, .bedroom, .kitchen, .dining, .study, .office, .openOffice, .meeting, .shop].contains(self) }
+    package var wantsWindow: Bool { [.living, .bedroom, .kitchen, .dining, .study, .office, .openOffice, .meeting, .shop].contains(self) }
     /// Can have a balcony in front of its window.
-    var hasBalcony: Bool { [.living, .bedroom, .dining, .kitchen].contains(self) }
+    package var hasBalcony: Bool { [.living, .bedroom, .dining, .kitchen].contains(self) }
     /// The structure's own (the editor doesn't retype or split them).
     package var isCore: Bool { self == .stairs || self == .lift }
     /// Its lights are on by day as well: a room with no window of its own (halls, corridors, stairs, wet rooms), or
     /// an office's work room. Without them such a room is near black by day.
-    func litByDay(office: Bool) -> Bool {
+    package func litByDay(office: Bool) -> Bool {
         [.entrance, .corridor, .landing, .lobby, .stairs, .bath, .wc, .toilets, .kitchenette, .hall].contains(self)
             || office && [.office, .openOffice, .meeting].contains(self)
     }
@@ -64,8 +65,8 @@ package struct PlanDoor: Equatable {
     package var width: Float
     var height: Float = 2.1
     /// The leaf turns into this room (an id), hinged at its lower (x or z) end or its upper one.
-    var into: Int = -1
-    var hingeLow = true
+    package var into: Int = -1
+    package var hingeLow = true
 
     package func touches(_ room: Int) -> Bool { a == room || b == room }
     package func other(_ room: Int) -> Int { a == room ? b : a }
@@ -116,8 +117,8 @@ package struct StairPlan: Equatable {
 
 /// One storey's plan.
 package struct FloorPlan: Equatable {
-    var storey: Int
-    var tier: Int
+    package var storey: Int
+    package var tier: Int
     /// The finished floor's height, the ceiling's (the slab above's underside), and the next floor's (or the top of
     /// the tier: the roof's).
     package var floor: Float
@@ -130,12 +131,12 @@ package struct FloorPlan: Equatable {
     package var stair: StairPlan?
     /// Its flights go up from this storey (the topmost's don't).
     package var climbs = true
-    var lift: CityPlan.Rect?
+    package var lift: CityPlan.Rect?
 
-    var height: Float { top - floor }
+    package var height: Float { top - floor }
 
     package func room(_ id: Int) -> PlanRoom? { rooms.first { $0.id == id } }
-    func index(_ id: Int) -> Int? { rooms.firstIndex { $0.id == id } }
+    package func index(_ id: Int) -> Int? { rooms.firstIndex { $0.id == id } }
 
     /// The room at `p` (x, z), if it is inside one.
     package func room(at p: SIMD2<Float>) -> PlanRoom? {
@@ -150,14 +151,14 @@ package struct BuildingPlan: Equatable {
     /// The outer walls' thickness, the partitions' and the slabs'.
     package var outer: Float = 0.3
     package var partition: Float = 0.12
-    var slab: Float = 0.25
+    package var slab: Float = 0.25
     /// It has shops on the ground floor.
-    var shops = false
+    package var shops = false
     /// The edits that found nothing to change (PlanEdit), by their index.
-    var orphaned: [Int] = []
+    package var orphaned: [Int] = []
 
     /// The room behind the outer wall at `p` (x, z: on the wall's face) on `storey`, looking in along `inward`.
-    func room(behind p: SIMD2<Float>, inward: SIMD2<Float>, storey: Int) -> PlanRoom? {
+    package func room(behind p: SIMD2<Float>, inward: SIMD2<Float>, storey: Int) -> PlanRoom? {
         guard storeys.indices.contains(storey) else { return nil }
         return storeys[storey].room(at: p + inward * (outer + 0.2))
     }
@@ -171,7 +172,7 @@ package struct BuildingPlan: Equatable {
 // MARK: - Geometry between rooms
 
 extension CityPlan.Rect {
-    var area: Float { size.x * size.y }
+    package var area: Float { size.x * size.y }
     package func contains(_ p: SIMD2<Float>, margin: Float = 0) -> Bool {
         p.x >= lo.x - margin && p.x <= hi.x + margin && p.y >= lo.y - margin && p.y <= hi.y + margin
     }

@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 
 /// A scene's sun along its day: where it is between morning (0) and evening (1) at time t of the scene's day clock.
@@ -36,10 +37,10 @@ package struct DaySweep: Equatable {
 }
 
 /// The four times the day bar and the settings panel switch to.
-enum DayPreset: Int, CaseIterable {
+package enum DayPreset: Int, CaseIterable {
     case dawn, noon, sunset, night
 
-    var title: String { ["Dawn", "Noon", "Sunset", "Night"][rawValue] }
+    package var title: String { ["Dawn", "Noon", "Sunset", "Night"][rawValue] }
 }
 
 /// A scene's day as a clock (the day bar's, the settings panel's Dawn/Noon/Sunset/Night): the open world's goes round
@@ -52,22 +53,22 @@ package struct DayClock {
         case sweep(DaySweep)        // morning to evening (and back)
         case night                  // the night city's: always night, no clock
     }
-    let path: Path
+    package let path: Path
     /// The hours the clock shows, from its morning to its evening.
-    let hours: ClosedRange<Float>
+    package let hours: ClosedRange<Float>
     /// The scene Night switches to (the day city's), or the one the day's times switch back to (the night city's).
-    let otherScene: SceneKind?
+    package let otherScene: SceneKind?
 
     /// A day that jumps this much of its cycle (half an hour of the open world's) starts the light over: what the
     /// frames before gathered of it (ReSTIR's reservoirs, the cascades, the denoiser's history) would
     /// smear the old light into the new. Less than that moves as the sun does when the day runs.
-    static let lightJump: Float = 1 / 48
+    package static let lightJump: Float = 1 / 48
 
     /// Scene `kind`'s clock (its definition's), if it has one.
-    static func of(_ kind: SceneKind) -> DayClock? { kind.definition.dayClock }
+    package static func of(_ kind: SceneKind) -> DayClock? { kind.definition.dayClock }
 
     /// Seconds of the scene's day clock (`SceneKind.dayCycle`); 0 for the night city's.
-    var cycle: Float {
+    package var cycle: Float {
         switch path {
         case .heavens: return Heavens.day
         case .sweep(let s): return s.cycle
@@ -76,10 +77,10 @@ package struct DayClock {
     }
 
     /// Whether the clock runs: not the night city's.
-    var runs: Bool { if case .night = path { return false } else { return true } }
+    package var runs: Bool { if case .night = path { return false } else { return true } }
 
     /// The hour (0..<24) at `dayTime` seconds of the scene's day clock; nil for the night city's.
-    func hour(dayTime: Float) -> Float? {
+    package func hour(dayTime: Float) -> Float? {
         switch path {
         case .heavens: return 24 * Heavens.phase(at: dayTime)
         case .sweep(let s): return hours.lowerBound + (hours.upperBound - hours.lowerBound) * s.phase(dayTime)
@@ -89,7 +90,7 @@ package struct DayClock {
 
     /// The time of the scene's day clock (0..<cycle) at `hour`, clamped to the clock's hours; on the way out for a sun
     /// that goes back.
-    func dayTime(hour: Float) -> Float {
+    package func dayTime(hour: Float) -> Float {
         switch path {
         case .heavens: return DayClock.wrap((hour / 24 - Heavens.start) * Heavens.day, Heavens.day)
         case .sweep(let s): return s.time((hour - hours.lowerBound) / (hours.upperBound - hours.lowerBound))
@@ -99,7 +100,7 @@ package struct DayClock {
 
     /// The hour `preset` is at on this clock; nil where it isn't one (Night by day, which is another scene; the day's
     /// times by night).
-    func hour(of preset: DayPreset) -> Float? {
+    package func hour(of preset: DayPreset) -> Float? {
         switch path {
         case .heavens:   // the sun just up, high, just down (Benchmark+Modes' worldDusk), and midnight
             return [0.205, 0.5, 0.803, 0][preset.rawValue] * 24
@@ -112,17 +113,17 @@ package struct DayClock {
     }
 
     /// Whether `preset` can be picked here (in this scene or by switching to the other): by night, every one.
-    func offers(_ preset: DayPreset) -> Bool {
+    package func offers(_ preset: DayPreset) -> Bool {
         !runs || hour(of: preset) != nil || (preset == .night && otherScene != nil)
     }
 
     /// Whether picking `preset` goes to the other scene: Night by day, the day's times by night.
-    func switches(_ preset: DayPreset) -> Bool {
+    package func switches(_ preset: DayPreset) -> Bool {
         otherScene != nil && (runs ? preset == .night && hour(of: preset) == nil : preset != .night)
     }
 
     /// The preset at `hour` (within half a minute), for the controls to show it picked; the night city's is Night.
-    func preset(at hour: Float?) -> DayPreset? {
+    package func preset(at hour: Float?) -> DayPreset? {
         guard let hour else { return runs ? nil : .night }
         return DayPreset.allCases.first { p in
             guard let h = self.hour(of: p) else { return false }
@@ -132,7 +133,7 @@ package struct DayClock {
     }
 
     /// Whether the scene is lit by night at `hour`: the open world's sun under the horizon; the night city's always.
-    func isNight(hour: Float?) -> Bool {
+    package func isNight(hour: Float?) -> Bool {
         switch path {
         case .heavens: return hour.map { Heavens(at: dayTime(hour: $0)).sunElevation < 0 } ?? false
         case .sweep: return false
@@ -141,19 +142,19 @@ package struct DayClock {
     }
 
     /// "14:30".
-    static func label(_ hour: Float) -> String {
+    package static func label(_ hour: Float) -> String {
         let minutes = Int((hour * 60).rounded()) % (24 * 60)
         return String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
 
     /// `t` in 0..<length.
-    static func wrap(_ t: Float, _ length: Float) -> Float {
+    package static func wrap(_ t: Float, _ length: Float) -> Float {
         guard length > 0 else { return 0 }
         let r = t - length * (t / length).rounded(.down)
         return r < length ? r : 0
     }
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(path: Path, hours: ClosedRange<Float>, otherScene: SceneKind?) {
         self.path = path
         self.hours = hours
@@ -164,20 +165,20 @@ package struct DayClock {
 extension RenderSettings {
     /// The time on the scene's day clock with the animation's at `animTime`: offset by `timeOfDay`, or held at it
     /// (`dayHeld`). A scene without a day cycle keeps the animation's time.
-    func dayTime(animTime: Float) -> Float {
+    package func dayTime(animTime: Float) -> Float {
         guard let cycle = scene.kind.dayCycle else { return animTime }
         return (dayHeld ? 0 : animTime) + timeOfDay * cycle
     }
 
     /// The day as a clock's hour, where the settings hold it; nil while it runs (the renderer tells the time then).
-    var heldHour: Float? {
+    package var heldHour: Float? {
         guard dayHeld, let clock = DayClock.of(scene.kind), let cycle = scene.kind.dayCycle else { return nil }
         return clock.hour(dayTime: timeOfDay * cycle)
     }
 
     /// `dayHeld` turned on or off since `old`, `timeOfDay` left as it was: `timeOfDay` changes with it so that the day
     /// stays where it was, at `animTime` (the panel's checkbox, the day bar's play button).
-    mutating func keepDay(from old: RenderSettings, animTime: Float) {
+    package mutating func keepDay(from old: RenderSettings, animTime: Float) {
         guard dayHeld != old.dayHeld, timeOfDay == old.timeOfDay, scene.kind == old.scene.kind,
               let cycle = scene.kind.dayCycle, cycle > 0 else { return }
         let t = (dayHeld ? old.dayTime(animTime: animTime) : old.dayTime(animTime: animTime) - animTime) / cycle
@@ -185,7 +186,7 @@ extension RenderSettings {
     }
 
     /// Holds the day at `hour` of the scene's clock.
-    mutating func holdDay(hour: Float) {
+    package mutating func holdDay(hour: Float) {
         guard let clock = DayClock.of(scene.kind), clock.runs, clock.cycle > 0 else { return }
         dayHeld = true
         timeOfDay = clock.dayTime(hour: hour) / clock.cycle
@@ -193,7 +194,7 @@ extension RenderSettings {
 
     /// Holds the day at `preset`: in the night city for the day city's Night, and back in the day city for the
     /// night's other times (a new scene, with its defaults, as the panel's scene popup makes it).
-    mutating func holdDay(_ preset: DayPreset, defaults: RenderSettings) {
+    package mutating func holdDay(_ preset: DayPreset, defaults: RenderSettings) {
         guard let clock = DayClock.of(scene.kind) else { return }
         if clock.switches(preset), let other = clock.otherScene {
             scene.kind = other

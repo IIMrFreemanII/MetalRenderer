@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -6,14 +7,14 @@ extension Foliage {
     /// leave it at, how long they are by where they grow, a leaf's size along its twig. The forms other than
     /// `points` are the formulas the recipes had before they had curves, and give exactly what those did; dragging
     /// one in the editor turns it into points (`editable`).
-    enum Curve: Equatable {
+    package enum Curve: Equatable {
         case linear(Float, Float)       // a + (b - a) x
         case taper(Float)               // 1 - t x
         case crown(Crown)               // crownRatio(crown, 1 - x): a limb's length by where it grows on the trunk
         case points([SIMD2<Float>])     // through these (x ascending, from 0 to 1), monotone between them
 
         /// At x (0...1).
-        func value(_ x: Float) -> Float {
+        package func value(_ x: Float) -> Float {
             switch self {
             case .linear(let a, let b): return a + (b - a) * x
             case .taper(let t): return 1 - t * x
@@ -23,7 +24,7 @@ extension Foliage {
         }
 
         /// At the start: `a` itself for a line (what level 0's single angle was).
-        var start: Float {
+        package var start: Float {
             switch self {
             case .linear(let a, _): return a
             default: return value(0)
@@ -31,7 +32,7 @@ extension Foliage {
         }
 
         /// At the end: `b` itself for a line (what a twig's tip leaf was scaled by).
-        var end: Float {
+        package var end: Float {
             switch self {
             case .linear(_, let b): return b
             case .points(let p): return p.last?.y ?? 0
@@ -39,10 +40,10 @@ extension Foliage {
             }
         }
 
-        var isPoints: Bool { if case .points = self { return true }; return false }
+        package var isPoints: Bool { if case .points = self { return true }; return false }
 
         /// The same curve as points, to drag: `samples` of it, evenly along x (a line or a taper: its two ends).
-        func editable(samples: Int = 7) -> Curve {
+        package func editable(samples: Int = 7) -> Curve {
             switch self {
             case .points: return self
             case .linear, .taper: return .points([SIMD2(0, value(0)), SIMD2(1, value(1))])
@@ -53,7 +54,7 @@ extension Foliage {
         }
 
         /// Monotone cubic Hermite (Fritsch-Carlson) through the points: no overshoot past them. Flat beyond the ends.
-        static func interpolate(_ p: [SIMD2<Float>], _ x: Float) -> Float {
+        package static func interpolate(_ p: [SIMD2<Float>], _ x: Float) -> Float {
             guard let first = p.first else { return 0 }
             guard p.count > 1 else { return first.y }
             if x <= first.x { return first.y }
@@ -99,7 +100,7 @@ extension Foliage.Curve: Codable {
         }
     }
 
-    func encode(to encoder: Encoder) throws {
+    package func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .linear(let a, let b): try c.encode([a, b], forKey: .linear)

@@ -1,9 +1,10 @@
+import EngineCore
 import Foundation
 import simd
 
 /// A graph as Swift (the Material Designer's Copy as Swift): the statements that make it, for MaterialLibrary.
 extension MaterialGraph {
-    var swiftSource: String {
+    package var swiftSource: String {
         var lines = ["var g = MaterialGraph(\(MatSwift.string(name)), size: \(size))"]
         if bits != .inherit { lines.append("g.bits = .\(MatSwift.bits(bits))") }
         if seed != 0 { lines.append("g.seed = \(seed)") }

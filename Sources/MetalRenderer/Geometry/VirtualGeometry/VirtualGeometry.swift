@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -40,7 +41,7 @@ final class VirtualGeometry {
     private let scratch: MTLBuffer
 
     private var cutCounts = (selected: 0, triangles: 0, overflow: false)
-    var stats: (selected: Int, triangles: Int, overflow: Bool, residentGroups: Int, pending: Int, loadedThisFrame: Int) {
+    package var stats: (selected: Int, triangles: Int, overflow: Bool, residentGroups: Int, pending: Int, loadedThisFrame: Int) {
         lock.lock(); let c = cutCounts; lock.unlock()
         let s = streamer.stats
         return (c.selected, c.triangles, c.overflow, s.residentGroups, s.pending, s.loadedThisFrame)

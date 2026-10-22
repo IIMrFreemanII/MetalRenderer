@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import Metal
 import simd
@@ -5,7 +6,7 @@ import simd
 /// The solid look's resources (RenderSettings.solidLook; Shaders/Output.metal solidTraceKernel, solidResolveKernel).
 extension Renderer {
     /// Its three targets at the output's size (made when it changes; nil if Metal can't).
-    func solidTargets(width: Int, height: Int) -> [MTLTexture]? {
+    package func solidTargets(width: Int, height: Int) -> [MTLTexture]? {
         if solidTargetsStore.count == 3, solidTargetsStore[0].width == width, solidTargetsStore[0].height == height { return solidTargetsStore }
         var made: [MTLTexture] = []
         for (format, label) in [(MTLPixelFormat.rgba16Float, "solid colour"), (.rgba16Float, "solid geometry"), (.r32Uint, "solid ids")] {
@@ -21,7 +22,7 @@ extension Renderer {
     }
 
     /// What the look's settings ask of its kernels.
-    func solidParams() -> GPUSolidParams {
+    package func solidParams() -> GPUSolidParams {
         let l = settings.solidLook
         return GPUSolidParams(sun: SIMD4(simd_normalize(SIMD3<Float>(-0.45, 0.8, 0.4)), l.shadows ? 1 : 0),
                               look: SIMD4(l.materials ? l.tint : 0, l.cutFaces ? 1 : 0, l.aoRadius, l.ao ? Float(l.aoRays) : 0),
@@ -30,7 +31,7 @@ extension Renderer {
     }
 
     /// The scene's material flags in a buffer (made again when they change: a scene built anew).
-    func solidFlagBuffer() -> MTLBuffer? {
+    package func solidFlagBuffer() -> MTLBuffer? {
         let flags = scene.materialFlags
         if let b = solidFlagsStore, flags == solidFlagsCopyStore { return b }
         var bytes = flags.isEmpty ? [UInt8](repeating: 0, count: 16) : flags

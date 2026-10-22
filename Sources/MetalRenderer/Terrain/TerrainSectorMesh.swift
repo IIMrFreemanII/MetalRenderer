@@ -1,3 +1,4 @@
+import EngineCore
 import Foundation
 import simd
 
@@ -21,7 +22,7 @@ package struct TerrainMeshStyle {
     /// The realistic look's relief (realism high): what raises a fine sector's ground (TerrainSector.subdiv).
     var relief: GroundRelief? = nil
 
-    /// (As the memberwise initializer, for the game: Sources/Game.)
+    /// (As the memberwise initializer, for the modules above this one.)
     package init(uvOrigin: SIMD2<Double> = SIMD2<Double>.zero, uvScale: Float = 1, tileLocal: Bool = false, skirts: Bool = false, rock: UInt8 = 3, layers: [TerrainLayer] = [], relief: GroundRelief? = nil) {
         self.uvOrigin = uvOrigin
         self.uvScale = uvScale
