@@ -1,3 +1,4 @@
+import Characters
 import CoreGraphics
 import EngineCore
 import Foundation

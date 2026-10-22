@@ -1,3 +1,4 @@
+import Characters
 import EngineCore
 import MetalRenderer
 import Physics

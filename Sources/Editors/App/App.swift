@@ -1,4 +1,5 @@
 import AppKit
+import Characters
 import EngineCore
 import Metal
 import MetalRenderer
