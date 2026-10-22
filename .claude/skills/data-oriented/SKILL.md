@@ -91,7 +91,9 @@ The patterns, as code from this repo: [references/patterns.md](references/patter
    swift build -c release && python3 Tools/perf/hotcalls.py
    ```
    It fails if a listed function calls the runtime (retain/release, allocation, exclusivity or uniqueness checks,
-   dynamic casts, Objective-C messages), or if a name no longer matches. Names are `swift-demangle --simplified` ones:
+   dynamic casts, Objective-C messages, generic metadata, lazy globals) or a function of another of the package's
+   modules (nothing is inlined across modules: a per-element helper from another module is `@inlinable package`), or
+   if a name no longer matches. Names are `swift-demangle --simplified` ones:
    find yours with `python3 Tools/perf/hotcalls.py -v` on a broad pattern, or in the profile's output. A closure the
    optimiser inlines has no body to check: list the function it was inlined into only if that one is clean too, or
    give the loop its own function.

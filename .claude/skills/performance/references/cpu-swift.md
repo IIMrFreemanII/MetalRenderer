@@ -86,7 +86,12 @@ but quote release numbers.
   functions listed in `Tools/perf/hot-functions.txt` and fails if one calls the runtime: retain/release, allocation,
   `swift_beginAccess`, uniqueness checks, dynamic casts, `objc_msgSend`. Add a hot loop there once it is clean; a name
   that no longer matches fails too. It reads each function's own body only (inlined closures have none; callees aren't
-  followed).
+  followed). It also fails on generic metadata, witness tables, lazy globals (`swift_once`, a `static let`'s
+  addressor) and on calls into another of the package's modules: with `-disable-cmo` nothing is inlined across a
+  module, so a helper, computed property or memberwise init from another module is a call (make it `@inlinable
+  package`, or list the call in `Tools/perf/cross-allow.txt` with why). For a change that moves code between modules,
+  `--save-baseline main.json` on main's build and `--against main.json` on the branch's fail on anything a hot loop
+  (or a loop of `Tools/perf/boundary-functions.txt`) calls that it didn't before.
 * **Algorithmic wins dwarf micro-optimizations.**
   * binned SAH (16–32 bins) instead of a full sweep;
   * a heap or priority queue for edge collapses;
