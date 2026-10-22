@@ -238,20 +238,24 @@ final class CarTests: XCTestCase {
         XCTAssertEqual(run(everyCore: false), run(everyCore: true))
     }
 
-    /// The panels follow the nodes: each drawn vertex where the kernel puts it (PhysicsWorld.drawnSoftVertex, the
-    /// CPU's copy of MSL physicsSoftMeshKernel) starts where the loft put it.
-    func testPanelsStartOnTheBody() {
-        let spec = CarSpec.preset(.sedan), b = CarBlueprint(spec), surface = CarSurface(b)
-        let w = PhysicsWorld(substeps: 16)
-        let car = w.addCar(b, transform: translate([3, 0, -2]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
-        w.addCarSurface(surface.body, car: car, hull: b.hull, vertexBase: 0)
-        w.finish()
-        var worst: Float = 0
-        for (v, p) in surface.body.mesh.positions.enumerated() {
-            worst = max(worst, simd_distance(w.drawnSoftVertex(v), p + SIMD3(3, 0, -2)))
+    /// The panels follow the nodes: each drawn vertex of every model's body where the kernel puts it
+    /// (PhysicsWorld.drawnSoftVertex, the CPU's copy of MSL physicsSoftMeshKernel) starts where the model put it.
+    func testPanelsStartOnTheBody() throws {
+        guard let pack = CarPack.shared else { throw XCTSkip("no car pack in Assets/Cars") }
+        for style in CarStyle.allCases {
+            guard let model = pack.models[style] else { continue }
+            let b = CarBlueprint(CarSpec.preset(style).fitted(to: model)), surface = CarSurface(b, model: model)
+            let w = PhysicsWorld(substeps: 16)
+            let car = w.addCar(b, transform: translate([3, 0, -2]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
+            w.addCarSurface(surface.body, car: car, hull: b.hull, vertexBase: 0)
+            w.finish()
+            var worst: Float = 0
+            for (v, p) in surface.body.mesh.positions.enumerated() {
+                worst = max(worst, simd_distance(w.drawnSoftVertex(v), p + SIMD3(3, 0, -2)))
+            }
+            print("\(style): \(surface.body.mesh.positions.count) + \(surface.glass.mesh.positions.count) vertices, worst \(worst) m")
+            XCTAssertLessThan(worst, 0.005, "\(style)")
+            XCTAssertFalse(surface.glass.mesh.indices.isEmpty, "\(style)")
         }
-        print("panels: \(surface.body.mesh.positions.count) + \(surface.glass.mesh.positions.count) vertices, worst \(worst) m")
-        XCTAssertLessThan(worst, 0.005)
-        XCTAssertFalse(surface.glass.mesh.indices.isEmpty)
     }
 }

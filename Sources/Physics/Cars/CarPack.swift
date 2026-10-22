@@ -5,7 +5,7 @@ import simd
 /// A car's look from a model (CarPack): its body's meshes in car space (CarSpec's: x its left, y up, z forward, the
 /// origin on the ground midway between its axles), and its four wheels.
 package struct CarModel {
-    /// A mesh in car space (a wheel's: in its own, standing along y about its centre, as Scene.wheelMesh's), its
+    /// A mesh in car space (a wheel's: in its own, standing along y about its centre, as Scene.addCar turns it), its
     /// material (the pack's `materials`).
     package struct Mesh {
         package var positions: [SIMD3<Float>] = []
@@ -52,7 +52,7 @@ package enum CarPack {
     ]
 
     /// The pack's models and materials (loaded once, from Assets), nil when it isn't there (a clone without git-lfs,
-    /// METALRENDERER_CARPACK=0): the cars are then the procedural ones.
+    /// METALRENDERER_CARPACK=0): a scene then has no cars.
     package static let shared: (models: [CarStyle: CarModel], gltf: GLTFModel, url: URL)? = {
         guard ProcessInfo.processInfo.environment["METALRENDERER_CARPACK"] != "0" else { return nil }
         let url = Assets.directory.appendingPathComponent(file)

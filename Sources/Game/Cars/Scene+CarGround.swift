@@ -83,8 +83,6 @@ extension Scene {
 
         // The cars: the player's at the start of the run-up (or on the first lap), the others parked in the lot (or on
         // laps further out).
-        let colours: [SIMD3<Float>] = [[0.62, 0.05, 0.04], [0.05, 0.16, 0.42], [0.85, 0.85, 0.82], [0.08, 0.08, 0.09], [0.9, 0.55, 0.06],
-                                       [0.12, 0.35, 0.18], [0.45, 0.47, 0.5], [0.55, 0.1, 0.35]]
         let styles = CarStyle.allCases
         var rig = CarRig()
         for k in 0..<max(settings.cars, 1) {
@@ -108,7 +106,10 @@ extension Scene {
                 let tangent = SIMD2(-sin(angle), cos(angle))
                 place = translate([at.x, 0, at.y]) * float4x4(simd_quatf(angle: atan2(tangent.x, tangent.y), axis: [0, 1, 0]))
             }
-            let car = addCar(spec, paint: colours[k % colours.count], place, velocity: velocity, bounds: Scene.carGroundBounds, name: "\(spec.style.title) \(k + 1)")
+            guard let car = addCar(spec, place, velocity: velocity, bounds: Scene.carGroundBounds, name: "\(spec.style.title) \(k + 1)") else {
+                print("Cars: no model for \(spec.style.title): the car pack (\(CarPack.file) in Assets, Git LFS) isn't there")
+                continue
+            }
             rig.cars.append(car)
             if settings.demo == .laps {
                 var input = CarInput()

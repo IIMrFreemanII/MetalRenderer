@@ -63,8 +63,10 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
   their normals agree, their rings (smooth shading).
 - `Scene.addCar` adds only the materials and textures each car uses (`packTextures`: the pack has 39 textures of
   2048 x 2048). The paint is its texture under the clear coat.
-- New styles: wagon, compact, minivan, sports car, SUV, off-roader. Their presets are sized from the models, so the
-  procedural fallback is close.
+- New styles: wagon, compact, minivan, sports car, SUV, off-roader. Their presets are sized from the models.
+- The procedural look is gone (the user asked): the lofted panels, the built wheel, the colour paints. A car is
+  drawn only as its model (`Scene.addCar` returns nil without the pack, and the scene logs it). The presets' key
+  heights remain as the crash frames of the physics tests.
 - `-m carsmodels` renders the lot (two shots for all ten) and two close-ups.
 - **Front-wheel drive's wander: fixed.**
   - Probing a wagon's launch showed its front wheels toeing out 2.7° under front-wheel drive (0.2° under rear),
@@ -119,7 +121,6 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
   >= 2) is the renderer's one specular lobe. The flakes' GGX lobe is folded into the paint's colour as its split-sum
   albedo. A true second lobe needs a G-buffer channel and a second highlight in the composite, `LightSampling`, ReSTIR
   and the path tracer.
-- **The procedural bodies' window outlines are rough.** A paint triangle shows at the C pillar (`CarSurface.look`).
 - **No hand test in the window:** keys, HUD, captured-mouse orbit.
 
 ## Next phases

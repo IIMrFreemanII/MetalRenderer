@@ -16,13 +16,12 @@ package enum CarDrive: Int, Codable {
     case front, rear, all
 }
 
-/// What a car is made of (CarBlueprint builds its nodes and beams from it, CarSurface its panels): its body's profile
-/// and its mechanics.
+/// What a car is made of (CarBlueprint builds its nodes and beams from it): its body's profile and its mechanics.
 ///
 /// Car space: x across (+x is the car's left), y up, z forward (the front bumper at +z), the origin on the ground
-/// midway between the axles. The body's profile is a few key heights along z (the bumpers', the hood's, the roof's,
-/// the trunk's), joined by straight lines and rounded (`topHeight`): the same function places the nodes and the
-/// panels, so the panels lie on the node hull they are embedded in.
+/// midway between the axles. The body's profile is measured from its model (`fitted`: CarProfile); a preset's own is a
+/// few key heights along z (the bumpers', the hood's, the roof's, the trunk's), joined by straight lines and rounded
+/// (`topHeight`): its crash frame alone, for the tests (the scene draws a car only as its model).
 package struct CarSpec: Equatable {
     package var style: CarStyle
     // The body (m).
