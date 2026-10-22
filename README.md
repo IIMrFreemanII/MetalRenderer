@@ -95,10 +95,15 @@ You need Xcode 15 or newer and macOS 13 or newer.
 
 ```bash
 cd MetalRenderer
-swift run -c release
+Tools/release.sh                                 # the release build, for real frame rates
+.build/release/MetalRenderer                     # run it
+METALRENDERER_SCENE=demolition .build/release/MetalRenderer   # start in a scene
+"$(Tools/build.sh)"                              # or the dev build (seconds per edit), built and run
 ```
 
-You can also open `Package.swift` in Xcode, choose **My Mac**, and press Run. Use the Release scheme for real frame rates.
+Build with the two scripts rather than `swift run`, `swift build` or Xcode. Only the scripts rebuild the modules that use an `@inlinable` function whose body you changed (`Tools/modules/inlinable.py`). With the others, those modules can keep the old body. The first build compiles every module: about 3 minutes for release, 1.5 for dev (M1 Max). For later builds, see "Build times" below.
+
+You can still open `Package.swift` in Xcode, choose the **MetalRenderer** scheme and **My Mac**, and press Run (the Release configuration for real frame rates). After you edit an `@inlinable` body, build once with a script first, or a module can keep the old body.
 
 > The app finds its shaders through its source path, so run it from this folder rather than copying the binary somewhere else. `METALRENDERER_SHADERS=<path to a Shaders.metal>` points it at another copy of them.
 
