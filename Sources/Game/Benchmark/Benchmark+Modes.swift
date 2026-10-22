@@ -17,7 +17,7 @@ extension Benchmark {
     /// Every mode by name (registered with the scenes, as `Benchmark.modes`). Any other value of METALRENDERER_BENCH
     /// (the documented one is `1`) runs `standard`.
     static let gameModes: [String: () -> [Config]] = [
-        "shot": shot, "solid": solid, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
+        "shot": shot, "reload": reload, "solid": solid, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,

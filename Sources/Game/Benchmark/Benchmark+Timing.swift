@@ -43,6 +43,15 @@ extension Benchmark {
         return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
     }
 
+    /// The dev build's hot reload, checked offscreen: `shot`'s picture again and again (`METALRENDERER_RELOAD_SHOTS`,
+    /// default 6, each after `METALRENDERER_RELOAD_FRAMES`, default 600), with METALRENDERER_HOTRELOAD=1 so the
+    /// watcher runs. A save between two shows in the next ones (DevReload).
+    static func reload() -> [Config] {
+        let shots = env["METALRENDERER_RELOAD_SHOTS"].flatMap { Int($0) }.map { max(1, $0) } ?? 6
+        let frames = env["METALRENDERER_RELOAD_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 600
+        return (1...shots).map { Config("reload \($0)", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames) }
+    }
+
     /// Solid shading (RenderSettings.solid) against the look each scene opens with, moving: the physics scene (its
     /// physics look), the destruction courtyard, the city, the crowd (skinned characters) and the stress building's
     /// rooms, then those rooms again with the look back on (the scene stays: solid shading turned off live). Time whole

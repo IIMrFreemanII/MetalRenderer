@@ -206,35 +206,47 @@ extension Renderer {
         return parts.count >= 3 ? (SIMD3(parts[0], parts[1], parts[2]), parts.count > 3 ? Int(parts[3]) : 0) : nil
     }()
 
+    /// Makes the scene again from its builder at the next frame, with the same settings and the camera where it is (a
+    /// hot reload: the builder's code or the scene's files changed). Render thread.
+    package func remakeScene(because reason: String) { sceneRemake = reason }
+
     /// Starts preparing `settings.scene` / `settings.api` in the background; `install` swaps it in when done.
     package func startLoadingScene() {
         let wanted = (scene: settings.scene, api: settings.api)
-        if let loading, loading == wanted { return }
-        // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
-        if let loading, loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
-            return
-        }
-        // Only the effects' catalog changed (the VFX editor's draft, restored at launch): the load goes on, and the
-        // scene it makes takes the catalog when it is in (editEffects), in place if it can.
-        if let loading, loading.api == wanted.api, wanted.scene.effects != loading.scene.effects {
-            var same = wanted.scene
-            same.effects = loading.scene.effects
-            if same == loading.scene { return }
+        // Asked to run the builder again (remakeScene): whatever is loading, a scene from the new code.
+        let remake = sceneRemake
+        sceneRemake = nil
+        if remake == nil, let loading {
+            if loading == wanted { return }
+            // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
+            if loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
+                return
+            }
+            // Only the effects' catalog changed (the VFX editor's draft, restored at launch): the load goes on, and the
+            // scene it makes takes the catalog when it is in (editEffects), in place if it can.
+            if loading.api == wanted.api, wanted.scene.effects != loading.scene.effects {
+                var same = wanted.scene
+                same.effects = loading.scene.effects
+                if same == loading.scene { return }
+            }
         }
         loading = wanted
         // Why the scene is made again (not a workshop's edit or the world's next tile: those are expected).
-        if wanted.scene.kind == scene.settings.kind, benchmark == nil, !wanted.scene.isSameWorkshop(as: scene.settings),
+        if let remake {
+            print("\(wanted.scene.kind.title) made again: \(remake)")
+        } else if wanted.scene.kind == scene.settings.kind, benchmark == nil, !wanted.scene.isSameWorkshop(as: scene.settings),
            !wanted.scene.isSameWorld(as: scene.settings), !wanted.scene.isSameCity(as: scene.settings) {
             let changes = wanted.scene.changes(from: scene.settings) + (wanted.api != builtAPI ? ["api"] : [])
             print("\(wanted.scene.kind.title) made again: \(changes.isEmpty ? "virtual geometry or the season" : changes.joined(separator: ", ")) changed")
         }
-        let reuse = wanted.scene == scene.settings ? scene : nil   // only the API changes
+        let reuse = remake == nil && wanted.scene == scene.settings ? scene : nil   // only the API changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
         loadJob?.cancel()
-        let job = benchmark != nil || wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings)
-            ? nil : loadActivity.begin(reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
-            : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title)
+        let job = benchmark != nil || remake == nil && (wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings))
+            ? nil : loadActivity.begin(remake.map { "\(wanted.scene.kind.title): \($0)" }
+            ?? (reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
+            : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title))
         loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }

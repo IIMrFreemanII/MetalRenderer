@@ -130,7 +130,8 @@ package final class Renderer: NSObject {
     /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
     package var vfxSetup: VFXCompiler.Setup {
         VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
-                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4)
+                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4,
+                          generation: shaderGeneration)
     }
     package var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
     package var particlesVersion = 0
@@ -565,6 +566,8 @@ package final class Renderer: NSObject {
     // MARK: - Setup: state
 
     package var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
+    package var sceneRemake: String?                // the scene's builder runs again, with the same settings: why
+    package var devReload: DevReload?               // the dev build's hot reload (startDevReload)
     package var streaming = Streaming()
 
     // MARK: - Procedural materials: state

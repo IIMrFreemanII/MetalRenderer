@@ -27,6 +27,10 @@ import simd
     }()
 }
 
+/// The game's entry when its code is loaded again (the dev build's hot reload, DevReload): this copy registers itself
+/// over the one the app was built with.
+@_cdecl("metalrenderer_game_reload") func gameReloaded() { GameScenes.register() }
+
 extension SceneKind {
     static let stress = SceneKind("stress")
     static let gallery = SceneKind("gallery")
