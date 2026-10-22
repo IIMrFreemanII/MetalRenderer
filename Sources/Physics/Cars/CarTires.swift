@@ -37,7 +37,7 @@ extension CarSolver {
                 let d = b.shapes.distance(shape: Int(s.info.x), PhysicsWorld.Pose(s).toBody(centre))
                 if d < nearest { (best, nearest, onBody) = (st, d, false) }
             } else {
-                let j = Int(code), o = b.bodies[j]
+                let j = Int(code), o = met(j, b)
                 if length_squared(centre - PhysicsMath.xyz(o.position)) > (radius + o.invInertia.w) * (radius + o.invInertia.w) { continue }
                 let d = b.shapes.distance(shape: Int(o.info.x), PhysicsWorld.Pose(o).toBody(centre))
                 if d < nearest { (best, nearest, onBody) = (j, d, true) }
@@ -45,9 +45,10 @@ extension CarSolver {
         }
         w.load = 0
         w.slip = .zero
+        w.over = 0
         defer { b.wheels[wk] = w }
         guard best >= 0 else { return }
-        let s = onBody ? b.bodies[best] : b.statics[best], pose = PhysicsWorld.Pose(s), shape = Int(s.info.x)
+        let s = onBody ? met(best, b) : b.statics[best], pose = PhysicsWorld.Pose(s), shape = Int(s.info.x)
         // The patch: the tyre's edge toward the surface, in the wheel's plane.
         var n = pose.direction(b.shapes.gradient(shape: shape, pose.toBody(centre)))
         var down = n * -1 + a * dot(n, a)
@@ -112,6 +113,7 @@ extension CarSolver {
         hubCouple(torque - a * about, w, b)
         w.load = load
         w.slip = SIMD2(sx, sy)
+        w.over = dot(v - ground, along)
         w.spin = spin
     }
 

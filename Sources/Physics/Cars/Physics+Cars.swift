@@ -225,7 +225,12 @@ extension PhysicsWorld {
         carSystem.pushCounts = [Int32](repeating: 0, count: carSystem.cars.count)
         carSystem.hits = [CarHit](repeating: CarHit(), count: carSystem.cars.count * CarSystem.maxHits)
         carSystem.hitCounts = [Int32](repeating: 0, count: carSystem.cars.count)
+        carSystem.stepHits = [Int32](repeating: -1, count: carSystem.cars.count * CarSystem.maxHits)
+        carSystem.stepHitCounts = [Int32](repeating: 0, count: carSystem.cars.count)
         carSystem.tyreKicks = [CarPush](repeating: CarPush(), count: carSystem.wheels.count)
+        carSystem.wheelBodies = carSystem.wheels.map { bodies[Int($0.body)] }
+        carSystem.bodyWheel = [Int32](repeating: -1, count: bodies.count)
+        for (k, w) in carSystem.wheels.enumerated() { carSystem.bodyWheel[Int(w.body)] = Int32(k) }
         carSystem.telemetry = [CarTelemetry](repeating: CarTelemetry(), count: carSystem.cars.count)
         carSystem.bodyPushes = [SIMD4<Float>](repeating: .zero, count: bodies.count)
         carSystem.bodyTwists = [SIMD3<Float>](repeating: .zero, count: bodies.count)
@@ -313,6 +318,7 @@ extension PhysicsWorld {
     /// in colours: CarContacts.swift).
     func carBroadPhase(_ p: GPUPhysicsParams) {
         carSystem.candidates.removeAll(keepingCapacity: true)
+        if fractures { for c in carSystem.cars.indices { carSystem.cars[c].stepMomentum = carMomentum(c) } }
         let shapes = self.shapes
         for c in carSystem.cars.indices {
             var s = carSystem.cars[c]
@@ -405,6 +411,7 @@ extension PhysicsWorld {
     /// Each car's forces this substep (its drivetrain, brakes, tyres, the air), then its nodes moved: before the
     /// bodies move (its wheels with them).
     func carForces(_ p: GPUPhysicsParams, sub: Int) {
+        copyCarWheels()
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
                 for c in range { CarSolver.carForces(c, b, p, sub: sub) }
@@ -418,6 +425,7 @@ extension PhysicsWorld {
     /// velocities.
     func solveCars(_ p: GPUPhysicsParams, sub: Int) {
         let h = p.gravity.w
+        copyCarWheels()
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
                 for c in range { CarSolver.solveCar(c, b, p) }
@@ -439,12 +447,59 @@ extension PhysicsWorld {
         }
     }
 
+    /// The cars' wheels' bodies as a stage begins, for the other cars to meet (each car's thread moves its own: read
+    /// as they were, the steps are the same on any number of cores).
+    func copyCarWheels() {
+        for k in carSystem.wheels.indices { carSystem.wheelBodies[k] = bodies[Int(carSystem.wheels[k].body)] }
+    }
+
     /// The cars' pushes on the bodies this substep: each body moved by its pushes summed (each node's took it as one of
     /// as many shares as it had pushes the substep before: mass splitting, so twenty nodes against a crate don't move
     /// it twenty times as far, nor as one node would), and woken; summed in the cars' order, so the sums are the same
     /// every time. (Averaged, a crate twenty nodes met was twenty times as heavy: a car stopped dead against three.)
     func applyCarReactions() {
         withCarBuffers { CarSolver.applyCarReactions($0) }
+    }
+
+    /// Car `c`'s momentum (kg m/s): its nodes' and its wheels'.
+    func carMomentum(_ c: Int) -> SIMD3<Float> {
+        let s = carSystem.cars[c]
+        var p = SIMD3<Float>()
+        for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) where particles[i].prevPosition.w > 0 {
+            p += PhysicsMath.xyz(particles[i].velocity) / particles[i].prevPosition.w
+        }
+        for k in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) {
+            let o = bodies[Int(carSystem.wheels[k].body)]
+            if o.position.w > 0 { p += PhysicsMath.xyz(o.velocity) / o.position.w }
+        }
+        return p
+    }
+
+    /// After the fractured objects' verdict (PhysicsWorld.endFractureStep): a car whose knocks broke a piece or freed it
+    /// gets back what it lost this step against them, less what breaking them took (their thresholds), as a body's shot
+    /// does (`giveWay`). Against held pieces it crumples as against a wall, and was all but stopped by the time they let
+    /// go: a brick wall stopped a car at 50 km/h, standing.
+    func carsGiveWay() {
+        for c in carSystem.cars.indices where carSystem.stepHitCounts[c] > 0 {
+            let first = c * CarSystem.maxHits
+            var spent: Float = 0, gave = false
+            for k in first..<first + Int(carSystem.stepHitCounts[c]) {
+                let j = Int(carSystem.stepHits[k]), verdict = fractureState[j].strain.w
+                guard verdict != 0 else { continue }
+                gave = true
+                spent += verdict == 1 ? fractureNodes[j].offset.w : fractureNodes[j].extra.y
+            }
+            carSystem.stepHitCounts[c] = 0
+            let s = carSystem.cars[c], lost = s.stepMomentum - carMomentum(c), l = length(lost)
+            guard gave, l > spent, s.mass > 0 else { continue }
+            let dv = lost / l * ((l - spent) / s.mass)
+            for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) where particles[i].prevPosition.w > 0 {
+                particles[i].velocity += SIMD4(dv, 0)
+            }
+            for k in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) where bodies[Int(carSystem.wheels[k].body)].position.w > 0 {
+                bodies[Int(carSystem.wheels[k].body)].velocity += SIMD4(dv, 0)
+            }
+        }
     }
 
     /// The step's end: beams that broke, the damage (CarDamage.swift: dents, scrapes, parts, wheels, panes, the engine),
@@ -569,6 +624,10 @@ extension PhysicsWorld {
         try system.hits.withUnsafeMutableBufferPointer { hits in
         try system.hitCounts.withUnsafeMutableBufferPointer { hitCounts in
         try system.tyreKicks.withUnsafeMutableBufferPointer { tyreKicks in
+        try system.wheelBodies.withUnsafeBufferPointer { wheelBodies in
+        try system.bodyWheel.withUnsafeBufferPointer { bodyWheel in
+        try system.stepHits.withUnsafeMutableBufferPointer { stepHits in
+        try system.stepHitCounts.withUnsafeMutableBufferPointer { stepHitCounts in
         try fractureState.withUnsafeMutableBufferPointer { fractureState in
         try particles.withUnsafeMutableBufferPointer { particles in
         try bodies.withUnsafeMutableBufferPointer { bodies in
@@ -579,13 +638,20 @@ extension PhysicsWorld {
                                 bodyTwists: bodyTwists, bodyShares: bodyShares, parts: parts, panes: panes, paneFrames: paneFrames, radiator: radiator, reach: reach, events: events,
                                 eventCounts: eventCounts, wear: wear, triangles: triangles, nodeParts: nodeParts, gridStarts: gridStarts,
                                 gridItems: gridItems, pairs: pairs, pairStarts: pairStarts, paired: paired, partWake: partWake, hits: hits, hitCounts: hitCounts, tyreKicks: tyreKicks,
+                                wheelBodies: wheelBodies, bodyWheel: bodyWheel, stepHits: stepHits, stepHitCounts: stepHitCounts,
                                 fractureState: fractureState, particles: particles, bodies: bodies, statics: statics, staticBounds: bounds,
                                 shapes: shapes))
-        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
     }
 }
 
 extension CarSolver {
+    /// Body `j` as a car meets it: another car's wheel as its stage began (`CarSystem.wheelBodies`), any other as it is.
+    @inline(__always) package static func met(_ j: Int, _ b: CarBuffers) -> GPUPhysicsBody {
+        let w = j < b.bodyWheel.count ? Int(b.bodyWheel[j]) : -1
+        return w >= 0 ? b.wheelBodies[w] : b.bodies[j]
+    }
+
     /// The cars' pushes on the bodies (PhysicsWorld.applyCarReactions), and their knocks on fractured objects' pieces.
     @inline(__always) package static func applyCarReactions(_ b: CarBuffers) {
         for c in b.cars.indices {
@@ -624,6 +690,14 @@ extension CarSolver {
                 let hit = b.hits[k]
                 guard hit.impulse > 0 else { continue }
                 PhysicsWorld.strike(&b.fractureState[Int(hit.body)], hit.point / hit.impulse, PhysicsMath.direction(hit.push), hit.impulse)
+                // (Kept for the step's end: PhysicsWorld.carsGiveWay.)
+                let n = Int(b.stepHitCounts[c])
+                var known = false
+                for m in first..<first + n where b.stepHits[m] == hit.body { known = true }
+                if !known && n < CarSystem.maxHits {
+                    b.stepHits[first + n] = hit.body
+                    b.stepHitCounts[c] = Int32(n + 1)
+                }
             }
         }
     }
@@ -665,6 +739,10 @@ package struct CarBuffers {
     let hits: UnsafeMutableBufferPointer<CarHit>
     let hitCounts: UnsafeMutableBufferPointer<Int32>
     let tyreKicks: UnsafeMutableBufferPointer<CarPush>
+    let wheelBodies: UnsafeBufferPointer<GPUPhysicsBody>
+    let bodyWheel: UnsafeBufferPointer<Int32>
+    let stepHits: UnsafeMutableBufferPointer<Int32>
+    let stepHitCounts: UnsafeMutableBufferPointer<Int32>
     /// The world's fractured pieces' state (empty without fractured objects).
     let fractureState: UnsafeMutableBufferPointer<GPUFractureState>
     let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>

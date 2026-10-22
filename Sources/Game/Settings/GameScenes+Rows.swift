@@ -80,7 +80,7 @@ extension GameScenes {
             S.slider("Cars", \.scene.cars.cars, CarSettings.carRange, live: false).env(.scene, "carcount").when { $0.scene.kind == .cars },
             S.popup("Demo", \.scene.cars.demo, SettingsTable.titled(\.title)).env(.scene, "cardemo").when { $0.scene.kind == .cars },
             S.slider("Demo speed", \.scene.cars.demoSpeed, CarSettings.speedRange, step: 5, live: false) { String(format: "%.0f km/h", $0) }
-                .env(.scene, "carspeed").when { $0.scene.kind == .cars && $0.scene.cars.demo == .wall },
+                .env(.scene, "carspeed").when { $0.scene.kind == .cars && $0.scene.cars.demo.crashes },
             S.check("Traction control and ABS", \.scene.cars.assists).env(.scene, "carassists").when { $0.scene.kind == .cars },
             S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
                 .when { $0.scene.kind == .demolition },

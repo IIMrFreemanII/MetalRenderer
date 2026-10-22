@@ -15,7 +15,30 @@ import MetalRenderer
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
         "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
+        "carscrash": carsCrash,
     ]
+
+    /// Phase 3's crashes in the full look, each before, as and after it hits: two cars head on at 50 km/h each, the
+    /// player's car through the brick wall at 50 and into the crates at 40 (CarContacts.swift, Physics+Cars).
+    private static func carsCrash() -> [Config] {
+        let headOn = Scene.camera([9, 2.4, 8], yaw: -.pi / 2, pitch: -0.14)
+        let wall = Scene.camera([16.5, 2.4, 29.5], yaw: 2.45, pitch: -0.14)
+        let crates = Scene.camera([-0.5, 2.2, 25.5], yaw: -2.39, pitch: -0.14)
+        let shots: [(String, CarSettings.Demo, Float, Int, Camera, [Float])] = [
+            ("head on", .headOn, 50, 2, headOn, [0.6, 1.0, 3]), ("brick wall", .breakables, 50, 1, wall, [0.2, 0.6, 3]),
+            ("crates", .props, 40, 1, crates, [0.5, 0.9, 3]),
+        ]
+        return shots.flatMap { name, demo, kmh, cars, camera, times in
+            times.map { t in
+                carBase(String(format: "%@ t%03.1f", name, t)).with {
+                    $0.scene.cars.demo = demo
+                    $0.scene.cars.demoSpeed = kmh
+                    $0.scene.cars.cars = cars
+                    $0.solid = false
+                }.from(camera).still(at: t)
+            }
+        }
+    }
 
     /// The wall demo's damage in the full look, close (CarDamage.swift): at 50 km/h just after the hit (the shards, the
     /// steam) and stopped, and at 100 km/h stopped (the smoke), from the front three-quarters by the wall.

@@ -18,13 +18,13 @@ import simd
 final class CarContactTests: XCTestCase {
     private func run(_ w: PhysicsWorld, _ seconds: Float) { w.advance(to: w.time + seconds + PhysicsWorld.stepLength / 2) }
 
-    /// A scene with nothing of its own and a floor, its world at the cars' 16 substeps (for fractured objects and
-    /// bodies drawn as a scene's).
-    private func scene() -> Scene {
+    /// A scene with nothing of its own and a floor (of `friction`), its world at the cars' 16 substeps (for fractured
+    /// objects and bodies drawn as a scene's).
+    private func scene(friction: Float = 0.7) -> Scene {
         var settings = SceneSettings(kind: .cornell)
         settings.physics.substeps = 16
         let s = Scene(settings)
-        s.addStaticPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
+        s.addStaticPlane(point: .zero, normal: [0, 1, 0], friction: friction, restitution: 0.1)
         return s
     }
 
@@ -135,10 +135,11 @@ final class CarContactTests: XCTestCase {
         XCTAssertGreaterThan(w.carTelemetry(0).speed, 1)
     }
 
-    /// A car standing on a loose platform (a body) pulls away: its tyres carry it there (their loads the car's weight,
-    /// not its rims'), and push the platform back as they drive it forward.
+    /// A car standing on a loose platform (a body) on frictionless ground pulls away: its tyres carry it there (their loads the car's
+    /// weight, not its rims'), and push the platform back as they drive it forward, the two's momentum kept (on the
+    /// ground's friction the platform stays: under the car's weight it holds three times what the tyres push).
     func testTyresStandOnBodies() {
-        let s = scene()
+        let s = scene(friction: 0)
         let w = s.physicsWorld()
         let deck = w.bodies.count
         s.addBody(sdf: s.addSDFShape(SDFShape(.box(halfExtents: [1.5, 0.1, 4]))), 0, translate([0, 0.1, 1]), density: 150, friction: 0.9, restitution: 0)
@@ -150,53 +151,67 @@ final class CarContactTests: XCTestCase {
         input.accelerate = 1
         w.add(PhysicsWorld.carCommand(0, input))
         run(w, 1)
-        print(String(format: "on the platform: tyre loads %.0f N (weight %.0f), the platform at %.2f m/s, the car at %.2f m/s", loads, weight,
-                     w.bodies[deck].velocity.z, w.carTelemetry(0).speed))
+        let platform = w.bodies[deck].velocity.z / w.bodies[deck].position.w, car = w.carSystem.cars[0].mass * w.carTelemetry(0).speed
+        print(String(format: "on the platform: tyre loads %.0f N (weight %.0f), the platform at %.2f m/s, the car at %.2f m/s, momentum %.0f / %.0f",
+                     loads, weight, w.bodies[deck].velocity.z, w.carTelemetry(0).speed, platform, car))
         XCTAssertEqual(loads, weight, accuracy: 0.25 * weight)
         XCTAssertLessThan(w.bodies[deck].velocity.z, -0.1)
         XCTAssertGreaterThan(w.carTelemetry(0).speed, 1)
+        XCTAssertEqual(-platform, car, accuracy: 0.35 * car, "the platform's momentum isn't the car's")
     }
 
     /// Into a brick wall standing on the ground at 40 km/h: it breaks (its pieces come free, their breaks logged) and
     /// the car goes on through what is left, slowed.
     func testABrickWallBreaks() {
-        let s = scene()
-        var r = FractureRecipe.defaults(.brick)
-        r.brick = [0.4, 0.16, 0.22]
-        r.seed = 21
-        let f = s.addFractured("bricks", shape: SDFShape(.box(halfExtents: [1.6, 0.88, 0.11])), recipe: r, transform: translate([0, 0.88, 7]),
-                               material: 0, interior: 0, anchor: .ground(0))
-        let w = s.physicsWorld()
-        w.addCar(CarBlueprint(.preset(.civic)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 40 / 3.6])
-        w.finish()
-        run(w, 2.5)
-        var free = 0
-        for k in f.tree.nodes.indices {
-            let o = w.bodies[f.firstBody + k]
-            if o.info.y & PhysicsWorld.disabledBit == 0 && o.position.w > 0 { free += 1 }
+        let fitted = CarPack.model(.civic).map { CarSpec.preset(.civic).fitted(to: $0.model) }
+        for spec in [CarSpec.preset(.civic)] + (fitted.map { [$0] } ?? []) {
+            let s = scene()
+            var r = FractureRecipe.defaults(.brick)
+            r.brick = [0.4, 0.16, 0.22]
+            r.seed = 21
+            let f = s.addFractured("bricks", shape: SDFShape(.box(halfExtents: [1.6, 0.88, 0.11])), recipe: r, transform: translate([0, 0.88, 7]),
+                                   material: 0, interior: 0, anchor: .ground(0))
+            let w = s.physicsWorld()
+            w.addCar(CarBlueprint(spec), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 40 / 3.6])
+            w.finish()
+            let starts = f.tree.nodes.indices.map { PhysicsMath.xyz(w.bodies[f.firstBody + $0].position) }
+            run(w, 2.5)
+            let moved = f.tree.nodes.indices.filter { simd_distance(PhysicsMath.xyz(w.bodies[f.firstBody + $0].position), starts[$0]) > 0.1 }.count
+            var free = 0
+            for k in f.tree.nodes.indices {
+                let o = w.bodies[f.firstBody + k]
+                if o.info.y & PhysicsWorld.disabledBit == 0 && o.position.w > 0 { free += 1 }
+            }
+            let t = w.carTelemetry(0), bricks = w.breakLog.filter { UInt32($0.velocity.w) == UInt32(FractureMaterial.brick.rawValue) }.count
+            let name = spec.profile == nil ? "preset" : "model"
+            print(String(format: "brick wall (%@): %d pieces free, %d moved, %d breaks logged; the car at %.1f km/h, its front at z %.2f, bent %d", name,
+                         free, moved, bricks, t.speed * 3.6, t.position.z + spec.frontEnd, t.bent))
+            XCTAssertGreaterThan(free, 5, name)
+            XCTAssertGreaterThan(moved, 20, name)
+            XCTAssertGreaterThan(t.position.z + spec.frontEnd, 7.11, "\(name): not through the wall")
+            XCTAssertGreaterThan(bricks, 0, name)
+            XCTAssertLessThan(t.speed, 40 / 3.6, name)
         }
-        let t = w.carTelemetry(0), bricks = w.breakLog.filter { UInt32($0.velocity.w) == UInt32(FractureMaterial.brick.rawValue) }.count
-        print(String(format: "brick wall: %d pieces free, %d breaks logged; the car at %.1f km/h, z %.2f, bent %d", free, bricks, t.speed * 3.6, t.position.z, t.bent))
-        XCTAssertGreaterThan(free, 5)
-        XCTAssertGreaterThan(bricks, 0)
-        XCTAssertLessThan(t.speed, 40 / 3.6)
     }
 
-    /// The head-on crash on one core as on all of them, and a replay from the start the same, bit for bit.
+    /// The head-on crash on one core as on all of them, and a replay from the start the same, bit for bit; every car.
+    /// (A car's nodes and tyres meet the other's wheels, which that car's thread moves: read as its stage began.)
     func testContactsAreDeterministic() {
         let v: Float = 50 / 3.6
         let turn = float4x4(simd_quatf(angle: .pi, axis: [0, 1, 0]))
+        for style in CarStyle.allCases {
         func crash(everyCore: Bool) -> [SIMD4<Float>] {
-            let w = world([(translate([0, 0, -3]), [0, 0, v]), (translate([0, 0, 3]) * turn, [0, 0, -v])])
+            let w = world([(translate([0, 0, -3]), [0, 0, v]), (translate([0, 0, 3]) * turn, [0, 0, -v])], spec: .preset(style))
             PhysicsPool.shared.enabled = everyCore
             defer { PhysicsPool.shared.enabled = true }
             run(w, 1)
             let first = w.particles.map(\.position)
             w.advance(to: 0)
             run(w, 1)
-            XCTAssertEqual(w.particles.map(\.position), first, "the replay")
+            XCTAssertEqual(w.particles.map(\.position), first, "\(style): the replay")
             return first
         }
-        XCTAssertEqual(crash(everyCore: false), crash(everyCore: true))
+        XCTAssertEqual(crash(everyCore: false), crash(everyCore: true), "\(style)")
+        }
     }
 }

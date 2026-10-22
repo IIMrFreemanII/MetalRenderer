@@ -108,10 +108,13 @@ package struct DemolitionSettings: Equatable, Codable {
 /// The car scene's (Scene+CarGround.swift, Physics+Cars.swift). Changing any of it builds the scene again.
 package struct CarSettings: Equatable, Codable {
     /// What the scene does by itself: nothing (the player drives), the player's car into the wall at `demoSpeed`, every
-    /// car round its own lap on autopilot (the benchmark's).
+    /// car round its own lap on autopilot (the benchmark's); the player's car and the next head on, each at
+    /// `demoSpeed`; the player's car through the brick wall, or into the crates, at `demoSpeed`.
     package enum Demo: Int, CaseIterable, Codable {
-        case none, wall, laps
-        package var title: String { ["None", "Into the wall", "Laps"][rawValue] }
+        case none, wall, laps, headOn, breakables, props
+        package var title: String { ["None", "Into the wall", "Laps", "Head on", "Through the brick wall", "Into the crates"][rawValue] }
+        /// Whether its cars start at `demoSpeed`.
+        package var crashes: Bool { self != .none && self != .laps }
     }
     /// The player's car, and how many cars there are (the player's, and the other styles parked in turn).
     package var style = CarStyle.civic

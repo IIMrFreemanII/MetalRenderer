@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792700292.8961835,
-    "seen": 1792700522.723281,
-    "ast_hash": "2dd5b79fa42cd76d4122147efc7ec3f1",
+    "mtime": 1792704868.9265566,
+    "seen": 1792705227.014652,
+    "ast_hash": "1e595422feacef607c1900546765e1c6",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -2262,9 +2262,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsTable.swift": {
-    "mtime": 1792666531.2294455,
-    "seen": 1792667529.630225,
-    "ast_hash": "3d3481ea3517a7edb785deb74fb455e0",
+    "mtime": 1792704210.9957821,
+    "seen": 1792705227.007083,
+    "ast_hash": "01c291c38267b2956e384a22e684976c",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/Renderer+Terrain.swift": {
@@ -2970,9 +2970,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Settings/GameScenes+Rows.swift": {
-    "mtime": 1792666620.2938843,
-    "seen": 1792667529.630093,
-    "ast_hash": "e81d806a23474056bb74848bed077195",
+    "mtime": 1792703572.0760207,
+    "seen": 1792705227.001992,
+    "ast_hash": "e3b4b2768ebb72593692f2f77236beb6",
     "semantic_hash": ""
   },
   "Sources/Game/Terrain/Benchmark+Terrain.swift": {
@@ -3840,9 +3840,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsCPU.swift": {
-    "mtime": 1792666464.287194,
-    "seen": 1792667529.6302872,
-    "ast_hash": "c22c8a70fdcde5fce7e528e98c217b2f",
+    "mtime": 1792704041.0769458,
+    "seen": 1792705227.009266,
+    "ast_hash": "2ce620b65d6e4bcc0a1060b535d77c07",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsCollide.swift": {
@@ -3900,9 +3900,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSettings.swift": {
-    "mtime": 1792699083.7724497,
-    "seen": 1792700522.718579,
-    "ast_hash": "3a3798acb73b3b4b8de16c9c201c83d0",
+    "mtime": 1792703572.0756347,
+    "seen": 1792705227.0094988,
+    "ast_hash": "5f3dd970ba56bead429abb9b143e7d20",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSkin.swift": {
@@ -4836,9 +4836,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Cars/Benchmark+Cars.swift": {
-    "mtime": 1792699083.7730482,
-    "seen": 1792700522.711095,
-    "ast_hash": "ed3403ebda7ddbe526b5944595be31ba",
+    "mtime": 1792703610.021046,
+    "seen": 1792705227.001209,
+    "ast_hash": "1ea2e41ed734cb6b930478f4d3580fd8",
     "semantic_hash": ""
   },
   "Sources/Game/Cars/CarPlayer.swift": {
@@ -4848,21 +4848,21 @@
     "semantic_hash": ""
   },
   "Sources/Game/Cars/Scene+CarGround.swift": {
-    "mtime": 1792699083.772708,
-    "seen": 1792700522.7110982,
-    "ast_hash": "d2e242efb037b8b4bf0693cae5b65ca7",
+    "mtime": 1792704822.8340917,
+    "seen": 1792705227.001269,
+    "ast_hash": "4ce286b465834467a51eef99d8e8b3c2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Cars/Scene+Cars.swift": {
-    "mtime": 1792699065.5076828,
-    "seen": 1792700522.713593,
-    "ast_hash": "b35e7e1ef46fabf9a35d957681578ea2",
+    "mtime": 1792702525.255598,
+    "seen": 1792705227.003895,
+    "ast_hash": "60914f67461d58162443c653a0493a82",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarBeams.swift": {
-    "mtime": 1792701324.5395873,
-    "seen": 1792701509.904074,
-    "ast_hash": "65fd4c8d0434e01f27cda8a72dfc203a",
+    "mtime": 1792703393.157884,
+    "seen": 1792705227.0086489,
+    "ast_hash": "066929743ac10d79fc4fe0b395564c19",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarBlueprint.swift": {
@@ -4872,9 +4872,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarDrivetrain.swift": {
-    "mtime": 1792698610.9074154,
-    "seen": 1792700522.717931,
-    "ast_hash": "0d0d0f30bfbd8766a3c2168f1032f047",
+    "mtime": 1792703142.6835232,
+    "seen": 1792705227.0087318,
+    "ast_hash": "f9111a2791e9f3863afaa44e49291c48",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarSpec.swift": {
@@ -4890,33 +4890,33 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarTires.swift": {
-    "mtime": 1792697134.7850597,
-    "seen": 1792700522.7179341,
-    "ast_hash": "9b5e5b855fb26f0165a6e9e86507b7b6",
+    "mtime": 1792703393.1582325,
+    "seen": 1792705227.008831,
+    "ast_hash": "ac21716d0c09b578c22fbd81b7f2e0ac",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarTypes.swift": {
-    "mtime": 1792701324.5394058,
-    "seen": 1792701509.904254,
-    "ast_hash": "1eb9ea635d59c0600f068f2c34344bdb",
+    "mtime": 1792704041.0761554,
+    "seen": 1792705227.008832,
+    "ast_hash": "5e26ae3424029ff1341d1eff2e21d908",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/Physics+Cars.swift": {
-    "mtime": 1792699554.0517333,
-    "seen": 1792700522.717936,
-    "ast_hash": "d7e2f128db59bb621ba484e90f9b8179",
+    "mtime": 1792704893.4328933,
+    "seen": 1792705227.008832,
+    "ast_hash": "3ba517527ed405ffac871866827260dc",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Cars/CarTests.swift": {
-    "mtime": 1792700273.106201,
-    "seen": 1792700522.719161,
-    "ast_hash": "920e2abc6ccfa5318e013f7505a853b3",
+    "mtime": 1792702540.2088761,
+    "seen": 1792705227.0101361,
+    "ast_hash": "64f547a4d5fc8700dc8632b9420f9ec2",
     "semantic_hash": ""
   },
   ".claude/notes/cars-handoff.md": {
-    "mtime": 1792701489.5020864,
-    "seen": 1792701509.909009,
-    "ast_hash": "35d0cddae6e742c09b6ddbe63467ea70",
+    "mtime": 1792704868.9268053,
+    "seen": 1792705227.013262,
+    "ast_hash": "4b5b5aed2967a6e1874482371fba80f7",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarPack.swift": {
@@ -4956,15 +4956,21 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Cars/CarContactTests.swift": {
-    "mtime": 1792700243.0364075,
-    "seen": 1792700522.7191591,
-    "ast_hash": "d0e89ec85d680d732f5ec211e8453270",
+    "mtime": 1792704048.662078,
+    "seen": 1792705227.0101042,
+    "ast_hash": "6df788dbf03899a35efd9d40b6b7934f",
     "semantic_hash": ""
   },
   "Tools/cars/inspect.py": {
     "mtime": 1792698458.5800612,
     "seen": 1792700522.721131,
     "ast_hash": "6960073d63c6242b833e076780d91f98",
+    "semantic_hash": ""
+  },
+  "Sources/Physics/Cars/CarSurfaceCache.swift": {
+    "mtime": 1792702517.3424766,
+    "seen": 1792705227.00883,
+    "ast_hash": "523f63be125c7ab88ea516a543293aeb",
     "semantic_hash": ""
   }
 }

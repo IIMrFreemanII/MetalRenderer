@@ -96,6 +96,9 @@ package struct CarWheel {
     package var spin: Float = 0
     package var load: Float = 0
     package var slip = SIMD2<Float>()
+    /// Its speed over what it stands on, along its heading (m/s; 0 touching nothing): what the assists compare its spin
+    /// with (on a body that moves, a platform, the car's speed over the world isn't its speed over the road).
+    package var over: Float = 0
     /// The hardest knock its axle took this step: its pull on its hubs along the ground (level, the world's) in one
     /// substep (N; its XPBD lambdas / h^2). Past `axleStrength` (a curb's, not a bump's, which mostly lifts), it comes
     /// off, as it does when its knuckle's links break (`links`). And the hardest so far.
@@ -110,8 +113,8 @@ package struct CarWheel {
 }
 
 /// A part of a car's body that can come off (CarBlueprint.Part): its own nodes (`nodeCount` of the car's particles
-/// from `firstNode`) and panel beams, on the body's by its attachments (CarBeam.attachBit) and by supports that only
-/// push. Off, it is a free island of nodes; still for a second, it is frozen (its nodes held: no mass) until a body
+/// from `firstNode`) and panel beams, on the body's by its attachments (CarBeam.attachBit) and by supports that hold
+/// it both ways until it comes off. Off, it is a free island of nodes; still for a second, it is frozen (its nodes held: no mass) until a body
 /// comes near.
 package struct CarPart {
     package var firstNode: Int32 = 0
@@ -190,6 +193,9 @@ package struct CarState {
     package var candidateCount: Int32 = 0
     /// Its mass (kg, wheels included), the world's at the start.
     package var mass: Float = 0
+    /// Its momentum (kg m/s, its nodes' and wheels') as the step began: what it gets back of it when what it hit gives
+    /// way (PhysicsWorld.carsGiveWay).
+    package var stepMomentum = SIMD3<Float>()
     /// Its parts (`CarSystem.parts`), panes and lamps (`panes`), and its front end's nodes (`radiatorNodes`: how far
     /// they came back toward its engine is how far its front is crushed).
     package var firstPart: Int32 = 0
@@ -337,8 +343,15 @@ package struct CarSystem {
     package var pushCounts: [Int32] = []
     package var hits: [CarHit] = []
     package var hitCounts: [Int32] = []
+    /// Per car the fractured objects' pieces it knocked this step (`maxHits` each), and how many.
+    package var stepHits: [Int32] = []
+    package var stepHitCounts: [Int32] = []
     /// Per wheel its tyre's impulse on the body it stands on this substep (count 0: none), CarSolver.applyTyreKicks.
     package var tyreKicks: [CarPush] = []
+    /// Per wheel its body as a stage began (PhysicsWorld.copyCarWheels), and per body its wheel (-1: none): what the
+    /// other cars meet of it while its own car's thread moves it (CarSolver.met).
+    package var wheelBodies: [GPUPhysicsBody] = []
+    package var bodyWheel: [Int32] = []
     /// Per body, the pushes the cars gave it this substep summed (w: how many), and their turns (applyCarReactions);
     /// how many it had the substep before (a node's push takes its mass as that many shares: CarSolver.nodeContacts).
     package var bodyPushes: [SIMD4<Float>] = []

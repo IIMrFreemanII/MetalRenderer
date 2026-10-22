@@ -66,7 +66,8 @@ extension EnvNamed {
     package var envName: String { "\(self)" }
     package var envText: String { envName }
     package init?(envText: String) {
-        guard let match = Self.allCases.first(where: { $0.envName == envText.lowercased() }) else { return nil }
+        // (Both sides in lower case: a case named in camel case, `headOn`, `santaFe`, is `headon`, `santafe`.)
+        guard let match = Self.allCases.first(where: { $0.envName.lowercased() == envText.lowercased() }) else { return nil }
         self = match
     }
 }

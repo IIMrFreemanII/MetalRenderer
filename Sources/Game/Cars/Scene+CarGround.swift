@@ -135,6 +135,23 @@ extension Scene {
                     place = translate([0, 0, Scene.carWallZ - spec.frontOverhang - spec.wheelbase / 2 - 14])
                     velocity = [0, 0, settings.demoSpeed / 3.6]
                 }
+            case .headOn:
+                // The two on the run-up's line, 28 m apart, toward each other: they meet about 0.8 s after the start.
+                if k == 0 { place = translate([0, 0, -6]) }
+                if k == 1 { place = translate([0, 0, 22]) * float4x4(simd_quatf(angle: .pi, axis: [0, 1, 0])) }
+                if k < 2 { velocity = (k == 0 ? 1 : -1) * SIMD3(0, 0, settings.demoSpeed / 3.6) }
+            case .breakables:
+                // In the speed bumps' lane past the last bump, toward the brick wall (the concrete one behind it).
+                if k == 0 {
+                    place = translate([22, 0, 27])
+                    velocity = [0, 0, settings.demoSpeed / 3.6]
+                }
+            case .props:
+                // Toward the stack of crates on the left.
+                if k == 0 {
+                    place = translate([-5.6, 0, 20])
+                    velocity = [0, 0, settings.demoSpeed / 3.6]
+                }
             case .laps:
                 let radius = Scene.carLapRadius + Float(k) * Scene.carLapSpacing
                 let angle = Float(k) * 0.9

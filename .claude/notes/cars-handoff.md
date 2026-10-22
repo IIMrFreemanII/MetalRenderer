@@ -226,12 +226,26 @@ phase 1's tip. Node-beam (BeamNG-style) cars that drive, dent and break. The pla
 - `GLTFLoader`: a number too small for a Float (the Santa Fe's `-8.4e-53`) made JSONDecoder throw: flushed to 0 and
   decoded again.
 
+## Phase 3: done (branch `claude/car-collisions`, stacked on PR #121)
+
+- Cars against cars (`CarContacts.swift`), bodies (mass-split pushes), fractured objects (knocks as strain), tyres on
+  bodies (`tyreKick`); the WIP commit 5993615c, then:
+  - **Tyres on bodies:** the test's platform stood on friction (under the car's weight it held three times the tyres'
+    push): now on frictionless ground, momentum kept to 0.3%. The assists compared wheel spin with the car's speed over
+    the world: on a sliding platform that read as wheelspin. `CarWheel.over`: each wheel's speed over what it stands on.
+  - **Determinism:** a car's nodes and tyres read the other cars' wheels while those cars' threads moved them.
+    `CarSystem.wheelBodies`: copies as each stage began (`copyCarWheels`, `CarSolver.met`). The test runs every car.
+  - **Breakables:** the car crumpled against held pieces and was stopped before they let go (a brick wall at 50 km/h
+    stood). `carsGiveWay`: after the fracture verdict, a car whose knocks broke or freed pieces gets back what it lost
+    this step, less their thresholds (the shots' `giveWay`). The test now asks for the car through the wall.
+  - Settings: `cardemo` `headon`, `breakables`, `props` (`carspeed`); env names now match case-blind (`santafe`,
+    `headon` never matched their camel-case cases: SettingsTableTests' round trip failed on them).
+  - `-m carscrash`: the three, each before, as and after.
+- Cost (release): see the README's "What it costs". The brick wall's 59 ms at 3 s is the broken wall's loose bricks in
+  the rays (49 ms without dust): a fractured-objects cost; for P4's demos, or drawing pieces as meshes.
+- Not done: the window hand test of the crashes; Metal 4 / M4 Max.
+
 ## Next phases
 
-- **P3 — car against car and the world:**
-  - car vs car (node vs hull triangles);
-  - node pushes into fractured pieces with `strike`;
-  - rigid props;
-  - tyres on bodies.
 - **P4 — cameras, slow motion, replay, demos:** hood/cockpit/orbit cams on C, slow motion, instant replay ring, crash
   demo modes with video.

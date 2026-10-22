@@ -166,7 +166,7 @@ extension CarSolver {
                 x += PhysicsWorld.particlePush(n, overlap, moved, (q.velocity.w * o.velocity.w).squareRoot())
                 slid += sliding(moved, n, h)
             } else {
-                let j = Int(code), o = b.bodies[j], centre = PhysicsMath.xyz(o.position)
+                let j = Int(code), o = met(j, b), centre = PhysicsMath.xyz(o.position)
                 let reach = r + o.invInertia.w
                 if length_squared(x - centre) > reach * reach { continue }
                 let pose = PhysicsWorld.Pose(o), local = pose.toBody(x)
