@@ -69,7 +69,7 @@ extension CarSolver {
         var spinning: Float = 0
         if t.assists && driven > 0 {
             let ground = abs(speed), wheel = abs(meanSpin) * b.wheels[wf].radius
-            spinning = simd_clamp((wheel - ground * (1 + 1.2 * tyrePeakRatio) - 0.5) / 1.5, 0, 1)
+            spinning = simd_clamp((wheel - ground * (1 + tyrePeakRatio) - 0.3) / 1.0, 0, 1)
         }
         // The engine.
         if s.running {
@@ -148,7 +148,7 @@ extension CarSolver {
             // Traction control's brakes: a driven wheel spinning past its peak's slip is braked (an open differential
             // then gives its torque to the other wheel as well, and the car doesn't turn toward the one that grips).
             if t.assists && w.flags & CarWheel.driven != 0 {
-                let excess = abs(spins[k]) * w.radius - abs(speed) * (1 + 1.2 * tyrePeakRatio) - 0.3
+                let excess = abs(spins[k]) * w.radius - abs(speed) * (1 + tyrePeakRatio) - 0.2
                 if excess > 0 { pedal += min(excess * 1500, w.brake) }
             }
             let torque = pedal + (w.flags & CarWheel.handbraked != 0 ? t.handbrake * s.handbrake : 0)

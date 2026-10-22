@@ -19,6 +19,8 @@ package struct CarBlueprint {
         package var kind: CarBeamKind
         package var zone: CarBeamZone
         package var hull = false
+        /// A wheel's corner's (CarBeam.cornerBit).
+        package var corner = false
         /// Overrides: stiffness (N/m), damping, rest length; a tie rod's steering (CarBeamLimit.steer).
         package var stiffness: Float?
         package var damping: Float?
@@ -262,6 +264,8 @@ package struct CarBlueprint {
 
     /// A wheel's corner carrying `sprung` kg of the body (the knuckles' and mounts' added after).
     private mutating func buildCorner(front: Bool, side s: Float, sprung: Float) {
+        let firstBeam = beams.count
+        defer { for k in firstBeam..<beams.count { beams[k].corner = true } }
         let R = spec.wheelRadius, zc = front ? spec.frontAxle : spec.rearAxle
         let g: Float = 9.81
         let km = CarBlueprint.knuckleMass, mm = CarBlueprint.mountMass
@@ -271,10 +275,17 @@ package struct CarBlueprint {
         let hub: Float = 0.09
         let hubIn = node(c + inward * hub, mass: km)
         let hubOut = node(c - inward * hub, mass: km)
-        let top = node(c + inward * 0.16 + SIMD3(0, 0.19, 0), mass: km)
-        let bottom = node(c + inward * 0.13 + SIMD3(0, -0.14, 0), mass: km)
-        let arm = node(c + inward * 0.15 + SIMD3(0, 0, -0.14), mass: km)
-        let knuckle = [hubIn, hubOut, top, bottom, arm]
+        // The kingpin (top to bottom) 6 cm inboard of the wheel's middle: the drive's pull at the wheel turns the knuckle
+        // less about it (13 to 16 cm inboard, a front-wheel-drive car toed its wheels out under power and wandered).
+        let top = node(c + inward * 0.06 + SIMD3(0, 0.19, 0), mass: km)
+        let bottom = node(c + inward * 0.04 + SIMD3(0, -0.14, 0), mass: km)
+        // The steering arm ahead of the axle (front steer): the drive's pull moves the knuckle forward on its mounts a
+        // little, and about an arm behind the axle that toed the wheel out (2.7 degrees under a front-wheel drive's
+        // launch, and the car wandered); ahead of it, about nothing. A rear corner holds its toe with a second link
+        // behind the axle too (with the one alone, its wheels toed out a degree under drive and a tall car weaved).
+        let arm = node(c + inward * 0.15 + SIMD3(0, 0, 0.14), mass: front ? km : km / 2)
+        let toeArm: Int? = front ? nil : node(c + inward * 0.15 + SIMD3(0, 0, -0.14), mass: km / 2)
+        let knuckle = [hubIn, hubOut, top, bottom, arm] + (toeArm.map { [$0] } ?? [])
         for i in 0..<knuckle.count {
             for j in (i + 1)..<knuckle.count { beam(knuckle[i], knuckle[j], .rigid, .suspension) }
         }
@@ -284,26 +295,31 @@ package struct CarBlueprint {
         let lowerF = node([inner - s * 0.52, nodes[bottom].y + 0.02, zc + 0.22], mass: mm)
         let lowerB = node([inner - s * 0.52, nodes[bottom].y + 0.02, zc - 0.22], mass: mm)
         let tower = node([inner - s * 0.3, min(c.y + 0.42, spec.beltHeight(zc) - 0.05), zc], mass: mm)
-        let rack = node([inner - s * 0.5, nodes[arm].y, nodes[arm].z], mass: mm)
+        let rack = node([inner - s * 0.5, nodes[arm].y, nodes[arm].z], mass: front ? mm : mm / 2)
+        let toeRack: Int? = toeArm.map { node([inner - s * 0.5, nodes[$0].y, nodes[$0].z], mass: mm / 2) }
         // The mounts are a subframe (each tied to every other), held from the sides and the floor near it.
-        let mounts = [upperF, upperB, lowerF, lowerB, tower, rack]
+        let mounts = [upperF, upperB, lowerF, lowerB, tower, rack] + (toeRack.map { [$0] } ?? [])
         for i in 0..<mounts.count {
             for j in (i + 1)..<mounts.count { beam(mounts[i], mounts[j], .plastic, .cabinRail) }
         }
         for m in mounts {
+            // (A front rack, ahead of the axle, is held as the crumple zone's rails are: as the cabin's, it stiffened the
+            // front against a wall.)
+            let zone: CarBeamZone = front && m == rack ? .rail : .cabinRail
             for r in nearestRing(nodes[m], count: 2, slots: CarBlueprint.sides) + nearestRing(nodes[m], count: 2) where !beams.contains(where: {
                 $0.a == m && $0.b == r
             }) {
-                beam(m, r, .plastic, .cabinRail)
+                beam(m, r, .plastic, zone)
             }
         }
-        // The wishbones (the kingpin's ends are their ball joints), the tie rod.
+        // The wishbones (the kingpin's ends are their ball joints), the tie rod (and a rear corner's second toe link).
         for (a, b) in [(top, upperF), (top, upperB), (bottom, lowerF), (bottom, lowerB)] { beam(a, b, .rigid, .suspension) }
         var tie = Beam(a: arm, b: rack, kind: front ? .steer : .rigid, zone: .suspension)
-        // Steering left turns a front wheel's nose to +x: its arm, behind the axle, to -x, shortening the left tie rod
-        // and lengthening the right one.
-        if front { tie.steer = -s * 0.14 }
+        // Steering left turns a front wheel's nose to +x: its arm, ahead of the axle, to +x too, lengthening the left
+        // tie rod and shortening the right one.
+        if front { tie.steer = s * 0.14 }
         beams.append(tie)
+        if let toeArm, let toeRack { beams.append(Beam(a: toeArm, b: toeRack, kind: .rigid, zone: .suspension)) }
         // The spring and damper, preloaded to hold the car's corner at this ride height (the rate at the wheel is the
         // spring's along it x the square of its lean); a bump stop and a rebound strap at the ends of the travel.
         let d = nodes[tower] - nodes[bottom], length = simd_length(d), lean = max(d.y / length, 0.3)

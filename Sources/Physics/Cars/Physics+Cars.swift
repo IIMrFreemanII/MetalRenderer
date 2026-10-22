@@ -85,7 +85,8 @@ extension PhysicsWorld {
             if beam.kind == .steer { tieOf[beam.a] = carSystem.beams.count }
             carSystem.beams.append(CarBeam(nodes: SIMD2(UInt32(first + beam.a), UInt32(first + beam.b)), rest: rest, compliance: 1 / stiffness,
                                            damping: beam.damping ?? (rigid ? 0 : c), yield: plastic ? yield : .infinity, load: 0,
-                                           info: beam.kind.rawValue | beam.zone.rawValue << 8 | (beam.hull ? CarBeam.hullBit : 0)))
+                                           info: beam.kind.rawValue | beam.zone.rawValue << 8 | (beam.hull ? CarBeam.hullBit : 0)
+                                               | (beam.corner ? CarBeam.cornerBit : 0)))
             carSystem.limits.append(CarBeamLimit(rest0: rest, strength: plastic ? strength : .infinity, strainLimit: plastic ? strain : .infinity,
                                                  hardening: hardening, steer: beam.steer))
         }

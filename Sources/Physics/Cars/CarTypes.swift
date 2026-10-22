@@ -14,12 +14,15 @@ package struct CarBeam {
     /// The force (N) it flows at, and its load (N, + pulled) averaged over a few substeps (what flows it).
     package var yield: Float = .infinity
     package var load: Float = 0
-    /// Its kind (CarBeamKind) in the low byte, `brokenBit`, its zone (CarBeamZone) in the second byte, `hullBit`.
+    /// Its kind (CarBeamKind) in the low byte, `brokenBit`, its zone (CarBeamZone) in the second byte, `hullBit`,
+    /// `cornerBit`.
     package var info: UInt32 = 0
 
     package static let brokenBit: UInt32 = 1 << 7
     /// On the body's outside: its middle meets the world too (a pole between two nodes).
     package static let hullBit: UInt32 = 1 << 16
+    /// A wheel's corner's (its knuckle, wishbones, tie rod, spring, mounts): solved again (CarSolver.cornerPasses).
+    package static let cornerBit: UInt32 = 1 << 17
 
     @inline(__always) package var kind: UInt32 { info & 0x7F }
 }

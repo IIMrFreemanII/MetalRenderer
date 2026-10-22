@@ -44,6 +44,11 @@ package struct GLTFModel {
     package var name: String
     package var meshes: [Mesh] = []
     package var parts: [(mesh: Int, transform: float4x4)] = []   // one per mesh use in the node hierarchy
+    /// Per part, the nodes from its scene's root down to the one that holds its mesh (indices into `nodeNames`): what
+    /// tells a pack's models apart (CarPack).
+    package var partNodes: [[Int]] = []
+    /// Each node's name ("" when it has none).
+    package var nodeNames: [String] = []
     package var materials: [Material] = []
     package var images: [Image] = []
     package var lights: [Light] = []
@@ -106,6 +111,7 @@ package enum GLTFLoader {
     private struct Asset: Decodable { var version: String }
     private struct SceneDef: Decodable { var nodes: [Int]? }
     private struct Node: Decodable {
+        package var name: String?
         package var children: [Int]?
         package var mesh: Int?
         package var matrix: [Float]?
@@ -376,6 +382,7 @@ package enum GLTFLoader {
 
         // Node hierarchy -> parts with model-space transforms.
         let nodes = doc.nodes ?? []
+        model.nodeNames = nodes.map { $0.name ?? "" }
         func local(_ n: Node) -> float4x4 {
             if let m = n.matrix, m.count == 16 {
                 return float4x4(SIMD4(m[0], m[1], m[2], m[3]), SIMD4(m[4], m[5], m[6], m[7]),
@@ -389,12 +396,15 @@ package enum GLTFLoader {
             if let sc = n.scale, sc.count == 3 { s = scale(SIMD3(sc[0], sc[1], sc[2])) }
             return t * r * s
         }
-        func visit(_ index: Int, _ parent: float4x4, depth: Int) {
+        func visit(_ index: Int, _ parent: float4x4, depth: Int, path: [Int]) {
             guard nodes.indices.contains(index), depth < 64 else { return }
             let n = nodes[index]
-            let world = parent * local(n)
+            let world = parent * local(n), path = path + [index]
             if let m = n.mesh, meshPrimitives.indices.contains(m) {
-                for mesh in meshPrimitives[m] { model.parts.append((mesh, world)) }
+                for mesh in meshPrimitives[m] {
+                    model.parts.append((mesh, world))
+                    model.partNodes.append(path)
+                }
             }
             if let l = n.extensions?.KHR_lights_punctual?.light, let lights = doc.extensions?.KHR_lights_punctual?.lights,
                lights.indices.contains(l) {
@@ -412,7 +422,7 @@ package enum GLTFLoader {
                                                         intensity: def.intensity ?? 1, transform: world))
                 }
             }
-            for c in n.children ?? [] { visit(c, world, depth: depth + 1) }
+            for c in n.children ?? [] { visit(c, world, depth: depth + 1, path: path) }
         }
         var roots: [Int]
         if let scenes = doc.scenes, !scenes.isEmpty {
@@ -421,9 +431,10 @@ package enum GLTFLoader {
             let children = Set(nodes.flatMap { $0.children ?? [] })
             roots = nodes.indices.filter { !children.contains($0) }
         }
-        for r in roots { visit(r, matrix_identity_float4x4, depth: 0) }
+        for r in roots { visit(r, matrix_identity_float4x4, depth: 0, path: []) }
         if model.parts.isEmpty {   // no node hierarchy: every mesh once, untransformed
             model.parts = model.meshes.indices.map { ($0, matrix_identity_float4x4) }
+            model.partNodes = model.parts.map { _ in [] }
         }
         return model
     }

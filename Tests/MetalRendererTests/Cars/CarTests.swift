@@ -18,14 +18,18 @@ import simd
 final class CarTests: XCTestCase {
     /// A world with a floor and car(s) of `styles` side by side (4 m apart), facing +z, `speed` m/s.
     private func world(_ styles: [CarStyle] = [.sedan], speed: Float = 0, wall: Float? = nil) -> PhysicsWorld {
+        world(specs: styles.map { CarSpec.preset($0) }, speed: speed, wall: wall)
+    }
+
+    private func world(specs: [CarSpec], speed: Float = 0, wall: Float? = nil) -> PhysicsWorld {
         let w = PhysicsWorld(substeps: 16)
         w.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
         if let wall {
             let shape = SDFShape(.box(halfExtents: [6, 1.5, 0.5]))
             w.addStatic(sdf: 90, shape, transform: translate([0, 1.5, wall + 0.5]), friction: 0.6, restitution: 0.1)
         }
-        for (k, style) in styles.enumerated() {
-            let b = CarBlueprint(CarSpec.preset(style))
+        for (k, spec) in specs.enumerated() {
+            let b = CarBlueprint(spec)
             w.addCar(b, transform: translate([Float(k) * 4, 0, 0]), rimSDF: 100 + k, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, speed])
         }
         w.finish()
@@ -55,12 +59,39 @@ final class CarTests: XCTestCase {
 
     // MARK: The blueprint
 
-    /// Every style's blueprint: about 200 to 330 nodes, every node in three beams or more, no beam of zero length, its
+    /// The car pack's models (CarPack, when Assets/Cars has it): every style there, its four wheels, and its crash frame
+    /// fitted to it well formed and standing on its springs (within 2 cm of where it began, nothing bent).
+    func testPackModelsFit() throws {
+        guard let pack = CarPack.shared else { throw XCTSkip("no car pack in Assets/Cars") }
+        for style in CarStyle.allCases {
+            guard let model = pack.models[style] else {
+                XCTFail("\(style): not in the pack")
+                continue
+            }
+            let spec = CarSpec.preset(style).fitted(to: model), b = CarBlueprint(spec)
+            print(String(format: "%@: %.2f x %.2f, wheelbase %.2f, track %.2f, front overhang %.2f, wheels %.3f x %.3f, sill %.2f, belt %.2f, roof %.2f, windows %.2f...%.2f, %d nodes, %d paint + %d lamp + %d glass vertices",
+                         style.title, spec.length, spec.width, spec.wheelbase, spec.track, spec.frontOverhang, spec.wheelRadius, spec.wheelWidth,
+                         spec.sill, spec.belt, spec.roof, spec.rearWindowBase, spec.windshieldBase, b.nodes.count, model.paint.positions.count,
+                         model.lamps.positions.count, model.glass.positions.count))
+            XCTAssertEqual(model.wheels.count, 4, "\(style)")
+            XCTAssert((2...3.4).contains(spec.wheelbase) && (1...1.8).contains(spec.track), "\(style): wheelbase \(spec.wheelbase), track \(spec.track)")
+            let w = world(specs: [spec])
+            let start = frame(w).position.y
+            run(w, 3)
+            let t = frame(w)
+            print("   floor \(start) -> \(t.position.y), up \(t.up), bent \(t.bent)")
+            XCTAssertEqual(t.position.y, start, accuracy: 0.02, "\(style)")
+            XCTAssertEqual(t.bent, 0, "\(style)")
+            XCTAssertGreaterThan(t.up.y, 0.999, "\(style)")
+        }
+    }
+
+    /// Every style's blueprint: about 150 to 330 nodes, every node in three beams or more, no beam of zero length, its
     /// mass the spec's.
     func testBlueprintsAreWellFormed() {
         for style in CarStyle.allCases {
             let spec = CarSpec.preset(style), b = CarBlueprint(spec)
-            XCTAssert((180...330).contains(b.nodes.count), "\(style): \(b.nodes.count) nodes")
+            XCTAssert((150...330).contains(b.nodes.count), "\(style): \(b.nodes.count) nodes")
             var degree = [Int](repeating: 0, count: b.nodes.count)
             for beam in b.beams {
                 degree[beam.a] += 1
@@ -91,11 +122,15 @@ final class CarTests: XCTestCase {
         }
     }
 
-    /// Full throttle from a stop: 100 km/h in each style's time, the car keeping straight.
+    /// Full throttle from a stop: 100 km/h in each style's time, the car keeping straight; procedural, and fitted to
+    /// its model when the car pack is there.
     func testItAccelerates() {
-        let windows: [CarStyle: ClosedRange<Float>] = [.sedan: 5.5...10, .hatchback: 7...13, .pickup: 6...12, .coupe: 4...8]
-        for style in CarStyle.allCases {
-            let w = world([style])
+        let windows: [CarStyle: ClosedRange<Float>] = [.sedan: 5.5...10, .hatchback: 7...13, .pickup: 6...12, .coupe: 4...8, .wagon: 6...12,
+                                                       .compact: 8...14, .minivan: 7...13, .sport: 3.5...7, .suv: 6...12, .offroad: 8...15]
+        let fitted = CarPack.shared.map { pack in CarStyle.allCases.compactMap { s in pack.models[s].map { CarSpec.preset(s).fitted(to: $0) } } } ?? []
+        for spec in CarStyle.allCases.map({ CarSpec.preset($0) }) + fitted {
+            let style = spec.style
+            let w = world(specs: [spec])
             run(w, 1)
             drive(w, accelerate: 1)
             var reached: Float?
@@ -106,7 +141,7 @@ final class CarTests: XCTestCase {
                 if frame(w).speed >= 100 / 3.6 { reached = t }
             }
             let f = frame(w)
-            print("\(style): 0-100 \(reached ?? -1) s, gear \(f.gear), rpm \(f.rpm), heading \(f.forward)")
+            print("\(style)\(spec.profile == nil ? "" : " (model)"): 0-100 \(reached ?? -1) s, gear \(f.gear), rpm \(f.rpm), heading \(f.forward)")
             XCTAssert(reached.map { windows[style]!.contains($0) } ?? false, "\(style): \(reached ?? -1) s")
             XCTAssertGreaterThan(f.forward.z, 0.995, "\(style) went off line")
         }

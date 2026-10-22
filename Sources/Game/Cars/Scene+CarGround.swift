@@ -88,9 +88,8 @@ extension Scene {
         let styles = CarStyle.allCases
         var rig = CarRig()
         for k in 0..<max(settings.cars, 1) {
-            var spec = CarSpec.preset(styles[(settings.style.rawValue + k) % styles.count])
+            var spec = Scene.carSpec(styles[(settings.style.rawValue + k) % styles.count])
             spec.assists = settings.assists
-            let materials = addCarMaterials(paint: colours[k % colours.count])
             var place = translate([Float(k / 4) * 7 + 30, 0, -18 - Float(k % 4) * 6]) * float4x4(simd_quatf(angle: .pi / 2, axis: [0, 1, 0]))
             var velocity = SIMD3<Float>()
             switch settings.demo {
@@ -109,7 +108,7 @@ extension Scene {
                 let tangent = SIMD2(-sin(angle), cos(angle))
                 place = translate([at.x, 0, at.y]) * float4x4(simd_quatf(angle: atan2(tangent.x, tangent.y), axis: [0, 1, 0]))
             }
-            let car = addCar(spec, materials, place, velocity: velocity, bounds: Scene.carGroundBounds, name: "\(spec.style.title) \(k + 1)")
+            let car = addCar(spec, paint: colours[k % colours.count], place, velocity: velocity, bounds: Scene.carGroundBounds, name: "\(spec.style.title) \(k + 1)")
             rig.cars.append(car)
             if settings.demo == .laps {
                 var input = CarInput()

@@ -16,6 +16,8 @@ package struct CarSurface {
     /// each vertex (as SoftModel.rings); per triangle its material's offset (`paint`...).
     package struct Part {
         package var mesh: MeshGeometry = ([], [], [])
+        /// Its texture coordinates (a model's; none for the procedural panels).
+        package var uvs: [SIMD2<Float>]?
         package var materials: [UInt8] = []
         package var embedding: [[(triangle: Int, bary: SIMD3<Float>)]] = []
         package var rings: [[SIMD2<UInt32>]] = []
@@ -89,6 +91,71 @@ package struct CarSurface {
         }
         body = CarSurface.part(grid, bodyTris.map(\.0), bodyTris.map(\.1), b)
         glass = CarSurface.part(grid, glassTris, [UInt8](repeating: 0, count: glassTris.count), b)
+    }
+
+    /// A model's panels (CarPack) on blueprint `b` (fitted to it: CarSpec.fitted): its paint and lamps as the body (their
+    /// materials' offsets 0 and 1: Scene.addCar makes them in that order), its glass. Each vertex follows the hull as the
+    /// procedural panels' do; a seam's copies of one place (split for their texture coordinates or their normals)
+    /// follow it alike, so it can't open, and those whose normals agree share their rings too, so the shading stays
+    /// smooth across it (a hard edge's keep their own).
+    package init(_ b: CarBlueprint, model: CarModel) {
+        body = CarSurface.part([(model.paint, 0), (model.lamps, 1)], b)
+        glass = CarSurface.part([(model.glass, 0)], b)
+    }
+
+    private static func part(_ meshes: [(CarModel.Mesh, UInt8)], _ b: CarBlueprint) -> Part {
+        var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
+        var materials: [UInt8] = []
+        for (m, material) in meshes {
+            let base = UInt32(positions.count)
+            positions += m.positions
+            normals += m.normals
+            uvs += m.uvs.count == m.positions.count ? m.uvs : [SIMD2<Float>](repeating: .zero, count: m.positions.count)
+            indices += m.indices.map { $0 + base }
+            materials += [UInt8](repeating: material, count: m.indices.count / 3)
+        }
+        // Each vertex's own ring, and the copies of its place.
+        var own = [[SIMD2<UInt32>]](repeating: [], count: positions.count)
+        for t in stride(from: 0, to: indices.count, by: 3) {
+            let a = indices[t], c1 = indices[t + 1], c2 = indices[t + 2]
+            own[Int(a)].append(SIMD2(c1, c2))
+            own[Int(c1)].append(SIMD2(c2, a))
+            own[Int(c2)].append(SIMD2(a, c1))
+        }
+        var copies: [SIMD3<Int32>: [Int]] = [:]
+        func key(_ p: SIMD3<Float>) -> SIMD3<Int32> { SIMD3<Int32>((p * 5000).rounded(.toNearestOrAwayFromZero)) }
+        for (v, p) in positions.enumerated() { copies[key(p), default: []].append(v) }
+        var rings = [[SIMD2<UInt32>]](repeating: [], count: positions.count)
+        var embedding = [[(triangle: Int, bary: SIMD3<Float>)]](repeating: [], count: positions.count)
+        var nearest: [SIMD3<Int32>: Int] = [:]
+        func hull(_ v: UInt32) -> Int {
+            let k = key(positions[Int(v)])
+            if let h = nearest[k] { return h }
+            let h = CarSurface.nearestHull(positions[Int(v)], b)
+            nearest[k] = h
+            return h
+        }
+        for group in copies.values {
+            let p = positions[group[0]]
+            // Its embedding: its place's hull triangle, then those of its neighbours round all its copies.
+            var follows = [hull(UInt32(group[0]))]
+            for v in group {
+                for pair in own[v] {
+                    for u in [pair.x, pair.y] {
+                        let h = hull(u)
+                        if !follows.contains(h) { follows.append(h) }
+                    }
+                }
+            }
+            let embed = follows.map { ($0, CarSurface.bary(p, hull: b.hull[$0], b.nodes)) }
+            for v in group {
+                embedding[v] = embed
+                var ring = own[v]
+                for u in group where u != v && dot(normals[u], normals[v]) > 0.95 { ring += own[u] }
+                rings[v] = Array(ring.prefix(31))
+            }
+        }
+        return Part(mesh: (positions, normals, indices), uvs: uvs, materials: materials, embedding: embedding, rings: rings)
     }
 
     /// The section's point `t` of the way along segment `s` (slot s to s + 1): straight on the sides and underneath,
@@ -184,7 +251,7 @@ package struct CarSurface {
             }
             return follows.map { ($0, CarSurface.bary(positions[v], hull: b.hull[$0], b.nodes)) }
         }
-        return Part(mesh: (positions, normals, indices), materials: materials, embedding: embedding, rings: rings)
+        return Part(mesh: (positions, normals, indices), uvs: nil, materials: materials, embedding: embedding, rings: rings)
     }
 
     /// The hull triangle nearest `p`.

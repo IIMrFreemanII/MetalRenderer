@@ -47,7 +47,46 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
 - Tests: `Tests/MetalRendererTests/Cars/CarTests.swift` (9). `related.sh` maps `Cars/` to CarTests and
   PhysicsThreadsTests.
 
+## The car pack (after phase 1, on this branch)
+
+- The user asked for downloaded models in place of the procedural bodies. They chose Sketchfab's "Generic passenger car
+  pack" by Comrade1280 (CC BY 4.0, credited in the README's "Cars"), downloaded through their Chrome as glTF:
+  `Assets/Cars/generic_passenger_car_pack.glb` (26.7 MB, Git LFS).
+- `CarPack.swift` reads it: each style's body node by name (`CarPack.bodies`, with which way its front is in the node's
+  space), its `_Body_0` / `_Optics_0` / `_Glass_0` meshes, and the four `Wheel_` nodes in its footprint.
+  `GLTFLoader` now keeps each part's node path (`partNodes`, `nodeNames`).
+- The car's frame comes from its shape (the long axis of its footprint, squared with its wheels), not its node: the
+  pack's coupe sits at an angle in its own.
+- `CarSpec.fitted(to:)` sizes the crash frame from the model and measures its profile (`CarProfile`: the top, the width
+  below the belt line, the top's width at 48 stations).
+- `CarSurface(_:model:)` embeds the model's meshes. Seam copies of one place share an embedding (no cracks) and, where
+  their normals agree, their rings (smooth shading).
+- `Scene.addCar` adds only the materials and textures each car uses (`packTextures`: the pack has 39 textures of
+  2048 x 2048). The paint is its texture under the clear coat.
+- New styles: wagon, compact, minivan, sports car, SUV, off-roader. Their presets are sized from the models, so the
+  procedural fallback is close.
+- `-m carsmodels` renders the lot (two shots for all ten) and two close-ups.
+- **Front-wheel drive's wander: fixed.**
+  - Probing a wagon's launch showed its front wheels toeing out 2.7° under front-wheel drive (0.2° under rear),
+    the knuckle turning while the tie rod kept its length.
+  - The pull moved the knuckle forward on its mounts (one Gauss-Seidel pass leaves them soft: two passes over all
+    beams halved it), and it turned about the tie rod's end behind the axle.
+  - Now, in `CarBlueprint.buildCorner`:
+    - the steering arm is ahead of the axle (front steer, the steering's sign flipped);
+    - a rear knuckle has a second toe link behind its axle;
+    - the corners' beams (`CarBeam.cornerBit`) get `CarSolver.cornerPasses` (2) more passes a substep while under
+      half their yield.
+  - The toe under power is 0.1–0.3°, every style runs within 3° of straight, and the minivan is front-wheel drive again.
+  - Self-aligning torque was tried and taken out: it changed nothing (10 N·m against 450).
+
 ## Traps found (keep them)
+
+- **Toe compliance.**
+  - A knuckle whose tie rod's end is behind the axle turns about it when the drive pulls the knuckle forward on its
+    mounts: front-wheel drive toed out and wandered.
+  - Moving only the front arms ahead of the axle, with the rear ones behind, was worse: several cars spun.
+  - Solving the corners' plastic mount beams again in a crash stiffened the front: 0.30 m of crush in place of 0.35.
+    They are passed again only under half their yield.
 
 - **Hot loops on a class.** The car solver's statics live on `CarSolver` (an enum), not on `PhysicsWorld`: a call the
   stages' closures don't inline would look up the class's metadata, which `Tools/perf/hotcalls.py` refuses. The
@@ -80,7 +119,7 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
   >= 2) is the renderer's one specular lobe. The flakes' GGX lobe is folded into the paint's colour as its split-sum
   albedo. A true second lobe needs a G-buffer channel and a second highlight in the composite, `LightSampling`, ReSTIR
   and the path tracer.
-- **Window outlines are rough.** A paint triangle shows at the C pillar (`CarSurface.look`).
+- **The procedural bodies' window outlines are rough.** A paint triangle shows at the C pillar (`CarSurface.look`).
 - **No hand test in the window:** keys, HUD, captured-mouse orbit.
 
 ## Next phases

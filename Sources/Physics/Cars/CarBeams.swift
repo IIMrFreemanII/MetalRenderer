@@ -19,6 +19,11 @@ extension CarSolver {
     /// Passes over a car's beams a substep (XPBD's iterations, its lambda summed over them): one leaves the body about
     /// 6 mm low on its springs, two 3 mm, at twice the cost.
     package static let carIterations = 1
+    /// More passes over the corners' beams a substep, while each is well short of its yield (a plastic one past half of
+    /// it, a crash's, is left to bend as the rest of the body: solved again, the mounts stiffened the front against a
+    /// wall): with one pass, a front-wheel drive's pull moved a knuckle on its mounts until its wheel toed out, and the
+    /// car wandered.
+    package static let cornerPasses = 2
 
     /// Car `c`'s substep: axles, beams (in their order: an order alternating each substep made a two-substep rhythm
     /// that grew until the nodes flew apart), the nodes against the statics and the bodies, the hull's beams' middles
@@ -32,6 +37,11 @@ extension CarSolver {
         let first = Int(s.firstBeam), count = Int(s.beamCount)
         for k in first..<(first + count) { b.lambdas[k] = 0 }
         for pass in 0..<carIterations { for k in first..<(first + count) { solveBeam(k, b, h, first: pass == 0) } }
+        for _ in 0..<cornerPasses {
+            for k in first..<(first + count) where b.beams[k].info & CarBeam.cornerBit != 0 && abs(b.beams[k].load) < 0.5 * b.beams[k].yield {
+                solveBeam(k, b, h, first: false)
+            }
+        }
         let candidates = Int(s.firstCandidate)..<Int(s.firstCandidate + s.candidateCount)
         for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) { nodeContacts(i, c, b, candidates, h) }
         for k in first..<(first + count) where b.beams[k].info & (CarBeam.hullBit | CarBeam.brokenBit) == CarBeam.hullBit {
