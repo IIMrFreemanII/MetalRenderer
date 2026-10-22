@@ -127,7 +127,8 @@ Where the time goes (M1 Max, October 2026; one module, then the modules):
 * **A system's edit** costs what its module does, where inside the engine it cost what an engine edit does: a plant's
   (`Sources/Plants`) 4.5 s in the dev build and 10.5 s in release, the physics' (`Sources/Physics`) 2.8 s and 27 s,
   a character's (`Sources/Characters`) 3.5 s and 30 s, an effect's (`Sources/Effects`) 3.7 s and 16 s, a material's
-  (`Sources/Materials`) 3.2 s and 26 s. With them out, an engine edit is 6.9 s and 93 s.
+  (`Sources/Materials`) 3.2 s and 26 s, a building's (`Sources/Buildings`) 5.1 s and 22 s. With them out, an engine
+  edit is 6 s and 77 s.
 * **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
   one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
   modules above).
@@ -2197,13 +2198,14 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | `Characters` | `Sources/Characters` | People: their DNA and bodies, faces, skin, hair, muscles and skeletons (the atlases), animation (FBX, the Mixamo library), the crowd and its skinning, a character's rig for the physics, the catalog and store, the workshop's settings; on the plants (their parameter rows) and the physics. Putting them in a scene (`Scene+Characters`, the crowd's parts) is the engine's |
 | `Effects` | `Sources/Effects` | GPU particles (emitters, fields, colliders, their textures and maths) and effects as graphs (the VFX graph and its nodes, the lowering, the interpreter, generated Metal and its compiler, the library and store, the gizmos), with their GPU structs and settings; on the physics (its break events emit particles). Running them in a scene (`Scene+Effects`, the stage, `VFXLive`) is the engine's |
 | `Materials` | `Sources/Materials` | The Material Designer's graphs and nodes, their plan, compiler, engine and bakes (generated Metal and Swift), the library (Mireland's, the scans') and store, scanned materials; the Material Painter's documents, brushes, bakes, smart materials, unwrapping and packing, its GPU structs; on the effects (the graphs' curves and gradients). Their part of a scene and a frame (assignments, displacement, the painter's session) is the engine's |
+| `Buildings` | `Sources/Buildings` | The building generator (plans, the planner, facades, roofs, styles and their definitions, plan edits), interiors (furnishing, furniture, props, lifts, controls), the city's plan, the catalog and store, the walker and its colliders, the workshop's settings; on the physics (an interior's doors and loose furniture are bodies). Putting them in a scene (`Scene+Buildings`, `Scene+Interiors`, `Renderer+Interiors`) is the engine's |
 | `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
 | `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
 | `Game` | `Sources/Game` | The demo scenes (below) |
 | `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
 
 The modules reach each other through `package` declarations (nothing is `public`). Above the core the systems (the
-plants, the physics, the characters on both, the effects, the materials on them), then the engine, then the editors and the game, which know nothing of each other; the tests
+plants, the physics, the characters on both, the effects, the materials on them, the buildings), then the engine, then the editors and the game, which know nothing of each other; the tests
 (`Tests/MetalRendererTests`) import them all.
 
 * **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
@@ -2229,7 +2231,8 @@ plants, the physics, the characters on both, the effects, the materials on them)
 * **Moving code between modules:** `Tools/modules/` has what did it (`moveblocks.py` moves declarations between files,
   `addimport.py` adds the imports, `loop.sh` builds and runs `pkgfix.py`, which marks `package` what the build above
   can't see and writes the initializers it calls, `markmembers.py` marks a type's members for SwiftUI views, whose
-  errors don't name what they can't see).
+  errors don't name what they can't see; `imports.py` keeps a module's imports to the modules it depends on: a file
+  that moved keeps the imports it had, and one of a module its target doesn't depend on builds only by chance).
 
 The game:
 
@@ -2328,11 +2331,11 @@ The engine's folders:
 |---|---|
 | `Settings/` | `RenderSettings` (`Settings.swift`), the scenes' settings (`SceneSettings.swift`), the table of names, the store |
 | `Renderer/` | The renderer, cut by stage (`Renderer+Setup`, `+FramePlan`, `+Encoding`, `+Stages`, `+GI`, `+Sky`, `+Input`, …), the frame encoders, the backends, the surfaces, what it reports (`RendererStatus`, `DebugInfo`); `Lighting/` and `Post/` |
-| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation, the walker |
+| `Scene/` | `Scene` and its parts (`+Animation`, `+GPUData`, `+Construction`, `+EmissiveLights`, `+Kit`: what every builder shares), the scene registry (`SceneDefinition`), its buffers, navigation |
 | `Geometry/` | `VirtualGeometry/` (Nanite-like: streaming, the cut, tracing), `SDF/` (the scene's SDF buffers), the scene's mesh shapes |
 | `Physics/` | The scene's physics world (`Scene+PhysicsWorld`: building it from a scene, drawing its bodies) |
 | `Destruction/` | The tools' rigs; `Fracture/` (a scene's fractured objects) |
-| `Buildings/` | The generator, plans, styles; `Interior/`, `City/` |
+| `Buildings/` | The buildings in a scene: the workshop, the city's and the open world's (`Scene+Buildings`), interiors on demand (`Interior/`) |
 | `Plants/`, `Characters/` | The plants in a scene (tracing, voxel levels, the forest, the workshop); the characters in a scene (the workshop, the crowd's meshes and instances) |
 | `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
 | `MaterialGraph/`, `Painter/`, `Textures/` | The materials in a scene and a frame (procedural materials, displacement, assignments, the pick), the painter's session and its GPU work, scanned materials on meshes |

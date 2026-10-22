@@ -1,10 +1,7 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
 import Metal
-import Physics
-import Plants
 
 /// The Material Designer's Mesh Map node's pictures: a painted object's bakes (PaintBake) under a context name while a
 /// graph mask of it is baked, or a neutral picture (flat curvature and height, open occlusion, an upward normal...)

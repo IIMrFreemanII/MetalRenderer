@@ -1,7 +1,6 @@
 import EngineCore
 import Foundation
 import CPhysicsAtomics
-import Plants
 
 /// The CPU physics step's workers (PhysicsCPU.swift): a pool of threads that, while a step runs, spin waiting for the
 /// next stage, and run its items in fixed chunks with the stepping thread. A step has hundreds of stages (a colour of

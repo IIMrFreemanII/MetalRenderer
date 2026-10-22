@@ -1,9 +1,7 @@
-import Characters
 import CoreGraphics
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// A scene's particle effects (Particles.swift; the particles scene's, the showcase's motes). Changing any of it

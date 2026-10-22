@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+@testable import Buildings
 @testable import Characters
 @testable import Editors
 @testable import Effects

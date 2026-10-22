@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// Flesh on bones: soft tissue whose lattice (PhysicsSoft.swift) is held to a skeleton, with muscles in it that

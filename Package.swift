@@ -82,11 +82,20 @@ let package = Package(
             path: "Sources/Materials",
             swiftSettings: engineSettings
         ),
+        // The buildings: the generator (plans, facades, roofs, styles), interiors (furnishing, furniture, props, lifts,
+        // controls), the city's plan, the catalog and store, the walker and its colliders. Putting them in a scene is
+        // the engine's. On the physics: an interior's loose furniture and doors are bodies.
+        .target(
+            name: "Buildings",
+            dependencies: ["EngineCore", "Physics"],
+            path: "Sources/Buildings",
+            swiftSettings: engineSettings
+        ),
         // The engine: the scene, the renderer and its systems, the editors' workshop scenes, the benchmarks; all but
         // the core, the editors, the game and the entry point.
         .target(
             name: "MetalRenderer",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings"],
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.
@@ -97,7 +106,7 @@ let package = Package(
         // engine never calls them: they read its reports (RendererController) and send it work.
         .target(
             name: "Editors",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "MetalRenderer"],
             path: "Sources/Editors",
             swiftSettings: engineSettings
         ),
@@ -105,7 +114,7 @@ let package = Package(
         // on the engine's `package` API. A change here recompiles this target alone (README, "Source layout").
         .target(
             name: "Game",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "MetalRenderer"],
             path: "Sources/Game",
             swiftSettings: engineSettings
         ),
@@ -116,7 +125,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MetalRendererTests",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "MetalRenderer", "Editors", "Game"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "MetalRenderer", "Editors", "Game"],
             path: "Tests/MetalRendererTests"
         )
     ]

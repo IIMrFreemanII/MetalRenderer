@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 
 /// Which scene objects the Material Painter paints, and with which document: per scene (MaterialAssignments.scope),
 /// the instances by their index, each with a fingerprint of its mesh and material as the scene made them (a scene

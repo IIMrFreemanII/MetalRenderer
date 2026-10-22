@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// Charts into the square of a texture set by their outlines, not their boxes ("Tetris" packing, as in Lévy et al.'s

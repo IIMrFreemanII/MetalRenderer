@@ -1,10 +1,7 @@
-import Characters
 import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// The material workshop (Scene+Materials.swift): the graph whose material it shows (by name: MaterialCatalog's),

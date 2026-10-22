@@ -1,6 +1,5 @@
 import EngineCore
 import Foundation
-import Plants
 import simd
 
 /// Hair and fur: guide strands, each a chain of vertices whose root a body holds (or the world), simulated after the

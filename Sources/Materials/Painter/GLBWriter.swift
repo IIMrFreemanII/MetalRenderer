@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 import simd
 
 /// A painted object's mesh as a glTF binary (.glb): its triangles with the painter's UVs (a vertex for each place and

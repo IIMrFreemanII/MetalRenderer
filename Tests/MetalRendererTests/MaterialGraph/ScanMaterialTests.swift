@@ -2,6 +2,7 @@ import XCTest
 import Metal
 import ImageIO
 import simd
+@testable import Buildings
 @testable import Characters
 @testable import Editors
 @testable import Effects

@@ -1,8 +1,6 @@
-import Characters
 import EngineCore
 import Foundation
 import Physics
-import Plants
 import simd
 
 /// A particle effect's source (Particles.swift, Shaders/ParticleSim.metal): where its particles are born and how, the

@@ -1,9 +1,6 @@
-import Characters
 import Effects
 import EngineCore
 import Foundation
-import Physics
-import Plants
 
 /// A stack of layers kept to be dropped on any object (the Material Painter's smart materials): their masks generated
 /// from the object's bakes (edge wear, dirt in cavities, dust, rust), so they fit wherever they go. The built-in ones,

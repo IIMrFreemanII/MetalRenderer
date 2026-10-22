@@ -1,12 +1,9 @@
-import Characters
 import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
 import ImageIO
 import Metal
-import Physics
-import Plants
 import UniformTypeIdentifiers
 
 /// A baked graph's textures as files: each output channel a PNG (8 or 16 bits a channel) or an EXR (32-bit float),
