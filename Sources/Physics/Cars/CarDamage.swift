@@ -220,7 +220,7 @@ extension CarSolver {
     @inline(__always) package static func event(_ c: Int, _ kind: CarEvent, _ x: SIMD3<Float>, _ v: SIMD3<Float>, _ radius: Float, _ b: CarBuffers) {
         let n = Int(b.eventCounts[c])
         guard n < CarSystem.maxEvents else { return }
-        b.events[c * CarSystem.maxEvents + n] = GPUBreakEvent(position: SIMD4(x, radius), velocity: SIMD4(v, Float(kind.rawValue)))
+        b.events[c * CarSystem.maxEvents + n] = GPUBreakEvent(position: SIMD4(x, radius), velocity: SIMD4(v, Float(kind.slot)))
         b.eventCounts[c] = Int32(n + 1)
     }
 }

@@ -54,7 +54,7 @@ final class CarDamageTests: XCTestCase {
         return w.carSystem.parts[Int(s.firstPart)..<Int(s.firstPart + s.partCount)].filter { $0.kind == kind.rawValue }
     }
 
-    private func events(_ w: PhysicsWorld, _ kind: CarEvent) -> Int { w.breakLog.filter { UInt32($0.velocity.w) == kind.rawValue }.count }
+    private func events(_ w: PhysicsWorld, _ kind: CarEvent) -> Int { w.breakLog.filter { UInt32($0.velocity.w) == kind.slot }.count }
 
     // MARK: Building
 

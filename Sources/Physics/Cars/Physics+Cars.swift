@@ -126,6 +126,12 @@ extension PhysicsWorld {
                                            attachments: Int32(holding)))
         }
         state.partCount = Int32(blueprint.parts.count)
+        state.firstTriangle = Int32(carSystem.triangles.count)
+        carSystem.triangles += blueprint.hull.indices.map { k in
+            let t = blueprint.hull[k]
+            return SIMD4(UInt32(first + Int(t.x)), UInt32(first + Int(t.y)), UInt32(first + Int(t.z)), UInt32(blueprint.hullPart[k]))
+        }
+        state.triangleCount = Int32(blueprint.hull.count)
         // Its panes and lamps: each one's frame the plastic beams among the nodes of the triangles it is on.
         state.firstPane = Int32(carSystem.panes.count)
         for pane in panes {
@@ -216,12 +222,28 @@ extension PhysicsWorld {
         carSystem.lambdas = [Float](repeating: 0, count: carSystem.beams.count)
         carSystem.pushes = [CarPush](repeating: CarPush(), count: carSystem.cars.count * CarSystem.maxPushes)
         carSystem.pushCounts = [Int32](repeating: 0, count: carSystem.cars.count)
+        carSystem.hits = [CarHit](repeating: CarHit(), count: carSystem.cars.count * CarSystem.maxHits)
+        carSystem.hitCounts = [Int32](repeating: 0, count: carSystem.cars.count)
+        carSystem.tyreKicks = [CarPush](repeating: CarPush(), count: carSystem.wheels.count)
         carSystem.telemetry = [CarTelemetry](repeating: CarTelemetry(), count: carSystem.cars.count)
         carSystem.bodyPushes = [SIMD4<Float>](repeating: .zero, count: bodies.count)
         carSystem.bodyTwists = [SIMD3<Float>](repeating: .zero, count: bodies.count)
+        carSystem.bodyShares = [Float](repeating: 0, count: bodies.count)
         carSystem.events = [GPUBreakEvent](repeating: GPUBreakEvent(), count: carSystem.cars.count * CarSystem.maxEvents)
         carSystem.eventCounts = [Int32](repeating: 0, count: carSystem.cars.count)
         carSystem.wear = [SIMD2<Float>](repeating: .zero, count: particles.count)
+        carSystem.nodeParts = [UInt8](repeating: 0, count: particles.count)
+        for s in carSystem.cars {
+            for p in 0..<Int(s.partCount) {
+                let part = carSystem.parts[Int(s.firstPart) + p]
+                for i in Int(part.firstNode)..<Int(part.firstNode + part.nodeCount) { carSystem.nodeParts[i] = UInt8(p + 1) }
+            }
+        }
+        carSystem.gridStarts = [UInt32](repeating: 0, count: carSystem.cars.count * (CarSystem.gridBuckets + 1))
+        carSystem.gridItems = [UInt32](repeating: 0, count: carSystem.triangles.count * CarSystem.gridCells)
+        carSystem.partWake = [Int32](repeating: 0, count: carSystem.parts.count)
+        carSystem.pairs.reserveCapacity(carSystem.cars.count * (carSystem.cars.count + 1) / 2)
+        carSystem.pairStarts.reserveCapacity(carSystem.cars.count + 2)
         carSystem.initialCars = carSystem.cars
         carSystem.initialBeams = carSystem.beams
         carSystem.initialLimits = carSystem.limits
@@ -285,7 +307,9 @@ extension PhysicsWorld {
     // MARK: The step
 
     /// What each car's nodes may meet this step (its box grown by how far it may go): the statics, then the bodies,
-    /// but the wheels. Its wheels and the bodies close to it are woken while it moves.
+    /// but its own wheels (the other cars' it meets). Its wheels and the bodies close to it are woken while it moves.
+    /// Then the pairs of cars whose boxes meet, and each car with its own parts while one is off (`CarSystem.pairs`,
+    /// in colours: CarContacts.swift).
     func carBroadPhase(_ p: GPUPhysicsParams) {
         carSystem.candidates.removeAll(keepingCapacity: true)
         let shapes = self.shapes
@@ -300,12 +324,18 @@ extension PhysicsWorld {
             }
             let reach = CarBlueprint.radius + fastest.squareRoot() * PhysicsWorld.stepLength + 0.15
             let centre = (lo + hi) / 2, radius = length(hi - lo) / 2 + reach
+            s.lo = lo - reach
+            s.hi = hi + reach
             s.firstCandidate = Int32(carSystem.candidates.count)
             for st in statics.indices where PhysicsWorld.touchesStatic(statics[st], shapes, staticBounds[st], centre: centre, radius: radius) {
                 carSystem.candidates.append(UInt32(st) | PhysicsWorld.staticBit)
             }
             let active = s.awake || s.input != CarInput()
-            for j in bodies.indices where bodies[j].info.y & (PhysicsWorld.disabledBit | PhysicsWorld.wheelBit) == 0 && bodies[j].position.w > 0 {
+            let wheels = Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount)
+            // (A fractured object's piece held where it is, unbroken, too: the nodes meet it, and knock it: `CarHit`.)
+            for j in bodies.indices where bodies[j].info.y & PhysicsWorld.disabledBit == 0
+                && (bodies[j].position.w > 0 || bodies[j].info.y & PhysicsWorld.pieceBit != 0) {
+                if bodies[j].info.y & PhysicsWorld.wheelBit != 0 && wheels.contains(where: { carSystem.wheels[$0].body == Int32(j) }) { continue }
                 let d = simd_distance(PhysicsMath.xyz(bodies[j].position), centre), r = bodies[j].invInertia.w
                 guard d < r + radius else { continue }
                 carSystem.candidates.append(UInt32(j))
@@ -315,12 +345,14 @@ extension PhysicsWorld {
                 }
             }
             s.candidateCount = Int32(carSystem.candidates.count) - s.firstCandidate
-            // Its parts that came off and froze, woken by a body that comes near (their nodes have their mass back).
+            // Its parts that came off and froze, woken by a body that comes near or a car that met them (their nodes have
+            // their mass back).
             for p in Int(s.firstPart)..<Int(s.firstPart + s.partCount) where carSystem.parts[p].flags & CarPart.frozen != 0 {
                 let part = carSystem.parts[p], x = PhysicsMath.xyz(particles[Int(part.firstNode)].position)
-                let near = carSystem.candidates[Int(s.firstCandidate)...].contains { code in
+                let near = carSystem.partWake[p] != 0 || carSystem.candidates[Int(s.firstCandidate)...].contains { code in
                     code & PhysicsWorld.staticBit == 0 && simd_distance(PhysicsMath.xyz(bodies[Int(code)].position), x) < bodies[Int(code)].invInertia.w + 1
                 }
+                carSystem.partWake[p] = 0
                 guard near else { continue }
                 for i in Int(part.firstNode)..<Int(part.firstNode + part.nodeCount) { particles[i].prevPosition.w = part.inverseMass }
                 carSystem.parts[p].flags &= ~CarPart.frozen
@@ -335,6 +367,38 @@ extension PhysicsWorld {
             }
             carSystem.cars[c] = s
         }
+        pairCars()
+    }
+
+    /// This step's pairs of cars (`CarSystem.pairs`): each car with itself while one of its parts is off, and each two
+    /// whose boxes meet; coloured (a pair takes the first colour neither of its cars has yet), in the cars' order.
+    func pairCars() {
+        let cars = carSystem.cars
+        var found: [(pair: SIMD2<Int32>, colour: Int)] = []
+        var used = [UInt64](repeating: 0, count: cars.count)
+        func add(_ a: Int, _ b: Int) {
+            let free = ~(used[a] | used[b])
+            guard free != 0 else { return }   // (64 colours a car: never, with 8 cars)
+            let colour = free.trailingZeroBitCount
+            used[a] |= 1 << UInt64(colour)
+            used[b] |= 1 << UInt64(colour)
+            found.append((SIMD2(Int32(a), Int32(b)), colour))
+        }
+        for a in cars.indices {
+            let s = cars[a]
+            if carSystem.parts[Int(s.firstPart)..<Int(s.firstPart + s.partCount)].contains(where: { $0.flags & CarPart.off != 0 }) { add(a, a) }
+            for b in (a + 1)..<cars.count where all(s.lo .<= cars[b].hi) && all(cars[b].lo .<= s.hi) { add(a, b) }
+        }
+        found.sort { ($0.colour, $0.pair.x, $0.pair.y) < ($1.colour, $1.pair.x, $1.pair.y) }
+        carSystem.pairs.removeAll(keepingCapacity: true)
+        carSystem.pairStarts.removeAll(keepingCapacity: true)
+        for (k, f) in found.enumerated() {
+            if k == 0 || f.colour != found[k - 1].colour { carSystem.pairStarts.append(Int32(k)) }
+            carSystem.pairs.append(f.pair)
+        }
+        carSystem.pairStarts.append(Int32(found.count))
+        carSystem.paired.removeAll(keepingCapacity: true)
+        for c in cars.indices where found.contains(where: { $0.pair.x == Int32(c) || $0.pair.y == Int32(c) }) { carSystem.paired.append(Int32(c)) }
     }
 
     /// Each car's forces this substep (its drivetrain, brakes, tyres, the air), then its nodes moved: before the
@@ -344,20 +408,40 @@ extension PhysicsWorld {
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
                 for c in range { CarSolver.carForces(c, b, p, sub: sub) }
             }
+            CarSolver.applyTyreKicks(b)
         }
     }
 
-    /// Each car's constraints and contacts this substep, after the bodies moved.
+    /// Each car's constraints and contacts this substep, after the bodies moved; then the cars against each other
+    /// (CarContacts.swift: the cars in pairs hashed, then the pairs a colour at a time); then each car's nodes'
+    /// velocities.
     func solveCars(_ p: GPUPhysicsParams, sub: Int) {
+        let h = p.gravity.w
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
                 for c in range { CarSolver.solveCar(c, b, p) }
             }
+            if !b.pairs.isEmpty {
+                PhysicsPool.shared.parallel(b.paired.count, grain: 1) { range in
+                    for k in range { CarSolver.gridCar(Int(b.paired[k]), b) }
+                }
+                for colour in 0..<(b.pairStarts.count - 1) {
+                    let first = Int(b.pairStarts[colour]), end = Int(b.pairStarts[colour + 1])
+                    PhysicsPool.shared.parallel(end - first, grain: 1) { range in
+                        for k in range { CarSolver.meet(b.pairs[first + k], b, h, sub: sub) }
+                    }
+                }
+            }
+            PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
+                for c in range { CarSolver.carVelocities(c, b, h) }
+            }
         }
     }
 
-    /// The cars' pushes on the bodies this substep: each body moved by its pushes averaged (as a particle's are), and
-    /// woken; summed in the cars' order, so the sums are the same every time.
+    /// The cars' pushes on the bodies this substep: each body moved by its pushes summed (each node's took it as one of
+    /// as many shares as it had pushes the substep before: mass splitting, so twenty nodes against a crate don't move
+    /// it twenty times as far, nor as one node would), and woken; summed in the cars' order, so the sums are the same
+    /// every time. (Averaged, a crate twenty nodes met was twenty times as heavy: a car stopped dead against three.)
     func applyCarReactions() {
         withCarBuffers { CarSolver.applyCarReactions($0) }
     }
@@ -464,6 +548,7 @@ extension PhysicsWorld {
         try system.pushCounts.withUnsafeMutableBufferPointer { pushCounts in
         try system.bodyPushes.withUnsafeMutableBufferPointer { bodyPushes in
         try system.bodyTwists.withUnsafeMutableBufferPointer { bodyTwists in
+        try system.bodyShares.withUnsafeMutableBufferPointer { bodyShares in
         try system.parts.withUnsafeMutableBufferPointer { parts in
         try system.panes.withUnsafeMutableBufferPointer { panes in
         try system.paneFrames.withUnsafeBufferPointer { paneFrames in
@@ -472,21 +557,35 @@ extension PhysicsWorld {
         try system.events.withUnsafeMutableBufferPointer { events in
         try system.eventCounts.withUnsafeMutableBufferPointer { eventCounts in
         try system.wear.withUnsafeMutableBufferPointer { wear in
+        try system.triangles.withUnsafeBufferPointer { triangles in
+        try system.nodeParts.withUnsafeBufferPointer { nodeParts in
+        try system.gridStarts.withUnsafeMutableBufferPointer { gridStarts in
+        try system.gridItems.withUnsafeMutableBufferPointer { gridItems in
+        try system.pairs.withUnsafeBufferPointer { pairs in
+        try system.pairStarts.withUnsafeBufferPointer { pairStarts in
+        try system.paired.withUnsafeBufferPointer { paired in
+        try system.partWake.withUnsafeMutableBufferPointer { partWake in
+        try system.hits.withUnsafeMutableBufferPointer { hits in
+        try system.hitCounts.withUnsafeMutableBufferPointer { hitCounts in
+        try system.tyreKicks.withUnsafeMutableBufferPointer { tyreKicks in
+        try fractureState.withUnsafeMutableBufferPointer { fractureState in
         try particles.withUnsafeMutableBufferPointer { particles in
         try bodies.withUnsafeMutableBufferPointer { bodies in
         try statics.withUnsafeBufferPointer { statics in
         try staticBounds.withUnsafeBufferPointer { bounds in
             try body(CarBuffers(cars: cars, beams: beams, limits: limits, loads: loads, lambdas: lambdas, wheels: wheels, reactions: reactions,
                                 tunes: tunes, candidates: candidates, pushes: pushes, pushCounts: pushCounts, bodyPushes: bodyPushes,
-                                bodyTwists: bodyTwists, parts: parts, panes: panes, paneFrames: paneFrames, radiator: radiator, reach: reach, events: events,
-                                eventCounts: eventCounts, wear: wear, particles: particles, bodies: bodies, statics: statics, staticBounds: bounds,
+                                bodyTwists: bodyTwists, bodyShares: bodyShares, parts: parts, panes: panes, paneFrames: paneFrames, radiator: radiator, reach: reach, events: events,
+                                eventCounts: eventCounts, wear: wear, triangles: triangles, nodeParts: nodeParts, gridStarts: gridStarts,
+                                gridItems: gridItems, pairs: pairs, pairStarts: pairStarts, paired: paired, partWake: partWake, hits: hits, hitCounts: hitCounts, tyreKicks: tyreKicks,
+                                fractureState: fractureState, particles: particles, bodies: bodies, statics: statics, staticBounds: bounds,
                                 shapes: shapes))
-        }}}}}}}}}}}}}}}}}}}}}}}}}
+        }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
     }
 }
 
 extension CarSolver {
-    /// The cars' pushes on the bodies (PhysicsWorld.applyCarReactions).
+    /// The cars' pushes on the bodies (PhysicsWorld.applyCarReactions), and their knocks on fractured objects' pieces.
     @inline(__always) package static func applyCarReactions(_ b: CarBuffers) {
         for c in b.cars.indices {
             let first = c * CarSystem.maxPushes
@@ -506,13 +605,24 @@ extension CarSolver {
                 body.info.y &= ~PhysicsWorld.asleep
                 body.prevPosition.w = 0
                 if body.position.w > 0 {
-                    body.position = SIMD4(PhysicsMath.xyz(body.position) + PhysicsMath.xyz(total) / count * body.position.w, body.position.w)
+                    body.position = SIMD4(PhysicsMath.xyz(body.position) + PhysicsMath.xyz(total) * body.position.w, body.position.w)
                     body.rotation = PhysicsMath.qturn(body.rotation, PhysicsMath.applyInvInertia(body.rotation, PhysicsMath.xyz(body.invInertia),
-                                                                                               b.bodyTwists[j] / count))
+                                                                                               b.bodyTwists[j]))
                 }
+                b.bodyShares[j] = count
                 b.bodies[j] = body
                 b.bodyPushes[j] = .zero
                 b.bodyTwists[j] = .zero
+            }
+        }
+        // The knocks on fractured objects' pieces, into their strain (what breaks them at the step's end).
+        guard !b.fractureState.isEmpty else { return }
+        for c in b.cars.indices {
+            let first = c * CarSystem.maxHits
+            for k in first..<first + Int(b.hitCounts[c]) {
+                let hit = b.hits[k]
+                guard hit.impulse > 0 else { continue }
+                PhysicsWorld.strike(&b.fractureState[Int(hit.body)], hit.point / hit.impulse, PhysicsMath.direction(hit.push), hit.impulse)
             }
         }
     }
@@ -534,6 +644,7 @@ package struct CarBuffers {
     let pushCounts: UnsafeMutableBufferPointer<Int32>
     let bodyPushes: UnsafeMutableBufferPointer<SIMD4<Float>>
     let bodyTwists: UnsafeMutableBufferPointer<SIMD3<Float>>
+    let bodyShares: UnsafeMutableBufferPointer<Float>
     let parts: UnsafeMutableBufferPointer<CarPart>
     let panes: UnsafeMutableBufferPointer<CarPane>
     let paneFrames: UnsafeBufferPointer<UInt32>
@@ -542,6 +653,19 @@ package struct CarBuffers {
     let events: UnsafeMutableBufferPointer<GPUBreakEvent>
     let eventCounts: UnsafeMutableBufferPointer<Int32>
     let wear: UnsafeMutableBufferPointer<SIMD2<Float>>
+    let triangles: UnsafeBufferPointer<SIMD4<UInt32>>
+    let nodeParts: UnsafeBufferPointer<UInt8>
+    let gridStarts: UnsafeMutableBufferPointer<UInt32>
+    let gridItems: UnsafeMutableBufferPointer<UInt32>
+    let pairs: UnsafeBufferPointer<SIMD2<Int32>>
+    let pairStarts: UnsafeBufferPointer<Int32>
+    let paired: UnsafeBufferPointer<Int32>
+    let partWake: UnsafeMutableBufferPointer<Int32>
+    let hits: UnsafeMutableBufferPointer<CarHit>
+    let hitCounts: UnsafeMutableBufferPointer<Int32>
+    let tyreKicks: UnsafeMutableBufferPointer<CarPush>
+    /// The world's fractured pieces' state (empty without fractured objects).
+    let fractureState: UnsafeMutableBufferPointer<GPUFractureState>
     let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>
     let bodies: UnsafeMutableBufferPointer<GPUPhysicsBody>
     let statics: UnsafeBufferPointer<GPUPhysicsBody>

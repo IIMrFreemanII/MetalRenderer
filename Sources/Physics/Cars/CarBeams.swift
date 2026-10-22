@@ -27,10 +27,11 @@ extension CarSolver {
 
     /// Car `c`'s substep: axles, beams (in their order: an order alternating each substep made a two-substep rhythm
     /// that grew until the nodes flew apart), the nodes against the statics and the bodies, the hull's beams' middles
-    /// against the statics, and the nodes' velocities.
+    /// against the statics (its nodes' velocities after the cars have met: `carVelocities`).
     @inline(__always) package static func solveCar(_ c: Int, _ b: CarBuffers, _ p: GPUPhysicsParams) {
         let s = b.cars[c], h = p.gravity.w
         b.pushCounts[c] = 0
+        b.hitCounts[c] = 0
         for _ in 0..<PhysicsWorld.axlePasses {
             for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) where b.wheels[w].flags & CarWheel.off == 0 { solveAxle(w, b, h) }
         }
@@ -47,7 +48,11 @@ extension CarSolver {
         for k in first..<(first + count) where b.beams[k].info & (CarBeam.hullBit | CarBeam.brokenBit) == CarBeam.hullBit {
             beamMiddle(b.beams[k], b, candidates, h)
         }
-        let top = PhysicsWorld.carTopSpeed
+    }
+
+    /// Car `c`'s nodes' velocities, from how far they went this substep (after the cars met each other: CarContacts.swift).
+    @inline(__always) package static func carVelocities(_ c: Int, _ b: CarBuffers, _ h: Float) {
+        let s = b.cars[c], top = PhysicsWorld.carTopSpeed
         for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) {
             var q = b.particles[i]
             var v = (PhysicsMath.xyz(q.position) - PhysicsMath.xyz(q.prevPosition)) / h
@@ -175,9 +180,14 @@ extension CarSolver {
                 slid += sliding(slide, n, h)
                 let l = length(push)
                 guard l > 1e-9 else { continue }
+                // A fractured object's piece knocked (faster than PhysicsWorld.impactSpeed): its share of the push as an
+                // impulse, for its strain (`CarHit`).
+                if o.info.y & PhysicsWorld.pieceBit != 0 && max(-dot(slide, n), 0) > PhysicsWorld.impactSpeed * h {
+                    knock(c, j, x, -n, l / ((wn + PhysicsWorld.weight(o, lever, push / l) / max(b.bodyShares[j], 1)) * h), b)
+                }
                 // The body's share kept in a push of its own or, the car's list full, added to the last push to the same
                 // body; with none there, the body is held still (the node takes it all), so no share is lost.
-                var slot = -1, wb = PhysicsWorld.weight(o, lever, push / l)
+                var slot = -1, wb = PhysicsWorld.weight(o, lever, push / l) / max(b.bodyShares[j], 1)
                 if wb > 0 {
                     let first = c * CarSystem.maxPushes, count = Int(b.pushCounts[c])
                     if count < CarSystem.maxPushes {
@@ -202,6 +212,22 @@ extension CarSolver {
         q.position = SIMD4(x, q.position.w)
         b.particles[i] = q
         if slid != .zero { b.wear[i] += slid }
+    }
+
+    /// Car `c`'s knock on piece `j` at `point`, pushing it `push` (unit) with `impulse` (N s): added to its knock on
+    /// that piece this substep, or a new one (as many as its slots hold).
+    @inline(__always) package static func knock(_ c: Int, _ j: Int, _ point: SIMD3<Float>, _ push: SIMD3<Float>, _ impulse: Float, _ b: CarBuffers) {
+        let first = c * CarSystem.maxHits, count = Int(b.hitCounts[c])
+        var k = first
+        while k < first + count && b.hits[k].body != Int32(j) { k += 1 }
+        if k == first + count {
+            guard count < CarSystem.maxHits else { return }
+            b.hits[k] = CarHit(body: Int32(j))
+            b.hitCounts[c] = Int32(count + 1)
+        }
+        b.hits[k].impulse += impulse
+        b.hits[k].point += point * impulse
+        b.hits[k].push += push * impulse
     }
 
     /// How far a node that went `moved` this substep against a surface of normal `n` slid along it: fast (a scrape:

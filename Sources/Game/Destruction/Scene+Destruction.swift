@@ -291,6 +291,13 @@ extension Scene {
     /// (none for glass) and chunks of the broken inside that tumble and bounce. Returns the proxies by material.
     func addDestructionDust(_ kit: Kit, interiors: [FractureMaterial: Int]) -> [UInt32] {
         var emitters: [ParticleEmitter] = []
+        let proxies = destructionDust(kit, interiors: interiors, into: &emitters)
+        addParticles(ParticleSystem(emitters: emitters))
+        return proxies
+    }
+
+    /// ...its emitters added to `emitters` (a scene with other particles too: its one system holds them all).
+    func destructionDust(_ kit: Kit, interiors: [FractureMaterial: Int], into emitters: inout [ParticleEmitter]) -> [UInt32] {
         var proxies = [UInt32](repeating: ParticleSystem.none, count: FractureMaterial.allCases.count)
         for material in FractureMaterial.allCases {
             guard let inside = interiors[material] else { continue }
@@ -351,7 +358,6 @@ extension Scene {
             debris.spin = 9
             emitters.append(debris)
         }
-        addParticles(ParticleSystem(emitters: emitters))
         return proxies
     }
 }

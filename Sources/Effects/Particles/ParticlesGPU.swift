@@ -81,8 +81,9 @@ package final class ParticlesGPU {
     /// Whether it has programs (and so wants the VFX library's kernels).
     package var hasPrograms: Bool { system.programSource != nil }
 
-    /// Destruction's dust (Physics+Fracture.swift): the physics' ring of breaks (PhysicsGPU.breakRing), and per
-    /// FractureMaterial the proxy emitter its breaks are events of (Scene.destructionDust). Before each step's begin.
+    /// Destruction's dust (Physics+Fracture.swift): the physics' ring of breaks (PhysicsGPU.breakRing), and per kind of
+    /// break (GPUBreakEvent.velocity.w: a FractureMaterial's 0...7, a CarEvent's 8...15) the proxy emitter its breaks
+    /// are events of (Scene.destructionDust, Scene.carDust). Before each step's begin.
     package var breakRing: MTLBuffer?
     package var breakProxies: [UInt32] = []
 
@@ -94,6 +95,8 @@ package final class ParticlesGPU {
         var perSlot = UInt32(PhysicsWorld.ringEvents)
         var proxies0 = SIMD4<UInt32>(repeating: ParticleSystem.none)
         var proxies1 = SIMD4<UInt32>(repeating: ParticleSystem.none)
+        var proxies2 = SIMD4<UInt32>(repeating: ParticleSystem.none)
+        var proxies3 = SIMD4<UInt32>(repeating: ParticleSystem.none)
     }
     /// Per pool slot the light its particle scatters, averaged over the frames, and whose it is (particleLightKernel).
     package let lighting: MTLBuffer
@@ -311,8 +314,13 @@ package final class ParticlesGPU {
         for k in 0..<steps {
             if let ring = breakRing, !breakProxies.isEmpty {
                 var inject = Inject(step: UInt32(stepIndex + k), parity: UInt32((stepIndex + k) & 1))
-                for (m, e) in breakProxies.prefix(8).enumerated() {
-                    if m < 4 { inject.proxies0[m] = e } else { inject.proxies1[m - 4] = e }
+                for (m, e) in breakProxies.prefix(16).enumerated() {
+                    switch m / 4 {
+                    case 0: inject.proxies0[m % 4] = e
+                    case 1: inject.proxies1[m % 4] = e
+                    case 2: inject.proxies2[m % 4] = e
+                    default: inject.proxies3[m % 4] = e
+                    }
                 }
                 enc.setComputePipelineState(pipelines[.particleInject])
                 enc.setBytes(&inject, length: MemoryLayout<Inject>.stride, index: 0)

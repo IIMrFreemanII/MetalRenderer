@@ -25,22 +25,29 @@ extension CarSolver {
         var o = b.bodies[i]
         guard PhysicsWorld.moves(o) else { return }
         let centre = PhysicsMath.xyz(o.position), a = PhysicsMath.qrot(o.rotation, w.axle), radius = w.radius
-        // The static nearest the wheel's centre within its reach.
-        var best = -1, nearest = radius + 0.05
+        // The static or body nearest the wheel's centre within its reach (a body: a crate, a piece of a wall, driven
+        // onto; it takes the patch's impulse back, `tyreKick`).
+        var best = -1, nearest = radius + 0.05, onBody = false
         for k in candidates {
             let code = b.candidates[k]
-            guard code & PhysicsWorld.staticBit != 0 else { continue }
-            let st = Int(code & ~PhysicsWorld.staticBit), box = b.staticBounds[st]
-            if any(centre .< box.lo - radius) || any(centre .> box.hi + radius) { continue }
-            let s = b.statics[st]
-            let d = b.shapes.distance(shape: Int(s.info.x), PhysicsWorld.Pose(s).toBody(centre))
-            if d < nearest { (best, nearest) = (st, d) }
+            if code & PhysicsWorld.staticBit != 0 {
+                let st = Int(code & ~PhysicsWorld.staticBit), box = b.staticBounds[st]
+                if any(centre .< box.lo - radius) || any(centre .> box.hi + radius) { continue }
+                let s = b.statics[st]
+                let d = b.shapes.distance(shape: Int(s.info.x), PhysicsWorld.Pose(s).toBody(centre))
+                if d < nearest { (best, nearest, onBody) = (st, d, false) }
+            } else {
+                let j = Int(code), o = b.bodies[j]
+                if length_squared(centre - PhysicsMath.xyz(o.position)) > (radius + o.invInertia.w) * (radius + o.invInertia.w) { continue }
+                let d = b.shapes.distance(shape: Int(o.info.x), PhysicsWorld.Pose(o).toBody(centre))
+                if d < nearest { (best, nearest, onBody) = (j, d, true) }
+            }
         }
         w.load = 0
         w.slip = .zero
         defer { b.wheels[wk] = w }
         guard best >= 0 else { return }
-        let s = b.statics[best], pose = PhysicsWorld.Pose(s), shape = Int(s.info.x)
+        let s = onBody ? b.bodies[best] : b.statics[best], pose = PhysicsWorld.Pose(s), shape = Int(s.info.x)
         // The patch: the tyre's edge toward the surface, in the wheel's plane.
         var n = pose.direction(b.shapes.gradient(shape: shape, pose.toBody(centre)))
         var down = n * -1 + a * dot(n, a)
@@ -51,10 +58,13 @@ extension CarSolver {
         let depth = -b.shapes.distance(shape: shape, local)
         guard depth > 0 else { return }
         n = pose.direction(b.shapes.gradient(shape: shape, local))
+        // (On a body: its surface's velocity at the patch is the ground's.)
+        let ground = onBody && PhysicsWorld.moves(s) ? PhysicsMath.xyz(s.velocity) + cross(PhysicsMath.xyz(s.angular), patch - PhysicsMath.xyz(s.position))
+            : SIMD3<Float>()
         let v = PhysicsMath.xyz(o.velocity), spinning = PhysicsMath.xyz(o.angular)
-        let load = simd_clamp(t.tyreStiffness * depth - t.tyreDamping * dot(v, n), 0, t.tyreStiffness * 0.15)
+        let load = simd_clamp(t.tyreStiffness * depth - t.tyreDamping * dot(v - ground, n), 0, t.tyreStiffness * 0.15)
         let lever = patch - centre
-        let slipping = v + cross(spinning, lever)
+        let slipping = v + cross(spinning, lever) - ground
         let along = PhysicsMath.direction(cross(a, n)), across = PhysicsMath.direction(a - n * dot(a, n))
         let sx = dot(slipping, along), sy = dot(slipping, across), vx = dot(v, along)
         let grip = t.grip * min(s.velocity.w / 0.7, 1.3)
@@ -92,6 +102,7 @@ extension CarSolver {
         }
         let impulse = n * (load * h) + along * jx + across * jy
         o.velocity = SIMD4(v + impulse * o.position.w, o.velocity.w)
+        if onBody && PhysicsWorld.moves(s) { tyreKick(wk, best, -impulse, patch - PhysicsMath.xyz(s.position), b) }
         let torque = cross(lever, impulse), about = dot(torque, a)
         var spin = dot(spinning, a) + about * k
         let roll = tyreRolling * load * radius * h * k
@@ -102,6 +113,27 @@ extension CarSolver {
         w.load = load
         w.slip = SIMD2(sx, sy)
         w.spin = spin
+    }
+
+    /// Wheel `wk`'s tyre's impulse back on body `j`, at `lever` from its centre: kept in its car's list (one slot a
+    /// wheel, `CarSystem.tyreKicks`) for `applyTyreKicks`, which applies them in the cars' order.
+    @inline(__always) package static func tyreKick(_ wk: Int, _ j: Int, _ impulse: SIMD3<Float>, _ lever: SIMD3<Float>, _ b: CarBuffers) {
+        b.tyreKicks[wk] = CarPush(body: Int32(j), impulse: impulse, twist: cross(lever, impulse), count: 1)
+    }
+
+    /// The tyres' impulses on bodies this substep (after the cars' forces, in the cars' order): each body's velocity
+    /// and spin changed, the body woken; the slots emptied.
+    @inline(__always) package static func applyTyreKicks(_ b: CarBuffers) {
+        for k in b.tyreKicks.indices where b.tyreKicks[k].count > 0 {
+            let kick = b.tyreKicks[k], j = Int(kick.body)
+            var o = b.bodies[j]
+            o.velocity = SIMD4(PhysicsMath.xyz(o.velocity) + kick.impulse * o.position.w, o.velocity.w)
+            o.angular = SIMD4(PhysicsMath.xyz(o.angular) + PhysicsMath.applyInvInertia(o.rotation, PhysicsMath.xyz(o.invInertia), kick.twist), o.angular.w)
+            o.info.y &= ~PhysicsWorld.asleep
+            o.prevPosition.w = 0
+            b.bodies[j] = o
+            b.tyreKicks[k] = CarPush()
+        }
     }
 
     /// An angular impulse `l` (across the axle) on wheel `w`'s knuckle, as a couple on its two hubs: `F` out, `-F` in,

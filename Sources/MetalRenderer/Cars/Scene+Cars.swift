@@ -25,8 +25,9 @@ extension Scene {
         package var player = 0
         /// The car pack's textures added so far (by image, x 2, + 1 for sRGB: indices into the scene's textures).
         package var packTextures: [Int: UInt32] = [:]
-        /// Per CarEvent (glass, steam, smoke, debris) its particle proxy (ParticlesGPU.breakProxies: an emitter whose
-        /// events are the cars' breaks), ParticleSystem.none for none; empty: no dust.
+        /// Per kind of break its particle proxy (ParticlesGPU.breakProxies: an emitter whose events are those breaks): a
+        /// fractured object's material's (the first 8), then each CarEvent's (from CarEvent.firstSlot);
+        /// ParticleSystem.none for none; empty: no dust.
         package var breakProxies: [UInt32] = []
         package init() {}
     }
