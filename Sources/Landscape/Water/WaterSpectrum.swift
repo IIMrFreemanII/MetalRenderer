@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -13,13 +10,13 @@ import simd
 /// Gaussian pair (seeded: the same sea every run). The GPU (waterSpectrumKernel) turns them in time, ω = √(g k),
 /// and the inverse FFT makes the heights, the sideways pushes and their slopes. Each cascade holds the waves of its
 /// band of wave numbers only, so the three tiles add up to one sea without counting a wave twice.
-enum WaterSpectrum {
-    static let gravity = 9.81
+package enum WaterSpectrum {
+    package static let gravity = 9.81
     /// The open sea's fetch (m): a sea grown over a long way.
-    static let fetch = 300_000.0
+    package static let fetch = 300_000.0
 
     /// The band of wave numbers (rad/m) cascade `c` holds.
-    static func band(_ c: Int) -> ClosedRange<Double> {
+    package static func band(_ c: Int) -> ClosedRange<Double> {
         let lengths = WaterWaves.lengths.map(Double.init)
         let lo = c == 0 ? 0 : 2 * .pi / lengths[c] * 6
         let hi = c + 1 < lengths.count ? 2 * .pi / lengths[c + 1] * 6 : .infinity
@@ -28,7 +25,7 @@ enum WaterSpectrum {
 
     /// JONSWAP's energy at angular frequency ω for a wind of `wind` m/s, over the fetch (no longer than the sea
     /// grows over: past it, it is fully developed and the fetch-limited fit overshoots).
-    static func jonswap(_ omega: Double, wind: Double) -> Double {
+    package static func jonswap(_ omega: Double, wind: Double) -> Double {
         let g = gravity, U = max(wind, 0.5), F = min(fetch, 1e4 * U * U / g)
         let peak = 22 * pow(g * g / (U * F), 1.0 / 3)
         let alpha = 0.076 * pow(U * U / (F * g), 0.22)
@@ -38,7 +35,7 @@ enum WaterSpectrum {
     }
 
     /// Cascade `c`'s texels: (h0(k).re, h0(k).im, conj(h0(-k)).re, conj(h0(-k)).im), rows along z.
-    static func amplitudes(cascade c: Int, wind: Double, direction: Double, seed: UInt64 = 0x5EA) -> [SIMD4<Float>] {
+    package static func amplitudes(cascade c: Int, wind: Double, direction: Double, seed: UInt64 = 0x5EA) -> [SIMD4<Float>] {
         let n = WaterWaves.size, L = Double(WaterWaves.lengths[c]), dk = 2 * .pi / L
         let band = band(c), g = gravity
         var h0 = [SIMD2<Float>](repeating: .zero, count: n * n)

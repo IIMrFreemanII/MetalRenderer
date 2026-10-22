@@ -11,9 +11,9 @@ import Foundation
 /// A file is read mapped. One of another format, for another key, or cut short is a miss (`init?` gives nil): the
 /// caller makes the content again and writes the file over it.
 package struct SectionFile {
-    static let magic: UInt32 = 0x4653_524D       // "MRSF"
-    static let version: UInt32 = 1
-    static let pageSize = 16384                   // Apple silicon's; a multiple of Intel's 4096
+    package static let magic: UInt32 = 0x4653_524D       // "MRSF"
+    package static let version: UInt32 = 1
+    package static let pageSize = 16384                   // Apple silicon's; a multiple of Intel's 4096
 
     /// A section's name: four characters.
     package static func id(_ name: String) -> UInt32 {
@@ -64,7 +64,7 @@ package struct SectionFile {
     }
 
     /// Section `id`'s bytes in the mapping, which stays mapped while the file (or what `body` keeps of it) lives.
-    func withBytes<R>(_ id: UInt32, _ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R? {
+    package func withBytes<R>(_ id: UInt32, _ body: (UnsafeRawBufferPointer) throws -> R) rethrows -> R? {
         guard let s = sections[id] else { return nil }
         return try data.withUnsafeBytes { try body(UnsafeRawBufferPointer(rebasing: $0[s.offset..<(s.offset + s.bytes)])) }
     }

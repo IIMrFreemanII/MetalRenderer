@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -75,6 +72,18 @@ package struct TerrainLayer: Codable, Equatable {
         case "ground": return "ground"
         default: return nil
         }
+    }
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(name: String, material: String = "", color: SIMD3<Float> = SIMD3<Float>(0.3, 0.3, 0.3), roughness: Float = 0.9, tileMetres: Float = 4, rule: TerrainRule = TerrainRule(), builtIn: Int? = nil, textureSet: String? = nil) {
+        self.name = name
+        self.material = material
+        self.color = color
+        self.roughness = roughness
+        self.tileMetres = tileMetres
+        self.rule = rule
+        self.builtIn = builtIn
+        self.textureSet = textureSet
     }
 }
 

@@ -25,7 +25,7 @@ package protocol ComputePass {
 
 /// Metal 3: straight through to the encoder. One reference wide, so passing it as `ComputePass` allocates nothing.
 package struct Metal3Pass: ComputePass {
-    let enc: MTLComputeCommandEncoder
+    package let enc: MTLComputeCommandEncoder
     package var declarationScope: AnyObject { enc }
 
     package func setComputePipelineState(_ state: MTLComputePipelineState) { enc.setComputePipelineState(state) }
@@ -151,11 +151,11 @@ extension PrimitiveWork4 {
 /// its boxes from the vertices its descriptor points at, which the skinning has just rewritten. And the build of those
 /// whose triangles change (a liquid's surface: FluidSurface.swift), from scratch, into the same structure.
 package struct PrimitiveRefit: PrimitiveWork {
-    let structures: [MTLAccelerationStructure]
-    let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
-    let scratch: MTLBuffer
-    let scratchOffsets: [Int]
-    var rebuilt: [(structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratchOffset: Int)] = []
+    package let structures: [MTLAccelerationStructure]
+    package let descriptors: [MTLPrimitiveAccelerationStructureDescriptor]
+    package let scratch: MTLBuffer
+    package let scratchOffsets: [Int]
+    package var rebuilt: [(structure: MTLAccelerationStructure, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratchOffset: Int)] = []
     /// The mesh each rebuilt structure is of.
     package var rebuiltMeshes: [Int] = []
 

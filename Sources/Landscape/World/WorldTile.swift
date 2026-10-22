@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -32,17 +29,17 @@ import simd
 /// (a city tile has more than 256 materials: it is several chunks). Window glass is in chunks of its own.
 package struct WorldTile {
     package struct Chunk {
-        var positions: Stored<SIMD3<Float>>
-        var normals: Stored<SIMD3<Float>>
-        var uvs: Stored<SIMD2<Float>>
-        var indices: Stored<UInt32>             // into this chunk's vertices
-        var triangleMaterials: Stored<UInt8>    // into `materials`
+        package var positions: Stored<SIMD3<Float>>
+        package var normals: Stored<SIMD3<Float>>
+        package var uvs: Stored<SIMD2<Float>>
+        package var indices: Stored<UInt32>             // into this chunk's vertices
+        package var triangleMaterials: Stored<UInt8>    // into `materials`
         /// Generated surfaces' textures are named by kind (World.texture) in `textures.x`.
-        var materials: [GPUMaterial]
-        var glass: Bool
-        var bounds: AABB
+        package var materials: [GPUMaterial]
+        package var glass: Bool
+        package var bounds: AABB
 
-        var triangles: Int { indices.count / 3 }
+        package var triangles: Int { indices.count / 3 }
     }
 
     /// A chunk being put together.
@@ -176,7 +173,7 @@ package struct WorldTile {
         for (c, chunk) in chunks.enumerated() where !chunk.glass {
             let emission = chunk.materials.map { SIMD3($0.emission.x, $0.emission.y, $0.emission.z) }
             guard emission.contains(where: { $0.max() > 0 }) else { continue }
-            var drafts = [Scene.MeshLightDraft](repeating: Scene.MeshLightDraft(), count: emission.count)
+            var drafts = [MeshLightDraft](repeating: MeshLightDraft(), count: emission.count)
             chunk.positions.withUnsafeBufferPointer { positions in
                 chunk.indices.withUnsafeBufferPointer { indices in
                     chunk.triangleMaterials.withUnsafeBufferPointer { materials in

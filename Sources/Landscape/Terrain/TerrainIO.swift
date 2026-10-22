@@ -1,11 +1,8 @@
 import Buildings
-import Characters
 import CoreGraphics
-import Effects
 import EngineCore
 import Foundation
 import ImageIO
-import Materials
 import Physics
 import Plants
 import UniformTypeIdentifiers

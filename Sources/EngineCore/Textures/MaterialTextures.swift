@@ -7,7 +7,7 @@ import Metal
 /// Pixels are drawn into RGBA8 in the image's own colour space, so data maps (normals, metallic-roughness) keep
 /// their raw values; colour maps get an sRGB texture format and are linearized by the sampler.
 package enum MaterialTextures {
-    static let maxSize = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_SIZE"] ?? "") ?? 2048
+    package static let maxSize = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_SIZE"] ?? "") ?? 2048
 
     /// `load`: the load to report the decoded images to.
     package static func load(_ sources: [TextureSource], device: MTLDevice, queue: MTLCommandQueue,

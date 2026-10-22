@@ -17,8 +17,8 @@ import Metal
 ///   nobody needed lately. Shaders clamp the level to what's resident (`minLod`, per frame slot), so a missing level is
 ///   only blur.
 package final class TextureStreamer {
-    static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_STREAMING"] != "0"
-    static let residentBaseSize = 128             // levels at most this big are always resident
+    package static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_STREAMING"] != "0"
+    package static let residentBaseSize = 128             // levels at most this big are always resident
     private static let magic: UInt32 = 0x3154_474D   // "MGT1"
 
     private struct Level { var offset: Int; var size: Int; var width: Int; var height: Int }
@@ -54,13 +54,13 @@ package final class TextureStreamer {
     private var staging: [[MTLBuffer]]
     private var stagingCursor = (slot: 0, buffer: 0, offset: 0)
     private var work = TextureStreamWork()
-    var uploadBytesPerFrame = 48 << 20
+    package var uploadBytesPerFrame = 48 << 20
     package private(set) var stats = (residentMB: 0.0, uploadedMB: 0.0, levelsMapped: 0)
 
     package var placement: Bool { tileAllocator != nil }
     package var textures: [MTLTexture] { entries.map(\.texture) }
     /// Per texture: its finest level the shaders may sample.
-    var residentLevels: [Int] { entries.map(\.resident) }
+    package var residentLevels: [Int] { entries.map(\.resident) }
     /// The levels mapped of those the textures want (base levels first), summed over the textures (render thread): the
     /// loading overlay's progress. Done when every texture has what it wants.
     package var levelProgress: (done: Int, total: Int) {

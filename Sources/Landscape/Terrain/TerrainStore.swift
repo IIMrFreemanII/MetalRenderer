@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -20,7 +17,7 @@ enum TerrainStore {
         switch ProcessInfo.processInfo.environment["METALRENDERER_TERRAINS"] {
         case "none": return nil
         case let path? where !path.isEmpty: return URL(fileURLWithPath: path)
-        default: return Scene.assetsDirectory.appendingPathComponent("Terrains")
+        default: return Assets.directory.appendingPathComponent("Terrains")
         }
     }
 

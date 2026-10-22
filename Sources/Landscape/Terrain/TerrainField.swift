@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -12,22 +9,22 @@ import simd
 /// it has been painted, the ground layers' painted weights (16 a sample, 0...255) with how much of the paint shows
 /// over the layers' own rules (`mask`); and where the city's ground is kept level whatever the brushes do (`protect`).
 package struct TerrainTile: Equatable {
-    static let layers = 16
-    var delta: [Float]
-    var paint: [UInt8]? = nil
-    var mask: [UInt8]? = nil
-    var protect: [UInt8]? = nil
+    package static let layers = 16
+    package var delta: [Float]
+    package var paint: [UInt8]? = nil
+    package var mask: [UInt8]? = nil
+    package var protect: [UInt8]? = nil
     /// Counts its edits (the renderer meshes again what changed since it last looked; saved, it says the tile changed).
-    var revision = 0
+    package var revision = 0
     /// The same per chunk of `chunkCells` samples a side (a sector's size): the brushes mark what they change
     /// (`changed`), so only the sectors there are meshed again. Empty: every chunk is `revision`.
-    var chunks: [Int] = []
-    static let chunkCells = 64
-    static let pending = Int.max
+    package var chunks: [Int] = []
+    package static let chunkCells = 64
+    package static let pending = Int.max
 
     /// Samples `lo`...`hi` (the tile's own, from its first) changed: their chunks, and those whose sectors' normals read
     /// them (one sample beyond), wait for the field's next revision.
-    mutating func changed(_ lo: SIMD2<Int>, _ hi: SIMD2<Int>, cells n: Int) {
+    package mutating func changed(_ lo: SIMD2<Int>, _ hi: SIMD2<Int>, cells n: Int) {
         let c = TerrainTile.chunkCells, per = max(n / c, 1)
         if chunks.count != per * per { chunks = [Int](repeating: revision, count: per * per) }
         let a = simd_max((lo &- 1) / c, .zero), b = simd_min((hi &+ 1) / c, SIMD2(repeating: per - 1))
@@ -36,7 +33,7 @@ package struct TerrainTile: Equatable {
     }
 
     /// The highest revision of its chunks that samples `lo`...`hi` (the tile's own) are in.
-    func revision(_ lo: SIMD2<Int>, _ hi: SIMD2<Int>, cells n: Int) -> Int {
+    package func revision(_ lo: SIMD2<Int>, _ hi: SIMD2<Int>, cells n: Int) -> Int {
         let c = TerrainTile.chunkCells, per = max(n / c, 1)
         guard chunks.count == per * per else { return revision }
         let a = simd_max(lo / c, .zero), b = simd_min(hi / c, SIMD2(repeating: per - 1))
@@ -52,7 +49,7 @@ package struct TerrainTile: Equatable {
     }
 
     /// Nothing in it changes the ground.
-    var isEmpty: Bool { paint == nil && protect == nil && !delta.contains { $0 != 0 } }
+    package var isEmpty: Bool { paint == nil && protect == nil && !delta.contains { $0 != 0 } }
 
     package static func == (a: TerrainTile, b: TerrainTile) -> Bool {
         a.delta == b.delta && a.paint == b.paint && a.mask == b.mask && a.protect == b.protect && a.revision == b.revision
@@ -255,12 +252,12 @@ package final class TerrainBaseCache {
     private let lock = NSLock()
     private var tiles: [SIMD2<Int>: [Float]] = [:]
     private var order: [SIMD2<Int>] = []
-    let capacity: Int
+    package let capacity: Int
 
     package init(capacity: Int = 48) { self.capacity = capacity }
 
     /// The tile's heights, made now if it isn't kept.
-    func heights(_ tile: SIMD2<Int>, base: TerrainBase) -> [Float] {
+    package func heights(_ tile: SIMD2<Int>, base: TerrainBase) -> [Float] {
         lock.lock()
         if let h = tiles[tile] { lock.unlock(); return h }
         lock.unlock()
@@ -275,7 +272,7 @@ package final class TerrainBaseCache {
     }
 
     /// Fills the cache with a tile's heights made elsewhere (an open world's tile file has them).
-    func set(_ tile: SIMD2<Int>, heights: [Float]) {
+    package func set(_ tile: SIMD2<Int>, heights: [Float]) {
         lock.lock(); defer { lock.unlock() }
         if tiles[tile] == nil { order.append(tile) }
         tiles[tile] = heights
@@ -283,18 +280,18 @@ package final class TerrainBaseCache {
     }
 
     /// A tile's heights if they are kept.
-    func cached(_ tile: SIMD2<Int>) -> [Float]? {
+    package func cached(_ tile: SIMD2<Int>) -> [Float]? {
         lock.lock(); defer { lock.unlock() }
         return tiles[tile]
     }
 
-    func isCached(_ tile: SIMD2<Int>) -> Bool {
+    package func isCached(_ tile: SIMD2<Int>) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return tiles[tile] != nil
     }
 
     /// The base's height at a sample: from its tile if that is kept, else straight from the base.
-    @inline(__always) func height(_ i: Int, _ j: Int, base: TerrainBase) -> Float {
+    @inline(__always) package func height(_ i: Int, _ j: Int, base: TerrainBase) -> Float {
         let n = base.grid.tileCells, t = base.grid.tile(i, j)
         lock.lock()
         let h = tiles[t]
@@ -309,7 +306,7 @@ package final class TerrainBaseCache {
 package final class TerrainField {
     private let lock = NSLock()
     private var current: TerrainSnapshot
-    private(set) var revision = 0
+    package private(set) var revision = 0
 
     package init(base: TerrainBase, tiles: [SIMD2<Int>: TerrainTile] = [:]) {
         current = TerrainSnapshot(base: base, tiles: tiles, baseCache: TerrainBaseCache())

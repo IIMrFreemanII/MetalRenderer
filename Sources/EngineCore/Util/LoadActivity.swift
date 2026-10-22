@@ -197,7 +197,7 @@ package final class LoadActivity: @unchecked Sendable {
 /// One load's handle for its loaders (any thread). All of it does nothing once the job is cancelled or has ended.
 package final class LoadJob: @unchecked Sendable {
     private weak var activity: LoadActivity?
-    let id: Int
+    package let id: Int
 
     fileprivate init(activity: LoadActivity, id: Int) {
         self.activity = activity

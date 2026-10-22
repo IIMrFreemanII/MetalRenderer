@@ -2,6 +2,7 @@ import Buildings
 import Characters
 import Effects
 import EngineCore
+import Landscape
 import Materials
 import Metal
 import Physics
@@ -20,12 +21,11 @@ package final class MeshBlock {
     let geometry: MTLBuffer
     let vertexCount: Int, indexCount: Int
     var indexOffset: Int { MeshBlock.indexOffset(vertices: vertexCount) }
-    static func indexOffset(vertices: Int) -> Int { vertices * (2 * MemoryLayout<SIMD3<Float>>.stride + MemoryLayout<SIMD2<Float>>.stride) }
-    /// A terrain's sector's layer weights (16 bytes a vertex): after the materials, on a 16-byte boundary.
-    static func weightsOffset(vertices: Int, indices: Int) -> Int { (indexOffset(vertices: vertices) + indices * 4 + indices / 3 + 15) & ~15 }
-    /// The bytes a mesh takes, with weights or without.
+    // (Its layout: MeshBlockLayout, in the core, which the terrain's sectors write by.)
+    static func indexOffset(vertices: Int) -> Int { MeshBlockLayout.indexOffset(vertices: vertices) }
+    static func weightsOffset(vertices: Int, indices: Int) -> Int { MeshBlockLayout.weightsOffset(vertices: vertices, indices: indices) }
     static func length(vertices: Int, indices: Int, weights: Bool) -> Int {
-        weights ? weightsOffset(vertices: vertices, indices: indices) + vertices * 16 : indexOffset(vertices: vertices) + indices * 4 + indices / 3
+        MeshBlockLayout.length(vertices: vertices, indices: indices, weights: weights)
     }
 
     package init(device: MTLDevice, name: String, mesh: Scene.BorrowedMesh) throws {

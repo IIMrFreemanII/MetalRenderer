@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -17,11 +14,11 @@ package struct TerrainShapes {
     /// A rounded rectangle of the world's x, z made level at `level`, blending back into the ground over `blend`
     /// metres beyond its edge. `protect`: the brushes leave it as it is.
     package struct Flat {
-        var lo: SIMD2<Float>, hi: SIMD2<Float>
-        var corner: Float = 0
-        var level: Float
-        var blend: Float
-        var protect = false
+        package var lo: SIMD2<Float>, hi: SIMD2<Float>
+        package var corner: Float = 0
+        package var level: Float
+        package var blend: Float
+        package var protect = false
 
         /// (As the memberwise initializer, for the modules above this one.)
         package init(lo: SIMD2<Float>, hi: SIMD2<Float>, corner: Float = 0, level: Float, blend: Float, protect: Bool = false) {
@@ -39,7 +36,7 @@ package struct TerrainShapes {
         package var center: SIMD2<Float>
         package var radii: SIMD2<Float>
         package var level: Float
-        var depth: Float
+        package var depth: Float
     }
     /// A river's bed along its line (the world's x, z), its height at each point (kept: TerrainWater.bed), within half
     /// its width a rounded channel, then a bank back to the ground over another half width.
@@ -52,9 +49,9 @@ package struct TerrainShapes {
 
     package var flats: [Flat] = []
     package var bowls: [Bowl] = []
-    var channels: [Channel] = []
+    package var channels: [Channel] = []
 
-    var isEmpty: Bool { flats.isEmpty && bowls.isEmpty && channels.isEmpty }
+    package var isEmpty: Bool { flats.isEmpty && bowls.isEmpty && channels.isEmpty }
 
     /// What the shapes are, in a few characters (part of the base's fingerprint, and of a terrain's name).
     package var fingerprint: String {
@@ -77,7 +74,7 @@ package struct TerrainShapes {
 
     /// The ground `h` at (x, z) shaped: the water's beds and banks, then the flats over them (in their order: a later
     /// one over an earlier).
-    func shape(_ x: Double, _ z: Double, _ h: Float) -> Float {
+    package func shape(_ x: Double, _ z: Double, _ h: Float) -> Float {
         var out = h
         if !channels.isEmpty || !bowls.isEmpty {
             var bed = Float.infinity, bank = Float.infinity
@@ -124,7 +121,7 @@ package struct TerrainShapes {
     }
 
     /// Whether the brushes leave (x, z) as it is (a protected flat's).
-    func protects(_ x: Double, _ z: Double) -> Bool {
+    package func protects(_ x: Double, _ z: Double) -> Bool {
         flats.contains { $0.protect && Float(x) >= $0.lo.x && Float(x) <= $0.hi.x && Float(z) >= $0.lo.y && Float(z) <= $0.hi.y }
     }
 
@@ -139,8 +136,8 @@ package struct TerrainShapes {
 /// A base with shapes over it (TerrainShapes): its heights shaped, its kinds and protection its own (and the
 /// protected flats'). The fingerprint says both, so edits saved over the plain base aren't taken for edits of this.
 package final class ShapedTerrainBase: TerrainBase {
-    let inner: TerrainBase
-    let shapes: TerrainShapes
+    package let inner: TerrainBase
+    package let shapes: TerrainShapes
     package var grid: TerrainGrid { inner.grid }
 
     package init(_ inner: TerrainBase, shapes: TerrainShapes) {

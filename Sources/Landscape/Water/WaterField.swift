@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -11,9 +8,9 @@ import simd
 /// The water at one place of the world: its surface's height, how it flows there (m/s, the world's x, z), its look
 /// (an index into the scene's looks) and how white it runs (0...1).
 package struct WaterSample {
-    var level: Float
-    var flow = SIMD2<Float>.zero
-    var look: Int
+    package var level: Float
+    package var flow = SIMD2<Float>.zero
+    package var look: Int
     var turbulence: Float = 0
 }
 
@@ -51,7 +48,7 @@ extension WaterField {
 
 /// A terrain's water (its document's bodies, TerrainWater): rivers over lakes over seas, each with the look the scene
 /// gave it.
-final class TerrainWaterField: WaterField {
+package final class TerrainWaterField: WaterField {
     private struct Sea { var level: Float; var look: Int; var lo: SIMD2<Double>?; var hi: SIMD2<Double>? }
     private struct Lake { var lo: SIMD2<Int>; var size: SIMD2<Int>; var cells: [Bool]; var level: Float; var look: Int }
     private struct River {
@@ -124,12 +121,12 @@ final class TerrainWaterField: WaterField {
     }
 
     private static func key(_ x: Int, _ z: Int) -> Int { (x &* 73_856_093) ^ (z &* 19_349_663) }
-    static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
+    package static func smoothstep(_ a: Float, _ b: Float, _ x: Float) -> Float {
         let t = min(max((x - a) / (b - a), 0), 1)
         return t * t * (3 - 2 * t)
     }
 
-    func ground(_ x: Double, _ z: Double) -> Float {
+    package func ground(_ x: Double, _ z: Double) -> Float {
         guard let r = raster else { return snapshot.height(x: x, z: z) }
         let g = snapshot.grid.coordinates(x, z)
         let fx = min(max((g.x - Double(r.lo.x)) / Double(r.step), 0), Double(r.size.x - 1))
@@ -175,11 +172,11 @@ final class TerrainWaterField: WaterField {
         }
     }
 
-    func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
+    package func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         TerrainWaterField.water(x, z, ground: ground, rivers: rivers, lakes: lakes, seas: seas, grid: snapshot.grid)
     }
 
-    func wet(_ x: Double, _ z: Double, margin: Double) -> Bool {
+    package func wet(_ x: Double, _ z: Double, margin: Double) -> Bool {
         let g = ground(x, z)
         if let w = water(x, z, ground: g), g < w.level + Float(margin) * 0.3 { return true }
         // (A lake's shore: within the margin of one of its cells.)
@@ -254,7 +251,7 @@ final class TerrainWaterField: WaterField {
 
 /// Water at one level over a square of the world (the swamp's): wherever the ground is under it, with one look.
 package final class LevelWaterField: WaterField {
-    let level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>
+    package let level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>
     private let height: (Double, Double) -> Float
     package init(level: Float, look: Int, lo: SIMD2<Double>, hi: SIMD2<Double>, ground: @escaping (Double, Double) -> Float) {
         (self.level, self.look, self.lo, self.hi, height) = (level, look, lo, hi, ground)

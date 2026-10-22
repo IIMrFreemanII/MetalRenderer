@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -12,32 +9,32 @@ import simd
 /// its cell's own random numbers (World.candidates' way), kept or not by the rule's filters against the ground as it
 /// is. A candidate's place and look depend on its cell alone, so re-scattering a region after a brush stroke changes
 /// nothing outside it.
-enum TerrainScatter {
-    struct Candidate: Hashable {
-        var rule: Int
-        var cell: SIMD2<Int>
-        var x: Double, z: Double
-        var yaw: Float
-        var size: Float
-        var chance: Float       // kept if under the rule's share of cells (`share`)
-        var pick: Float         // which variant (a plant of the species, a rock)
-        var shade: Int
+package enum TerrainScatter {
+    package struct Candidate: Hashable {
+        package var rule: Int
+        package var cell: SIMD2<Int>
+        package var x: Double, z: Double
+        package var yaw: Float
+        package var size: Float
+        package var chance: Float       // kept if under the rule's share of cells (`share`)
+        package var pick: Float         // which variant (a plant of the species, a rock)
+        package var shade: Int
     }
 
     /// The side of the grid's cell: as far apart as the rule's spacing at least, and wide enough that one to a cell is
     /// as many as its density asks for (or fewer, kept by chance).
-    static func cell(_ rule: ScatterRule) -> Double {
+    package static func cell(_ rule: ScatterRule) -> Double {
         max(Double(max(rule.spacing, 0.1)), (10_000 / Double(max(rule.density, 1e-4))).squareRoot() * 0.999)
     }
 
     /// The share of cells kept: its density over one to a cell.
-    static func share(_ rule: ScatterRule) -> Float {
+    package static func share(_ rule: ScatterRule) -> Float {
         let c = cell(rule)
         return min(Float(Double(rule.density) * c * c / 10_000), 1)
     }
 
     /// The candidates of rule `index` whose cells' places fall in the square from `lo` to `hi` (the world's x, z).
-    static func candidates(_ rule: ScatterRule, index: Int, lo: SIMD2<Double>, hi: SIMD2<Double>) -> [Candidate] {
+    package static func candidates(_ rule: ScatterRule, index: Int, lo: SIMD2<Double>, hi: SIMD2<Double>) -> [Candidate] {
         let c = cell(rule)
         let i0 = Int((lo.x / c).rounded(.down)), i1 = Int((hi.x / c).rounded(.down))
         let j0 = Int((lo.y / c).rounded(.down)), j1 = Int((hi.y / c).rounded(.down))
@@ -60,7 +57,7 @@ enum TerrainScatter {
 
     /// Where candidate `c` stands, if the rule keeps it there: its place (y on the ground, sunk) and the ground's
     /// normal. Nil: left out (by chance, height, slope, layer, patches, water, protected ground).
-    static func placement(_ c: Candidate, rule: ScatterRule, snapshot s: TerrainSnapshot, layers: [TerrainLayer], water: [WaterBody])
+    package static func placement(_ c: Candidate, rule: ScatterRule, snapshot s: TerrainSnapshot, layers: [TerrainLayer], water: [WaterBody])
         -> (position: SIMD3<Double>, normal: SIMD3<Float>)? {
         guard rule.enabled, c.chance < share(rule) else { return nil }
         let y = s.height(x: c.x, z: c.z), n = s.normal(x: c.x, z: c.z)
@@ -93,16 +90,16 @@ enum TerrainScatter {
 
     /// The transform a placed thing has (in the scene: `offset` the world's place of its origin): turned about its own
     /// up, tilted toward the ground's normal as much as the rule says, sized.
-    static func transform(_ c: Candidate, rule: ScatterRule, position p: SIMD3<Double>, normal: SIMD3<Float>, offset: SIMD2<Double>) -> float4x4 {
+    package static func transform(_ c: Candidate, rule: ScatterRule, position p: SIMD3<Double>, normal: SIMD3<Float>, offset: SIMD2<Double>) -> float4x4 {
         let up = simd_normalize(SIMD3<Float>(0, 1, 0) * (1 - rule.alignToGround) + normal * rule.alignToGround)
         let at = SIMD3(Float(p.x - offset.x), Float(p.y), Float(p.z - offset.y))
-        return translate(at) * Scene.alignY(up) * rotate(c.yaw, [0, 1, 0]) * scale(c.size)
+        return translate(at) * Geo.alignY(up) * rotate(c.yaw, [0, 1, 0]) * scale(c.size)
     }
 
     /// A rock's mesh: an icosphere pushed in and out by noise (`roughness` how much), flattened a little, its own
     /// variant by `seed`.
-    static func rock(roughness: Float, seed: Int) -> (MeshGeometry, [SIMD2<Float>]) {
-        let base = Scene.icosphere(subdivisions: 3)
+    package static func rock(roughness: Float, seed: Int) -> (MeshGeometry, [SIMD2<Float>]) {
+        let base = MeshShapes.icosphere(subdivisions: 3)
         let s = UInt32(truncatingIfNeeded: seed &* 7919 &+ 13)
         var positions = base.positions.map { p -> SIMD3<Float> in
             let n = simd_normalize(p)

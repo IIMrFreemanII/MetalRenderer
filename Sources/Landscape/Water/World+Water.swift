@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -24,9 +21,9 @@ import simd
 ///
 /// The rivers are worked out the first time a place near them is asked for (the springs of the regions around it,
 /// a few milliseconds), and kept.
-final class WorldWater {
+package final class WorldWater {
     let seed: UInt64
-    let seaLevel: Float
+    package let seaLevel: Float
     private let broadSeed: UInt32, rollingSeed: UInt32
 
     static let lattice = 32.0
@@ -38,7 +35,7 @@ final class WorldWater {
 
     /// A river's step from one lattice cell to the next downstream: its ends, its bed's height at each, half its
     /// width and its depth, and the springs that feed it.
-    struct Edge {
+    package struct Edge {
         package var a: SIMD2<Double>, b: SIMD2<Double>
         package var bedA: Float, bedB: Float
         package var half: Float, depth: Float
@@ -46,10 +43,10 @@ final class WorldWater {
         package var level: (Float, Float) { (bedA + depth * 0.8, bedB + depth * 0.8) }
     }
     /// A river's end in a hollow: a round pond, its water's height, its radius and depth.
-    struct Pond {
-        var center: SIMD2<Double>
-        var level: Float
-        var radius: Float, depth: Float
+    package struct Pond {
+        package var center: SIMD2<Double>
+        package var level: Float
+        package var radius: Float, depth: Float
     }
 
     private let lock = NSLock()
@@ -86,7 +83,7 @@ final class WorldWater {
     private func rolling(_ x: Double, _ z: Double) -> Float { 15.3 * Terrain.fbm(x / 120, z / 120, octaves: 5, seed: rollingSeed) }
 
     /// The ground as the hills make it, before the rivers, the cities and the roads.
-    func natural(_ x: Double, _ z: Double) -> Float { broad(x, z) + rolling(x, z) }
+    package func natural(_ x: Double, _ z: Double) -> Float { broad(x, z) + rolling(x, z) }
     /// ...smoothed: what the rivers run down.
     func smooth(_ x: Double, _ z: Double) -> Float { broad(x, z) + 0.33 * rolling(x, z) }
 
@@ -320,7 +317,7 @@ final class WorldWater {
 
     /// The rivers' steps in chains (each from a step no other in the square leads into, along the next ones) and the
     /// ponds in the square from `lo` to `hi`: what a scene's water surfaces are.
-    func contents(lo: SIMD2<Double>, hi: SIMD2<Double>) -> (edges: [Edge], chains: [[Int]], ponds: [Pond]) {
+    package func contents(lo: SIMD2<Double>, hi: SIMD2<Double>) -> (edges: [Edge], chains: [[Int]], ponds: [Pond]) {
         let (edges, ponds) = near(lo: lo, hi: hi)
         var index: [SIMD2<Double>: Int] = [:]
         for (k, e) in edges.enumerated() { index[e.a] = k }
@@ -343,17 +340,17 @@ final class WorldWater {
 
 /// The open world's water for the water map (WaterMap): the world's (WorldWater), with the looks the scene gave it.
 /// A band of the map's rows gets the rivers and ponds over it once, then works out its texels without asking again.
-final class WorldWaterField: WaterField {
-    let world: World
-    let looks: (sea: Int, lake: Int, river: Int)
+package final class WorldWaterField: WaterField {
+    package let world: World
+    package let looks: (sea: Int, lake: Int, river: Int)
     package init(world: World, looks: (sea: Int, lake: Int, river: Int)) { (self.world, self.looks) = (world, looks) }
-    func ground(_ x: Double, _ z: Double) -> Float { world.water.carve(x, z, world.water.natural(x, z)) }
-    func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
+    package func ground(_ x: Double, _ z: Double) -> Float { world.water.carve(x, z, world.water.natural(x, z)) }
+    package func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         let (edges, ponds) = world.water.near(lo: SIMD2(x, z), hi: SIMD2(x, z))
         return WorldWater.sample(x, z, ground: ground, edges: edges, ponds: ponds, seaLevel: world.water.seaLevel, looks: looks)
     }
 
-    func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
+    package func draw(rows: Range<Int>, origin: SIMD2<Double>, cell: Double, size n: Int, surface: UnsafeMutablePointer<SIMD2<Float>>,
               info: UnsafeMutablePointer<UInt32>) {
         let w = world.water, sea = w.seaLevel
         let lo = origin + SIMD2(0, Double(rows.lowerBound) * cell), hi = origin + SIMD2(Double(n) * cell, Double(rows.upperBound) * cell)

@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -11,10 +8,10 @@ import simd
 /// A terrain's water (WaterBody): a river's bed carved into the ground, a lake's basin found by flooding the ground
 /// from a place up to its level, and the surfaces the scene draws: a sea's sheet, a lake's over its basin, a river's
 /// ribbon along its line.
-enum TerrainWater {
+package enum TerrainWater {
     /// The heights of a river's bed at its points: `depth` under the ground there, never higher than at the point
     /// before (it runs from its source, the first point, down to its mouth).
-    static func bed(_ s: TerrainSnapshot, river: WaterBody) -> [Float] {
+    package static func bed(_ s: TerrainSnapshot, river: WaterBody) -> [Float] {
         if let kept = river.bed, river.bedPoints == river.points, kept.count == river.points.count { return kept }
         var out: [Float] = []
         var lowest = Float.infinity
@@ -26,7 +23,7 @@ enum TerrainWater {
     }
 
     /// The nearest point of a polyline to `p`: its distance, the segment and the share along it.
-    static func nearest(_ points: [SIMD2<Double>], to p: SIMD2<Double>) -> (distance: Double, segment: Int, t: Double) {
+    package static func nearest(_ points: [SIMD2<Double>], to p: SIMD2<Double>) -> (distance: Double, segment: Int, t: Double) {
         var best = (Double.infinity, 0, 0.0)
         for k in 0..<(points.count - 1) {
             let a = points[k], b = points[k + 1], ab = b - a
@@ -39,7 +36,7 @@ enum TerrainWater {
 
     /// The river's bed carved: within half its width the ground goes down to a rounded channel over the bed, beyond
     /// that it fades back into the ground over another half width. Protected ground stays.
-    static func carve(_ s: inout TerrainSnapshot, river: WaterBody, record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
+    package static func carve(_ s: inout TerrainSnapshot, river: WaterBody, record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let beds = bed(s, river: river), half = Double(max(river.width, 0.5)) / 2, reach = half * 2
         let xs = river.points.map(\.x), zs = river.points.map(\.y)
         let lo2 = SIMD2(xs.min()! - reach, zs.min()! - reach), hi2 = SIMD2(xs.max()! + reach, zs.max()! + reach)
@@ -76,7 +73,7 @@ enum TerrainWater {
 
     /// A lake's basin: the cells connected to `seed` whose ground is under `level` (flooded from it, at most `limit`
     /// cells across), as a mask of cells (i, j) from `lo`, `size` across.
-    static func basin(_ s: TerrainSnapshot, seed: SIMD2<Double>, level: Float, limit: Int = 2048) -> (lo: SIMD2<Int>, size: SIMD2<Int>, cells: [Bool])? {
+    package static func basin(_ s: TerrainSnapshot, seed: SIMD2<Double>, level: Float, limit: Int = 2048) -> (lo: SIMD2<Int>, size: SIMD2<Int>, cells: [Bool])? {
         let g = s.grid.coordinates(seed.x, seed.y)
         let start = SIMD2(Int(g.x.rounded(.down)), Int(g.y.rounded(.down)))
         var lo = start &- limit / 2, hi = start &+ limit / 2
@@ -107,7 +104,7 @@ enum TerrainWater {
 
     /// A flat sheet over cells (a lake's basin, a sea's extent: `cells` nil is all), at `level`, in the scene's
     /// coordinates (`offset` the world's place of its origin), cells merged into runs along x. UVs a metre a tile.
-    static func sheet(grid: TerrainGrid, lo: SIMD2<Int>, size: SIMD2<Int>, cells: [Bool]?, level: Float, offset: SIMD2<Double>,
+    package static func sheet(grid: TerrainGrid, lo: SIMD2<Int>, size: SIMD2<Int>, cells: [Bool]?, level: Float, offset: SIMD2<Double>,
                       step: Int = 1) -> (MeshGeometry, [SIMD2<Float>])? {
         var positions: [SIMD3<Float>] = [], normals: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
         func corner(_ i: Int, _ j: Int) -> UInt32 {
@@ -134,7 +131,7 @@ enum TerrainWater {
     }
 
     /// A level square from `a` to `b` (the world's x, z), `cells` a side, in the scene's coordinates.
-    static func plane(from a: SIMD2<Double>, to b: SIMD2<Double>, level: Float, offset: SIMD2<Double>, cells: Int = 64)
+    package static func plane(from a: SIMD2<Double>, to b: SIMD2<Double>, level: Float, offset: SIMD2<Double>, cells: Int = 64)
         -> (MeshGeometry, [SIMD2<Float>]) {
         var positions: [SIMD3<Float>] = [], uvs: [SIMD2<Float>] = [], indices: [UInt32] = []
         let n = cells + 1
@@ -156,7 +153,7 @@ enum TerrainWater {
 
     /// A river's surface: a ribbon along its line, its width a little narrower than the channel's, at the bed plus most
     /// of its depth (so it runs downhill with it), in the scene's coordinates.
-    static func ribbon(_ s: TerrainSnapshot, river: WaterBody, offset: SIMD2<Double>) -> (MeshGeometry, [SIMD2<Float>])? {
+    package static func ribbon(_ s: TerrainSnapshot, river: WaterBody, offset: SIMD2<Double>) -> (MeshGeometry, [SIMD2<Float>])? {
         let points = river.points
         guard points.count > 1 else { return nil }
         let beds = bed(s, river: river), half = Double(river.width) * 0.45

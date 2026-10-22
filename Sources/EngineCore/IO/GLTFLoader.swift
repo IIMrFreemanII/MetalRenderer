@@ -139,11 +139,11 @@ package enum GLTFLoader {
     private struct Buffer: Decodable { var uri: String?; var byteLength: Int }
     private struct TextureInfo: Decodable { var index: Int; var texCoord: Int?; var scale: Float? }
     private struct PBR: Decodable {
-        var baseColorFactor: [Float]?
-        var baseColorTexture: TextureInfo?
-        var metallicFactor: Float?
-        var roughnessFactor: Float?
-        var metallicRoughnessTexture: TextureInfo?
+        package var baseColorFactor: [Float]?
+        package var baseColorTexture: TextureInfo?
+        package var metallicFactor: Float?
+        package var roughnessFactor: Float?
+        package var metallicRoughnessTexture: TextureInfo?
     }
     private struct EmissiveStrength: Decodable { var emissiveStrength: Float? }
     private struct MaterialExtensions: Decodable {

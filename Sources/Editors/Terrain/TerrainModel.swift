@@ -5,6 +5,7 @@ import Combine
 import Effects
 import EngineCore
 import Foundation
+import Landscape
 import Materials
 import MetalRenderer
 import Physics

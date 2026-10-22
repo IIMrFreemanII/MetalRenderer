@@ -10,25 +10,25 @@ import simd
 ///                            bit 31 set   = leaf: (count - 1) << 28 | first triangle.
 /// Its root is always an internal node, so the union of the root's two child boxes is the cluster's bounds.
 package struct BVHNode {
-    var lo0 = SIMD4<Float>(repeating: 0)
-    var hi0 = SIMD4<Float>(repeating: 0)
-    var lo1 = SIMD4<Float>(repeating: 0)
-    var hi1 = SIMD4<Float>(repeating: 0)
+    package var lo0 = SIMD4<Float>(repeating: 0)
+    package var hi0 = SIMD4<Float>(repeating: 0)
+    package var lo1 = SIMD4<Float>(repeating: 0)
+    package var hi1 = SIMD4<Float>(repeating: 0)
 
-    static let leafBit: UInt32 = 0x8000_0000
-    static let none: UInt32 = 0xFFFF_FFFF      // root ref of an empty tree
-    static let maxLeafTriangles = 4             // leaf triangle count is stored in 3 bits of the ref (1...8)
+    package static let leafBit: UInt32 = 0x8000_0000
+    package static let none: UInt32 = 0xFFFF_FFFF      // root ref of an empty tree
+    package static let maxLeafTriangles = 4             // leaf triangle count is stored in 3 bits of the ref (1...8)
 
-    mutating func setChild(_ i: Int, lo: SIMD3<Float>, hi: SIMD3<Float>, ref: UInt32, mask: UInt32) {
+    package mutating func setChild(_ i: Int, lo: SIMD3<Float>, hi: SIMD3<Float>, ref: UInt32, mask: UInt32) {
         let l = SIMD4<Float>(lo, Float(bitPattern: ref)), h = SIMD4<Float>(hi, Float(bitPattern: mask))
         if i == 0 { lo0 = l; hi0 = h } else { lo1 = l; hi1 = h }
     }
-    func ref(_ i: Int) -> UInt32 { (i == 0 ? lo0 : lo1).w.bitPattern }
-    func mask(_ i: Int) -> UInt32 { (i == 0 ? hi0 : hi1).w.bitPattern }
-    func lo(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? lo0 : lo1; return SIMD3(v.x, v.y, v.z) }
-    func hi(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? hi0 : hi1; return SIMD3(v.x, v.y, v.z) }
+    package func ref(_ i: Int) -> UInt32 { (i == 0 ? lo0 : lo1).w.bitPattern }
+    package func mask(_ i: Int) -> UInt32 { (i == 0 ? hi0 : hi1).w.bitPattern }
+    package func lo(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? lo0 : lo1; return SIMD3(v.x, v.y, v.z) }
+    package func hi(_ i: Int) -> SIMD3<Float> { let v = i == 0 ? hi0 : hi1; return SIMD3(v.x, v.y, v.z) }
 
-    static func leaf(first: Int, count: Int) -> UInt32 {
+    package static func leaf(first: Int, count: Int) -> UInt32 {
         precondition(count >= 1 && count <= 8 && first < 1 << 28)
         return leafBit | UInt32(count - 1) << 28 | UInt32(first)
     }
@@ -42,7 +42,7 @@ package struct AABB {
     package mutating func grow(_ b: AABB) { lo = simd_min(lo, b.lo); hi = simd_max(hi, b.hi) }
     package var isEmpty: Bool { lo.x > hi.x }
     package var centroid: SIMD3<Float> { (lo + hi) * 0.5 }
-    var area: Float {
+    package var area: Float {
         if isEmpty { return 0 }
         let d = hi - lo
         return 2 * (d.x * d.y + d.y * d.z + d.z * d.x)
@@ -85,7 +85,7 @@ enum BVHBuilder {
     private indirect enum Part {
         case built([Node])
         case split(Node, Part, Part)
-        var count: Int {
+        package var count: Int {
             switch self {
             case .built(let nodes): return nodes.count
             case .split(_, let l, let r): return 1 + l.count + r.count

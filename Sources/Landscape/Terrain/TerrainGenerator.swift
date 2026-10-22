@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -11,13 +8,13 @@ import simd
 /// A terrain's generator (GeneratorStack): its steps evaluated at a place of the world, a source's noise combined with
 /// what the steps before made by its blend, an operation changing it; and the stack run over a region, its edge
 /// faded into the ground around it.
-enum TerrainGenerator {
+package enum TerrainGenerator {
     /// Gradient noise remapped to about -1...1.
     @inline(__always) private static func n(_ x: Double, _ z: Double, _ seed: UInt32) -> Float { Terrain.noise(x, z, seed: seed) * 1.4 }
 
     /// The stack's height at (x, z) given the ground's `ground` there (only `replaces == false` stacks add to it, and
     /// operations read it as the first steps' input).
-    static func height(_ stack: GeneratorStack, x: Double, z: Double, ground: Float) -> Float {
+    package static func height(_ stack: GeneratorStack, x: Double, z: Double, ground: Float) -> Float {
         var h: Float = stack.replaces ? 0 : ground
         var px = x, pz = z
         for node in stack.nodes where node.enabled {
@@ -96,7 +93,7 @@ enum TerrainGenerator {
 
     /// The stack run over a region (sample indices `lo`...`hi`), faded into the ground over `border` metres inside its
     /// edge (a whole finite terrain: no fade). Kept for undo in `record`; protected ground stays.
-    static func run(_ s: inout TerrainSnapshot, stack: GeneratorStack, lo: SIMD2<Int>, hi: SIMD2<Int>, border: Float,
+    package static func run(_ s: inout TerrainSnapshot, stack: GeneratorStack, lo: SIMD2<Int>, hi: SIMD2<Int>, border: Float,
                     record: inout TerrainUndoRecord) -> Set<SIMD2<Int>> {
         let grid = s.grid, size = hi &- lo &+ 1
         guard size.x > 0, size.y > 0 else { return [] }
@@ -132,7 +129,7 @@ enum TerrainGenerator {
     }
 
     /// `passes` of a 3 x 3 mean (edges clamped).
-    static func smooth(_ h: [Float], _ w: Int, _ hgt: Int, passes: Int) -> [Float] {
+    package static func smooth(_ h: [Float], _ w: Int, _ hgt: Int, passes: Int) -> [Float] {
         var a = h, b = h
         for _ in 0..<passes {
             a.withUnsafeBufferPointer { src in

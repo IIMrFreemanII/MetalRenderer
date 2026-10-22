@@ -51,12 +51,12 @@ package enum Kernel: Int, CaseIterable {
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
     case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
 
-    var function: String { "\(self)Kernel" }
+    package var function: String { "\(self)Kernel" }
 
     /// The bits of Uniforms.flags that this kernel's variants have compiled in (KernelVariants): the ones it reads
     /// that stay the same from frame to frame. A bit that is missing here is only read at run time, as before; a bit
     /// the kernel doesn't read would only make variants that are the same code.
-    var fixedFlags: UInt32 {
+    package var fixedFlags: UInt32 {
         typealias F = UniformFlags
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
@@ -73,7 +73,7 @@ package enum Kernel: Int, CaseIterable {
     /// The same for the kernel's own flags: the word its `bind` passes (Uniforms.tracePassFlags, GPURestirParams'
     /// and GPURestirGIParams' flags, GPUFogParams.reflectionPassFlags). The "last frame is valid" bits change on the
     /// first frame after a reset, so they stay run-time tests: a variant for that one frame would be compiled for nothing.
-    var fixedPassFlags: UInt32 {
+    package var fixedPassFlags: UInt32 {
         switch self {
         case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
         case .restirTemporal: return GPURestirParams.visibilityReuse
@@ -187,13 +187,13 @@ package final class PipelineCache<Value> {
         }
     }
     /// How many sets are kept (each is the kernels' pipelines and the variants made for them since).
-    let capacity: Int
+    package let capacity: Int
     private let lock = NSLock()
     private var sets: [(key: Key, pipelines: Value)] = []   // the most recently used last
 
     package init(capacity: Int = 6) { self.capacity = capacity }
 
-    var count: Int { lock.lock(); defer { lock.unlock() }; return sets.count }
+    package var count: Int { lock.lock(); defer { lock.unlock() }; return sets.count }
 
     package func get(_ key: Key) -> Value? {
         lock.lock(); defer { lock.unlock() }

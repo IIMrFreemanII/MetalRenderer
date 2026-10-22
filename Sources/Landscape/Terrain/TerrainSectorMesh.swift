@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -13,20 +10,20 @@ import simd
 package struct TerrainMeshStyle {
     /// UVs: the vertex's place from `uvOrigin` (the world's) times `uvScale`, or with `tileLocal` its place from its
     /// tile's corner times `uvScale` (the open world's ground, whose detail repeats every 5 m from each tile's corner).
-    var uvOrigin = SIMD2<Double>.zero
-    var uvScale: Float = 1
-    var tileLocal = false
+    package var uvOrigin = SIMD2<Double>.zero
+    package var uvScale: Float = 1
+    package var tileLocal = false
     /// Skirts hang under the sides of tiles (where a neighbour may be of another level of detail): `2 cell + 2` m deep.
     /// Off, they are flat (a finite terrain's edge, or a sector's side inside its tile, needs none).
-    var skirts = false
+    package var skirts = false
     /// The kind steep cells (a normal's y under 0.8) take, where the base names kinds (World.Ground.rock).
-    var rock: UInt8 = 3
+    package var rock: UInt8 = 3
     /// The terrain's layers (their rules make the vertices' weights where nothing is painted; none enabled: layer 0,
     /// the scene's own ground, wherever nothing is painted).
-    var layers: [TerrainLayer] = []
-    var rules: Bool { layers.contains { $0.rule.enabled } }
+    package var layers: [TerrainLayer] = []
+    package var rules: Bool { layers.contains { $0.rule.enabled } }
     /// The realistic look's relief (realism high): what raises a fine sector's ground (TerrainSector.subdiv).
-    var relief: GroundRelief? = nil
+    package var relief: GroundRelief? = nil
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(uvOrigin: SIMD2<Double> = SIMD2<Double>.zero, uvScale: Float = 1, tileLocal: Bool = false, skirts: Bool = false, rock: UInt8 = 3, layers: [TerrainLayer] = [], relief: GroundRelief? = nil) {
@@ -44,16 +41,16 @@ package struct TerrainMeshStyle {
 /// corner (y the world's), smooth normals from the neighbouring heights (across sectors and tiles, so the sides
 /// match), and if the base names kinds, a material offset per triangle. The same layout every time for a sector,
 /// so a sector's buffer can be written again in place (`write`).
-struct TerrainSectorMesh {
-    let sector: TerrainSector
-    var positions: [SIMD3<Float>]
-    var normals: [SIMD3<Float>]
-    var uvs: [SIMD2<Float>]
-    var indices: [UInt32]
-    var materials: [UInt8]?
+package struct TerrainSectorMesh {
+    package let sector: TerrainSector
+    package var positions: [SIMD3<Float>]
+    package var normals: [SIMD3<Float>]
+    package var uvs: [SIMD2<Float>]
+    package var indices: [UInt32]
+    package var materials: [UInt8]?
     /// Each vertex's 16 layer weights (0...255; layer 0 the mesh's own material): TERRAIN's shading.
-    var weights: [SIMD16<UInt8>]
-    var bounds: AABB
+    package var weights: [SIMD16<UInt8>]
+    package var bounds: AABB
 
     private init(sector: TerrainSector, positions: [SIMD3<Float>], normals: [SIMD3<Float>], uvs: [SIMD2<Float>], indices: [UInt32],
                  materials: [UInt8]?, weights: [SIMD16<UInt8>], bounds: AABB) {
@@ -366,16 +363,10 @@ struct TerrainSectorMesh {
                                  materials: kinds == nil ? nil : materials, weights: weights, bounds: box)
     }
 
-    /// As a scene borrows it (Scene.addMesh(borrowing:)).
-    var borrowed: Scene.BorrowedMesh {
-        Scene.BorrowedMesh(positions: .made(positions), normals: .made(normals), uvs: .made(uvs), indices: .made(indices),
-                           materials: materials.map { .made($0) }, weights: .made(weights))
-    }
+    /// Its bytes as a mesh's buffer holds them (MeshBlockLayout): positions, normals, UVs, indices, a material per triangle.
+    package var byteCount: Int { MeshBlockLayout.length(vertices: positions.count, indices: indices.count, weights: true) }
 
-    /// Its bytes as a mesh's buffer holds them (MeshBlock): positions, normals, UVs, indices, a material per triangle.
-    var byteCount: Int { MeshBlock.length(vertices: positions.count, indices: indices.count, weights: true) }
-
-    func write(into p: UnsafeMutableRawPointer) {
+    package func write(into p: UnsafeMutableRawPointer) {
         var at = p
         func copy<T>(_ a: [T]) {
             a.withUnsafeBytes { at.copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
@@ -386,7 +377,7 @@ struct TerrainSectorMesh {
         copy(uvs)
         copy(indices)
         if let materials { copy(materials) } else { at.initializeMemory(as: UInt8.self, repeating: 0, count: indices.count / 3) }
-        at = p + MeshBlock.weightsOffset(vertices: positions.count, indices: indices.count)
+        at = p + MeshBlockLayout.weightsOffset(vertices: positions.count, indices: indices.count)
         copy(weights)
     }
 }

@@ -6,16 +6,16 @@ import simd
 /// its faces, which nothing outside can be nearer to the surface than). MSL `sdfVolume` in Shaders/SDF.metal.
 package struct SDFVolume {
     /// The first sample's place, and the samples' spacing.
-    var lo: SIMD3<Float>
+    package var lo: SIMD3<Float>
     package var cell: Float
-    var dims: SIMD3<Int>
+    package var dims: SIMD3<Int>
     package var samples: [Float16]
     /// The least sample on the grid's faces.
-    var border: Float
+    package var border: Float
 
-    var hi: SIMD3<Float> { lo + SIMD3<Float>(dims &- 1) * cell }
+    package var hi: SIMD3<Float> { lo + SIMD3<Float>(dims &- 1) * cell }
 
-    func sample(_ x: Int, _ y: Int, _ z: Int) -> Float { Float(samples[(z * dims.y + y) * dims.x + x]) }
+    package func sample(_ x: Int, _ y: Int, _ z: Int) -> Float { Float(samples[(z * dims.y + y) * dims.x + x]) }
 
     package func distance(_ p: SIMD3<Float>) -> Float {
         let q = simd_clamp(p, lo, hi)
@@ -40,7 +40,7 @@ package struct SDFVolume {
     // MARK: - Baking
 
     /// Of `bake`'s output: a change of it makes other files in the cache.
-    static let version = 1
+    package static let version = 1
 
     /// `bake`, from the cache or into it (GeneratedCache): the file is named by the mesh and the resolution.
     package static func cached(_ mesh: MeshGeometry, resolution: Int = 64) -> SDFVolume {
@@ -68,7 +68,7 @@ package struct SDFVolume {
     /// with two cells of room around it. The distance is exact (to the nearest triangle, through a tree over them);
     /// the sign is a vote of three: inside along a row of samples is where an odd number of the mesh's faces have been
     /// crossed, counted along x, y and z, so a mesh with a few holes or doubled faces still has its inside right.
-    static func bake(_ mesh: MeshGeometry, resolution: Int = 64) -> SDFVolume {
+    package static func bake(_ mesh: MeshGeometry, resolution: Int = 64) -> SDFVolume {
         var bounds = AABB()
         for p in mesh.positions { bounds.grow(p) }
         let cell = simd_reduce_max(bounds.hi - bounds.lo) / Float(max(resolution - 5, 1))
@@ -184,7 +184,7 @@ package struct SDFVolume {
     }
 
     /// The squared distance from `p` to triangle (a, b, c) (Ericson, Real-Time Collision Detection 5.1.5).
-    static func distance2(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
+    package static func distance2(_ p: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float {
         let ab = b - a, ac = c - a, ap = p - a
         let d1 = dot(ab, ap), d2 = dot(ac, ap)
         func d(_ q: SIMD3<Float>) -> Float { let e = p - q; return dot(e, e) }
@@ -204,7 +204,7 @@ package struct SDFVolume {
     }
 
     /// Where the ray o + d t (t > 0) crosses triangle (a, b, c), either face; nil if it doesn't.
-    static func rayTriangle(_ o: SIMD3<Float>, _ d: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float? {
+    package static func rayTriangle(_ o: SIMD3<Float>, _ d: SIMD3<Float>, _ a: SIMD3<Float>, _ b: SIMD3<Float>, _ c: SIMD3<Float>) -> Float? {
         let e1 = b - a, e2 = c - a
         let pv = cross(d, e2), det = dot(e1, pv)
         guard abs(det) > 1e-12 else { return nil }

@@ -1,9 +1,6 @@
 import Buildings
-import Characters
-import Effects
 import EngineCore
 import Foundation
-import Materials
 import Physics
 import Plants
 import simd
@@ -18,19 +15,27 @@ package final class GroundRelief {
         package var scale: Float          // UV per metre, as the shader's
         package var contrast: Float
         package var relief: Float         // metres from the height's lowest to its highest
-    }
-    let ground: [Layer]
-    /// Layers 1...15 (index l - 1): a painted layer's, nil for one without a scan.
-    let painted: [Layer?]
-    /// The ground map's two images (Terrain/GroundLook.swift draw), and the rectangle they cover (scene x, z).
-    let maps: (FoliageTextures.Image, FoliageTextures.Image)?
-    let lo: SIMD2<Float>, size: SIMD2<Float>
-    let rock: Int
-    let slope: SIMD2<Float>
-    /// The world's place that is the scene's origin.
-    let offset: SIMD2<Double>
 
-    static let blendDepth: Float = 0.12   // TERRAIN_BLEND_DEPTH
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(height: TextureSet.HeightField? = nil, scale: Float, contrast: Float, relief: Float) {
+            self.height = height
+            self.scale = scale
+            self.contrast = contrast
+            self.relief = relief
+        }
+    }
+    package let ground: [Layer]
+    /// Layers 1...15 (index l - 1): a painted layer's, nil for one without a scan.
+    package let painted: [Layer?]
+    /// The ground map's two images (Terrain/GroundLook.swift draw), and the rectangle they cover (scene x, z).
+    package let maps: (FoliageTextures.Image, FoliageTextures.Image)?
+    package let lo: SIMD2<Float>, size: SIMD2<Float>
+    package let rock: Int
+    package let slope: SIMD2<Float>
+    /// The world's place that is the scene's origin.
+    package let offset: SIMD2<Double>
+
+    package static let blendDepth: Float = 0.12   // TERRAIN_BLEND_DEPTH
 
     package init(ground: [Layer], painted: [Layer?], maps: (FoliageTextures.Image, FoliageTextures.Image)?, lo: SIMD2<Float>, size: SIMD2<Float>,
          rock: Int, slope: SIMD2<Float>, offset: SIMD2<Double>) {
@@ -40,7 +45,7 @@ package final class GroundRelief {
 
     /// A scan's relief in metres, by its name: rock most, then stones and soil (clods, ruts, roots), the soft
     /// grounds least. (What the mesh's 0.25 m can hold: the parallax adds what is finer.)
-    static func relief(of set: String) -> Float {
+    package static func relief(of set: String) -> Float {
         switch set {
         case "rock": return 0.3
         case "pebbles", "gravel": return 0.1
@@ -76,7 +81,7 @@ package final class GroundRelief {
 
     /// The relief (metres, up) at the world's place (x, z), where the ground's normal's y is `up` and the vertex's
     /// layer weights are `w` (0...1; layer 0 the scene's own ground).
-    func callAsFunction(x: Double, z: Double, up: Float, weights w: SIMD16<Float>) -> Float {
+    package func callAsFunction(x: Double, z: Double, up: Float, weights w: SIMD16<Float>) -> Float {
         var best = (0, 0, 0), strongest: (Float, Float, Float) = (0, 0, 0)
         for l in 1..<16 {
             let v = w[l]

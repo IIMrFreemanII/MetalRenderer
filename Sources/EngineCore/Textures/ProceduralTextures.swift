@@ -70,14 +70,14 @@ extension SurfaceKind: Codable {
 /// keeps a mip-chain cache per kind next to it and later launches only read.
 package enum ProceduralTextures {
     /// Bump this when what `generate` draws changes.
-    static let version = 1
+    package static let version = 1
 
     /// One kind's maps, `size` x `size` RGBA bytes each, rows from the top.
-    struct Maps {
-        var size: Int
-        var base: [UInt8]           // sRGB
-        var normal: [UInt8]         // tangent space, +Y = +V (down the image)
-        var roughness: [UInt8]?     // G = roughness, B = metallic (both scale the material's), as glTF's
+    package struct Maps {
+        package var size: Int
+        package var base: [UInt8]           // sRGB
+        package var normal: [UInt8]         // tangent space, +Y = +V (down the image)
+        package var roughness: [UInt8]?     // G = roughness, B = metallic (both scale the material's), as glTF's
     }
 
     // MARK: - Noise
@@ -176,7 +176,7 @@ package enum ProceduralTextures {
     }
 
     /// `kind`'s maps at `size` pixels a side (its own size by default).
-    static func generate(_ kind: SurfaceKind, size: Int? = nil) -> Maps {
+    package static func generate(_ kind: SurfaceKind, size: Int? = nil) -> Maps {
         let n = size ?? kind.size
         var heights = [Float](repeating: 0, count: n * n)
         var maps = Maps(size: n, base: [UInt8](repeating: 255, count: n * n * 4), normal: [UInt8](repeating: 255, count: n * n * 4),
@@ -207,7 +207,7 @@ package enum ProceduralTextures {
     // MARK: - Files
 
     /// `pixels` (RGBA, `size` x `size`) as a PNG. Nil if ImageIO refuses.
-    static func png(_ pixels: [UInt8], size: Int) -> Data? {
+    package static func png(_ pixels: [UInt8], size: Int) -> Data? {
         guard let provider = CGDataProvider(data: Data(pixels) as CFData),
               let image = CGImage(width: size, height: size, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: size * 4,
                                   space: CGColorSpace(name: CGColorSpace.sRGB)!,
@@ -220,7 +220,7 @@ package enum ProceduralTextures {
     }
 
     /// Where the PNGs are kept.
-    static let folder: URL = {
+    package static let folder: URL = {
         let folder = CacheFile.userFolder.appendingPathComponent("textures")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder
