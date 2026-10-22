@@ -547,6 +547,12 @@ package final class Scene {
     package var physicsStepper: PhysicsStepper?
     /// The time the CPU's steps were last asked for (a frame at the same time: paused, a still, waits for them).
     package var physicsTime: Float?
+    /// With cars: what this frame draws, between the stepper's last two steps (`Scene.drawnBetween`), and how far
+    /// behind the frame the latest steps are on average (s).
+    package var drawnFrame: PhysicsStepper.Drawn?
+    package var physicsLag: Float = 0
+    /// The time that frame drew the steps at, and the frame's own time.
+    package var physicsShown: (shown: Float, at: Float)?
     /// The open world's scene: which part of the world it holds, and where (Scene+World.swift).
     package var worldPlace: WorldPlace?
     /// ...and where its sun and moon are now (`update`).

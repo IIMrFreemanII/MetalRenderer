@@ -49,9 +49,12 @@ final class CarTests: XCTestCase {
 
     private func frame(_ w: PhysicsWorld, _ car: Int = 0) -> CarTelemetry { w.carTelemetry(car) }
 
+    /// Car `car`'s body's length (its parts' nodes left out: a bumper may fly off).
     private func length(_ w: PhysicsWorld, car: Int = 0) -> Float {
         let s = w.carSystem.cars[car]
-        let nodes = (Int(s.firstNode)..<Int(s.firstNode + s.nodeCount)).map { PhysicsMath.xyz(w.particles[$0].position) }
+        let parts = w.carSystem.parts[Int(s.firstPart)..<Int(s.firstPart + s.partCount)]
+        let body = (Int(s.firstNode)..<Int(s.firstNode + s.nodeCount)).filter { i in !parts.contains { i >= Int($0.firstNode) && i < Int($0.firstNode + $0.nodeCount) } }
+        let nodes = body.map { PhysicsMath.xyz(w.particles[$0].position) }
         let f = frame(w, car)
         let along = nodes.map { dot($0, f.forward) }
         return along.max()! - along.min()!
@@ -222,6 +225,71 @@ final class CarTests: XCTestCase {
         XCTAssertEqual(w.particles.map(\.position), nodes.map(\.position))
     }
 
+    /// What a frame between two steps draws (PhysicsStepper.Drawn.between): a moving car's nodes, wheels and frame
+    /// halfway, the wheels' rotations whole, the rest the later step's.
+    func testDrawnBetweenSteps() {
+        let w = world([.sedan], speed: 20)
+        run(w, 0.5)
+        let a = PhysicsStepper.Drawn(w)
+        w.advance(to: w.time + PhysicsWorld.stepLength)
+        let b = PhysicsStepper.Drawn(w)
+        let m = PhysicsStepper.Drawn.between(a, b, 0.5)
+        XCTAssertEqual(m.stepIndex, b.stepIndex)
+        XCTAssertEqual(simd_distance(m.cars[0].position, (a.cars[0].position + b.cars[0].position) / 2), 0, accuracy: 1e-4)
+        let i = Int(w.carSystem.cars[0].firstNode)
+        XCTAssertEqual(simd_distance(PhysicsMath.xyz(m.particles[i].position), (PhysicsMath.xyz(a.particles[i].position) + PhysicsMath.xyz(b.particles[i].position)) / 2),
+                       0, accuracy: 1e-4)
+        for k in m.bodies.indices { XCTAssertEqual(simd_length(m.bodies[k].rotation), 1, accuracy: 1e-4) }
+        XCTAssertEqual(PhysicsStepper.Drawn.between(a, b, 1).particles.map(\.position), b.particles.map(\.position))
+    }
+
+    /// A car at 20 m/s stepped behind frames of uneven lengths (12 to 20 ms, a window's at 60 to 80 fps): drawn from
+    /// the latest step, how far it moves a frame against the frame's length jumps about; drawn between the recent
+    /// steps (Scene.drawnBetween), it keeps to its speed.
+    func testFramesBetweenStepsAreSmooth() {
+        let w = world([.sedan], speed: 20)
+        let scene = Scene()
+        scene.physics = w
+        let stepper = PhysicsStepper(world: w)
+        defer { stepper.stop() }
+        var t: Float = 0, seed: UInt32 = 7
+        var latest: [(t: Float, z: Float)] = [], between: [(t: Float, z: Float)] = []
+        for frame in 0..<150 {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let dt = 0.012 + 0.008 * Float(seed >> 8) / Float(1 << 24)
+            t += dt
+            stepper.request(to: t)
+            Thread.sleep(forTimeInterval: Double(dt))
+            let drawn = scene.drawnBetween(stepper, at: t, paused: false)
+            if frame > 30 {
+                latest.append((t, stepper.latest.cars[0].centre.z))
+                between.append((t, drawn.cars[0].centre.z))
+            }
+        }
+        // (How much its speed changes from one frame to the next, as a share of it: the car slowing down changes it by
+        // under 1%.)
+        func jitter(_ track: [(t: Float, z: Float)]) -> Float {
+            let speeds = zip(track, track.dropFirst()).map { ($1.z - $0.z) / ($1.t - $0.t) }
+            let mean = speeds.reduce(0, +) / Float(speeds.count)
+            let changes = zip(speeds, speeds.dropFirst()).map { ($1 - $0) * ($1 - $0) }
+            return (changes.reduce(0, +) / Float(changes.count)).squareRoot() / mean
+        }
+        // (The car's own: its middle from step to step, the body's shake in it.)
+        let own = PhysicsWorld(substeps: 16)
+        own.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
+        own.addCar(CarBlueprint(.preset(.sedan)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 20])
+        own.finish()
+        var steps: [(t: Float, z: Float)] = []
+        for k in 1...120 {
+            own.advance(to: Float(k) * PhysicsWorld.stepLength + PhysicsWorld.stepLength / 2)
+            if k > 30 { steps.append((own.time, own.carTelemetry(0).centre.z)) }
+        }
+        print(String(format: "speed's change from frame to frame: latest %.0f%%, between %.0f%%; from step to step %.0f%%", jitter(latest) * 100,
+                     jitter(between) * 100, jitter(steps) * 100))
+        XCTAssertLessThan(jitter(between), 0.05)
+        XCTAssertLessThan(jitter(between), jitter(latest) / 5)
+    }
+
     /// The steps are the same on one core as on all of them, with a car's input commands.
     func testThreadsAgree() {
         func run(everyCore: Bool) -> [SIMD4<Float>] {
@@ -249,11 +317,12 @@ final class CarTests: XCTestCase {
             let car = w.addCar(b, transform: translate([3, 0, -2]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
             w.addCarSurface(surface.body, car: car, hull: b.hull, vertexBase: 0)
             w.finish()
-            var worst: Float = 0
+            var worst: Float = 0, at = SIMD3<Float>()
             for (v, p) in surface.body.mesh.positions.enumerated() {
-                worst = max(worst, simd_distance(w.drawnSoftVertex(v), p + SIMD3(3, 0, -2)))
+                let d = simd_distance(w.drawnSoftVertex(v), p + SIMD3(3, 0, -2))
+                if d > worst { (worst, at) = (d, p) }
             }
-            print("\(style): \(surface.body.mesh.positions.count) + \(surface.glass.mesh.positions.count) vertices, worst \(worst) m")
+            print("\(style): \(surface.body.mesh.positions.count) + \(surface.glass.mesh.positions.count) vertices, worst \(worst) m at \(at)")
             XCTAssertLessThan(worst, 0.005, "\(style)")
             XCTAssertFalse(surface.glass.mesh.indices.isEmpty, "\(style)")
         }

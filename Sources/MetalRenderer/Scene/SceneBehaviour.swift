@@ -39,6 +39,10 @@ package protocol SceneBehaviour: AnyObject {
     /// The physics as drawn this frame (its bodies' poses, the demolition's rockets and blasts, the cars' gauges): what
     /// the scene shows of them (Scene.update).
     func drawn(_ scene: Scene, _ drawn: PhysicsStepper.Drawn)
+    /// A frame, after the scene has moved to its time (Scene.update: what it draws this frame): a camera that chases
+    /// something moving is placed here (from `update`, before, it chased where the thing was a frame ago, and every
+    /// frame of another length showed it somewhere else on the screen).
+    func lateUpdate(_ renderer: Renderer, dt: Float)
     /// What the view shows over the frame (SceneHUDView), or nil.
     var hud: SceneHUD? { get }
 }
@@ -54,6 +58,7 @@ package extension SceneBehaviour {
     var grabs: Bool { true }
     func look(_ renderer: Renderer, dx: Float, dy: Float) {}
     func drawn(_ scene: Scene, _ drawn: PhysicsStepper.Drawn) {}
+    func lateUpdate(_ renderer: Renderer, dt: Float) {}
     var hud: SceneHUD? { nil }
 }
 

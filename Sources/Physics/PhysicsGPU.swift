@@ -808,9 +808,12 @@ package final class PhysicsGPU {
         dispatch(enc, pipelines[.physicsClothMesh], particleCount)
     }
 
-    /// The soft bodies' drawn vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits.
-    package func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer) {
+    /// The soft bodies' drawn vertices (and last frame's) and normals into the scene's vertex buffers, ahead of the refits;
+    /// the cars' vertices' damage into `damage` (one uchar4 a vertex of the scene's: SceneBuffers.damage, there when the
+    /// world has cars).
+    package func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer, damage: MTLBuffer? = nil) {
         guard hasSoftBodies else { return }
+        precondition(damage != nil || !world.hasCars, "a world with cars and no damage buffer")
         var n = UInt32(world.softVertices.count)
         enc.setComputePipelineState(pipelines[.physicsSoftMesh])
         enc.setBytes(&n, length: 4, index: 0)
@@ -819,6 +822,7 @@ package final class PhysicsGPU {
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(softEmbeds, offset: 0, index: 4)
         enc.setBuffer(simulates ? bodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
+        enc.setBuffer(damage ?? positions, offset: 0, index: 6)   // (no car's vertex writes to it without cars)
         dispatch(enc, pipelines[.physicsSoftMesh], Int(n))
         enc.setComputePipelineState(pipelines[.physicsSoftNormals])
         enc.setBuffer(softVertices, offset: 0, index: 1)

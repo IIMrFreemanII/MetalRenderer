@@ -170,8 +170,11 @@ static_assert(sizeof(PhysicsTet) == 32, "PhysicsTet: GPUPhysicsTet");
 struct PhysicsSoftVertex {
     uint4 info;      // x = its place in the vertex buffer, y = its mesh's prevOffset, z = its soft body,
                      // w = its ring's start << 5 | its triangles
-    uint4 embeds;    // x = its first PhysicsSoftEmbed, y = how many
+    uint4 embeds;    // x = its first PhysicsSoftEmbed, y = how many; a car's: z = PHYS_CAR_VERTEX | its pane or lamp (1 +
+                     // its place, low byte) | PHYS_CAR_LAMP, w = its car's first node
 };
+// PhysicsWorld.carVertexBit, lampBit.
+constant uint PHYS_CAR_VERTEX = 1u << 31, PHYS_CAR_LAMP = 1u << 8;
 static_assert(sizeof(PhysicsSoftVertex) == 32, "PhysicsSoftVertex: GPUSoftVertex");
 
 // Where a drawn vertex is in one of the tets it follows: GPUSoftEmbed.
@@ -2696,12 +2699,17 @@ kernel void physicsClothMeshKernel(constant uint&                count     [[buf
 
 // Every soft body's drawn vertex into the scene's vertex buffer (PhysicsWorld.drawnSoftVertex): last frame's place
 // first (motion vectors), then this frame's, where its tets put it, averaged. The normals follow, then the refits.
+// A car's vertex (CarSurface) also takes its damage from the nodes of the triangle it is on (their info.z: crush,
+// scrape, dirt, a byte each: CarDamage.swift) into `damage`, at its place, for the paint (Surface.metal carDamage);
+// on a broken pane (its bit in its car's first nodes' info.z, from bit 24) it folds away to its car's first node, on
+// a broken lamp it is dark (w).
 kernel void physicsSoftMeshKernel(constant uint&                  count     [[buffer(0)]],
                                   device const PhysicsParticle*   particles [[buffer(1)]],
                                   device const PhysicsSoftVertex* vertices  [[buffer(2)]],
                                   device float3*                  positions [[buffer(3)]],
                                   device const PhysicsSoftEmbed*  embeds    [[buffer(4)]],
                                   device const PhysicsBody*       bodies    [[buffer(5)]],
+                                  device uchar4*                  damage    [[buffer(6)]],
                                   uint i [[thread_position_in_grid]])
 {
     if (i >= count) return;
@@ -2724,6 +2732,19 @@ kernel void physicsSoftMeshKernel(constant uint&                  count     [[bu
         p += (x0 + e1 * e.bary.x + e2 * e.bary.y + e3 * e.bary.z) * e.bary.w;
     }
     uint at = s.info.x;
+    if ((s.embeds.z & PHYS_CAR_VERTEX) != 0u) {
+        PhysicsSoftEmbed e = embeds[s.embeds.x];
+        float3 w = float3(1.0f - e.bary.x - e.bary.y, e.bary.xy);
+        uint3 z = uint3(particles[e.ids.x].info.z, particles[e.ids.y].info.z, particles[e.ids.z].info.z);
+        float3 d = float3(z.x & 0xFFu, (z.x >> 8) & 0xFFu, (z.x >> 16) & 0xFFu) * w.x
+                 + float3(z.y & 0xFFu, (z.y >> 8) & 0xFFu, (z.y >> 16) & 0xFFu) * w.y
+                 + float3(z.z & 0xFFu, (z.z >> 8) & 0xFFu, (z.z >> 16) & 0xFFu) * w.z;
+        uint pane = s.embeds.z & 0xFFu;
+        bool broken = pane != 0u && ((particles[s.embeds.w + (pane - 1u) / 8u].info.z >> (24u + (pane - 1u) % 8u)) & 1u) != 0u;
+        bool lamp = (s.embeds.z & PHYS_CAR_LAMP) != 0u;
+        if (broken && !lamp) p = particles[s.embeds.w].position.xyz;
+        damage[at] = uchar4(uint4(uint3(clamp(d + 0.5f, 0.0f, 255.0f)), broken && lamp ? 255u : 0u));
+    }
     positions[at + s.info.y] = positions[at];
     positions[at] = p;
 }

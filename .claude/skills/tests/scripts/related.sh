@@ -124,7 +124,7 @@ by_folder() {
     Sources/Materials/Painter/UV*.swift|Sources/Materials/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
     Sources/Materials/Painter/*.swift|Sources/MetalRenderer/Painter/*.swift) add PainterTests ;;
     Sources/Materials/MaterialGraph/*.swift|Sources/MetalRenderer/MaterialGraph/*.swift) add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
-    Sources/Physics/Cars/*.swift|Sources/MetalRenderer/Cars/*.swift|Sources/Game/Cars/*.swift) add CarTests PhysicsThreadsTests ;;
+    Sources/Physics/Cars/*.swift|Sources/MetalRenderer/Cars/*.swift|Sources/Game/Cars/*.swift) add CarTests CarDamageTests PhysicsThreadsTests ;;
     Sources/Physics/*.swift) add PhysicsTests PhysicsThreadsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests DestructionTests ;;
     Sources/Characters/*.swift) add CharacterBaseTests CrowdTests CharacterEditorTests ;;
     Sources/Buildings/*.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests WalkerTests ;;

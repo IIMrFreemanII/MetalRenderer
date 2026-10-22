@@ -28,9 +28,9 @@ final class CarPlayer: SceneBehaviour {
     var eye: SIMD3<Float>?
     var message: String?
 
-    /// The chase camera's place behind and above the car (m), what it looks at above the car's floor, how fast it
-    /// follows (s).
-    static let behind: Float = 6.5, above: Float = 2.2, target: Float = 0.9, lag: Float = 0.12
+    /// The chase camera's place behind and above the car (m), what it looks at above the car's middle (its body's
+    /// rings' nodes': CarTelemetry.centre), how fast it follows (s).
+    static let behind: Float = 6.5, above: Float = 2.2, target: Float = 0.4, lag: Float = 0.12
 
     init(_ scene: Scene) { self.scene = scene }
 
@@ -84,7 +84,7 @@ final class CarPlayer: SceneBehaviour {
         message = "Restarted"
     }
 
-    /// A frame: the keys as the car's input (sent when they change), then the chase camera.
+    /// A frame: the keys as the car's input (sent when they change); true while the chase camera has the view.
     func update(_ r: Renderer, dt: Float) -> Bool {
         guard let car = player else { return false }
         var input = CarInput()
@@ -100,15 +100,20 @@ final class CarPlayer: SceneBehaviour {
             shiftUp = false
             shiftDown = false
         }
-        // (A benchmark's fixed camera stays where it is.)
-        guard r.benchmark?.current.camera == nil, let drawn = r.scene.drawnPhysics, drawn.cars.indices.contains(car) else { return false }
+        // (A benchmark's fixed camera stays where it is.) The chase camera itself once the scene has moved: lateUpdate.
+        return r.benchmark?.current.camera == nil
+    }
+
+    /// The chase camera, after the scene has moved: behind the car as this frame draws it.
+    func lateUpdate(_ r: Renderer, dt: Float) {
+        guard let car = player, r.benchmark?.current.camera == nil, let drawn = r.scene.drawnPhysics, drawn.cars.indices.contains(car) else { return }
         let t = drawn.cars[car]
         // Behind the car (its heading on the ground), turned by the mouse, a little above; easing after it.
         var ahead = SIMD3<Float>(t.forward.x, 0, t.forward.z)
         ahead = length(ahead) > 1e-3 ? normalize(ahead) : [0, 0, 1]
         let turn = simd_quatf(angle: orbit.x, axis: [0, 1, 0])
         let back = turn.act(-ahead)
-        let target = t.position + SIMD3(0, CarPlayer.target, 0)
+        let target = t.centre + SIMD3(0, CarPlayer.target, 0)
         let wanted = target + back * (CarPlayer.behind * cos(orbit.y)) + SIMD3(0, CarPlayer.above + CarPlayer.behind * sin(orbit.y), 0)
         let k = 1 - exp(-dt / CarPlayer.lag)
         let smooth = eye.map { $0 + (wanted - $0) * k } ?? wanted
@@ -117,16 +122,25 @@ final class CarPlayer: SceneBehaviour {
         r.camera.position = smooth
         r.camera.yaw = atan2(look.x, -look.z)
         r.camera.pitch = asin(simd_clamp(look.y, -1, 1))
-        return true
     }
 
-    /// Speed, gear and revs in the bottom-left corner, and the keys.
+    /// Speed, gear and revs in the bottom-left corner, the damage, and the keys.
     var hud: SceneHUD? {
         guard let car = player, let drawn = scene?.drawnPhysics, drawn.cars.indices.contains(car) else { return nil }
         let t = drawn.cars[car]
         let gear = t.gear < 0 ? "R" : t.gear == 0 ? "N" : "\(t.gear)"
         var lines = [String(format: "%3.0f km/h   %@   %4.0f rpm", abs(t.speed) * 3.6, gear, t.rpm)]
         if t.bent > 0 || t.broken > 0 { lines.append("damage: \(t.bent) beams bent, \(t.broken) broken") }
+        var off: [String] = []
+        if t.partsOff > 0 { off.append("\(t.partsOff) part\(t.partsOff == 1 ? "" : "s") off") }
+        if t.wheelsOff > 0 { off.append("\(t.wheelsOff) wheel\(t.wheelsOff == 1 ? "" : "s") off") }
+        if t.panesBroken > 0 { off.append("\(t.panesBroken) glass broken") }
+        if !off.isEmpty { lines.append(off.joined(separator: ", ")) }
+        if !t.running {
+            lines.append("engine: seized")
+        } else if t.coolant < 1 || t.engineDamage > 0 {
+            lines.append(String(format: "engine: coolant %.0f%%, heat %.0f%%, damage %.0f%%", t.coolant * 100, t.heat * 100, t.engineDamage * 100))
+        }
         lines.append("W/S throttle, brake   A/D steer   Space handbrake")
         lines.append("\(manual ? "Q/E shift   " : "")M \(manual ? "automatic" : "manual")   R restart   \(captured ? "Esc: free the mouse" : "click: turn the camera")")
         if let m = message { lines.append(m) }

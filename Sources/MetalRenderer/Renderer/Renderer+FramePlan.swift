@@ -288,6 +288,7 @@ extension Renderer {
         if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale }
         scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
+        scene.behaviour?.lateUpdate(self, dt: dt)
         sendDayTime()
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
     }

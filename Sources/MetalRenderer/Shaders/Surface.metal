@@ -22,6 +22,7 @@ struct SceneData {
     device const MaterialExtra* extras;         // SceneShading.extras (with MATERIAL_EXTRAS)
     device const float4*       procParams;      // SceneShading.procParams (with PROCEDURAL_CODE)
     device const WaterScene*   water;           // SceneShading.water (with WATER)
+    device const uchar4*       damage;          // SceneShading.damage (with cars), or null
 };
 
 inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
@@ -38,6 +39,7 @@ inline void bindShading(thread SceneData& s, constant SceneShading& shading) {
     s.extras = shading.extras;
     s.procParams = shading.procParams;
     s.water = shading.water;
+    s.damage = shading.damage;
 }
 
 // A kernel's scene, from its bindings. What a kernel doesn't bind stays null: `sceneLights` is for the kernels that
@@ -787,6 +789,45 @@ inline void surfaceSpecular(thread Surface& sf) {
     }
 }
 
+// Value noise in [0, 1] over a grid of unit cells (smoothed), for the cars' damage's patches.
+inline float damageNoise(float2 p) {
+    float2 i = floor(p), f = p - i;
+    f = f * f * (3.0f - 2.0f * f);
+    uint2 c = uint2(int2(i));
+    float a = float(pcgHash(c.x * 0x9E3779B9u ^ pcgHash(c.y)) & 0xFFFFu), b = float(pcgHash((c.x + 1u) * 0x9E3779B9u ^ pcgHash(c.y)) & 0xFFFFu);
+    float d = float(pcgHash(c.x * 0x9E3779B9u ^ pcgHash(c.y + 1u)) & 0xFFFFu), e = float(pcgHash((c.x + 1u) * 0x9E3779B9u ^ pcgHash(c.y + 1u)) & 0xFFFFu);
+    return mix(mix(a, b, f.x), mix(d, e, f.x), f.y) * (1.0f / 65535.0f);
+}
+
+// A car's damage at a hit on its panels (SceneBuffers.damage: per vertex, from the nodes it follows,
+// physicsSoftMeshKernel; CarDamage.swift): a broken lamp is dark; the paint (a clear coat) is dulled by its dirt,
+// creased and cracked to its primer where it is crushed, scratched to its primer and scraped to bare metal where it
+// slid on what it hit, each in patches (noise over its texture's coordinates) that spread as the damage grows.
+inline void carDamage(thread Surface& sf, thread const HitVertices& hv, float w0, float2 bc, thread const SceneData& s, float2 uv) {
+    float4 d = (float4(s.damage[hv.i[0]]) * w0 + float4(s.damage[hv.i[1]]) * bc.x + float4(s.damage[hv.i[2]]) * bc.y) * (1.0f / 255.0f);
+    if (all(d < float4(0.004f))) return;
+    if (d.w > 0.5f) {
+        sf.emission = float3(0.0f);
+        sf.albedo *= 0.3f;
+    }
+    if (sf.coat < 0.0f) return;
+    float n = 0.65f * damageNoise(uv * 90.0f) + 0.35f * damageNoise(uv * 260.0f + 17.0f);
+    float film = saturate(d.z * (0.5f + n));
+    sf.albedo = mix(sf.albedo, float3(0.16f, 0.13f, 0.1f), 0.85f * film);
+    sf.roughness = mix(sf.roughness, 0.75f, film);
+    sf.albedo *= 1.0f - 0.25f * d.x;
+    float primer = max(saturate((d.x - 0.35f - 0.4f * n) * 6.0f), saturate((d.y - 0.05f - 0.4f * n) * 6.0f));
+    float metal = saturate((d.y - 0.25f - 0.6f * n) * 5.0f);
+    primer *= 1.0f - metal;
+    if (primer + metal < 0.5f) return;
+    // (The coat is gone there: the primer is a dull dielectric, the bare steel a metal.)
+    sf.coat = -1.0f;
+    sf.specular = 1.0f;
+    sf.metallic = metal / (primer + metal);
+    sf.albedo = mix(float3(0.42f, 0.42f, 0.4f), float3(0.62f, 0.62f, 0.64f), sf.metallic);
+    sf.roughness = mix(0.65f, 0.3f, sf.metallic);
+}
+
 // The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures.
 Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
@@ -1104,6 +1145,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             }
         }
     }
+    if (DEFORMING_MESHES && hv.prevOffset != 0 && s.damage != nullptr) carDamage(sf, hv, w0, bc, s, t0 * w0 + t1 * bc.x + t2 * bc.y);
     if (TERRAIN && hv.terrain != 0u) {
         float cosTheta = max(abs(dot(normalize(r.direction), sf.geomNormal)), 0.2f);
         float footprint = res.distance * length(r.direction) * spread / cosTheta;

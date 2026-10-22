@@ -420,7 +420,34 @@ extension PhysicsWorld {
             let e3 = PhysicsMath.xyz(q[Int(e.ids.w)].position) - x0
             p += (x0 + e1 * e.bary.x + e2 * e.bary.y + e3 * e.bary.z) * e.bary.w
         }
+        // A car's broken pane: folded away to its car's first node.
+        if s.embeds.z & PhysicsWorld.carVertexBit != 0, s.embeds.z & PhysicsWorld.lampBit == 0, PhysicsWorld.carPaneBroken(s, q) {
+            return PhysicsMath.xyz(q[Int(s.embeds.w)].position)
+        }
         return p
+    }
+
+    /// Whether car vertex `s`'s pane or lamp is broken (its bit in its car's first nodes' info.z).
+    package static func carPaneBroken(_ s: GPUSoftVertex, _ q: [GPUPhysicsParticle]) -> Bool {
+        let pane = s.embeds.z & 0xFF
+        guard pane != 0 else { return false }
+        return (q[Int(s.embeds.w + (pane - 1) / 8)].info.z >> (24 + (pane - 1) % 8)) & 1 != 0
+    }
+
+    /// Car vertex `v`'s damage as the kernel takes it (crush, scrape, dirt from 0 to 255 across the triangle it is on;
+    /// 255 in w: a broken lamp's).
+    package func drawnCarDamage(_ v: Int) -> SIMD4<UInt8> {
+        let s = softVertices[v], e = softEmbeds[Int(s.embeds.x)], q = particles
+        guard s.embeds.z & PhysicsWorld.carVertexBit != 0 else { return .zero }
+        let w = SIMD3<Float>(1 - e.bary.x - e.bary.y, e.bary.x, e.bary.y)
+        var d = SIMD3<Float>()
+        for (k, i) in [e.ids.x, e.ids.y, e.ids.z].enumerated() {
+            let z = q[Int(i)].info.z
+            d += SIMD3(Float(z & 0xFF), Float(z >> 8 & 0xFF), Float(z >> 16 & 0xFF)) * w[k]
+        }
+        let c = simd_clamp(d + 0.5, SIMD3(repeating: 0), SIMD3(repeating: 255))
+        let dark = s.embeds.z & PhysicsWorld.lampBit != 0 && PhysicsWorld.carPaneBroken(s, q)
+        return SIMD4(UInt8(c.x), UInt8(c.y), UInt8(c.z), dark ? 255 : 0)
     }
 
     /// Drawn vertex `v`'s normal across its ring, the drawn vertices at `position` (by their place in the scene's

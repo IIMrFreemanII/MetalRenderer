@@ -553,6 +553,7 @@ extension Renderer {
             p.storeBytes(of: triangleMaterialBuffer.gpuAddress, toByteOffset: 48, as: UInt64.self)
             p.storeBytes(of: extrasBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingExtrasOffset, as: UInt64.self)
             p.storeBytes(of: procParamBuffers[slot].gpuAddress, toByteOffset: Renderer.shadingProcParamsOffset, as: UInt64.self)
+            p.storeBytes(of: sceneBuffers.damage?.gpuAddress ?? 0, toByteOffset: Renderer.shadingDamageOffset, as: UInt64.self)
             shadingArgs.append(args)
             writeSkyArguments(slot: slot)
         }
@@ -567,6 +568,7 @@ extension Renderer {
         for perSlot in [materialBuffers, textureTables, extrasBuffers, opacityBuffers, procParamBuffers] { resources += perSlot }
         let shared: [MTLResource] = [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
         resources += shared
+        if let damage = sceneBuffers.damage { resources.append(damage) }
         if textureStreamer?.placement != false { resources += materialTextures }
         resources += sceneBuffers.blockBuffers
         resources += sceneBuffers.instanceResources

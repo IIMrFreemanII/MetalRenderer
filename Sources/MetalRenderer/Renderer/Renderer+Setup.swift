@@ -335,8 +335,10 @@ extension Renderer {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene
             cpuBreakRing = nil
-            if let proxies = scene.destructionRig?.dustProxies ?? scene.demolitionRig?.dustProxies, !proxies.isEmpty,
-               scene.physics?.fractures == true {
+            // (The cars' breaks too: CarDamage.swift's events, on the CPU's steps.)
+            let carProxies = scene.carRig.breakProxies.isEmpty ? nil : scene.carRig.breakProxies
+            if let proxies = scene.destructionRig?.dustProxies ?? scene.demolitionRig?.dustProxies ?? carProxies, !proxies.isEmpty,
+               scene.physics?.fractures == true || scene.physics?.hasCars == true {
                 if let ring = physicsGPU?.breakRing, physicsGPU?.simulates == true {
                     particlesGPU?.breakRing = ring
                 } else {

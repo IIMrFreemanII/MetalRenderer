@@ -125,6 +125,8 @@ extension Scene {
         }
         world.keepBuiltCommands()
         rig.player = 0
+        rig.packTextures = carRig.packTextures
+        rig.breakProxies = addCarDust(kit)
         carRig = rig
 
         section("Sun")

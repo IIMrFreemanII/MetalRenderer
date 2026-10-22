@@ -1,6 +1,7 @@
 # Cars: handoff
 
-Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars that drive and dent. The plan is
+Phase 1 on branch `claude/car-physics-deformation-7275c3` (PR #120); phase 2 on `claude/car-breaking-damage`, from
+phase 1's tip. Node-beam (BeamNG-style) cars that drive, dent and break. The plan is
 `/Users/ndiahovets/.claude/plans/add-car-physics-and-tender-wadler.md`; the design is in the README's "Cars" section.
 
 ## The user's choices
@@ -123,14 +124,73 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
   and the path tracer.
 - **No hand test in the window:** keys, HUD, captured-mouse orbit.
 
+## Phase 2: breaking and the damage look (branch `claude/car-breaking-damage`)
+
+- **Parts** (`CarBlueprint.buildParts`, `addPart`, `addMirror`): bumpers, hood, trunk lid (not a pickup's or a
+  hatchback's), two or four doors, mirrors where the model has them (`CarSpec.mirror`, measured in `fitted`). A part is
+  twins of the body nodes under it, 2 cm out (`partGap`), its triangles' edges and bend beams (`.panel`), compression
+  supports to its body twins, and attachments (`.attach`, `CarBeam.attachBit`, the part in `info >> 24`).
+  `CarSystem.parts` (`CarPart`: node range, holding, flags off/frozen). Hull tags (`hullTags`) say which body triangle
+  is which panel; a bumper takes only the end below the belt line (the whole end took a pickup's tailgate, and float32
+  precision on a thin twin triangle drifted its vertices 2 cm).
+- **Attachments** break when the body node they are fixed to is crushed (`CarSolver.mountCrush`, 6% flow); a part with
+  less than half left is torn off (`tornBelow`), its supports let go, and it is frozen once still for 1 s (inverse mass
+  0), woken in `carBroadPhase` by a body coming near.
+- **Wheels and arms:** wishbones, tie rods and toe links are plastic `.arm` beams (40 kN yield, 90 kN strength), their
+  load from the substep's lambdas after the corners' passes (`armLoad`). A wheel comes off (`CarWheel.off`: flags
+  cleared, body friction back, `wheelBit` cleared) when 3 of its `links` break or its axle's knock along the ground in
+  one substep passes 32 kN (`axleKnock`).
+- **Glass and lamps** (`CarSurface.panes`, `CarPane`): panes by facing and place, lamps by corner. Broken when the frame
+  strains past 0.8% (lamps' flow past 3%) or the door they are in comes off. The break bit is in the car's first
+  nodes' `info.z` (bit 24 + pane % 8, node first + pane / 8); `GPUSoftVertex.embeds.z` holds `carVertexBit | pane+1 |
+  lampBit`, `.w` the car's first node. The kernel folds a broken pane's vertices to the first node, darkens a lamp.
+- **Engine** (`CarDamage.swift`): `frontCrush` = mean of the 4 front-end nodes that came back furthest toward the
+  engine (rest-length shortening measured buckled beams as 0.2 m at 100 km/h). Radiator leaks from 0.08 m; coolant →
+  heat → power cut → seize; block damage from 0.5 m (1 at 0.8 m). Steam / smoke events every 6 steps.
+- **Look:** node `info.z` bytes crush / scrape / dirt (`crushNode`, `wearNodes` from `CarSystem.wear`, which
+  `nodeContacts` fills via `sliding`). `SceneBuffers.damage` (uchar4 per vertex, only with cars) at
+  `SceneShading.damage` (offset 296, `Renderer.shadingDamageOffset`); `Surface.metal` `carDamage` (primer, bare steel,
+  dirt, dark lamps), only where the material has a coat for the paint part.
+- **Events → particles:** `CarSystem.events` per car, logged into `breakLog` in `endCarStep`; `CarRig.breakProxies`
+  (`Scene+CarDust.swift`) wired into `ParticlesGPU.breakRing` in `Renderer+Setup` for worlds with cars.
+- **Tests:** `CarDamageTests` (10); `CarTests` length now leaves parts out. `-m carsdamage` renders the wall at 50 and
+  100 km/h. Hot loops: `damage`, `crushNode`, `wearNodes`, `tear`, `letGo`, `armLoad`, `flow`, `sliding`; hotcalls
+  passes (a SIMD2 static constant made a swift_once: plain Floats).
+- **Cost:** carscpu 1.25 / 1.9 / 2.8 ms for 1 / 4 / 8 cars (P1: 0.92 / 1.6 / 2.2), over the 2.5 ms target at 8 cars.
+  The solver is inlined into one closure, so `sample` can't split it further; parts are ~25% more nodes and beams.
+  Corner beams are now last (`firstCorner`) and parts' edges aren't hull beams: both small gains.
+
+- **After the first hand test** (the user's recording: an off-roader's front wheels sideways, the camera stuttering):
+  - The front steering arm was 10 cm inboard of the kingpin, 54° from the tie rod's line: steering full left then full
+    right put the right wheel over centre (−102°), and centred both stayed at ±73° (the car couldn't pull away). The
+    arm is straight ahead of the kingpin now (`buildCorner`); `testSteeringLeavesTheTieRodsStraight`.
+  - The chase camera aimed at the latest step's car, 60 steps a second against 75–80 frames: car worlds draw their
+    stepper's recent steps blended (`PhysicsStepper.recent`, `Drawn.between`, `Scene.drawnBetween`, `drawnFrame`,
+    `physicsLag`, `physicsShown`). The second recording still stuttered: the camera ran in `update`, before
+    `Scene.update`, so it chased the car a frame behind; it is in `SceneBehaviour.lateUpdate` now, aimed at
+    `CarTelemetry.centre`. `testFramesBetweenStepsAreSmooth`: speed change from frame to frame 50% → 2%.
+
+### Traps found in phase 2
+
+- **Stiff beams' load from stretch.** An arm at 5e7 N/m read a millimetre of solver slack as 50 kN and bent at rest:
+  the car sank and couldn't drive. Use the constraint's lambda / h² over the substep.
+- **Attachment strength per beam.** Each beam of a hinge carried the whole hinge's strength: four times too strong.
+- **Attachments as stiff as the body** yielded at 0.3 mm; the body's flex in a crash at the front tore off the rear
+  bumper and trunk lid, and at rest bent the mirrors. They yield 3 mm out now, and break when their mount is crushed.
+- **Axle loads averaged over a step** can't tell a curb from a speed bump (both ~40 kN; along the ground 19 vs 17 at
+  the rear). The hardest substep's knock along the ground separates them (39 vs 23 kN).
+- **ParticleSystem.maxPerEvent is 8**: more traps at launch, no message (lldb showed it).
+
+### Not done in phase 2
+
+- Detached parts don't meet their own car (P3's car-vs-car solver).
+- A car that rebounds off a wall rolls back freely (no rolling resistance).
+- No A/B against a baseline build for the other scenes: the shading reads damage only when `SceneShading.damage` is
+  set (worlds with cars), and the kernel's change is behind the car vertex bit.
+- 8 cars over the cost target; the window hand test (keys, HUD with damage lines, the dust in motion).
+
 ## Next phases
 
-- **P2 — breaking and the damage look:**
-  - parts table, attachment beams, detached node islands;
-  - glass shatter (break events → dust and shards);
-  - axle and arm breaks;
-  - engine damage and smoke;
-  - per-vertex damage channel (scrape, dirt, primer) and broken lamps.
 - **P3 — car against car and the world:**
   - car vs car (node vs hull triangles);
   - node pushes into fractured pieces with `strike`;

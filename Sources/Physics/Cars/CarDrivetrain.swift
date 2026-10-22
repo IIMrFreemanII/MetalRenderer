@@ -52,7 +52,10 @@ extension CarSolver {
         var driven: Float = 0, drivenInverse: Float = 0, meanSpin: Float = 0
         for k in 0..<wheels {
             let w = b.wheels[wf + k]
-            if w.tie >= 0 { b.beams[Int(w.tie)].rest = b.limits[Int(w.tie)].rest0 + b.limits[Int(w.tie)].steer * turn }
+            if w.tie >= 0 {
+                let limit = b.limits[Int(w.tie)]
+                b.beams[Int(w.tie)].rest = limit.rest0 + limit.bend + limit.steer * turn
+            }
             let o = b.bodies[Int(w.body)], a = PhysicsMath.qrot(o.rotation, w.axle)
             spins[k] = dot(PhysicsMath.xyz(o.angular), a)
             inverse[k] = PhysicsWorld.turnWeight(o, a)
@@ -71,13 +74,16 @@ extension CarSolver {
             let ground = abs(speed), wheel = abs(meanSpin) * b.wheels[wf].radius
             spinning = simd_clamp((wheel - ground * (1 + tyrePeakRatio) - 0.3) / 1.0, 0, 1)
         }
-        // The engine.
+        // The engine: its power cut by its damage and by its heat past half (CarDamage.swift); a seized one stopped.
         if s.running {
             var throttle = s.throttle * (1 - 0.95 * spinning)
             if s.engine < t.idle { throttle = max(throttle, min((t.idle - s.engine) / (0.2 * t.idle), 1) * 0.3) }
             if s.engine > t.limiter { throttle = 0 }
-            let torque = throttle * t.torque(at: s.engine) - (15 + 0.02 * s.engine) * min(s.engine / 10, 1)
+            let power = (1 - s.engineDamage) * (1 - 1.2 * max(s.heat - 0.5, 0))
+            let torque = throttle * power * t.torque(at: s.engine) - (15 + 0.02 * s.engine) * min(s.engine / 10, 1)
             s.engine = max(s.engine + torque * h / t.engineInertia, 0)
+        } else {
+            s.engine = 0
         }
         // The gearbox: automatic shifts (the clutch out for a moment), up when the wheels turn the gearbox near the limiter,
         // down when they turn it near idle, not back at once.
@@ -99,7 +105,7 @@ extension CarSolver {
         // The clutch: slipping at a launch (as the engine revs), in while the gearbox turns above idle.
         let g = ratio(t, s.gear)
         var engage: Float = 0
-        if g != 0 && s.shifting <= 0 && driven > 0 {
+        if g != 0 && s.shifting <= 0 && driven > 0 && s.running {
             let launch = s.throttle > 0.05 ? simd_clamp((s.engine - t.idle) / (1.2 * t.idle), 0, 1) : 0
             let rolling = simd_clamp((abs(g * meanSpin) - 0.9 * t.idle) / (0.4 * t.idle), 0, 1)
             engage = max(launch, rolling)
@@ -160,9 +166,9 @@ extension CarSolver {
             let taken = spinWheel(w, b, dw)
             knuckleCouple(-taken, w, b)
         }
-        // The tyres.
+        // The tyres (of the wheels still on).
         let candidates = Int(s.firstCandidate)..<Int(s.firstCandidate + s.candidateCount)
-        for k in 0..<wheels { tyre(wf + k, b, t, candidates, h) }
+        for k in 0..<wheels where b.wheels[wf + k].flags & CarWheel.off == 0 { tyre(wf + k, b, t, candidates, h) }
 
         // The air's drag, and the nodes moved (their velocities, gravity).
         let v = length(f.velocity)
