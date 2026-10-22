@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "metalrenderer": {
+      "command": "python3",
+      "args": ["Tools/mcp/metalrenderer.py"]
+    }
+  }
+}

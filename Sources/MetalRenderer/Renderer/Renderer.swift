@@ -565,7 +565,16 @@ package final class Renderer: NSObject {
     // MARK: - Setup: state
 
     package var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
+    package var sceneRemake: String?                // the scene's builder runs again, with the same settings: why
     package var streaming = Streaming()
+
+    // MARK: - Scripts: state
+
+    package var scripts: ScriptRunner?              // compiles and runs Swift scripts (Renderer+Scripting)
+    package var scriptServer: ScriptServer?         // the socket Tools/script.py and the MCP server reach
+    package var scriptHooks: [ScriptHook] = []      // the scripts' per-frame closures (ScriptRun.onFrame)
+    package var frameCaptures: [FrameCapture] = []  // the next frame's picture, asked for (captureFrame)
+    package var placedPending: SceneFile?           // a scene file edited while a scene loads: made once it is in
 
     // MARK: - Procedural materials: state
 

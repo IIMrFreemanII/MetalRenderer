@@ -64,7 +64,8 @@ extension Renderer {
         setWorldLights()
         if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene.materials != scene.settings.materials, loading == nil { editMaterials() }
-        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
+        if placedPending != nil { remakeForPendingPlaced() }
+        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged || sceneRemake != nil {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
             let streamed = (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)) && settings.api == builtAPI
@@ -272,6 +273,7 @@ extension Renderer {
             }
         }
         frameDt = dt
+        if !scriptHooks.isEmpty { runScriptHooks(dt: dt) }
         updateCamera(dt: dt)
         let angles = SIMD2(camera.yaw, camera.pitch)
         if angles != sentAngles {

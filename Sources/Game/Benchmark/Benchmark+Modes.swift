@@ -34,7 +34,7 @@ extension Benchmark {
         "interiormotion": interiorMotion, "exposurewalk": exposureWalk, "darkroom": darkRoom,
         "characters": characters, "charactercrowd": characterCrowd, "vfx": vfx, "vfxdemo": vfxDemo, "vfxedit": vfxEdit,
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
-        "outlines": outlines, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
+        "outlines": outlines, "script": script, "serve": serve, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
      .merging(destructionModes) { a, _ in a }.merging(demolitionModes) { a, _ in a }
 

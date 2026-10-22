@@ -52,7 +52,12 @@ package final class Benchmark {
             case paint([PainterStep])
             /// The Terrain Editor's steps (sculpt mode, brushes, strokes, undo), one a frame (Renderer.runTerrainScript).
             case terrain([TerrainStep])
+            /// A Swift script run (ScriptRunner); the setting holds its frame until it is done and its scene is in.
+            case script(String, arguments: [String])
         }
+        /// The setting never ends: it draws its frame a few dozen times a second while scripts and the tools drive the
+        /// app through its socket, until one asks it to quit (the `serve` mode).
+        package var serves = false
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
 
@@ -108,6 +113,8 @@ package final class Benchmark {
         package func riding(_ n: Int) -> Config { var c = self; c.ride = n; return c }
         /// `event` at `time` seconds of the track.
         package func at(_ time: Float, _ event: Event) -> Config { var c = self; c.events.append((time, event)); return c }
+        /// The setting holds, as `serves` says.
+        package func serving() -> Config { var c = self; c.serves = true; return c }
         /// Paused at `time` seconds of animation, so every setting renders the same frame. `previous`: the frame
         /// before the last is saved too.
         package func still(at time: Float = 5, previous: Bool = false) -> Config {
@@ -421,17 +428,32 @@ package final class Benchmark {
             (fileName, type) = (name + (framesLeftInConfig == 2 ? "-prev" : "") + suffix + ".png", .png)
         }
         let url = dir.appendingPathComponent(fileName)
-        return (buffer, {
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
-            guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8,
-                                      bytesPerRow: rowBytes, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: bitmapInfo),
-                  let image = ctx.makeImage(),
-                  let dest = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else { return }
-            CGImageDestinationAddImage(dest, image, type == .jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary : nil)
-            CGImageDestinationFinalize(dest)
-        })
+        return (buffer, { Benchmark.writeImage(buffer, width: w, height: h, to: url, type: type) })
+    }
+
+    /// A frame's copy (`capture`: BGRA, sRGB-encoded bytes) written at `url` as a PNG or a JPEG, `scale` times its
+    /// size. Whether it was written.
+    @discardableResult
+    package static func writeImage(_ buffer: MTLBuffer, width w: Int, height h: Int, to url: URL, type: UTType = .png,
+                                   scale: Double = 1) -> Bool {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.noneSkipFirst.rawValue
+        let sRGB = CGColorSpace(name: CGColorSpace.sRGB)!
+        guard let ctx = CGContext(data: buffer.contents(), width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: w * 4, space: sRGB, bitmapInfo: bitmapInfo),
+              var image = ctx.makeImage(),
+              let dest = CGImageDestinationCreateWithURL(url as CFURL, type.identifier as CFString, 1, nil) else { return false }
+        if scale > 0 && scale < 1 {
+            let sw = max(Int(Double(w) * scale), 1), sh = max(Int(Double(h) * scale), 1)
+            guard let small = CGContext(data: nil, width: sw, height: sh, bitsPerComponent: 8, bytesPerRow: 0, space: sRGB,
+                                        bitmapInfo: bitmapInfo) else { return false }
+            small.interpolationQuality = .high
+            small.draw(image, in: CGRect(x: 0, y: 0, width: sw, height: sh))
+            guard let scaled = small.makeImage() else { return false }
+            image = scaled
+        }
+        CGImageDestinationAddImage(dest, image, type == .jpeg ? [kCGImageDestinationLossyCompressionQuality: 0.92] as CFDictionary : nil)
+        return CGImageDestinationFinalize(dest)
     }
 }
 

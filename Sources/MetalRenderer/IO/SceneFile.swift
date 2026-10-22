@@ -240,6 +240,7 @@ package struct SceneFile {
     ]
     package static func register(prefab name: String, _ make: @escaping Prefab) { registered[name] = make }
     package static func prefab(_ name: String) -> Prefab? { registered[name] }
+    package static var prefabNames: [String] { registered.keys.sorted() }
 }
 
 extension SceneFile.Object {

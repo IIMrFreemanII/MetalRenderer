@@ -126,7 +126,7 @@ extension Renderer {
 
     /// Delete: the selected object out of the file (and what hangs from it), the scene made again.
     package func deletePlaced() {
-        guard let k = placedSelection, var placed = scene.placed else { return }
+        guard let k = placedSelection, let placed = scene.placed else { return }
         var gone = Set([k])
         var grew = true
         while grew {
@@ -141,44 +141,105 @@ extension Renderer {
             kept.append(o)
         }
         for j in kept.indices { kept[j].parent = renumber[kept[j].parent] ?? -1 }
-        placed.file.objects = kept
-        scene.placed = placed
         selection = nil
-        savePlaced(rebuild: true)
+        editPlaced { $0.objects = kept }
     }
 
     /// Command-D: a copy of the selected object beside it (along x, its width away).
     package func duplicatePlaced() {
-        guard let k = placedSelection, var placed = scene.placed else { return }
+        guard let k = placedSelection, let placed = scene.placed else { return }
         var copy = placed.file.objects[k]
         let width = placed.instances[k].map { scene.worldBounds(of: $0) }.map { $0.hi.x - $0.lo.x }.max() ?? 1
         copy.position.x += width * 1.2
         copy.name += " copy"
-        placed.file.objects.append(copy)
-        scene.placed = placed
-        savePlaced(rebuild: true)
+        editPlaced { $0.objects.append(copy) }
     }
 
     /// Command-Shift-N: `asset` (a box) on the ground three metres in front of the camera.
     package func addPlaced(asset: String = "prefab:box") {
-        var placed = scene.placed ?? PlacedFile(file: SceneFile(), instances: [], worlds: [])
         let ahead = camera.position + normalize(SIMD3(camera.forward.x, 0, camera.forward.z)) * 3
         let ground = scene.terrain?.height(ahead.x, ahead.z) ?? 0
         let name = asset.split(separator: ":").last.map(String.init) ?? asset
-        placed.file.objects.append(SceneFile.Object(asset: asset, name: "\(name.capitalized) \(placed.file.objects.count + 1)",
-                                                    position: SIMD3(ahead.x, ground + 0.5, ahead.z)))
-        scene.placed = placed
-        savePlaced(rebuild: true)
+        editPlaced { file in
+            file.objects.append(SceneFile.Object(asset: asset, name: "\(name.capitalized) \(file.objects.count + 1)",
+                                                 position: SIMD3(ahead.x, ground + 0.5, ahead.z)))
+        }
     }
 
-    /// The scene's file written as it is now (and the scene made again from it, for a new or deleted object).
-    package func savePlaced(rebuild: Bool = false) {
+    /// The scene's file written as it is now (a move, applied live).
+    package func savePlaced() {
         guard let placed = scene.placed else { return }
         do {
             try placed.file.write(to: SceneFile.url(for: scene.settings.kind))
         } catch {
             print("Scene file: \(scene.settings.kind.name) not written: \(error)")
         }
-        if rebuild { startLoadingScene() }
+    }
+
+    /// Edits the file of the scene the settings ask for (`edit`, from the file as it was last edited) and writes it
+    /// at once: the editors' and the scripts' way to change what a scene has. Objects only moved, turned or scaled in
+    /// the scene that is in move live (Scene.moveInstances); anything else makes the scene again from the file, once
+    /// a load under way is in (`placedPending`). `save` false: a live move isn't written (motion every frame, a
+    /// script's `onFrame`); the next edit that is writes it. Render thread.
+    package func editPlaced(save: Bool = true, _ edit: (inout SceneFile) -> Void) {
+        let kind = settings.scene.kind
+        let live = kind == scene.settings.kind && loading == nil && placedPending == nil ? scene.placed : nil
+        let before = placedPending ?? live?.file ?? SceneFile(kind) ?? SceneFile()
+        var file = before
+        edit(&file)
+        guard !file.matches(before) else { return }
+        let moves = live.map { file.onlyMoves(from: $0.file) } ?? false
+        if save || !moves {
+            do {
+                try file.write(to: SceneFile.url(for: kind))
+            } catch {
+                print("Scene file: \(kind.name) not written: \(error)")
+                return
+            }
+        }
+        if var placed = live, moves {
+            let moved = file.objects.indices.filter { file.objects[$0] != placed.file.objects[$0] }
+            placed.file = file
+            scene.placed = placed
+            for k in moved { movePlaced(k) }
+            return
+        }
+        if loading != nil || placedPending != nil {
+            placedPending = file
+        } else {
+            remakeScene(because: "its scene file changed")
+        }
+    }
+
+    /// A scene file edited while a scene loaded (editPlaced): the scene made again from it once that one is in.
+    package func remakeForPendingPlaced() {
+        guard placedPending != nil, loading == nil else { return }
+        placedPending = nil
+        remakeScene(because: "its scene file changed")
+    }
+}
+
+extension SceneFile {
+    /// The same objects, lights, generators and camera.
+    package func matches(_ other: SceneFile) -> Bool {
+        objects == other.objects && lights == other.lights && generators == other.generators && sameCamera(other)
+    }
+
+    /// Only objects' places changed from `other` (their positions, rotations, scales): the scene can move them.
+    package func onlyMoves(from other: SceneFile) -> Bool {
+        guard objects.count == other.objects.count, lights == other.lights, generators == other.generators, sameCamera(other) else {
+            return false
+        }
+        return zip(objects, other.objects).allSatisfy { a, b in
+            a.asset == b.asset && a.name == b.name && a.parent == b.parent && a.material == b.material && a.flags == b.flags
+        }
+    }
+
+    private func sameCamera(_ other: SceneFile) -> Bool {
+        switch (camera, other.camera) {
+        case (nil, nil): return true
+        case let (a?, b?): return a.position == b.position && a.yaw == b.yaw && a.pitch == b.pitch && a.fovY == b.fovY
+        default: return false
+        }
     }
 }

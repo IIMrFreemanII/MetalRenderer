@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 fatalError("Renderer failed to start:\n\(error)")
             }
+            renderer.startScripts()   // a `script` mode's runner; the socket only for `serve` or METALRENDERER_SCRIPT_SERVER=1
             renderer.startRenderThread()
             return
         }
@@ -131,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             bar.show(controller.settings)
             dayBar = bar
         }
+        renderer.startScripts()   // Tools/script.py and the MCP server reach the app through its socket
         renderer.startRenderThread()
 
         print("""
@@ -329,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         renderer?.stopRenderThread()   // no frame half encoded while the app exits
+        renderer?.stopScripts()
         SettingsStore.flush()
         projectGraph?.model.save()
     }

@@ -219,8 +219,9 @@ package struct SceneBuffers {
     /// The SDF shapes, and their boxes, which come after the meshes' structures in `primitives`.
     let sdf: SDFBuffers
     let still: Bool                                         // the instances are written, and their structure built
-    /// A still scene with a terrain: its one top-level structure is refitted after the brushes rebuild the sectors'
-    /// (`stillRefit`, with the scratch buffer it keeps).
+    /// A still scene with a terrain or a scene file: its one top-level structure is refitted after the brushes rebuild
+    /// the sectors', or the placement editor or a script moves what the file placed (`stillRefit`, with the scratch
+    /// buffer it keeps).
     let editableStill: Bool
     private(set) var stillRefit: TLASUpdate?
     /// The plants' structures (assemblies, by multi-level instancing), if the scene has any.
@@ -372,7 +373,7 @@ package struct SceneBuffers {
         emissive = try buffer(scene.emissiveTriangles, "emissiveTriangles")
 
         still = scene.isStill
-        editableStill = still && scene.terrain != nil
+        editableStill = still && (scene.terrain != nil || scene.placed != nil)
         let count = scene.instances.count, sets = still ? 1 : options.slots
         // The groups: each in the block the scene being drawn has it in, or a new one, made from the group's instances.
         guard !scene.hasGroups || (!scene.groups.isEmpty && still) else {

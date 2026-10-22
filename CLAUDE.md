@@ -2,6 +2,13 @@
 
 Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`). Benchmark runs (`METALRENDERER_BENCH`) have no window and don't take the focus. Never launch the app without `METALRENDERER_BENCH`, or with `METALRENDERER_WINDOW=1`, unless the user asks: they work on this Mac while you iterate.
 
+## Driving a running app
+
+Swift scripts run inside a running app (README, "Scripts"): `Tools/script.py <file.swift>` or `-e '<code>'`, `--state`,
+`--capture out.png`; the `metalrenderer` MCP server (`.mcp.json`) has the same as tools. With no app running, start a
+headless one (`Tools/script.py --serve`, MCP `start_headless`: `METALRENDERER_BENCH=serve`, no window) and quit it
+when done. Scripts compile against the running binary: after a build, relaunch it.
+
 ## Source layout
 
 The code is in modules (README, "Source layout"): `Sources/EngineCore` (what every module shares, knowing no scene or

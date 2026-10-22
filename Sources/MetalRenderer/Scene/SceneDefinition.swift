@@ -36,7 +36,7 @@ package struct SceneKind: Hashable, Codable, CustomStringConvertible {
     package static let numbered = ["cornell", "stress", "gallery", "spots", "sun", "area", "tubes", "emissive", "mixed", "fog", "valley",
                            "market", "forest", "crowd", "city", "cityNight", "world", "showcase", "shapes", "physics", "ragdolls",
                            "hair", "softBodies", "muscles", "fluids", "particles", "plants", "buildings", "characters", "vfxStage",
-                           "materials", "mireland", "painter", "terrain", "destruction", "demolition"]
+                           "materials", "mireland", "painter", "terrain", "destruction", "demolition", "stage"]
 
     package init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()

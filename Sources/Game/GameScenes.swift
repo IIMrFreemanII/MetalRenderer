@@ -56,6 +56,7 @@ extension SceneKind {
     static let mireland = SceneKind("mireland")
     static let destruction = SceneKind("destruction")
     static let demolition = SceneKind("demolition")
+    static let stage = SceneKind("stage")
 }
 
 extension GameScenes {
@@ -319,6 +320,11 @@ extension GameScenes {
                 $0.cpuPhysics = true
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 11, 44], pitch: -0.2)
+            },
+            // An empty floor under the sun, for scripts to build on (README, "Scripts").
+            scene(.stage, "Stage (scripts)", "buildStage", build: { $0.buildStage() }) {
+                $0.sky = courtyard
+                $0.camera = Scene.camera([0, 4, 14], pitch: -0.2)
             },
         ]
     }
