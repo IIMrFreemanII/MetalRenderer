@@ -148,6 +148,9 @@ struct Surface {
     float  leaf;          // LEAF_TRANSMIT: a two-sided leaf's share of light through it, where the camera sees it
 };
 
+// A material's specular weight (Material.params.x): as it is, but 1 for a clear coat's (2 and up: Scene.addPaintMaterial).
+inline float specularWeight(float x) { return x >= 2.0f ? 1.0f : x; }
+
 // Where across a strand along `tangent` its normal `n` is, seen from `view` (pbrt's h: in the strand's frame x =
 // tangent, y = the view across it, z = x cross y, the normal is (cos gamma) y - (sin gamma) z and h = sin gamma).
 inline float hairOffset(float3 n, float3 tangent, float3 view) {
@@ -486,7 +489,7 @@ inline void terrainLayers(thread Surface& sf, thread const HitVertices& hv, floa
         albedo += c * share;
         roughness += rough * share;
         metallic += metal * share;
-        specular += m.params.x * share;
+        specular += specularWeight(m.params.x) * share;
         normal += n * share;
     }
     sf.albedo = albedo;
@@ -738,7 +741,7 @@ inline void terrainRealistic(thread Surface& sf, thread const HitVertices& hv, f
         normal += n * share;
         roughness += m.emission.a * ormh.g * share;
         metallic += m.albedo.a * ormh.b * share;
-        specular += m.params.x * share;
+        specular += specularWeight(m.params.x) * share;
     }
     // The large-scale noise: ±18% brightness, a little toward yellow or grey, roughness.
     albedo *= (0.82f + 0.36f * macro.r) * (0.88f + 0.24f * macro2.r);
@@ -757,7 +760,7 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.emission = mat.emission.rgb;
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
-    sf.specular = min(mat.params.x, 1.0f);
+    sf.specular = specularWeight(mat.params.x);
     sf.coat = mat.params.x >= 2.0f ? mat.params.x - 2.0f : -1.0f;
     sf.lightEmitter = mat.params.z > 0.0f;
     sf.skin = max(-mat.params.w, 0.0f);

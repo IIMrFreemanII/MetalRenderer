@@ -49,6 +49,10 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
 
 ## Traps found (keep them)
 
+- **Hot loops on a class.** The car solver's statics live on `CarSolver` (an enum), not on `PhysicsWorld`: a call the
+  stages' closures don't inline would look up the class's metadata, which `Tools/perf/hotcalls.py` refuses. The
+  cars' 17 loops are in `Tools/perf/hot-functions.txt`, and the check passes.
+
 - **Alternating Gauss-Seidel order.** Solving a car's beams forward, then backward, each substep made a two-substep
   rhythm that grew until the nodes hit the 90 m/s cap. Keep one fixed order.
 - **Weak floor.** Hanging the engine and the suspension mounts from the floor's middle (a flat sheet of beams) sagged
@@ -78,8 +82,6 @@ Branch `claude/car-physics-deformation-7275c3`. Node-beam (BeamNG-style) cars th
   and the path tracer.
 - **Window outlines are rough.** A paint triangle shows at the C pillar (`CarSurface.look`).
 - **No hand test in the window:** keys, HUD, captured-mouse orbit.
-- **`hotcalls.py` not run.** The hot loops (`solveCar`, `carForces`, `tyre`, `solveBeam`) need to go into
-  `Tools/perf/hot-functions.txt` after a release profile.
 
 ## Next phases
 

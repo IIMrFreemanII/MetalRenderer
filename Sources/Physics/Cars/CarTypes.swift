@@ -126,6 +126,10 @@ package struct CarState {
     package var sinceShift: Float = 0
     /// Moving at all in its last step (the wheels are kept awake while it does).
     package var awake = true
+    /// Its plastic beams bent for good (their rest length 1% or more off) and broken, as of its last step's end
+    /// (breakBeams).
+    package var bent: Int32 = 0
+    package var broken: Int32 = 0
 }
 
 /// A car's input (a `car` command's: Physics+Cars.swift): the pedals' and the wheel's targets, from -1 to 1 for the
@@ -169,8 +173,11 @@ package struct CarTelemetry {
 /// applies them in the cars' order).
 package struct CarPush {
     package var body: Int32 = 0
+    /// The impulses, their turns about the body's centre, how many contacts gave them (more than one once the car's
+    /// list is full: nodeContacts adds to the last push to the same body).
     package var impulse = SIMD3<Float>()
-    package var lever = SIMD3<Float>()
+    package var twist = SIMD3<Float>()
+    package var count: Float = 0
 }
 
 /// The cars of a world (Physics+Cars.swift): their nodes are among its particles, their wheels among its bodies; the
@@ -210,7 +217,6 @@ package struct CarSystem {
         beams = initialBeams
         wheels = initialWheels
         for i in loads.indices { loads[i] = 0 }
-        for i in telemetry.indices { telemetry[i] = CarTelemetry() }
     }
 }
 
@@ -282,3 +288,8 @@ package struct CarTune {
         return 0
     }
 }
+
+/// The cars' substep stages and their helpers (CarBeams.swift, CarDrivetrain.swift, CarTires.swift): static functions
+/// on a namespace rather than on PhysicsWorld, a class, whose metadata each call from the stages' closures would look
+/// up (Tools/perf/hotcalls.py).
+package enum CarSolver {}

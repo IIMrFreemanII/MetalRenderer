@@ -389,6 +389,8 @@ package final class Renderer: NSObject {
     package var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
     package var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     package var heldKeys = Set<String>()
+    /// Every key down now, whatever took it (releaseKeys lets them all go).
+    package var downKeys = Set<String>()
     /// The arrow keys (AppKit's function-key characters): up, down, left, right; held, they turn the camera.
     package static let arrowKeys = ["\u{F700}", "\u{F701}", "\u{F702}", "\u{F703}"]
     /// How fast an arrow turns the camera, in drag points a second (Camera.turnRate: about 90° a second).

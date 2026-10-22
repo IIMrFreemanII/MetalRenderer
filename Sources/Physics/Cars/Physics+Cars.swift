@@ -165,6 +165,13 @@ extension PhysicsWorld {
         for c in carSystem.cars.indices { carSystem.telemetry[c] = carTelemetry(c) }
     }
 
+    /// The cars as built (PhysicsWorld.reset, after the particles are): their state, and what a frame shows of them
+    /// from there (not from nowhere, until the first step's end).
+    func resetCars() {
+        carSystem.reset()
+        for c in carSystem.cars.indices { carSystem.telemetry[c] = carTelemetry(c) }
+    }
+
     // MARK: Input
 
     /// GPUFractureCommand.info.z's flags above the car's index (its low byte).
@@ -258,7 +265,7 @@ extension PhysicsWorld {
     func carForces(_ p: GPUPhysicsParams, sub: Int) {
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { PhysicsWorld.carForces(c, b, p, sub: sub) }
+                for c in range { CarSolver.carForces(c, b, p, sub: sub) }
             }
         }
     }
@@ -267,38 +274,15 @@ extension PhysicsWorld {
     func solveCars(_ p: GPUPhysicsParams, sub: Int) {
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { PhysicsWorld.solveCar(c, b, p) }
+                for c in range { CarSolver.solveCar(c, b, p) }
             }
         }
     }
 
     /// The cars' pushes on the bodies this substep: each body moved by its pushes averaged (as a particle's are), and
-    /// woken; in the cars' order, so the sums are the same every time.
+    /// woken; summed in the cars' order, so the sums are the same every time.
     func applyCarReactions() {
-        var touched = 0
-        for c in carSystem.cars.indices {
-            let n = Int(carSystem.pushCounts[c])
-            for k in 0..<n {
-                let push = carSystem.pushes[c * CarSystem.maxPushes + k], j = Int(push.body)
-                if carSystem.bodyPushes[j].w == 0 { touched += 1 }
-                carSystem.bodyPushes[j] += SIMD4(push.impulse, 1)
-                carSystem.bodyTwists[j] += cross(push.lever, push.impulse)
-            }
-        }
-        guard touched > 0 else { return }
-        for j in bodies.indices where carSystem.bodyPushes[j].w > 0 {
-            let total = carSystem.bodyPushes[j], count = total.w
-            var b = bodies[j]
-            b.info.y &= ~PhysicsWorld.asleep
-            b.prevPosition.w = 0
-            if b.position.w > 0 {
-                b.position = SIMD4(PhysicsMath.xyz(b.position) + PhysicsMath.xyz(total) / count * b.position.w, b.position.w)
-                b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.applyInvInertia(b.rotation, PhysicsMath.xyz(b.invInertia), carSystem.bodyTwists[j] / count))
-            }
-            bodies[j] = b
-            carSystem.bodyPushes[j] = .zero
-            carSystem.bodyTwists[j] = .zero
-        }
+        withCarBuffers { CarSolver.applyCarReactions($0) }
     }
 
     /// The step's end: beams that broke, and what a frame shows of each car.
@@ -306,7 +290,7 @@ extension PhysicsWorld {
         let substeps = Float(self.substeps)
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { PhysicsWorld.breakBeams(c, b, substeps: substeps) }
+                for c in range { CarSolver.breakBeams(c, b, substeps: substeps) }
             }
         }
         for c in carSystem.cars.indices {
@@ -330,10 +314,8 @@ extension PhysicsWorld {
         t.throttle = s.throttle
         t.brake = s.brake
         t.steer = s.steer
-        for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) {
-            let beam = carSystem.beams[k], rest0 = carSystem.limits[k].rest0
-            if beam.info & CarBeam.brokenBit != 0 { t.broken += 1 } else if abs(beam.rest - rest0) > 0.01 * rest0 { t.bent += 1 }
-        }
+        t.bent = s.bent
+        t.broken = s.broken
         return t
     }
 
@@ -365,21 +347,26 @@ extension PhysicsWorld {
             try system.beams.withUnsafeMutableBufferPointer { beams in
                 try system.limits.withUnsafeMutableBufferPointer { limits in
                     try system.lambdas.withUnsafeMutableBufferPointer { lambdas in
-                try system.loads.withUnsafeMutableBufferPointer { loads in
-                        try system.wheels.withUnsafeMutableBufferPointer { wheels in
-                            try system.reactionNodes.withUnsafeBufferPointer { reactions in
-                                try system.tunes.withUnsafeBufferPointer { tunes in
-                                    try system.candidates.withUnsafeBufferPointer { candidates in
-                                        try system.pushes.withUnsafeMutableBufferPointer { pushes in
-                                            try system.pushCounts.withUnsafeMutableBufferPointer { pushCounts in
-                                                try particles.withUnsafeMutableBufferPointer { particles in
-                                                    try bodies.withUnsafeMutableBufferPointer { bodies in
-                                                        try statics.withUnsafeBufferPointer { statics in
-                                                            try staticBounds.withUnsafeBufferPointer { bounds in
-                                                                try body(CarBuffers(cars: cars, beams: beams, limits: limits, loads: loads, lambdas: lambdas, wheels: wheels,
-                                                                                    reactions: reactions, tunes: tunes, candidates: candidates, pushes: pushes,
-                                                                                    pushCounts: pushCounts, particles: particles, bodies: bodies,
-                                                                                    statics: statics, staticBounds: bounds, shapes: shapes))
+                        try system.loads.withUnsafeMutableBufferPointer { loads in
+                            try system.wheels.withUnsafeMutableBufferPointer { wheels in
+                                try system.reactionNodes.withUnsafeBufferPointer { reactions in
+                                    try system.tunes.withUnsafeBufferPointer { tunes in
+                                        try system.candidates.withUnsafeBufferPointer { candidates in
+                                            try system.pushes.withUnsafeMutableBufferPointer { pushes in
+                                                try system.pushCounts.withUnsafeMutableBufferPointer { pushCounts in
+                                                    try system.bodyPushes.withUnsafeMutableBufferPointer { bodyPushes in
+                                                        try system.bodyTwists.withUnsafeMutableBufferPointer { bodyTwists in
+                                                            try particles.withUnsafeMutableBufferPointer { particles in
+                                                                try bodies.withUnsafeMutableBufferPointer { bodies in
+                                                                    try statics.withUnsafeBufferPointer { statics in
+                                                                        try staticBounds.withUnsafeBufferPointer { bounds in
+                                                                            try body(CarBuffers(cars: cars, beams: beams, limits: limits, loads: loads, lambdas: lambdas, wheels: wheels,
+                                                                                                reactions: reactions, tunes: tunes, candidates: candidates, pushes: pushes,
+                                                                                                pushCounts: pushCounts, bodyPushes: bodyPushes, bodyTwists: bodyTwists, particles: particles,
+                                                                                                bodies: bodies, statics: statics, staticBounds: bounds, shapes: shapes))
+                                                                        }
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -392,7 +379,39 @@ extension PhysicsWorld {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+extension CarSolver {
+    /// The cars' pushes on the bodies (PhysicsWorld.applyCarReactions).
+    @inline(__always) package static func applyCarReactions(_ b: CarBuffers) {
+        for c in b.cars.indices {
+            let first = c * CarSystem.maxPushes
+            for k in first..<first + Int(b.pushCounts[c]) {
+                let push = b.pushes[k], j = Int(push.body)
+                b.bodyPushes[j] += SIMD4(push.impulse, push.count)
+                b.bodyTwists[j] += push.twist
+            }
+        }
+        // Each body pushed once (its sums cleared as it moves), found from the pushes rather than every body.
+        for c in b.cars.indices {
+            let first = c * CarSystem.maxPushes
+            for k in first..<first + Int(b.pushCounts[c]) {
+                let j = Int(b.pushes[k].body), total = b.bodyPushes[j], count = total.w
+                guard count > 0 else { continue }
+                var body = b.bodies[j]
+                body.info.y &= ~PhysicsWorld.asleep
+                body.prevPosition.w = 0
+                if body.position.w > 0 {
+                    body.position = SIMD4(PhysicsMath.xyz(body.position) + PhysicsMath.xyz(total) / count * body.position.w, body.position.w)
+                    body.rotation = PhysicsMath.qturn(body.rotation, PhysicsMath.applyInvInertia(body.rotation, PhysicsMath.xyz(body.invInertia),
+                                                                                               b.bodyTwists[j] / count))
                 }
+                b.bodies[j] = body
+                b.bodyPushes[j] = .zero
+                b.bodyTwists[j] = .zero
             }
         }
     }
@@ -412,6 +431,8 @@ package struct CarBuffers {
     let candidates: UnsafeBufferPointer<UInt32>
     let pushes: UnsafeMutableBufferPointer<CarPush>
     let pushCounts: UnsafeMutableBufferPointer<Int32>
+    let bodyPushes: UnsafeMutableBufferPointer<SIMD4<Float>>
+    let bodyTwists: UnsafeMutableBufferPointer<SIMD3<Float>>
     let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>
     let bodies: UnsafeMutableBufferPointer<GPUPhysicsBody>
     let statics: UnsafeBufferPointer<GPUPhysicsBody>

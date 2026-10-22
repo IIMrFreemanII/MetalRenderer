@@ -680,7 +680,7 @@ package final class PhysicsWorld {
         breakSteps.removeAll()
         breakTotal = 0
         demolition.reset()
-        carSystem.reset()
+        resetCars()
         broadEpoch = -1
         narrowEpoch = -1   // (its welds are back)
         resetFluids()

@@ -13,7 +13,7 @@ import simd
 /// as its locking allows. What turns the wheels turns the body back (the engine's nodes, a couple), and what brakes them
 /// turns the knuckle (its steering arm against its hub). An automatic clutch slips at a launch and opens below idle;
 /// an automatic gearbox shifts up near the limiter and down near idle, and S held at a stop selects reverse.
-extension PhysicsWorld {
+extension CarSolver {
     @inline(__always) package static func approach(_ x: Float, _ target: Float, _ step: Float) -> Float {
         x < target ? min(x + step, target) : max(x - step, target)
     }
@@ -26,7 +26,7 @@ extension PhysicsWorld {
     @inline(__always) package static func carForces(_ c: Int, _ b: CarBuffers, _ p: GPUPhysicsParams, sub: Int) {
         var s = b.cars[c]
         let t = b.tunes[c], h = p.gravity.w
-        let f = carFrame(s, UnsafeBufferPointer(b.particles))
+        let f = PhysicsWorld.carFrame(s, UnsafeBufferPointer(b.particles))
         let speed = dot(f.velocity, f.forward)
         if sub == 0 && s.input.autopilot { autopilot(&s, f.centre, f.forward, speed) }
         let input = s.input
@@ -55,7 +55,7 @@ extension PhysicsWorld {
             if w.tie >= 0 { b.beams[Int(w.tie)].rest = b.limits[Int(w.tie)].rest0 + b.limits[Int(w.tie)].steer * turn }
             let o = b.bodies[Int(w.body)], a = PhysicsMath.qrot(o.rotation, w.axle)
             spins[k] = dot(PhysicsMath.xyz(o.angular), a)
-            inverse[k] = turnWeight(o, a)
+            inverse[k] = PhysicsWorld.turnWeight(o, a)
             if w.flags & CarWheel.driven != 0 {
                 driven += 1
                 drivenInverse += inverse[k]
@@ -166,7 +166,7 @@ extension PhysicsWorld {
 
         // The air's drag, and the nodes moved (their velocities, gravity).
         let v = length(f.velocity)
-        let drag = v > 1e-3 ? -f.velocity * (0.5 * airDensity * t.dragArea * v * h / s.mass) : SIMD3<Float>()
+        let drag = v > 1e-3 ? -f.velocity * (0.5 * PhysicsWorld.airDensity * t.dragArea * v * h / s.mass) : SIMD3<Float>()
         let gravity = PhysicsMath.xyz(p.gravity) * h
         for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) {
             var q = b.particles[i]
@@ -185,11 +185,11 @@ extension PhysicsWorld {
     @inline(__always) package static func spinWheel(_ w: CarWheel, _ b: CarBuffers, _ dw: Float) -> SIMD3<Float> {
         let i = Int(w.body)
         var o = b.bodies[i]
-        guard moves(o) else { return .zero }
+        guard PhysicsWorld.moves(o) else { return .zero }
         let a = PhysicsMath.qrot(o.rotation, w.axle)
         o.angular = SIMD4(PhysicsMath.xyz(o.angular) + a * dw, o.angular.w)
         b.bodies[i] = o
-        let k = turnWeight(o, a)
+        let k = PhysicsWorld.turnWeight(o, a)
         return k > 0 ? a * (dw / k) : .zero
     }
 

@@ -10,7 +10,7 @@ import simd
 /// huge: the destruction's welds learned that), averaged over a few substeps; past its yield its rest length flows
 /// toward where it is, the excess load's worth, and its yield hardens: the dent stays. The load summed over the step
 /// breaks it past its strength (`breakBeams`).
-extension PhysicsWorld {
+extension CarSolver {
     /// The most a beam's rest length flows in a substep (m): what a crumple zone's row of beams can give at the speed
     /// of a crash (8 mm at 960 substeps a second is 7.7 m/s a beam).
     package static let carFlow: Float = 0.008
@@ -26,7 +26,7 @@ extension PhysicsWorld {
     @inline(__always) package static func solveCar(_ c: Int, _ b: CarBuffers, _ p: GPUPhysicsParams) {
         let s = b.cars[c], h = p.gravity.w
         b.pushCounts[c] = 0
-        for _ in 0..<axlePasses {
+        for _ in 0..<PhysicsWorld.axlePasses {
             for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) { solveAxle(b.wheels[w], b, h) }
         }
         let first = Int(s.firstBeam), count = Int(s.beamCount)
@@ -37,7 +37,7 @@ extension PhysicsWorld {
         for k in first..<(first + count) where b.beams[k].info & (CarBeam.hullBit | CarBeam.brokenBit) == CarBeam.hullBit {
             beamMiddle(b.beams[k], b, candidates, h)
         }
-        let top = carTopSpeed
+        let top = PhysicsWorld.carTopSpeed
         for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) {
             var q = b.particles[i]
             var v = (PhysicsMath.xyz(q.position) - PhysicsMath.xyz(q.prevPosition)) / h
@@ -52,7 +52,7 @@ extension PhysicsWorld {
     @inline(__always) package static func solveAxle(_ w: CarWheel, _ b: CarBuffers, _ h: Float) {
         let i = Int(w.body)
         var body = b.bodies[i]
-        let soft = axleCompliance / (h * h)
+        let soft = PhysicsWorld.axleCompliance / (h * h)
         for end in 0..<2 {
             let node = Int(end == 0 ? w.hubIn : w.hubOut)
             let r = PhysicsMath.qrot(body.rotation, w.axle * (end == 0 ? -w.hubOffset : w.hubOffset))
@@ -60,11 +60,11 @@ extension PhysicsWorld {
             let d = PhysicsMath.xyz(body.position) + r - x
             let l = length(d)
             guard l > 1e-9 else { continue }
-            let n = d / l, wn = b.particles[node].prevPosition.w, wb = weight(body, r, n)
+            let n = d / l, wn = b.particles[node].prevPosition.w, wb = PhysicsWorld.weight(body, r, n)
             guard wn + wb > 0 else { continue }
             let lambda = l / (wn + wb + soft)
             b.particles[node].position = SIMD4(x + n * (lambda * wn), b.particles[node].position.w)
-            shove(&body, -n * lambda, r)
+            PhysicsWorld.shove(&body, -n * lambda, r)
         }
         b.bodies[i] = body
     }
@@ -116,37 +116,52 @@ extension PhysicsWorld {
         var x = PhysicsMath.xyz(q.position)
         for k in candidates {
             let code = b.candidates[k]
-            if code & staticBit != 0 {
-                let st = Int(code & ~staticBit), box = b.staticBounds[st]
+            if code & PhysicsWorld.staticBit != 0 {
+                let st = Int(code & ~PhysicsWorld.staticBit), box = b.staticBounds[st]
                 if any(x .< box.lo - r) || any(x .> box.hi + r) { continue }
-                let o = b.statics[st], pose = Pose(o), local = pose.toBody(x)
+                let o = b.statics[st], pose = PhysicsWorld.Pose(o), local = pose.toBody(x)
                 let depth = b.shapes.distance(shape: Int(o.info.x), local) - r
                 guard depth < 0 else { continue }
                 let n = pose.direction(b.shapes.gradient(shape: Int(o.info.x), local))
                 let moved = x - prev
-                let overlap = min(-depth, max(-dot(moved, n), 0) + pushSpeed * h)
-                x += particlePush(n, overlap, moved, (q.velocity.w * o.velocity.w).squareRoot())
+                let overlap = min(-depth, max(-dot(moved, n), 0) + PhysicsWorld.pushSpeed * h)
+                x += PhysicsWorld.particlePush(n, overlap, moved, (q.velocity.w * o.velocity.w).squareRoot())
             } else {
                 let j = Int(code), o = b.bodies[j], centre = PhysicsMath.xyz(o.position)
                 let reach = r + o.invInertia.w
                 if length_squared(x - centre) > reach * reach { continue }
-                let pose = Pose(o), local = pose.toBody(x)
+                let pose = PhysicsWorld.Pose(o), local = pose.toBody(x)
                 let depth = b.shapes.distance(shape: Int(o.info.x), local) - r
                 guard depth < 0 else { continue }
                 let n = pose.direction(b.shapes.gradient(shape: Int(o.info.x), local))
                 let lever = x - centre
                 let surface = PhysicsMath.xyz(o.velocity) + cross(PhysicsMath.xyz(o.angular), lever)
                 let slide = (x - prev) - surface * h
-                let overlap = min(-depth, max(-dot(slide, n), 0) + pushSpeed * h)
-                let push = particlePush(n, overlap, slide, (q.velocity.w * o.velocity.w).squareRoot())
+                let overlap = min(-depth, max(-dot(slide, n), 0) + PhysicsWorld.pushSpeed * h)
+                let push = PhysicsWorld.particlePush(n, overlap, slide, (q.velocity.w * o.velocity.w).squareRoot())
                 let l = length(push)
                 guard l > 1e-9 else { continue }
-                let wb = weight(o, lever, push / l)
+                // The body's share kept in a push of its own or, the car's list full, added to the last push to the same
+                // body; with none there, the body is held still (the node takes it all), so no share is lost.
+                var slot = -1, wb = PhysicsWorld.weight(o, lever, push / l)
+                if wb > 0 {
+                    let first = c * CarSystem.maxPushes, count = Int(b.pushCounts[c])
+                    if count < CarSystem.maxPushes {
+                        slot = first + count
+                        b.pushes[slot] = CarPush(body: Int32(j))
+                        b.pushCounts[c] = Int32(count + 1)
+                    } else {
+                        var k = first + count - 1
+                        while k >= first && b.pushes[k].body != Int32(j) { k -= 1 }
+                        if k >= first { slot = k } else { wb = 0 }
+                    }
+                }
                 x += push * (wn / (wn + wb))
-                let count = Int(b.pushCounts[c])
-                if wb > 0 && count < CarSystem.maxPushes {
-                    b.pushes[c * CarSystem.maxPushes + count] = CarPush(body: Int32(j), impulse: -push / (wn + wb), lever: lever)
-                    b.pushCounts[c] = Int32(count + 1)
+                if slot >= 0 {
+                    let impulse = -push / (wn + wb)
+                    b.pushes[slot].impulse += impulse
+                    b.pushes[slot].twist += cross(lever, impulse)
+                    b.pushes[slot].count += 1
                 }
             }
         }
@@ -165,15 +180,15 @@ extension PhysicsWorld {
         let moved = x - (PhysicsMath.xyz(qa.prevPosition) + PhysicsMath.xyz(qb.prevPosition)) / 2
         for k in candidates {
             let code = b.candidates[k]
-            guard code & staticBit != 0 else { continue }
-            let st = Int(code & ~staticBit), box = b.staticBounds[st]
+            guard code & PhysicsWorld.staticBit != 0 else { continue }
+            let st = Int(code & ~PhysicsWorld.staticBit), box = b.staticBounds[st]
             if any(x .< box.lo - r) || any(x .> box.hi + r) { continue }
-            let o = b.statics[st], pose = Pose(o), local = pose.toBody(x)
+            let o = b.statics[st], pose = PhysicsWorld.Pose(o), local = pose.toBody(x)
             let depth = b.shapes.distance(shape: Int(o.info.x), local) - r
             guard depth < 0 else { continue }
             let n = pose.direction(b.shapes.gradient(shape: Int(o.info.x), local))
-            let overlap = min(-depth, max(-dot(moved, n), 0) + pushSpeed * h)
-            x += particlePush(n, overlap, moved, (qa.velocity.w * o.velocity.w).squareRoot())
+            let overlap = min(-depth, max(-dot(moved, n), 0) + PhysicsWorld.pushSpeed * h)
+            x += PhysicsWorld.particlePush(n, overlap, moved, (qa.velocity.w * o.velocity.w).squareRoot())
         }
         let push = x - start
         guard push != .zero else { return }
@@ -181,19 +196,26 @@ extension PhysicsWorld {
         if qb.prevPosition.w > 0 { b.particles[ib].position += SIMD4(push, 0) }
     }
 
-    /// Car `c`'s step end: each beam's load over the step (its sum over the substeps), and the beams it broke.
+    /// Car `c`'s step end: each beam's load over the step (its sum over the substeps), the beams it broke, and how many
+    /// of its plastic beams are bent and broken (only theirs: a tie rod's length is the steering's).
     @inline(__always) package static func breakBeams(_ c: Int, _ b: CarBuffers, substeps: Float) {
-        let s = b.cars[c]
+        var s = b.cars[c]
+        var bent: Int32 = 0, broken: Int32 = 0
         for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) {
             let load = b.loads[k] / substeps
             b.loads[k] = 0
             var beam = b.beams[k]
-            guard beam.kind == CarBeamKind.plastic.rawValue && beam.info & CarBeam.brokenBit == 0 else { continue }
+            guard beam.kind == CarBeamKind.plastic.rawValue else { continue }
             let limit = b.limits[k]
-            if abs(load) > limit.strength || abs(beam.rest - limit.rest0) > limit.strainLimit * limit.rest0 {
+            if beam.info & CarBeam.brokenBit == 0
+                && (abs(load) > limit.strength || abs(beam.rest - limit.rest0) > limit.strainLimit * limit.rest0) {
                 beam.info |= CarBeam.brokenBit
                 b.beams[k] = beam
             }
+            if beam.info & CarBeam.brokenBit != 0 { broken += 1 } else if abs(beam.rest - limit.rest0) > 0.01 * limit.rest0 { bent += 1 }
         }
+        s.bent = bent
+        s.broken = broken
+        b.cars[c] = s
     }
 }

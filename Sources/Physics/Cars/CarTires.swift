@@ -13,7 +13,7 @@ import simd
 /// substep than stops the slip (so it can't flip it); below a few m/s it blends into plain Coulomb friction, which
 /// holds a parked car still. The force moves the wheel's body; its torque about the axle spins the wheel, the rest
 /// turns the knuckle (its hubs, a couple).
-extension PhysicsWorld {
+extension CarSolver {
     /// The Magic Formula's peaks (slip ratio, slip angle's tangent) and shapes (along, across).
     package static let tyrePeakRatio: Float = 0.1, tyrePeakAngle: Float = 0.12
     package static let tyreShapeAlong: Float = 1.5, tyreShapeAcross: Float = 1.35
@@ -23,24 +23,24 @@ extension PhysicsWorld {
         var w = b.wheels[wk]
         let i = Int(w.body)
         var o = b.bodies[i]
-        guard moves(o) else { return }
+        guard PhysicsWorld.moves(o) else { return }
         let centre = PhysicsMath.xyz(o.position), a = PhysicsMath.qrot(o.rotation, w.axle), radius = w.radius
         // The static nearest the wheel's centre within its reach.
         var best = -1, nearest = radius + 0.05
         for k in candidates {
             let code = b.candidates[k]
-            guard code & staticBit != 0 else { continue }
-            let st = Int(code & ~staticBit), box = b.staticBounds[st]
+            guard code & PhysicsWorld.staticBit != 0 else { continue }
+            let st = Int(code & ~PhysicsWorld.staticBit), box = b.staticBounds[st]
             if any(centre .< box.lo - radius) || any(centre .> box.hi + radius) { continue }
             let s = b.statics[st]
-            let d = b.shapes.distance(shape: Int(s.info.x), Pose(s).toBody(centre))
+            let d = b.shapes.distance(shape: Int(s.info.x), PhysicsWorld.Pose(s).toBody(centre))
             if d < nearest { (best, nearest) = (st, d) }
         }
         w.load = 0
         w.slip = .zero
         defer { b.wheels[wk] = w }
         guard best >= 0 else { return }
-        let s = b.statics[best], pose = Pose(s), shape = Int(s.info.x)
+        let s = b.statics[best], pose = PhysicsWorld.Pose(s), shape = Int(s.info.x)
         // The patch: the tyre's edge toward the surface, in the wheel's plane.
         var n = pose.direction(b.shapes.gradient(shape: shape, pose.toBody(centre)))
         var down = n * -1 + a * dot(n, a)
@@ -61,7 +61,7 @@ extension PhysicsWorld {
         // What the patch's impulse moves at once: the wheel and its hubs (the rest of the car follows through the axle
         // and the beams). An impulse sized for the car's share of its weight flung the 20 kg wheel past its slip, and
         // the slip across flipped every substep.
-        let k = turnWeight(o, a)
+        let k = PhysicsWorld.turnWeight(o, a)
         let cornerMass = 1 / o.position.w + 1 / max(b.particles[Int(w.hubIn)].prevPosition.w, 1e-3) + 1 / max(b.particles[Int(w.hubOut)].prevPosition.w, 1e-3)
         let acrossMass = cornerMass, alongMass = 1 / (1 / cornerMass + radius * radius * k)
         // The Magic Formula, the slips normalised by their peaks.
