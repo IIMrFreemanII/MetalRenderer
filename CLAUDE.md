@@ -23,7 +23,9 @@ matching folder of `Tests/MetalRendererTests`. The engine never names a game sce
 `@inlinable package` free function on plain types (`Tools/perf/hotcalls.py` finds the ones that aren't); build release
 with `Tools/release.sh`, which rebuilds the modules above an `@inlinable` body that changed; keep each module's imports
 to its dependencies (`Tools/modules/imports.py --check`). Find the package's files with `SourceTree`, never by counting
-folders up from `#filePath`.
+folders up from `#filePath`. The dev build hot-reloads saved shaders, `Sources/Game` and the scene's files (README, "Hot
+reload"; `DevReload`): the engine reaches the game only through what `GameScenes.register()` registers, so keep it that
+way, or a game reload can't replace it.
 
 ## New features
 

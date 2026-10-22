@@ -327,7 +327,18 @@ package enum SettingsTable {
     private static func fmt<T: CVarArg>(_ format: String) -> (T) -> String { { String(format: format, $0) } }
     package static func titled<T: CaseIterable>(_ title: (T) -> String) -> [(String, T)] { T.allCases.map { (title($0), $0) } }
 
-    package static let sections: [Section] = [scene, camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
+    /// Made again when the game's rows change (`sceneRows`: a hot reload of the game's code registers them again).
+    package static var sections: [Section] {
+        _ = SceneRegistry.kinds   // (the game's rows are registered with its scenes)
+        sectionsLock.lock()
+        defer { sectionsLock.unlock() }
+        if let made = madeSections, made.rows == sceneRowsVersion { return made.sections }
+        let made = [sceneSection(), camera, post, directLight, rendering, globalIllumination, fog, sky, foliage, denoiser, memory]
+        madeSections = (sceneRowsVersion, made)
+        return made
+    }
+    private static let sectionsLock = NSLock()
+    private static var madeSections: (rows: Int, sections: [Section])?
 
     private static let foliage: Section = {
         let plants: When = { $0.scene.kind.hasPlants }
@@ -350,10 +361,16 @@ package enum SettingsTable {
 
     /// The game's scenes' own rows (their counts, their physics, the destruction's and the demolition's), in the panel
     /// after the workshops' (SceneProvider registers them).
-    package static var sceneRows: [SettingSpec] = []
+    package static var sceneRows: [SettingSpec] = [] {
+        didSet {
+            sectionsLock.lock()
+            sceneRowsVersion += 1
+            sectionsLock.unlock()
+        }
+    }
+    private static var sceneRowsVersion = 0
 
-    private static let scene: Section = {
-        _ = SceneRegistry.kinds   // (the game's rows are registered with its scenes)
+    private static func sceneSection() -> Section {
         let assemblies: When = { !$0.scene.bakedPlants }
         let virtual: When = { $0.virtualGeometry.enabled }
         let city: When = { $0.scene.kind.isCity }
@@ -461,7 +478,7 @@ package enum SettingsTable {
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
             S.custom(.clearModels).when { !$0.scene.extraModels.isEmpty },
         ])
-    }()
+    }
 
     private static let post: Section = {
         let bloom: When = { $0.post.bloom > 0 }, focus: When = { $0.post.aperture > 0 }

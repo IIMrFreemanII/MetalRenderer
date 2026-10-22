@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var renderer: Renderer!
     private var controller: RendererController!
     private var settingsPanel: SettingsPanel?
+    private var panelSceneRows: [String] = []   // the game's rows the panel was made with (gameReloaded)
     private var debugPanel: DebugPanel?
     private var plantEditor: PlantEditorPanel?
     private var vfxEditor: VFXEditorPanel?
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } catch {
                 fatalError("Renderer failed to start:\n\(error)")
             }
+            renderer.startDevReload()   // (a benchmark's only with METALRENDERER_HOTRELOAD=1)
             renderer.startScripts()   // a `script` mode's runner; the socket only for `serve` or METALRENDERER_SCRIPT_SERVER=1
             renderer.startRenderThread()
             return
@@ -131,7 +133,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             controller.onToggleDayBar = { [weak self] in self?.toggleDayBar(nil) }
             bar.show(controller.settings)
             dayBar = bar
+            // The dev build's hot reload: the game's new code may bring other rows for the panel.
+            NotificationCenter.default.addObserver(forName: DevReload.gameReloaded, object: nil, queue: .main) { [weak self] _ in
+                self?.gameReloaded()
+            }
         }
+        renderer.startDevReload()
         renderer.startScripts()   // Tools/script.py and the MCP server reach the app through its socket
         renderer.startRenderThread()
 
@@ -151,7 +158,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
           - / =        lower / raise render resolution   U   upscaling (MetalFX denoiser): off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
-          R            hot-reload the shaders (edit Shaders/*.metal while the app runs)
+          R            hot-reload the shaders (edit Shaders/*.metal while the app runs; the dev build reloads them,
+                       the game's code and the scene's files when saved: README, Hot reload)
           Tab / Cmd-,  show or hide the Render Settings panel
           I / Cmd-I    show or hide the Debug window (frame graph, pass timings, virtual geometry, ...)
           P            show or hide the loading overlay (what loads in the background, and how far it is)
@@ -183,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let panel = SettingsPanel(renderer: controller)
         panel.show(nextTo: window)
         settingsPanel = panel
+        panelSceneRows = SettingsTable.sceneRows.map(\.title)
         controller.onTogglePanel = { [weak self] in self?.toggleSettings(nil) }
         debugPanel = DebugPanel(renderer: controller)
         if DebugPanel.wasVisible { debugPanel?.show(nextTo: window, below: panel.panel) }
@@ -345,6 +354,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.message = "Choose glTF models (.glb or .gltf) to add to the scene, or an HDR image (.hdr or .exr) for the sky"
         guard panel.runModal() == .OK else { return }
         controller.addModels(panel.urls)
+    }
+
+    /// The game's code was loaded again (DevReload): the settings panel is made again if the game's rows changed, where
+    /// it was.
+    private func gameReloaded() {
+        let rows = SettingsTable.sceneRows.map(\.title)
+        guard let old = settingsPanel, rows != panelSceneRows else { return }
+        let frame = old.panel.frame, visible = old.panel.isVisible
+        old.panel.orderOut(nil)
+        let panel = SettingsPanel(renderer: controller)
+        panel.panel.setFrame(frame, display: false)
+        if visible { panel.panel.orderFront(nil) }
+        settingsPanel = panel
+        panelSceneRows = rows
     }
 
     @objc private func toggleSettings(_ sender: Any?) {

@@ -226,6 +226,7 @@ package struct SceneFile {
         writer.add(SceneFile.stringRanges, ranges)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try writer.write(to: url, key: SceneFile.key)
+        FileStamps.note(url)   // the app's own save: not a reason to reload it (DevReload)
     }
 
     // MARK: - Prefabs
