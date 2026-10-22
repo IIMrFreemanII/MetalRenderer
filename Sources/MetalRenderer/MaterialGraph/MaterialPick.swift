@@ -1,5 +1,6 @@
 import Characters
 import Effects
+import Materials
 import Physics
 import Plants
 import simd

@@ -5,6 +5,7 @@ import simd
 @testable import Effects
 @testable import EngineCore
 @testable import Game
+@testable import Materials
 @testable import MetalRenderer
 @testable import Physics
 @testable import Plants

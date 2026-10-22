@@ -3,6 +3,7 @@ import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
+import Materials
 import Metal
 import MetalKit
 import Physics

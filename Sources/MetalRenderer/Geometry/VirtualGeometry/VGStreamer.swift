@@ -2,6 +2,7 @@ import Characters
 import Effects
 import EngineCore
 import Foundation
+import Materials
 import Metal
 import Physics
 import Plants

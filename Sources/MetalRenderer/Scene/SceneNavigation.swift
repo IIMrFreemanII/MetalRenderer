@@ -1,6 +1,7 @@
 import Characters
 import Effects
 import EngineCore
+import Materials
 import Physics
 import Plants
 import simd
