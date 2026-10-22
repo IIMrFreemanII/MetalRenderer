@@ -1,4 +1,5 @@
 import Characters
+import Effects
 import EngineCore
 import Foundation
 import Physics
@@ -61,10 +62,10 @@ extension Scene {
     /// Scene `kind`'s default camera (its definition's), unless the scene says its own.
     package static func demoCamera(_ kind: SceneKind) -> Camera? { kind.definition.camera }
 
-    package static func degrees(_ d: Float) -> Float { d * .pi / 180 }
+    package static func degrees(_ d: Float) -> Float { Geo.degrees(d) }
 
     /// Unit-luminance colour.
-    package static func hue(_ c: SIMD3<Float>) -> SIMD3<Float> { c / dot(c, [0.2126, 0.7152, 0.0722]) }
+    package static func hue(_ c: SIMD3<Float>) -> SIMD3<Float> { Geo.hue(c) }
 
     // MARK: - Light check
 

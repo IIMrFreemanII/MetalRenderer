@@ -23,3 +23,4 @@ Scene.placeBodies(poses:) -> closure #2 in Scene.placeBodies(poses:)  # once a c
 Scene.update(time:dayTime:) -> __invert_f4  # setTransform's inverse, inlined
 # The crowd's walkers (Scene.update): a call on main too, per walker.
 closure #1 in closure #1 in closure #2 in Scene.update(time:dayTime:) -> Crowd.Walker.positions(_:)  # a call on main too
+Scene.update(time:dayTime:) -> ParticleSystem.claim  # once per frame (the particles' steps to run)

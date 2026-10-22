@@ -1,5 +1,6 @@
 import Characters
 import CoreGraphics
+import Effects
 import EngineCore
 import Foundation
 import Physics

@@ -1,4 +1,5 @@
 import Characters
+import Effects
 import EngineCore
 import Foundation
 import ImageIO
@@ -323,16 +324,10 @@ extension Scene {
     }
 
     /// Unit direction perpendicular to `n`: horizontal if possible.
-    package static func perpendicular(_ n: SIMD3<Float>) -> SIMD3<Float> {
-        let h = cross(SIMD3<Float>(0, 1, 0), n)
-        return length(h) > 1e-4 ? normalize(h) : normalize(cross(SIMD3<Float>(1, 0, 0), n))
-    }
+    package static func perpendicular(_ n: SIMD3<Float>) -> SIMD3<Float> { Geo.perpendicular(n) }
 
     /// Rotation taking +Y to `d` (unit).
-    package static func alignY(_ d: SIMD3<Float>) -> float4x4 {
-        if dot(d, [0, 1, 0]) < -0.9999 { return rotate(.pi, [1, 0, 0]) }
-        return float4x4(simd_quatf(from: [0, 1, 0], to: d))
-    }
+    package static func alignY(_ d: SIMD3<Float>) -> float4x4 { Geo.alignY(d) }
 
     /// Rect lights: width axis (unit), normal, height axis.
     package static func rectFrame(_ pose: LightPose) -> (SIMD3<Float>, SIMD3<Float>, SIMD3<Float>) {
