@@ -384,8 +384,11 @@ extension Renderer {
     /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
     package func rebuildScene(resetCamera: Bool) {
         loading = nil   // a scene still loading is for settings this one replaces
+        let remake = sceneRemake
+        sceneRemake = nil
+        if let remake { print("\(settings.scene.kind.title) made again: \(remake)") }
         do {
-            let reuse = settings.scene == scene.settings ? scene : nil
+            let reuse = remake == nil && settings.scene == scene.settings ? scene : nil
             install(try prepareScene(settings.scene, reuse: reuse, options: loadOptions), resetCamera: resetCamera)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")

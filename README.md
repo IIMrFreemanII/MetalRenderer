@@ -109,6 +109,25 @@ You can still open `Package.swift` in Xcode, choose the **MetalRenderer** scheme
 
 The window opens first; the shaders compile in the background (after an edit that takes two to three seconds, otherwise Metal has them cached and the first frame is there after a quarter of a second). If they fail to compile, the error is printed with the file and line, the window stays empty, and **R** tries again.
 
+**Hot reload.** The dev build (`Tools/build.sh`) watches `Sources` and `Assets` while it runs and applies what you save. Release builds, benchmarks and tests never watch, and `METALRENDERER_HOTRELOAD=0` turns it off.
+
+| You save | What happens |
+|---|---|
+| A shader (`Sources/MetalRenderer/**.metal`, VFX included) | It compiles again, as **R** does. A failed compile keeps the shaders that work. |
+| The game's code (`Sources/Game`: scene builders, gameplay, benchmark modes) | `Tools/hotreload.sh` builds the Game module alone and links it into a bundle against the running binary. The app loads it and builds the scene again with the camera where it was. |
+| The scene's file (`Assets/Scenes/<kind>.scene`), or the saved plants or buildings (`Assets/Plants`, `Assets/Buildings`) | They are read again and the scene is built again. The app's own saves don't count. |
+| Code in any other module (the engine, a system, the editors) | Nothing reloads. The app says to rebuild and relaunch. |
+
+How a game reload behaves:
+- **Timing (M1 Max):** about 5 s to build the game's code, then the scene's own build. In total about 5.5 s from the save to the new frame in the light scenes, and 21 s in the demolition scene, which takes 13 s to build either way. A rebuild and relaunch take 6 s and 20–27 s.
+- **What it keeps:** the camera, the panels and the editors.
+- **What it resets:** the scene's gameplay (its `SceneBehaviour`) and the game's own statics.
+- **A build error:** printed, and the code that was running keeps running.
+- **Rows:** if the game's settings rows changed, the settings panel is made again where it was.
+- **Old code:** stays loaded until you quit, so each reload adds about 3 MB. The Objective-C runtime notes that the game's classes are "implemented in both"; that is expected.
+
+Materials, effects, props and HDRIs aren't watched: their editors already update the scene as you edit.
+
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
 **Build times.** The code is library modules: the core, the engine, the editors and the game (README, "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole; on an M1 Max that is about a minute after an engine edit, most of it the optimiser over the engine on one core, and 10–35 s after a system's, an editor's, the game's or the core's. Build release with `Tools/release.sh` (`swift build -c release`, after the modules above an `@inlinable` body that changed are marked for rebuilding). Release builds are testable, so `Tools/release.sh` and `Tools/release.sh test` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in 3–6 s, and it draws the same images at the same speed. Quote release numbers.

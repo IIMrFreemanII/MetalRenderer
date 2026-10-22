@@ -43,13 +43,17 @@ package final class VFXCompiler {
         package let lightTypes: UInt32
         package let stats: Bool
         package let metal4: Bool
+        /// The renderer's shader reloads so far (R, or a save in the dev build): a library compiled before the last one
+        /// read the old ShadersVFX.metal.
+        package let generation: Int
 
         /// (As the memberwise initializer, for the modules above this one.)
-        package init(entry: URL, lightTypes: UInt32, stats: Bool, metal4: Bool) {
+        package init(entry: URL, lightTypes: UInt32, stats: Bool, metal4: Bool, generation: Int = 0) {
             self.entry = entry
             self.lightTypes = lightTypes
             self.stats = stats
             self.metal4 = metal4
+            self.generation = generation
         }
     }
     private struct Key: Hashable {
