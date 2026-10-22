@@ -44,6 +44,8 @@ by_name() {
     Settings*.swift|SceneSettings.swift) add SettingsTableTests BenchmarkModesTests ;;
     SceneDefinition.swift|GameScenes*.swift|Scene+Kit.swift) add SceneRegistryTests SettingsTableTests BenchmarkModesTests ;;
     Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
+    Script*.swift|SceneCommand.swift|Renderer+Scripting.swift|Scene+Stage.swift) add ScriptingTests ;;
+    SceneFile.swift|Scene+SceneFile.swift|Renderer+Placement.swift) add SceneFileTests ScriptingTests ;;
     Capabilities.swift|Upscaler.swift|Metal4Backend.swift) add CapabilitiesTests ;;
     ShaderSource.swift|GPUTypes.swift) add ShaderSourceTests KernelVariantsTests ;;
     Pipelines.swift) add ShaderSourceTests KernelVariantsTests PipelineCacheTests ;;

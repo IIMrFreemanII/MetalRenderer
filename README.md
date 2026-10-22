@@ -2209,6 +2209,90 @@ Path traced's fog fills the scene's bounding sphere, the same bounds the realtim
 | History length | 16 frames | Temporal accumulation. Shorter means less lag on moving lights and shadows, and more flicker. |
 | Anti-lag | off | Shortens the history where a fast and a slow running average disagree, which happens when the lighting changes. It helps most with long histories. |
 
+### Scripts
+
+A Swift script can run inside the running app, against its live engine: change what a scene has, the settings, the
+camera, the time of day, which scene is loaded, and build a scene up a step at a time. The app compiles the script with
+`swiftc` against the module files next to its own binary (`.build-dev` or `.build`), links it as a bundle against
+itself (`clang -bundle -bundle_loader`) and loads it, so the script calls the engine's `package` API directly. Both the
+dev build and the release build run scripts (`Sources/MetalRenderer/Scripting/`).
+
+```bash
+Tools/script.py Scripts/grid.swift
+```
+
+```bash
+Tools/script.py -e 'renderer.camera.position = [0, 2, 8]'
+```
+
+`Tools/script.py` also has `--state` (the app's state as JSON), `--capture out.png [--scale 0.5]` (the next frame),
+`--serve` (a headless app, no window) and `--quit` (a headless one). `--build dev|release` picks the app of that build.
+
+**Two forms.**
+
+* Short: plain statements, run once on the render thread before the next frame, with `renderer`, `scene` and `run` in
+  scope (`Scripts/grid.swift`). It can declare local functions and types, not extensions.
+* Full: the script declares `func run(_ run: ScriptRun)`, called on a thread of its own, so it can wait between steps
+  (`Scripts/build-up.swift`, `Scripts/app-state.swift`).
+
+`ScriptRun` is only what the threads need, not a facade over the engine:
+
+| Call | Does |
+|---|---|
+| `run.render { renderer in … }` | Runs the closure on the render thread and returns its value |
+| `run.waitForScene()` | Returns once the scene the settings ask for is installed |
+| `run.wait(frames:)`, `run.wait(seconds:)` | Waits while the frames go on |
+| `run.onFrame { renderer, dt in … }` | A closure every frame, until the script runs again or calls `run.stop()` |
+| `run.capture(path, scale:)` | The next frame as a PNG |
+| `run.arguments`, `run.fail(_)` | The arguments after the script's path; the run's failure (exit status 1) |
+
+`print` goes back to whoever ran the script. A run that is done is on screen: the runner waits for the scene it asked
+for. Compile errors name the script's own lines; the app keeps running.
+
+**What a script builds goes into the scene's file.** `renderer.editPlaced { file in … }` edits the
+[scene file](#scene-files) of the scene the settings ask for and writes it at once, as the placement editor does
+(which now goes through it too). Objects only moved, turned or scaled move live; anything else makes the scene again
+from the file. `editPlaced(save: false)` moves without writing, for motion every frame. Scripts can register prefabs of
+their own (`SceneFile.register(prefab:)`), but those exist only while the script is loaded: after a relaunch the file
+says "no asset" until it runs again.
+
+**The stage** (`METALRENDERER_SCENE=stage`) is an empty floor under the sun, with named materials for a file's objects
+(`white`, `grey`, `black`, `red`, `orange`, `yellow`, `green`, `blue`, `purple`, `wood`, `stone`, `plastic`, `metal`,
+`gold`, `mirror`, `glow`). It remakes quickly, so a script building on it shows each step at once.
+
+**Without the window:**
+
+* `METALRENDERER_BENCH=script METALRENDERER_SCRIPT=<file.swift>` runs a script on the stage, then takes one shot
+  (`METALRENDERER_BENCH_DIR`).
+* `METALRENDERER_BENCH=serve` holds the stage with the socket open, at about 30 frames a second, until a tool sends quit.
+
+**The socket.** The windowed app always listens (`METALRENDERER_SCRIPTS=0` turns it off). A benchmark listens only in
+`serve` or with `METALRENDERER_SCRIPT_SERVER=1`. The socket is `/tmp/metalrenderer-<uid>/<pid>.sock`, and its path is
+in `<build>/script.socket`. Each request is one JSON line (`{"path":…}`, `{"state":true}`, `{"capture":…}`,
+`{"place":…}`, `{"move":…}`, `{"remove":…}`, `{"camera":…}`, `{"quit":true}`), answered with JSON lines up to `{"exit": n}`.
+
+**Typed commands.** The common single edits need no script and no compile (`SceneCommand`): `place` (an object by
+asset, name, position, rotation in degrees or a quaternion, scale and material; one of the same name is replaced),
+`move` (live), `remove` (by names or a name prefix) and `camera` (a position, `lookAt` or yaw and pitch, the field of
+view):
+
+```bash
+Tools/script.py --send '{"place": {"asset": "prefab:box", "name": "Crate", "position": [0, 0.5, 0], "material": "wood"}}'
+```
+
+**Claude (MCP).** `.mcp.json` registers `Tools/mcp/metalrenderer.py`, a stdio MCP server with no dependencies. Its
+tools: `run_swift` (optionally with the frame after it), `scene_state`, `capture`, `place_object`, `move_object`,
+`remove_objects`, `set_camera`, `switch_scene`, `set_settings`, `start_headless` and `quit_headless`. The `app-control`
+skill says which to use when, and when a script written again and again becomes a typed command.
+
+**Limits:**
+
+* A trap in a script (an index out of range, `fatalError`) takes the app down.
+* Bundles are never unloaded: about 100 KB a run, and Objective-C classes a script declares print "implemented in both".
+* A script compiles against the binary that runs: after a build, relaunch the app before running scripts again (the app
+  says so).
+* The first compile in a build folder takes a few seconds (the module cache); later ones well under a second.
+
 ## Source layout
 
 The code is in modules, each a target of `Package.swift` in a folder per feature:
@@ -2375,6 +2459,7 @@ The engine's folders:
 | `ProjectGraph/` | Outlines, overrides, the Project Graph's model |
 | `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
 | `IO/` | Scene files and placing their objects, glTF models in scenes |
+| `Scripting/` | Swift scripts in the running app: the source a script is made into, the compiler, the runner, `ScriptRun`, the socket (`ScriptServer`), the typed commands (`SceneCommand`) |
 
 The editors' folders: `App/` (the window, the view, the controller, panels and overlays, the day bar, the graph
 editors' canvas), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,

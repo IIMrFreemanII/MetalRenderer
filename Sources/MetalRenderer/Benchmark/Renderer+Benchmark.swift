@@ -17,6 +17,12 @@ extension Renderer {
     /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
     package func benchmarkActs(_ benchmark: Benchmark) {
         let c = benchmark.current
+        for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time {
+            if case .script(let path, let arguments) = e.event {
+                benchmarkFired.insert(k)
+                runBenchmarkScript(path, arguments: arguments)
+            }
+        }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
             if case .paint(let steps) = e.event {
                 benchmarkFired.insert(k)
@@ -36,12 +42,13 @@ extension Renderer {
             // (A painting's or a terrain edit's steps: theirs to fire, above, a few frames in.)
             if case .paint = e.event { continue }
             if case .terrain = e.event { continue }
+            if case .script = e.event { continue }
             benchmarkFired.insert(k)
             switch e.event {
             case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
             case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
             case .flashlight(let on): controls.flashlight.on = on
-            case .paint, .terrain: break
+            case .paint, .terrain, .script: break
             }
         }
         if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {
@@ -79,7 +86,19 @@ extension Renderer {
         print("benchmark: \(c.name)")
     }
 
+    /// A benchmark's script (Config.Event.script): its output to the run's.
+    private func runBenchmarkScript(_ path: String, arguments: [String]) {
+        guard let scripts else { print("script: scripts are off (METALRENDERER_SCRIPTS=0)"); return }
+        scripts.run(path: path, arguments: arguments, output: ScriptOutput { _ in })
+    }
+
     package func advanceBenchmark(_ benchmark: Benchmark) {
+        // A script running, or the scene it asked for still to make: the frame holds (its clock too).
+        if scripts?.isBusy == true || placedPending != nil || sceneRemake != nil { return }
+        if benchmark.current.serves {
+            Thread.sleep(forTimeInterval: 1.0 / 30)   // idle: the tools want a frame now and then, not the GPU
+            return
+        }
         if benchmark.hold(settled: streamingSettled) { return }
         guard benchmark.advance() else { return }
         guard benchmark.isFinished else {

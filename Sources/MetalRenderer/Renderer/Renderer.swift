@@ -570,6 +570,14 @@ package final class Renderer: NSObject {
     package var devReload: DevReload?               // the dev build's hot reload (startDevReload)
     package var streaming = Streaming()
 
+    // MARK: - Scripts: state
+
+    package var scripts: ScriptRunner?              // compiles and runs Swift scripts (Renderer+Scripting)
+    package var scriptServer: ScriptServer?         // the socket Tools/script.py and the MCP server reach
+    package var scriptHooks: [ScriptHook] = []      // the scripts' per-frame closures (ScriptRun.onFrame)
+    package var frameCaptures: [FrameCapture] = []  // the next frame's picture, asked for (captureFrame)
+    package var placedPending: SceneFile?           // a scene file edited while a scene loads: made once it is in
+
     // MARK: - Procedural materials: state
 
     package var pendingInstanceEdits: [Set<Int>] = []

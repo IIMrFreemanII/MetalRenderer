@@ -2,6 +2,13 @@
 
 Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`). Benchmark runs (`METALRENDERER_BENCH`) have no window and don't take the focus. Never launch the app without `METALRENDERER_BENCH`, or with `METALRENDERER_WINDOW=1`, unless the user asks: they work on this Mac while you iterate.
 
+## Driving a running app
+
+Change a running app's scene and state with the `app-control` skill (`.claude/skills/app-control`): typed tools
+(`place_object`, `move_object`, `remove_objects`, `set_camera`, …) for single edits, Swift scripts for the rest, both
+through the `metalrenderer` MCP server (`.mcp.json`) or `Tools/script.py`; a script written again and again becomes a
+typed tool. Never in the user's window unasked: a headless app (`METALRENDERER_BENCH=serve`), quit when done.
+
 ## Source layout
 
 The code is in modules (README, "Source layout"): `Sources/EngineCore` (what every module shares, knowing no scene or

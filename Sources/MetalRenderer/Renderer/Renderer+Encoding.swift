@@ -517,6 +517,10 @@ extension Renderer {
                 writeCapture = { capture.write(); other.write() }
             }
         }
+        if let output, let scripted = encodeFrameCaptures(of: output, passes: passes) {   // a script's or a tool's (captureFrame)
+            let benchmarks = writeCapture
+            writeCapture = { benchmarks?(); scripted() }
+        }
         let checkCrowd = benchmark?.shouldCapture == true && CrowdSkinner.checked && !CrowdSkinner.frozen
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
