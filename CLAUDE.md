@@ -4,10 +4,10 @@ Check rendering offscreen with the `offscreen` skill (`.claude/skills/offscreen`
 
 ## Driving a running app
 
-Swift scripts run inside a running app (README, "Scripts"): `Tools/script.py <file.swift>` or `-e '<code>'`, `--state`,
-`--capture out.png`; the `metalrenderer` MCP server (`.mcp.json`) has the same as tools. With no app running, start a
-headless one (`Tools/script.py --serve`, MCP `start_headless`: `METALRENDERER_BENCH=serve`, no window) and quit it
-when done. Scripts compile against the running binary: after a build, relaunch it.
+Change a running app's scene and state with the `app-control` skill (`.claude/skills/app-control`): typed tools
+(`place_object`, `move_object`, `remove_objects`, `set_camera`, …) for single edits, Swift scripts for the rest, both
+through the `metalrenderer` MCP server (`.mcp.json`) or `Tools/script.py`; a script written again and again becomes a
+typed tool. Never in the user's window unasked: a headless app (`METALRENDERER_BENCH=serve`), quit when done.
 
 ## Source layout
 

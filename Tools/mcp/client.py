@@ -128,6 +128,16 @@ def capture(path, scale=1.0, build=None):
     return status, "".join(a.get("out", "") for a in answers)
 
 
+def command(name, body, build=None):
+    """A typed scene command (SceneCommand: place, move, remove, camera), no compile; returns (exit status, the
+    app's result or its message)."""
+    status, answers = request({name: body}, build, timeout=120)
+    for a in answers:
+        if "result" in a:
+            return status, a["result"]
+    return status, "".join(a.get("out", "") for a in answers)
+
+
 def quit_app(build=None):
     status, answers = request({"quit": True}, build, timeout=10)
     return status, "".join(a.get("out", "") for a in answers)

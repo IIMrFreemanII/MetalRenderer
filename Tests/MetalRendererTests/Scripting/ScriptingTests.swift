@@ -85,6 +85,68 @@ final class ScriptingTests: XCTestCase {
         XCTAssertFalse(lit.onlyMoves(from: a))
     }
 
+    // MARK: - Typed commands (SceneCommand)
+
+    func testCommandsReadFromJSON() throws {
+        let place = try XCTUnwrap(SceneCommand.decode(["place": ["asset": "prefab:box", "name": "Crate", "position": [1, 0.5, -2],
+                                                                  "rotation": [0, 90, 0], "scale": 2, "material": "wood", "parent": "Table"]]))
+        guard case .success(.place(let o, let parent)) = place else { return XCTFail("\(place)") }
+        XCTAssertEqual(o.asset, "prefab:box")
+        XCTAssertEqual(o.position, [1, 0.5, -2])
+        XCTAssertEqual(o.scale, [2, 2, 2])
+        XCTAssertEqual(o.material, "wood")
+        XCTAssertEqual(parent, "Table")
+        // 90 degrees about y: x goes to -z.
+        let turned = o.rotation.act([1, 0, 0])
+        XCTAssertEqual(turned.z, -1, accuracy: 1e-5)
+
+        guard case .success(.move(let name, let position, nil, nil))? = SceneCommand.decode(["move": ["name": "Crate", "position": [0, 1, 0]]]) else {
+            return XCTFail("move")
+        }
+        XCTAssertEqual(name, "Crate")
+        XCTAssertEqual(position, [0, 1, 0])
+        guard case .success(.remove(let names, let prefix))? = SceneCommand.decode(["remove": ["name": "A", "prefix": "Grid "]]) else {
+            return XCTFail("remove")
+        }
+        XCTAssertEqual(names, ["A"])
+        XCTAssertEqual(prefix, "Grid ")
+        guard case .success(.camera(nil, let lookAt, nil, nil, let fov))? = SceneCommand.decode(["camera": ["lookAt": [0, 0, 0], "fov": 50]]) else {
+            return XCTFail("camera")
+        }
+        XCTAssertEqual(lookAt, SIMD3<Float>(0, 0, 0))
+        XCTAssertEqual(fov, 50)
+        XCTAssertNil(SceneCommand.decode(["state": true]))
+        for bad: [String: Any] in [["place": ["name": "no asset"]], ["move": ["position": [1, 2, 3]]], ["remove": [:]],
+                                   ["place": ["asset": "prefab:box", "position": [1, 2]]], ["camera": ["yaw": 1, "lookAt": "here"]]] {
+            guard case .failure? = SceneCommand.decode(bad) else { return XCTFail("\(bad) should fail") }
+        }
+    }
+
+    func testCameraAnglesLookAtTheTarget() throws {
+        let eye = SIMD3<Float>(3, 4, 5), target = SIMD3<Float>(-1, 0.5, 2)
+        let (yaw, pitch) = try XCTUnwrap(SceneCommand.angles(from: eye, to: target))
+        let camera = Camera(position: eye, yaw: yaw, pitch: pitch)
+        let wanted = simd_normalize(target - eye)
+        XCTAssertEqual(simd_distance(camera.forward, wanted), 0, accuracy: 1e-5)
+        XCTAssertNil(SceneCommand.angles(from: eye, to: eye))
+    }
+
+    func testPlacingReplacesByNameAndRemovingTakesChildren() {
+        var file = SceneFile()
+        XCTAssertEqual(file.upsert(SceneFile.Object(asset: "prefab:box", name: "Table")).replaced, false)
+        file.objects.append(SceneFile.Object(asset: "prefab:ball", name: "Lamp", parent: 0))
+        file.objects.append(SceneFile.Object(asset: "prefab:box", name: "Chair"))
+        file.objects.append(SceneFile.Object(asset: "prefab:quad", name: "Cushion", parent: 2))
+        let (k, replaced) = file.upsert(SceneFile.Object(asset: "prefab:box", name: "Table", position: [1, 0, 0]))
+        XCTAssertEqual(k, 0)
+        XCTAssertTrue(replaced)
+        XCTAssertEqual(file.objects.count, 4)
+        XCTAssertEqual(file.removeObjects([0]), 2)   // the table and its lamp
+        XCTAssertEqual(file.objects.map(\.name), ["Chair", "Cushion"])
+        XCTAssertEqual(file.objects[1].parent, 0)    // renumbered
+        XCTAssertEqual(file.removeObjects([]), 0)
+    }
+
     func testTheStageNamesItsMaterials() {
         GameScenes.register()
         XCTAssertEqual(SceneRegistry.kind(named: "stage"), .stage)

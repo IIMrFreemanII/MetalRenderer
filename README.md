@@ -2250,11 +2250,21 @@ says "no asset" until it runs again.
 **The socket.** The windowed app always listens (`METALRENDERER_SCRIPTS=0` turns it off). A benchmark listens only in
 `serve` or with `METALRENDERER_SCRIPT_SERVER=1`. The socket is `/tmp/metalrenderer-<uid>/<pid>.sock`, and its path is
 in `<build>/script.socket`. Each request is one JSON line (`{"path":…}`, `{"state":true}`, `{"capture":…}`,
-`{"quit":true}`), answered with JSON lines up to `{"exit": n}`.
+`{"place":…}`, `{"move":…}`, `{"remove":…}`, `{"camera":…}`, `{"quit":true}`), answered with JSON lines up to `{"exit": n}`.
+
+**Typed commands.** The common single edits need no script and no compile (`SceneCommand`): `place` (an object by
+asset, name, position, rotation in degrees or a quaternion, scale and material; one of the same name is replaced),
+`move` (live), `remove` (by names or a name prefix) and `camera` (a position, `lookAt` or yaw and pitch, the field of
+view):
+
+```bash
+Tools/script.py --send '{"place": {"asset": "prefab:box", "name": "Crate", "position": [0, 0.5, 0], "material": "wood"}}'
+```
 
 **Claude (MCP).** `.mcp.json` registers `Tools/mcp/metalrenderer.py`, a stdio MCP server with no dependencies. Its
-tools: `run_swift` (optionally with the frame after it), `scene_state`, `capture`, `switch_scene`, `set_settings`,
-`start_headless` and `quit_headless`.
+tools: `run_swift` (optionally with the frame after it), `scene_state`, `capture`, `place_object`, `move_object`,
+`remove_objects`, `set_camera`, `switch_scene`, `set_settings`, `start_headless` and `quit_headless`. The `app-control`
+skill says which to use when, and when a script written again and again becomes a typed command.
 
 **Limits:**
 
@@ -2430,7 +2440,7 @@ The engine's folders:
 | `ProjectGraph/` | Outlines, overrides, the Project Graph's model |
 | `Benchmark/` | The harness (`Benchmark.Config`, the mode lookup), the renderer's side |
 | `IO/` | Scene files and placing their objects, glTF models in scenes |
-| `Scripting/` | Swift scripts in the running app: the source a script is made into, the compiler, the runner, `ScriptRun`, the socket (`ScriptServer`) |
+| `Scripting/` | Swift scripts in the running app: the source a script is made into, the compiler, the runner, `ScriptRun`, the socket (`ScriptServer`), the typed commands (`SceneCommand`) |
 
 The editors' folders: `App/` (the window, the view, the controller, panels and overlays, the day bar, the graph
 editors' canvas), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,

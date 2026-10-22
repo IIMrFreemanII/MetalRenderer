@@ -9,6 +9,8 @@ import Foundation
 ///   {"path": "<script.swift>", "args": [...]}   runs a script (ScriptRunner): {"out": "<text>"}..., then its status
 ///   {"state": true}                             the app's state (Renderer.scriptState): {"state": {...}}
 ///   {"capture": "<file.png>", "scale": 0.5}     the next frame as a PNG: {"capture": "<file.png>"}
+///   {"place": {...}}, {"move": {...}},           typed edits of the scene's file and the camera, no compile
+///   {"remove": {...}}, {"camera": {...}}        (SceneCommand): {"result": {...}}
 ///   {"quit": true}                              a headless run quits (the window's app doesn't)
 ///
 /// The socket is `/tmp/metalrenderer-<uid>/<pid>.sock` (a path in the checkout would pass the 104 bytes a socket's
@@ -110,6 +112,31 @@ package final class ScriptServer {
             }
             done.wait()
             connection.send(["exit": Int(status)])
+        } else if let decoded = SceneCommand.decode(request) {
+            // A typed edit (place, move, remove, camera): no compile; answered once its scene is in.
+            let command: SceneCommand
+            switch decoded {
+            case .success(let c): command = c
+            case .failure(let failure):
+                connection.send(["out": "\(failure)\n"])
+                connection.send(["exit": 2])
+                return
+            }
+            var result: Result<[String: Any], SceneCommand.Failure> = .failure(.init("not done"))
+            renderer.perform { r in
+                result = command.apply(to: r)
+                done.signal()
+            }
+            done.wait()
+            switch result {
+            case .success(let answer):
+                waitForScene()
+                connection.send(["result": answer])
+                connection.send(["exit": 0])
+            case .failure(let failure):
+                connection.send(["out": "\(failure)\n"])
+                connection.send(["exit": 1])
+            }
         } else if request["state"] != nil {
             var state: [String: Any] = [:]
             renderer.perform { r in
@@ -146,6 +173,22 @@ package final class ScriptServer {
         } else {
             connection.send(["out": "unknown request: \(line)\n"])
             connection.send(["exit": 2])
+        }
+    }
+
+    /// Returns once the scene the settings ask for is in (at most a minute), as a script's run does.
+    private func waitForScene() {
+        let start = Date()
+        while Date().timeIntervalSince(start) < 60 {
+            let settled = DispatchSemaphore(value: 0)
+            var ready = false
+            renderer.perform { r in
+                ready = r.sceneSettled
+                settled.signal()
+            }
+            settled.wait()
+            if ready { return }
+            Thread.sleep(forTimeInterval: 1.0 / 240)
         }
     }
 

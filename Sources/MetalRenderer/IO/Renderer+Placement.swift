@@ -126,23 +126,9 @@ extension Renderer {
 
     /// Delete: the selected object out of the file (and what hangs from it), the scene made again.
     package func deletePlaced() {
-        guard let k = placedSelection, let placed = scene.placed else { return }
-        var gone = Set([k])
-        var grew = true
-        while grew {
-            let more = placed.file.objects.indices.filter { !gone.contains($0) && gone.contains(placed.file.objects[$0].parent) }
-            grew = !more.isEmpty
-            gone.formUnion(more)
-        }
-        var renumber: [Int: Int] = [:]
-        var kept: [SceneFile.Object] = []
-        for (j, o) in placed.file.objects.enumerated() where !gone.contains(j) {
-            renumber[j] = kept.count
-            kept.append(o)
-        }
-        for j in kept.indices { kept[j].parent = renumber[kept[j].parent] ?? -1 }
+        guard let k = placedSelection else { return }
         selection = nil
-        editPlaced { $0.objects = kept }
+        editPlaced { $0.removeObjects([k]) }
     }
 
     /// Command-D: a copy of the selected object beside it (along x, its width away).

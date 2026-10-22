@@ -18,12 +18,21 @@ PROTOCOL = "2025-06-18"
 BUILD = {"type": "string", "enum": sorted(client.BUILDS),
          "description": "The app of this build (Tools/build.sh: dev, Tools/release.sh: release); default: whichever runs."}
 
+VEC3 = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3, "description": "[x, y, z] in metres; y is up."}
+ROTATION = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 4,
+            "description": "[x, y, z] in degrees (turned about y, then x, then z), or a quaternion [x, y, z, w]."}
+SCALE = {"description": "A number, or [x, y, z].", "anyOf": [{"type": "number"}, VEC3]}
+# The typed tools: the socket's SceneCommand by its key.
+COMMANDS = {"place_object": "place", "move_object": "move", "remove_objects": "remove", "set_camera": "camera"}
+
 TOOLS = [
     {
         "name": "run_swift",
         "description": (
             "Compile and run a Swift script inside the running MetalRenderer app, against its live engine (the package "
-            "API of EngineCore, MetalRenderer and the system modules). Short form: plain statements, run on the render "
+            "API). For one object or the camera, use place_object, move_object, remove_objects or set_camera instead "
+            "(no compile); use a script for loops, procedural layouts and anything else in the engine (EngineCore, "
+            "MetalRenderer and the system modules). Short form: plain statements, run on the render "
             "thread with `renderer: Renderer`, `scene: Scene` and `run: ScriptRun` in scope. Full form: declare "
             "`func run(_ run: ScriptRun)`, run on its own thread; `run.render { renderer in ... }` runs a closure on the "
             "render thread, `run.waitForScene()`, `run.wait(frames:)`, `run.onFrame { renderer, dt in }`, "
@@ -72,6 +81,38 @@ TOOLS = [
                         "'solid=1,tod=18' (scene_state's settings show the lists and keys)."),
         "inputSchema": {"type": "object", "required": ["list", "items"], "properties": {
             "list": {"type": "string"}, "items": {"type": "string"}, "build": BUILD}},
+    },
+    {
+        "name": "place_object",
+        "description": ("Place an object in the scene's file (no compile): an asset (prefab:box, prefab:ball, prefab:quad, "
+                        "a scene's own prefab, model:<path under Assets>) at a position, with a rotation, scale and a "
+                        "named material (scene_state lists prefabs and namedMaterials). An object of the same name is "
+                        "replaced, so placing again updates it. Written to the scene's .scene file at once."),
+        "inputSchema": {"type": "object", "required": ["asset", "name"], "properties": {
+            "asset": {"type": "string"}, "name": {"type": "string"}, "position": VEC3,
+            "rotation": ROTATION, "scale": SCALE, "material": {"type": "string"},
+            "parent": {"type": "string", "description": "The name of the object it hangs from: its position, rotation and scale are then in the parent's space (a parent's scale applies to it)."},
+            "build": BUILD}},
+    },
+    {
+        "name": "move_object",
+        "description": "Move, turn or scale an object of the scene's file by its name; applied live, without a new scene.",
+        "inputSchema": {"type": "object", "required": ["name"], "properties": {
+            "name": {"type": "string"}, "position": VEC3, "rotation": ROTATION, "scale": SCALE, "build": BUILD}},
+    },
+    {
+        "name": "remove_objects",
+        "description": "Remove objects of the scene's file by name or name prefix, with what hangs from them.",
+        "inputSchema": {"type": "object", "properties": {
+            "names": {"type": "array", "items": {"type": "string"}}, "prefix": {"type": "string"}, "build": BUILD}},
+    },
+    {
+        "name": "set_camera",
+        "description": "Place the camera: a position, and where it looks (lookAt) or its yaw and pitch in degrees; the field of view in degrees.",
+        "inputSchema": {"type": "object", "properties": {
+            "position": VEC3, "lookAt": VEC3,
+            "yaw": {"type": "number", "description": "Degrees; 0 looks down -Z."}, "pitch": {"type": "number", "description": "Degrees; negative looks down."},
+            "fov": {"type": "number"}, "build": BUILD}},
     },
     {
         "name": "start_headless",
@@ -130,6 +171,10 @@ def call(name, a):
             else:
                 result["content"].append({"type": "text", "text": "capture: " + where})
         return result
+    if name in COMMANDS:
+        body = {k: v for k, v in a.items() if k != "build"}
+        status, result = client.command(COMMANDS[name], body, build)
+        return text(json.dumps(result) if isinstance(result, dict) else result.rstrip(), status != 0)
     if name == "scene_state":
         return text(json.dumps(client.state(build), indent=1))
     if name == "capture":

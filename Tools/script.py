@@ -5,6 +5,8 @@
   Tools/script.py -e 'renderer.camera.position = [0, 2, 8]'
   Tools/script.py --state                             the app's state as JSON (scene, camera, objects, settings)
   Tools/script.py --capture out.png [--scale 0.5]     the next frame as a PNG
+  Tools/script.py --send '{"place": {"asset": "prefab:box", "name": "Crate", "position": [0, 0.5, 0]}}'
+                                                      a typed command (place, move, remove, camera): no compile
   Tools/script.py --serve [--scene city]              start a headless app (no window) and wait for it
   Tools/script.py --quit                              quit a headless app
 
@@ -29,6 +31,7 @@ def main():
     parser.add_argument("--state", action="store_true", help="print the app's state")
     parser.add_argument("--capture", metavar="PNG", help="save the next frame")
     parser.add_argument("--scale", type=float, default=1.0, help="the capture's size, times the frame's")
+    parser.add_argument("--send", metavar="JSON", help="a typed command: place, move, remove or camera")
     parser.add_argument("--serve", action="store_true", help="start a headless app (METALRENDERER_BENCH=serve)")
     parser.add_argument("--scene", help="with --serve: the scene it opens (default: the stage)")
     parser.add_argument("--quit", action="store_true", help="quit a headless app")
@@ -38,6 +41,15 @@ def main():
             pid, log = client.start_headless(a.build or "release", a.scene)
             print("headless app %d is up (its output: %s)" % (pid, log))
             return 0
+        if a.send:
+            message = json.loads(a.send)
+            if len(message) != 1:
+                print("--send takes one command, e.g. {\"move\": {...}}", file=sys.stderr)
+                return 2
+            (name, body), = message.items()
+            status, result = client.command(name, body, a.build)
+            print(json.dumps(result) if isinstance(result, dict) else result.rstrip())
+            return status
         if a.state:
             print(json.dumps(client.state(a.build), indent=2))
             return 0

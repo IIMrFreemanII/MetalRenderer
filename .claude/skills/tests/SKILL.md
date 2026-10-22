@@ -50,7 +50,7 @@ name first, then by its folder (`by_name`, `by_folder`).
 | `Settings*.swift`, `SceneSettings` | SettingsTableTests, BenchmarkModesTests |
 | `SceneDefinition`, `GameScenes*`, `Scene+Kit` | SceneRegistryTests, SettingsTableTests, BenchmarkModesTests |
 | `Benchmark*.swift` | BenchmarkModesTests, CapabilitiesTests |
-| `Script*.swift`, `Renderer+Scripting`, `Scene+Stage` | ScriptingTests |
+| `Script*.swift`, `SceneCommand`, `Renderer+Scripting`, `Scene+Stage` | ScriptingTests |
 | `SceneFile`, `Scene+SceneFile`, `Renderer+Placement` | SceneFileTests, ScriptingTests |
 | `Capabilities`, `Upscaler`, `Metal4Backend` | CapabilitiesTests |
 | `ShaderSource`, `Pipelines`, `GPUTypes`, `Shaders.metal`, any `Shaders/*.metal` | ShaderSourceTests, KernelVariantsTests |
