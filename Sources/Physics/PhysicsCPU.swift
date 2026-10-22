@@ -18,11 +18,12 @@ extension PhysicsWorld {
     private func stepStages() {
         _ = shapeData   // (made here, if the shapes changed: the stages read it from every core)
         let p = params
-        if fractures { beginFractureStep() }   // the shots and blasts of this step (Physics+Fracture.swift)
+        if fractures { beginFractureStep() } else if hasCars { beginCarStep() }   // the shots, blasts, cars' input of this step
         broadPhase(p)
         wake(p)
         link()
         particleBroadPhase(p)
+        if hasCars { carBroadPhase(p) }   // (before the moving bodies are listed: it wakes the cars' wheels)
         // The liquids before each group of substeps (PhysicsFluidCPU.swift), against the bodies where they are, and
         // what they push the bodies by, before the group's contacts.
         stepFluids()
@@ -38,6 +39,7 @@ extension PhysicsWorld {
                 listMoving()
                 narrowPhase(p, refresh: true)
             }
+            if hasCars { carForces(p, sub: sub) }   // the cars' drivetrains and tyres, before their wheels move (Physics+Cars.swift)
             integrate(p, sub: sub)
             integrateParticles(p)
             solveFlesh(p)       // the muscles, and the flesh held to its bones where this substep moved them
@@ -45,9 +47,14 @@ extension PhysicsWorld {
             solveTets(p)
             solveSkin(p)
             solveParticles(p)   // against the bodies where this substep moved them, before they are pushed apart
+            if hasCars {
+                solveCars(p, sub: sub)
+                applyCarReactions()
+            }
             solvePositions(p)
             solveVelocities(p)
         }
+        if hasCars { endCarStep() }
         settle(p, start)
         stepHair(start)
         if fractures { endFractureStep() }     // what broke, what came free, what faded

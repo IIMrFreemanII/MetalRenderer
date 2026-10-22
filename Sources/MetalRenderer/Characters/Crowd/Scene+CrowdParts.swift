@@ -97,8 +97,9 @@ extension Scene {
 
     /// An instance of a deforming mesh (placed where its vertices are: they are in the scene's space).
     @discardableResult
-    package func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4) -> Int {
-        let i = addInstance(mesh, material, transform)
+    package func addDeformingInstance(_ mesh: Int, _ material: Int, _ transform: float4x4 = matrix_identity_float4x4,
+                                      mask: UInt32 = Scene.maskGeometry) -> Int {
+        let i = addInstance(mesh, material, transform, mask: mask)
         instances[i].deforms = true
         return i
     }

@@ -219,7 +219,9 @@ package struct GPUMesh {
 package struct GPUMaterial {
     package var albedo: SIMD4<Float>     // rgb = base colour (diffuse reflectance for non-metals), a = metallic
     package var emission: SIMD4<Float>   // rgb = emitted radiance, a = roughness
-    package var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes), y = normal scale,
+    package var params = SIMD4<Float>(0, 1, 0, 0)   // x = specular weight (0 = diffuse only, the generated scenes; >= 2: a clear
+                                            // coat over metallic paint, x - 2 the paint's roughness: Scene.addPaintMaterial),
+                                            // y = normal scale,
                                             // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
                                             // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
                                             // where it is thin (Hair.metal skinUnshadowed)

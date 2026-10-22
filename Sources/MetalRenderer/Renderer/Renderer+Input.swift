@@ -85,6 +85,7 @@ extension Renderer {
 
     package func keyUp(_ key: String) {
         heldKeys.remove(key)
+        scene.behaviour?.keyUp(self, key)
         if key == "c" { crouchHeld = false }
     }
 

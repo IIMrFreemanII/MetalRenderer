@@ -284,6 +284,8 @@ package final class PhysicsWorld {
     package var liveCommands: [Int32] = []
     /// The demolition scene's rockets in flight, blasts going on and walker (Physics+Demolition.swift).
     package var demolition = DemolitionState()
+    /// Cars (Physics+Cars.swift): their beams, wheels, tuning and input; their nodes are among `particles`.
+    package var carSystem = CarSystem()
     /// Welded pairs neither of whose bodies moves left out of the colouring (PhysicsWorld.idle): the demolition
     /// scene's office, every block welded to its neighbours and asleep, would otherwise solve 10,000 of them each
     /// substep for nothing. (Off elsewhere: the colours, and so the numbers, stay as they were.)
@@ -629,6 +631,7 @@ package final class PhysicsWorld {
         initialParticles = particles
         initialHairVertices = hairVertices
         initialWelds = welds
+        finishCars()
         resetFluids()
     }
 
@@ -677,6 +680,7 @@ package final class PhysicsWorld {
         breakSteps.removeAll()
         breakTotal = 0
         demolition.reset()
+        carSystem.reset()
         broadEpoch = -1
         narrowEpoch = -1   // (its welds are back)
         resetFluids()

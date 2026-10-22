@@ -76,6 +76,12 @@ extension GameScenes {
             S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
             S.slider("Buildings", \.scene.destruction.buildings, DestructionSettings.buildingRange, live: false).env(.scene, "buildings")
                 .when { $0.scene.kind == .destruction && $0.scene.destruction.massive },
+            S.popup("Car", \.scene.cars.style, SettingsTable.titled(\.title)).env(.scene, "carstyle").when { $0.scene.kind == .cars },
+            S.slider("Cars", \.scene.cars.cars, CarSettings.carRange, live: false).env(.scene, "carcount").when { $0.scene.kind == .cars },
+            S.popup("Demo", \.scene.cars.demo, SettingsTable.titled(\.title)).env(.scene, "cardemo").when { $0.scene.kind == .cars },
+            S.slider("Demo speed", \.scene.cars.demoSpeed, CarSettings.speedRange, step: 5, live: false) { String(format: "%.0f km/h", $0) }
+                .env(.scene, "carspeed").when { $0.scene.kind == .cars && $0.scene.cars.demo == .wall },
+            S.check("Traction control and ABS", \.scene.cars.assists).env(.scene, "carassists").when { $0.scene.kind == .cars },
             S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
                 .when { $0.scene.kind == .demolition },
             S.slider("Office seed", \.scene.demolition.seed, DemolitionSettings.seedRange, live: false).env(.scene, "demseed")

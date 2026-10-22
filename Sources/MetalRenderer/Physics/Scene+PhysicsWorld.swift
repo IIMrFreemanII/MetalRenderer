@@ -263,6 +263,15 @@ extension Scene {
         return materials.count - 1
     }
 
+    /// Car paint: a clear coat (a dielectric's 4%, of `coatRoughness`) over paint of `colour` with metallic flakes
+    /// (`metallic` of it, their own lobe of `flakeRoughness`): Surface.metal's surfaceSpecular. The coat is what reflects
+    /// the scene sharply; the paint is what it lets through.
+    package func addPaintMaterial(colour: SIMD3<Float>, metallic: Float = 0.5, flakeRoughness: Float = 0.35, coatRoughness: Float = 0.04) -> Int {
+        materials.append(GPUMaterial(albedo: SIMD4(colour, metallic), emission: SIMD4(.zero, coatRoughness),
+                                     params: SIMD4(2 + min(max(flakeRoughness, 0), 1), 1, 0, 0)))
+        return materials.count - 1
+    }
+
     /// A liquid (Shaders/Liquid.metal), for instances with `maskLiquid`: its absorption in the albedo's colour, its index
     /// of refraction in its alpha, its roughness in the emission's alpha.
     package func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {

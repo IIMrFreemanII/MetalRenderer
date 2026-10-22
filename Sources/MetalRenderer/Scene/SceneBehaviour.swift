@@ -21,6 +21,8 @@ package protocol SceneBehaviour: AnyObject {
     func update(_ renderer: Renderer, dt: Float) -> Bool
     /// A key (its character without modifiers, lowercased); true when it took it.
     func keyDown(_ renderer: Renderer, _ key: String, isRepeat: Bool) -> Bool
+    /// A key let go (whatever had it).
+    func keyUp(_ renderer: Renderer, _ key: String)
     /// The left button pressed, before anything else has it; true when it took it.
     func mouseDown(_ renderer: Renderer) -> Bool
     /// The left button let go (whatever had the press).
@@ -34,9 +36,9 @@ package protocol SceneBehaviour: AnyObject {
     /// The mouse is captured (SceneHUD.capturesMouse): it turns the camera, `look` gets its moves.
     var captured: Bool { get set }
     func look(_ renderer: Renderer, dx: Float, dy: Float)
-    /// The physics' poses drawn this frame (`state`: the demolition's, its rockets and blasts): what the scene shows of
-    /// them (Scene.update).
-    func drawn(_ scene: Scene, bodies: [GPUPhysicsBody], state: DemolitionState, step: Int)
+    /// The physics as drawn this frame (its bodies' poses, the demolition's rockets and blasts, the cars' gauges): what
+    /// the scene shows of them (Scene.update).
+    func drawn(_ scene: Scene, _ drawn: PhysicsStepper.Drawn)
     /// What the view shows over the frame (SceneHUDView), or nil.
     var hud: SceneHUD? { get }
 }
@@ -44,13 +46,14 @@ package protocol SceneBehaviour: AnyObject {
 package extension SceneBehaviour {
     func update(_ renderer: Renderer, dt: Float) -> Bool { false }
     func keyDown(_ renderer: Renderer, _ key: String, isRepeat: Bool) -> Bool { false }
+    func keyUp(_ renderer: Renderer, _ key: String) {}
     func mouseDown(_ renderer: Renderer) -> Bool { false }
     func mouseUp(_ renderer: Renderer) {}
     func click(_ renderer: Renderer, at cursor: SIMD2<Float>) -> Bool { false }
     func rightMouseDown(_ renderer: Renderer) -> Bool { false }
     var grabs: Bool { true }
     func look(_ renderer: Renderer, dx: Float, dy: Float) {}
-    func drawn(_ scene: Scene, bodies: [GPUPhysicsBody], state: DemolitionState, step: Int) {}
+    func drawn(_ scene: Scene, _ drawn: PhysicsStepper.Drawn) {}
     var hud: SceneHUD? { nil }
 }
 

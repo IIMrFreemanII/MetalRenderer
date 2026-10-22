@@ -16,7 +16,8 @@ import XCTest
 final class SceneRegistryTests: XCTestCase {
     func testEveryOldSceneIsRegistered() {
         let kinds = SceneRegistry.kinds
-        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered, "the panel lists them in the enum's order")
+        // (Scenes added since are saved by name only: after the enum's.)
+        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered + ["cars"], "the panel lists them in the enum's order")
         XCTAssertEqual(Set(kinds.map(\.definition.envName)).count, kinds.count, "env names are unique")
         for kind in kinds { XCTAssertEqual(kind.definition.kind, kind) }
     }
@@ -58,7 +59,7 @@ final class SceneRegistryTests: XCTestCase {
         XCTAssertEqual(SceneRegistry.kind(for: .forest), .forest)
         XCTAssertEqual(SceneRegistry.kind(for: .fracture), .destruction)
         XCTAssertEqual(SceneRegistry.kinds.filter(\.simulates).map(\.name),
-                       ["physics", "ragdolls", "hair", "softBodies", "muscles", "fluids", "destruction", "demolition"])
+                       ["physics", "ragdolls", "hair", "softBodies", "muscles", "fluids", "destruction", "demolition", "cars"])
         XCTAssertEqual(SceneRegistry.kinds.filter(\.usesPhysicsLook).count, 6)
         XCTAssertEqual(SceneRegistry.kinds.filter(\.hasRealisticLook).map(\.name),
                        ["sun", "valley", "forest", "crowd", "world", "plants", "buildings", "terrain"])

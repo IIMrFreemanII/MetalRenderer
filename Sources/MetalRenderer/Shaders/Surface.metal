@@ -136,6 +136,7 @@ struct Surface {
     float  metallic;
     float  roughness;
     float  specular;      // specular weight: 0 = diffuse-only material
+    float  coat;          // a clear coat over metallic paint (Material.params.x >= 2): the paint's roughness; -1: none
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
@@ -756,13 +757,27 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.emission = mat.emission.rgb;
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
-    sf.specular = mat.params.x;
+    sf.specular = min(mat.params.x, 1.0f);
+    sf.coat = mat.params.x >= 2.0f ? mat.params.x - 2.0f : -1.0f;
     sf.lightEmitter = mat.params.z > 0.0f;
     sf.skin = max(-mat.params.w, 0.0f);
 }
 
 // Metallic-roughness, once the textures are in: metals reflect their base colour, dielectrics 4% (x weight).
+// A clear coat over metallic paint (a car's): the coat is the specular lobe, a dielectric's 4% at its roughness (the
+// material's), so it is what the reflection rays, the lights' highlights and the path tracer see; the paint under it,
+// its colour and its metallic flakes' own GGX lobe (of the paint's roughness: `coat`), is what the coat lets through,
+// the flakes' lobe there as its split-sum albedo (it is broad: as good as diffuse in light from all round).
 inline void surfaceSpecular(thread Surface& sf) {
+    if (sf.specular > 0.0f && sf.coat >= 0.0f) {
+        float3 flakes = mix(float3(0.04f), sf.albedo, sf.metallic);
+        float3 paint = sf.albedo * (1.0f - sf.metallic) + specularAlbedo(flakes, 1.0f, max(sf.coat, MIN_ROUGHNESS), 1.0f);
+        float3 coat = float3(0.04f);
+        sf.albedo = paint * (1.0f - specularAlbedo(coat, 1.0f, max(sf.roughness, MIN_ROUGHNESS), 1.0f));
+        sf.f0 = coat;
+        sf.metallic = 0.0f;
+        return;
+    }
     if (sf.specular > 0.0f) {
         sf.f0 = mix(float3(0.04f * sf.specular), sf.albedo, sf.metallic);
         sf.albedo *= 1.0f - sf.metallic;
@@ -775,6 +790,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
     sf.metallic = sf.specular = 0.0f;
+    sf.coat = -1.0f;
     sf.roughness = 1.0f;
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;

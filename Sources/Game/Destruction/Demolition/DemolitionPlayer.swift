@@ -290,8 +290,9 @@ final class DemolitionPlayer: SceneBehaviour {
 
     /// The TNT charges where their bodies are now (`drawn`: the poses drawn this frame), and the fireballs of the rockets
     /// that went off lately: each grows to most of its blast's radius in 0.15 s, then shrinks away by 0.45 s.
-    func drawn(_ scene: Scene, bodies drawn: [GPUPhysicsBody], state: DemolitionState, step: Int) {
+    func drawn(_ scene: Scene, _ now: PhysicsStepper.Drawn) {
         guard var rig = scene.demolitionRig, let physics = scene.physics else { return }
+        let drawn = now.bodies, state = now.demolition, step = now.stepIndex
         let hidden = translate([0, -60, 0]) * scale(PhysicsWorld.hiddenScale)
         let nodes = physics.fractureNodes
         for k in rig.placed.indices {

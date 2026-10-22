@@ -1722,6 +1722,41 @@ A generated office to wreck (`METALRENDERER_SCENE=demolition`, `Scene+Demolition
   * The window's capture, HUD and play are untested by hand.
   * The new commands are the CPU's alone.
 
+### Cars
+
+Node-beam cars to drive and crash, BeamNG's way (`METALRENDERER_SCENE=cars`, `Sources/Physics/Cars/`, `Scene+Cars.swift`, `Scene+CarGround.swift`, `CarPlayer.swift`). A car's body is a frame of nodes and beams that bends where it is hit and keeps the dent; it rides on four rigid wheels, turned by an engine through a clutch, a gearbox and differentials. Its physics always runs on the CPU, behind the frame.
+
+* **The body** (`CarBlueprint`, from a `CarSpec`: sedan, hatchback, pickup, sports coupe). Cross-sections ("stations") every 34 cm from bumper to bumper, each a ring of ten nodes on the body's profile (sills, belt line, the top's edges and middle, the floor inside the wheels), triangulated by chords. Beams join each station to the next, two diagonals across each panel, and beams to the station after next for bending. The cabin's beams are stronger than the crumple zones' in front of the windshield and behind the rear window, the floor's rails stronger still. About 180 to 210 nodes and 900 to 1,100 beams a car.
+  * The engine is eight nodes on mounts, held from the sides: on the floor's middle, a flat sheet, it sagged the front 6 cm.
+  * Each wheel hangs from a knuckle of five nodes on a double wishbone. The mounts are a subframe tied to the sides. A spring with its damper is preloaded for the corner's share of the weight (from where the mass is), with a bump stop and a rebound strap. The front tie rods are the steering: their length is the steering wheel.
+* **Beams** (`CarBeams.swift`) are XPBD distance constraints with damping, solved one after another in a fixed order, each beam next to its mirror. An order that alternated each substep made a two-substep rhythm that grew until the nodes flew apart, and the left side going first pulled a launching car to one side. A beam's load is the force its stretch stands for (`(length − rest) / compliance`, never lambda / h², which a substep's jolt makes huge), averaged over a few substeps. Past its yield, its rest length flows and its yield hardens: the dent stays. Its load summed over a step breaks it past its strength.
+* **Wheels** are rigid bodies (`wheelBit`, a rim without friction) held at two points of their axle to the knuckle's hub nodes, free to spin.
+  * **The tyre** (`CarTires.swift`) is no collision shape. It is a radial spring and damper toward the nearest static under the wheel, and a contact patch whose slip gives the force along and across the road by a combined-slip Magic Formula, blended into Coulomb friction below 3 m/s.
+  * Its impulse is never more than stops the slip of the wheel and its hubs. Sized for the car's share of the weight, it flung the 20 kg wheel past its slip and the slip across flipped every substep, using up the grip.
+* **The drivetrain** (`CarDrivetrain.swift`): an engine on its torque curve with an idle control and a limiter, a clutch that slips at a launch, an automatic or manual gearbox, open or limited-slip differentials, brakes, a handbrake.
+  * Traction control and ABS are on by default: the throttle eased off and a spinning driven wheel braked; a locking wheel's brake let off. With an open differential and no brakes on a spinning wheel, a launch turned the car toward the wheel that gripped.
+  * What turns the wheels turns the engine's nodes back; what brakes them turns the knuckle.
+* **Input** is a `car` command (the fracture commands' list, stamped with its step), kept until the next, so a replay drives the same: W/S throttle and brake (reverse from a stop), A/D steer, Space the handbrake, Q/E shift and M manual or automatic, R restart. The camera chases the car; with the mouse captured, it turns round it.
+* **Drawing.** Each car's panels (`CarSurface`: the body's paint, trim and lamps, its glass) are lofted from the same profile. Each vertex is embedded in the node hull's triangles, and in those its neighbours follow, averaged: `GPUSoftEmbed.triangleKind`, drawn by the soft bodies' kernel (`physicsSoftMeshKernel`) and refitted every frame.
+* **Paint** is a clear coat over metallic paint (`Scene.addPaintMaterial`; `Surface.metal`'s `surfaceSpecular`). The renderer carries one specular lobe through every path (the G-buffer's F0 and roughness, the reflection rays, the lights' highlights, the path tracer, ReSTIR), so the coat is that lobe: a dielectric's 4%, sharp (roughness 0.04). The paint under it is what the coat lets through: its colour, and its metallic flakes' own GGX lobe as its split-sum albedo (a broad lobe, about as good as diffuse in light from all round). A material marks it with a specular weight of 2 or more (`params.x − 2`: the flakes' roughness); no other material has one, and the other scenes render the same as before (shapes, sun, soft bodies, market and destruction to the bit, gallery within its run-to-run noise). `-m carspaint` shows the car close up with a coated and a plain sample ball.
+* **Settings:** `carstyle`, `carcount` (the player's car and the other styles parked behind barriers), `cardemo` (`wall`: the player's car into the wall at `carspeed` km/h; `laps`: every car round its own lap on autopilot), `carassists`.
+* **What it costs** (M1 Max, dev build, `METALRENDERER_BENCH=carscpu`, autopilot laps): 1 / 4 / 8 cars, `cpu` 1.1 / 1.8 / 2.6 ms a frame; the panels' refit 0.13 / 0.56 / 1.1 ms of GPU.
+* **Checked** (`CarTests`):
+  * every style settles on its springs within 8 mm, level, nothing bent;
+  * 0 to 100 km/h in each style's time (sedan 8.5 s, hatchback 11, pickup 9.3, coupe 6), straight;
+  * braking from 100 km/h in 45 m, straight;
+  * 0.7 g round a turn;
+  * a wall at 50 km/h crushes the front 0.37 m with the cabin's floor within 1.5 cm, at 100 km/h 1 m;
+  * a roof drop keeps its dents;
+  * a replay and one thread against all are the same to the bit;
+  * the panels start on the node hull.
+* **Limits** (phase 1):
+  * Cars don't meet cars, nor push bodies hard (the parked cars are fenced off).
+  * Nothing breaks off: beams break, but parts, wheels and glass stay.
+  * The window outlines are rough.
+  * The paint's flakes have no highlight of their own: their lobe is folded into the paint's colour.
+  * The window's driving, HUD and camera are untested by hand.
+
 ### CPU physics on every core
 
 The CPU step (`PhysicsCPU.swift` and the files beside it) is the GPU's reference, and a scene can run on it (`physics=cpu`). It runs on every core and gives the same numbers, bit for bit, as it did on one thread, whatever the number of threads (`PhysicsThreads.swift`):

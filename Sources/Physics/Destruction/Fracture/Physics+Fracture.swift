@@ -49,6 +49,9 @@ extension PhysicsWorld {
         /// The walker's input from this step on: `direction.xz` its speed over the ground (m/s), `direction.y` a jump's
         /// speed (once), `info.z` DemolitionState.Drive flags, `origin` where to put it (a teleport).
         case drive
+        /// A car's input from this step on (Physics+Cars.swift, `carCommand`): `info.z` the car and its flags, `origin`
+        /// the pedals, the steering and the handbrake, `direction` an autopilot's lap.
+        case car
     }
 
     /// GPUFractureNode.info.w flags.
@@ -288,6 +291,16 @@ extension PhysicsWorld {
     /// The step's commands (PhysicsCPU.step's first stage; MSL physicsFractureCommandKernel).
     package func beginFractureStep() {
         let clock = UInt32(stepIndex)
+        runCommands(clock)
+        if demolition.active { beginDemolitionStep(clock) }   // the rockets' fuses, the blasts they set off, the walker
+        for i in bodies.indices where bodies[i].info.y & PhysicsWorld.pieceBit == 0 {
+            PhysicsWorld.startProjectile(bodies[i], &fractureState[i])
+        }
+    }
+
+    /// The commands live at step `clock`, done in the order they were added (with cars and no fractured objects, the
+    /// step's only stage of them: Physics+Cars.swift).
+    func runCommands(_ clock: UInt32) {
         findLiveCommands(clock)
         for k in liveCommands.indices {
             let c = fractureCommands[Int(liveCommands[k])]
@@ -310,12 +323,9 @@ extension PhysicsWorld {
             case .hit: hitBody(c)
             case .rocket: launchRocket(c, clock: clock)
             case .drive: demolition.walker.take(c, clock: clock)
+            case .car: takeCarCommand(c, clock: clock)
             case nil: continue
             }
-        }
-        if demolition.active { beginDemolitionStep(clock) }   // the rockets' fuses, the blasts they set off, the walker
-        for i in bodies.indices where bodies[i].info.y & PhysicsWorld.pieceBit == 0 {
-            PhysicsWorld.startProjectile(bodies[i], &fractureState[i])
         }
     }
 

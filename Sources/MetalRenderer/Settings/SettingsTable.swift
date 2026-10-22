@@ -91,6 +91,8 @@ extension PhysicsSettings.Body: EnvNamed {}
 extension PhysicsSettings.Liquids: EnvNamed {}
 extension PhysicsSettings.Solver: EnvNamed {}
 extension PhysicsSettings.Solvers: EnvNamed {}
+extension CarStyle: EnvNamed {}
+extension CarSettings.Demo: EnvNamed {}
 extension Foliage.Age: EnvNamed {}
 extension PlantSceneSettings.Layout: EnvNamed {}
 extension PlantSceneSettings.View: EnvNamed {}

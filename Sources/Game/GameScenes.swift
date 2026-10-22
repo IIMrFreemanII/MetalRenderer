@@ -60,6 +60,7 @@ extension SceneKind {
     static let mireland = SceneKind("mireland")
     static let destruction = SceneKind("destruction")
     static let demolition = SceneKind("demolition")
+    static let cars = SceneKind("cars")
     static let stage = SceneKind("stage")
 }
 
@@ -324,6 +325,14 @@ extension GameScenes {
                 $0.cpuPhysics = true
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 11, 44], pitch: -0.2)
+            },
+            // Node-beam cars to drive and crash (Physics+Cars.swift): the CPU's step's alone; the full look, the solid one too.
+            scene(.cars, "Cars", "buildCarGround", build: { $0.buildCarGround($0.settings.cars) }) {
+                $0.simulates = true
+                $0.behaviour = { CarPlayer($0) }
+                $0.cpuPhysics = true
+                $0.sky = courtyard
+                $0.cameraFromScene = true
             },
             // An empty floor under the sun, for scripts to build on (README, "Scripts").
             scene(.stage, "Stage (scripts)", "buildStage", build: { $0.buildStage() }) {

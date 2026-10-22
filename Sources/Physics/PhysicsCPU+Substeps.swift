@@ -40,7 +40,7 @@ extension PhysicsWorld {
                     b.angular = SIMD4(PhysicsMath.xyz(b.angular) * decay, b.angular.w)
                     var v = PhysicsMath.xyz(b.velocity) * decay + PhysicsMath.xyz(p.gravity) * h
                     let speed = length(v)
-                    if speed > p.grid.z { v *= p.grid.z / speed }
+                    if speed > p.grid.z && b.info.y & PhysicsWorld.wheelBit == 0 { v *= p.grid.z / speed }   // (a car's wheel: its car's)
                     b.velocity = SIMD4(v, b.velocity.w)
                     b.position = SIMD4(PhysicsMath.xyz(b.position) + v * h, b.position.w)
                     b.rotation = PhysicsMath.qturn(b.rotation, PhysicsMath.xyz(b.angular) * h)

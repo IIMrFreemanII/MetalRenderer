@@ -88,11 +88,11 @@ extension Scene {
                 physicsTime = t
                 let drawn = stepper.latest
                 placeBodies(drawn)
-                behaviour?.drawn(self, bodies: drawn.bodies, state: drawn.demolition, step: drawn.stepIndex)
+                behaviour?.drawn(self, drawn)
             } else {
                 physics.advance(to: t)
                 placeBodies()
-                behaviour?.drawn(self, bodies: physics.bodies, state: physics.demolition, step: physics.stepIndex)
+                behaviour?.drawn(self, PhysicsStepper.Drawn(physics))
             }
         }
         if let particles {
