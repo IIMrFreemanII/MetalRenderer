@@ -4,6 +4,7 @@ import Characters
 import Combine
 import Effects
 import EngineCore
+import Landscape
 import Materials
 import Metal
 import MetalRenderer

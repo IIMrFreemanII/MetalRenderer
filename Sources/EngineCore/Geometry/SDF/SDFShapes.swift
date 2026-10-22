@@ -64,7 +64,7 @@ package struct SDFShape {
     }
 
     /// The most nodes a shape may have (each costs every step of every ray through its box).
-    static let maxNodes = 32
+    package static let maxNodes = 32
 
     package var nodes: [Node]
 
@@ -125,7 +125,7 @@ package struct SDFShape {
     }
 
     /// The primitive's distance at `q` (its own space).
-    static func primitive(_ primitive: Primitive, _ q: SIMD3<Float>, volumes: [SDFVolume]) -> Float {
+    package static func primitive(_ primitive: Primitive, _ q: SIMD3<Float>, volumes: [SDFVolume]) -> Float {
         switch primitive {
         case .sphere(let r):
             return length(q) - r
@@ -167,7 +167,7 @@ package struct SDFShape {
     // MARK: - Bounds
 
     /// The primitive's box in its own space.
-    static func primitiveBounds(_ primitive: Primitive, volumes: [SDFVolume]) -> AABB {
+    package static func primitiveBounds(_ primitive: Primitive, volumes: [SDFVolume]) -> AABB {
         let e: SIMD3<Float>
         switch primitive {
         case .sphere(let r): e = SIMD3(repeating: r)

@@ -4,6 +4,7 @@ import Effects
 import EngineCore
 import Foundation
 import ImageIO
+import Landscape
 import Materials
 import Physics
 import Plants

@@ -3,6 +3,7 @@ import Characters
 import Effects
 import EngineCore
 import Foundation
+import Landscape
 import Materials
 import Metal
 import Physics
@@ -484,12 +485,4 @@ extension Renderer {
         shadingArgs[slot].contents().storeBytes(of: system.records[slot].gpuAddress, toByteOffset: Renderer.shadingWaterOffset, as: UInt64.self)
         return true
     }
-}
-
-/// The FFT ocean's sizes (Shaders/Water.metal's waterSpectrum / waterFFT / waterAssemble kernels): three cascades of
-/// 256 x 256 over tiles of these sides, the longest swell to the smallest chop.
-enum WaterWaves {
-    static let size = 256
-    static let cascades = 3
-    static let lengths: [Float] = [233, 41.3, 7.9]
 }

@@ -2,6 +2,7 @@ import Buildings
 import Characters
 import Effects
 import EngineCore
+import Landscape
 import Materials
 import Metal
 import Physics
@@ -98,16 +99,6 @@ package struct GPUSolidParams {
     var look: SIMD4<Float>    // x: each object's tint, y: broken faces (1 / 0), z: AO's reach (m), w: AO rays (0: none)
     var edges: SIMD4<Float>   // x: outlines (1 / 0), y: their width (pixels), z: material colours (1 / 0)
     var info: SIMD4<UInt32>   // x: how many materials the flags buffer has
-}
-
-/// Catches accidental layout drift between Swift and MSL at startup.
-/// One body of water's look (MSL WaterLook, WaterLook.gpu): a table of them, which the water map and the water's
-/// surfaces' triangles name.
-package struct GPUWaterLook {
-    var absorption: SIMD4<Float>   // rgb = per metre, w = index of refraction
-    var scattering: SIMD4<Float>   // rgb = per metre, w = phase g
-    var waves: SIMD4<Float>        // x = share of the wind's sea, y = chop, z = ripples, w = roughness
-    var foam: SIMD4<Float>         // x = crest foam, y = shore foam width (m), z = white water, w = flow speed (m/s)
 }
 
 /// The water this frame (MSL WaterScene, Shaders/WaterCommon.metal), its address in the shading arguments

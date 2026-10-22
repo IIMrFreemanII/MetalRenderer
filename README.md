@@ -106,7 +106,7 @@ The window opens first; the shaders compile in the background (after an edit tha
 
 `swift test` runs the unit tests (`Tests/`): every setting's `METALRENDERER_*` name round-trips through Copy as Env and back, and no setting is missing from the settings table.
 
-**Build times.** The code is library modules: the core, the engine, the editors and the game (README, "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole; on an M1 Max that is about 3 minutes after an engine edit, most of it the optimiser over the engine on one core, and half a minute after an editor's, the game's or the core's. Build release with `Tools/release.sh` (`swift build -c release`, after the modules above an `@inlinable` body that changed are marked for rebuilding). Release builds are testable, so `Tools/release.sh` and `Tools/release.sh test` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in 3–10 s, and it draws the same images at the same speed. Quote release numbers.
+**Build times.** The code is library modules: the core, the engine, the editors and the game (README, "Source layout"). The app (`Sources/MetalRendererApp`) is only their entry point, so the app and the tests share one build of each. Release compiles each module whole; on an M1 Max that is about a minute after an engine edit, most of it the optimiser over the engine on one core, and 10–35 s after a system's, an editor's, the game's or the core's. Build release with `Tools/release.sh` (`swift build -c release`, after the modules above an `@inlinable` body that changed are marked for rebuilding). Release builds are testable, so `Tools/release.sh` and `Tools/release.sh test` share `.build/release` and switching between them costs nothing. To iterate, use the dev build: the debug configuration with `-O`, incremental, in `.build-dev`. A one-file edit rebuilds in 3–6 s, and it draws the same images at the same speed. Quote release numbers.
 
 ```bash
 Tools/build.sh                                  # builds it and prints the binary's path
@@ -117,24 +117,23 @@ A debug build warns about any function that takes the type checker over 600 ms, 
 
 Where the time goes (M1 Max, October 2026; one module, then the modules):
 
-| Build | Clean | An engine edit | An editor's edit | The core's edit | The game's edit | An interface change |
-|---|---|---|---|---|---|---|
-| Dev (`Tools/build.sh`) | 75 → 79 s | 13 → 10 s | 13 → 4.3 s | 13 → 2.8 s | 3.6 → 3.9 s | 14 → 14 s (the core's), 28 s (the engine's) |
-| Release | 290 → 246 s | 225 → 176 s | 225 → 33 s | 225 → 22 s | 28 s | 252 → 224 s (the core's), 211 s (the engine's) |
+| Build | Clean | An engine edit | A system's edit | An editor's edit | The core's edit | The game's edit | An interface change |
+|---|---|---|---|---|---|---|---|
+| Dev (`Tools/build.sh`) | 75 → 84 s | 13 → 5.5 s | 13 → 2.8–5 s | 13 → 4.4 s | 13 → 3 s | 3.6 → 4 s | 14 → 9.9 s (the core's), 23 s (the engine's) |
+| Release | 290 → 192 s | 225 → 64 s | 225 → 11–30 s | 225 → 34 s | 225 → 22 s | 28 s | 252 → 172 s (the core's), 97 s (the engine's) |
+
+A system's edit, by module (dev, release): the plants 4.5 s and 10.6 s, the physics 2.9 s and 28 s, the characters
+3.5 s and 30 s, the effects 3.8 s and 16 s, the materials 3.1 s and 26 s, the buildings 5 s and 22 s, the landscape
+2.8 s and 18 s.
 
 * **An edit** recompiles its module. The modules above it are compiled again only when the module's interface
   changed (an added declaration, a changed signature), or one of its `@inlinable` bodies did.
-* **A system's edit** costs what its module does, where inside the engine it cost what an engine edit does: a plant's
-  (`Sources/Plants`) 4.5 s in the dev build and 10.5 s in release, the physics' (`Sources/Physics`) 2.8 s and 27 s,
-  a character's (`Sources/Characters`) 3.5 s and 30 s, an effect's (`Sources/Effects`) 3.7 s and 16 s, a material's
-  (`Sources/Materials`) 3.2 s and 26 s, a building's (`Sources/Buildings`) 5.1 s and 22 s. With them out, an engine
-  edit is 6 s and 77 s.
-* **A clean release build** compiles the editors and the game side by side once the engine is done, so it is faster than
-  one module; a clean dev build pays a little for the modules' interfaces (`package` declarations written for the
-  modules above).
-* **An engine edit that changes its interface** costs more in the dev build than before (28 s against 14): the editors
-  and the game check what they use of the new interface. In release it costs less (211 s against 252): their whole
-  modules are smaller than the engine was.
+* **A clean release build** compiles the systems side by side once the core is done, and the editors and the game once
+  the engine is, so it is faster than one module; a clean dev build pays a little for the modules' interfaces
+  (`package` declarations written for the modules above).
+* **An engine edit that changes its interface** costs more in the dev build than before (23 s against 14): the editors
+  and the game check what they use of the new interface. In release it costs less (97 s against 252): every module
+  is smaller than the one module was.
 * **A dev edit** recompiles only its own file (about 1.5 s). The rest is the job that writes its module's interface for
   the modules above and the tests: it type-checks every declaration of the module and optimises the accessors that
   `-enable-testing` exposes, which is why a small module's edit is cheap.
@@ -2199,14 +2198,23 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | `Effects` | `Sources/Effects` | GPU particles (emitters, fields, colliders, their textures and maths) and effects as graphs (the VFX graph and its nodes, the lowering, the interpreter, generated Metal and its compiler, the library and store, the gizmos), with their GPU structs and settings; on the physics (its break events emit particles). Running them in a scene (`Scene+Effects`, the stage, `VFXLive`) is the engine's |
 | `Materials` | `Sources/Materials` | The Material Designer's graphs and nodes, their plan, compiler, engine and bakes (generated Metal and Swift), the library (Mireland's, the scans') and store, scanned materials; the Material Painter's documents, brushes, bakes, smart materials, unwrapping and packing, its GPU structs; on the effects (the graphs' curves and gradients). Their part of a scene and a frame (assignments, displacement, the painter's session) is the engine's |
 | `Buildings` | `Sources/Buildings` | The building generator (plans, the planner, facades, roofs, styles and their definitions, plan edits), interiors (furnishing, furniture, props, lifts, controls), the city's plan, the catalog and store, the walker and its colliders, the workshop's settings; on the physics (an interior's doors and loose furniture are bodies). Putting them in a scene (`Scene+Buildings`, `Scene+Interiors`, `Renderer+Interiors`) is the engine's |
-| `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer` with every system they hold (physics, plants, buildings, characters, terrain, water, the open world, particles, materials, the painter's GPU side…), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
+| `Landscape` | `Sources/Landscape` | Terrain (its fields, grid, base, brushes, generator, erosion, painting, scatter, sector meshes, documents and store, the ground's look), water (its fields, looks, waves and spectrum, the world's) and the open world (its places and tiles), which reference each other; on the plants, the physics and the buildings (the ground and the world are dressed with them). Putting them in a scene and a frame (`Scene+Terrain`, `Renderer+Terrain`, `Renderer+Water`, `Scene+World` …) is the engine's |
+| `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer`, and each system's part of a scene and a frame (`Scene+Feature`, `Renderer+Feature`: building it into a scene, its GPU work, its descriptors), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
 | `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
 | `Game` | `Sources/Game` | The demo scenes (below) |
 | `MetalRendererApp` | `Sources/MetalRendererApp` | The entry point: registers the game's scenes and runs the app |
 
-The modules reach each other through `package` declarations (nothing is `public`). Above the core the systems (the
-plants, the physics, the characters on both, the effects, the materials on them, the buildings), then the engine, then the editors and the game, which know nothing of each other; the tests
-(`Tests/MetalRendererTests`) import them all.
+The modules reach each other through `package` declarations (nothing is `public`). Each depends on the ones below it:
+
+```
+EngineCore ─┬─ Plants ──────────────────────────┬─ Characters (Plants, Physics)
+            ├─ Physics (CPhysicsAtomics) ───────┼─ Buildings (Physics)
+            │                                   └─ Effects (Physics) ── Materials (Effects)
+            └─ Landscape (Plants, Physics, Buildings)
+MetalRenderer, the engine (every system) ── Editors, Game (the engine and the systems they name) ── MetalRendererApp
+```
+
+The editors and the game know nothing of each other; the tests (`Tests/MetalRendererTests`) import them all.
 
 * **What a change rebuilds:** its module, and the modules above it only when it changes the module's interface. An
   editor's or the game's edit leaves the engine as it was; an engine edit that keeps its interface leaves the editors
@@ -2337,7 +2345,7 @@ The engine's folders:
 | `Destruction/` | The tools' rigs; `Fracture/` (a scene's fractured objects) |
 | `Buildings/` | The buildings in a scene: the workshop, the city's and the open world's (`Scene+Buildings`), interiors on demand (`Interior/`) |
 | `Plants/`, `Characters/` | The plants in a scene (tracing, voxel levels, the forest, the workshop); the characters in a scene (the workshop, the crowd's meshes and instances) |
-| `Terrain/`, `Water/`, `World/` | The terrain system, water, the open world |
+| `Terrain/`, `Water/`, `World/` | The landscape in a scene and a frame: the terrain's scene, rocks, scatter and workshop, its GPU side and editing; water's; the open world's scene |
 | `MaterialGraph/`, `Painter/`, `Textures/` | The materials in a scene and a frame (procedural materials, displacement, assignments, the pick), the painter's session and its GPU work, scanned materials on meshes |
 | `VFX/` | The effects in a scene: the VFX stage, `Scene+Effects`, `VFXLive` (what the editor sees of them running) |
 | `ProjectGraph/` | Outlines, overrides, the Project Graph's model |

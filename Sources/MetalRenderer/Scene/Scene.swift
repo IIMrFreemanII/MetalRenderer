@@ -4,6 +4,7 @@ import Effects
 import EngineCore
 import Foundation
 import ImageIO
+import Landscape
 import Materials
 import Physics
 import Plants
@@ -166,62 +167,11 @@ package final class Scene {
         package var isMesh: Bool { if case .mesh = kind { return true }; return false }
     }
 
-    /// An emissive instance sampled as a light: its triangles are `emissiveTriangles[first ..< first + count]`.
-    package struct MeshLight {
-        var instance: Int
-        var firstTriangle: Int
-        var triangleCount: Int
-        var center: SIMD3<Float>              // object space bounding sphere of the triangles
-        var radius: Float
-        var normal: SIMD3<Float>              // object space, area-weighted mean normal (zero if closed)
-        var flatness: Float                   // |sum of area x normal| / area: 1 = flat, 0 = closed or round
-        var power: SIMD3<Float>               // sum of emitted radiance x area (object space)
-        /// Its material, from its instance's: the triangles of a mesh of several materials that have this one.
-        var materialOffset = 0
-    }
+    /// An emissive instance's light (MeshLight, in the core).
+    package typealias MeshLight = EngineCore.MeshLight
 
-    /// A mesh light's triangles as they are put together: each weighed by area x emitted luminance, and the bounding
-    /// sphere / mean normal the shaders weigh the whole light by.
-    package struct MeshLightDraft {
-        private(set) var triangles: [GPUEmissiveTriangle] = []
-        private var weights: [Float] = []
-        private var lo = SIMD3<Float>(repeating: .infinity), hi = SIMD3<Float>(repeating: -.infinity)
-        private var areaNormal = SIMD3<Float>(repeating: 0), area: Float = 0
-        private var power = SIMD3<Float>(repeating: 0)
-
-        /// A triangle that emits `le` (its mean radiance); nothing if it has no area or emits nothing.
-        mutating func add(_ p0: SIMD3<Float>, _ p1: SIMD3<Float>, _ p2: SIMD3<Float>, uv0: SIMD2<Float> = .zero, uv1: SIMD2<Float> = .zero,
-                          uv2: SIMD2<Float> = .zero, emission le: SIMD3<Float>) {
-            let e1 = p1 - p0, e2 = p2 - p0
-            let cr = cross(e1, e2)
-            let triArea = length(cr) / 2
-            guard triArea > 0 else { return }
-            let w = triArea * dot(le, SIMD3<Float>(0.2126, 0.7152, 0.0722))
-            guard w > 0 else { return }
-            weights.append(w)
-            triangles.append(GPUEmissiveTriangle(v0: SIMD4(p0, 0), e1: SIMD4(e1, uv0.x), e2: SIMD4(e2, uv0.y),
-                                                 uv12: SIMD4(uv1.x, uv1.y, uv2.x, uv2.y)))
-            for p in [p0, p1, p2] { lo = simd_min(lo, p); hi = simd_max(hi, p) }
-            areaNormal += cr / 2
-            area += triArea
-            power += le * triArea
-        }
-
-        /// The light of `instance`, its triangles from `firstTriangle` (their `v0.w` now the running share of its
-        /// power); nil if nothing was added.
-        mutating func finish(instance: Int, firstTriangle: Int) -> MeshLight? {
-            guard !weights.isEmpty else { return nil }
-            let total = weights.reduce(0, +)
-            var running: Float = 0
-            for (k, w) in weights.enumerated() {
-                running += w
-                triangles[k].v0.w = k == weights.count - 1 ? 1 : running / total
-            }
-            return MeshLight(instance: instance, firstTriangle: firstTriangle, triangleCount: weights.count, center: (lo + hi) / 2,
-                             radius: max(length(hi - lo) / 2, 1e-3), normal: length(areaNormal) > 0 ? normalize(areaNormal) : .zero,
-                             flatness: min(length(areaNormal) / area, 1), power: power)
-        }
-    }
+    /// A mesh light's triangles as they are put together (MeshLightDraft, in the core).
+    package typealias MeshLightDraft = EngineCore.MeshLightDraft
 
     /// A mesh light made already (an open world's tile has its own in its file): `light.instance` is the instance of
     /// the borrowed mesh it is of, its triangles are `triangles[range]`.

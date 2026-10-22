@@ -2,6 +2,7 @@ import Buildings
 import Characters
 import Effects
 import Foundation
+import Landscape
 import Materials
 import Physics
 import Plants

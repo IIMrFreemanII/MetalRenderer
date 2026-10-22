@@ -1,6 +1,7 @@
 import Buildings
 import Characters
 import Effects
+import Landscape
 import Materials
 import Physics
 import Plants

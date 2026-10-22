@@ -4,7 +4,7 @@ import Foundation
 /// or the assets doesn't depend on how deep it sits in the folders.
 package enum SourceTree {
     /// The folder with `Package.swift` (the current directory if the sources aren't where they were built).
-    static let packageRoot: URL = {
+    package static let packageRoot: URL = {
         var dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         while dir.path != "/" {
             if FileManager.default.fileExists(atPath: dir.appendingPathComponent("Package.swift").path) { return dir }

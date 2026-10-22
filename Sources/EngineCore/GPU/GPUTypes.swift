@@ -113,8 +113,8 @@ package struct GPURestirParams {
 /// ReSTIR GI pass parameters (MSL RestirGIParams).
 package struct GPURestirGIParams {
     package var config = SIMD4<UInt32>()   // x = GPURestirGIParams flags, y = max M, z = spatial samples, w = spatial pass index
-    var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = minimum distance in the target (m), z = firefly clamp (0 = off)
-    var extra = SIMD4<UInt32>()    // x = 1: quarter budget, y = bounces, z = max sample age (frames)
+    package var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = minimum distance in the target (m), z = firefly clamp (0 = off)
+    package var extra = SIMD4<UInt32>()    // x = 1: quarter budget, y = bounces, z = max sample age (frames)
 
     package static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
     package static let shade: UInt32 = 2            // this spatial pass is the last: trace the visibility ray, write `indirect`
@@ -125,8 +125,8 @@ package struct GPURestirGIParams {
     package static let fallback: UInt32 = 64        // feedback: off-screen path ends add last frame's mean indirect light
     package static let feedbackSet: UInt32 = 128    // multi-bounce is on (`feedback` is still off on a history's first frame)
     // Not in config.x: restirGIInitialKernel derives them from `extra`, and so does initialPassFlags, to compile them in.
-    static let quarter: UInt32 = 256        // extra.x: quarter budget
-    static let oneBounce: UInt32 = 512      // extra.y: the paths end at their first hit
+    package static let quarter: UInt32 = 256        // extra.x: quarter budget
+    package static let oneBounce: UInt32 = 512      // extra.y: the paths end at their first hit
 
     /// restirGIInitialKernel's own flags (MSL `own` there).
     package var initialPassFlags: UInt32 {
@@ -156,7 +156,7 @@ package struct GPUFogParams {
     package var counts = SIMD4<UInt32>()         // x, y = froxel columns and rows, z = volume count, w = FogParams flags
     package var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Uniforms.interiorLo / Hi): the sky's
     package var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // ambient light in the fog is occluded in it
-    var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
+    package var volumes = (GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume(),
                    GPUFogVolume(), GPUFogVolume(), GPUFogVolume(), GPUFogVolume())
 
     package static let historyValid: UInt32 = 1  // last frame's froxel grid matches: reproject it
@@ -165,7 +165,7 @@ package struct GPUFogParams {
     package static let skyLight: UInt32 = 8      // only the suns' light scatters in it (and the sky's): FogSettings.lights off
 
     /// reflectionKernel's own flag (MSL REFLECT_FOG), for the variant with it compiled in.
-    static let reflectionsFogged: UInt32 = 1
+    package static let reflectionsFogged: UInt32 = 1
     package var reflectionPassFlags: UInt32 {
         counts.w & (GPUFogParams.enabled | GPUFogParams.reflections) == GPUFogParams.enabled | GPUFogParams.reflections
             ? GPUFogParams.reflectionsFogged : 0
@@ -198,7 +198,7 @@ package struct GPUMesh {
     /// A terrain's sector (TERRAIN, Shaders/Terrain.metal): 1 + where its terrain's layer table starts in the procedural
     /// parameters; its block has its vertices' layer weights after its triangles' materials. 0: not a terrain's.
     package var terrain: UInt32 = 0
-    var pad: UInt32 = 0
+    package var pad: UInt32 = 0
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(firstIndex: UInt32, indexCount: UInt32, vertexOffset: UInt32 = 0, prevOffset: UInt32 = 0, sways: UInt32 = 0, cutout: UInt32 = 0, block: UInt64 = 0, vertexCount: UInt32 = 0, lod: UInt32 = 0, terrain: UInt32 = 0, pad: UInt32 = 0) {
@@ -256,7 +256,7 @@ package struct GPUEmissiveTriangle {
     package var v0: SIMD4<Float>     // w = cumulative selection probability within its light
     package var e1: SIMD4<Float>     // w = uv0.x
     package var e2: SIMD4<Float>     // w = uv0.y
-    var uv12: SIMD4<Float>   // uv1, uv2
+    package var uv12: SIMD4<Float>   // uv1, uv2
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(v0: SIMD4<Float>, e1: SIMD4<Float>, e2: SIMD4<Float>, uv12: SIMD4<Float>) {
@@ -269,18 +269,18 @@ package struct GPUEmissiveTriangle {
 
 /// One node of an SDF shape (MSL SDFNode, Shaders/SDF.metal; SDFShape.gpuNodes).
 package struct GPUSDFNode {
-    var row0: SIMD4<Float>               // shape space -> the primitive's, as rows
-    var row1: SIMD4<Float>
-    var row2: SIMD4<Float>
-    var params = SIMD4<Float>()          // per kind (SDFShape.sphereKind ...): its sizes
+    package var row0: SIMD4<Float>               // shape space -> the primitive's, as rows
+    package var row1: SIMD4<Float>
+    package var row2: SIMD4<Float>
+    package var params = SIMD4<Float>()          // per kind (SDFShape.sphereKind ...): its sizes
     package var kind: UInt32 = 0
-    var op: UInt32 = 0                   // SDFShape.Op, joining it to the nodes before it
-    var k: Float = 0                     // the blend's radius
-    var scale: Float = 1                 // the node's uniform scale (its distances are the primitive's x this)
-    var material: UInt32 = 0             // offset from the instance's material
+    package var op: UInt32 = 0                   // SDFShape.Op, joining it to the nodes before it
+    package var k: Float = 0                     // the blend's radius
+    package var scale: Float = 1                 // the node's uniform scale (its distances are the primitive's x this)
+    package var material: UInt32 = 0             // offset from the instance's material
     package var volume: UInt32 = 0               // a volume's: Scene.sdfVolumes index
-    var pad0: UInt32 = 0
-    var pad1: UInt32 = 0
+    package var pad0: UInt32 = 0
+    package var pad1: UInt32 = 0
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(row0: SIMD4<Float>, row1: SIMD4<Float>, row2: SIMD4<Float>, params: SIMD4<Float> = SIMD4<Float>(), kind: UInt32 = 0, op: UInt32 = 0, k: Float = 0, scale: Float = 1, material: UInt32 = 0, volume: UInt32 = 0, pad0: UInt32 = 0, pad1: UInt32 = 0) {
@@ -301,9 +301,9 @@ package struct GPUSDFNode {
 
 /// An SDF shape (MSL SDFShape): its box and its nodes.
 package struct GPUSDFShape {
-    var lo: SIMD4<Float>                 // xyz = box min (shape space), w = the march's step scale (1 = exact distances)
-    var hi: SIMD4<Float>                 // xyz = box max, w = 0
-    var range: SIMD4<UInt32>             // x = first node, y = node count
+    package var lo: SIMD4<Float>                 // xyz = box min (shape space), w = the march's step scale (1 = exact distances)
+    package var hi: SIMD4<Float>                 // xyz = box max, w = 0
+    package var range: SIMD4<UInt32>             // x = first node, y = node count
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(lo: SIMD4<Float>, hi: SIMD4<Float>, range: SIMD4<UInt32>) {
@@ -315,17 +315,17 @@ package struct GPUSDFShape {
 
 /// A baked distance grid (MSL SDFVolume; SDFVolume.gpu).
 package struct GPUSDFVolume {
-    var lo: SIMD4<Float>                 // xyz = the first sample's place, w = the samples' spacing
-    var hi: SIMD4<Float>                 // xyz = the last's, w = the least sample on the grid's faces
-    var dims: SIMD4<UInt32>              // xyz = samples per axis, w = where its samples start among all of them
+    package var lo: SIMD4<Float>                 // xyz = the first sample's place, w = the samples' spacing
+    package var hi: SIMD4<Float>                 // xyz = the last's, w = the least sample on the grid's faces
+    package var dims: SIMD4<UInt32>              // xyz = samples per axis, w = where its samples start among all of them
 }
 
 /// A local fog volume (MSL FogVolume): a soft-edged box or sphere of denser fog.
 package struct GPUFogVolume {
-    var centerShape = SIMD4<Float>()     // xyz = centre, w = shape (0 = box, 1 = sphere)
-    var extentDensity = SIMD4<Float>()   // xyz = half extents (sphere: x = radius), w = extinction at the bottom (1/m)
-    var albedoEdge = SIMD4<Float>()      // rgb = single-scattering albedo, w = edge softness (m)
-    var params = SIMD4<Float>()          // x = noise amount, y = height falloff inside (1/m, from the bottom)
+    package var centerShape = SIMD4<Float>()     // xyz = centre, w = shape (0 = box, 1 = sphere)
+    package var extentDensity = SIMD4<Float>()   // xyz = half extents (sphere: x = radius), w = extinction at the bottom (1/m)
+    package var albedoEdge = SIMD4<Float>()      // rgb = single-scattering albedo, w = edge softness (m)
+    package var params = SIMD4<Float>()          // x = noise amount, y = height falloff inside (1/m, from the bottom)
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(centerShape: SIMD4<Float> = SIMD4<Float>(), extentDensity: SIMD4<Float> = SIMD4<Float>(), albedoEdge: SIMD4<Float> = SIMD4<Float>(), params: SIMD4<Float> = SIMD4<Float>()) {

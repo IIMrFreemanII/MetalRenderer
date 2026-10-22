@@ -88,9 +88,9 @@ private struct EXRDecoder {
     }
 
     struct Channel {
-        let name: String
-        let type: PixelType
-        let linear: Bool
+        package let name: String
+        package let type: PixelType
+        package let linear: Bool
     }
 
     enum Compression: UInt8 {

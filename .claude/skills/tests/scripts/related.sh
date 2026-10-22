@@ -111,15 +111,22 @@ by_folder() {
     Sources/Editors/Buildings/*.swift) add BuildingEditorTests ;;
     Sources/Editors/Characters/*.swift) add CharacterEditorTests ;;
     Sources/Editors/ProjectGraph/*.swift) add ProjectGraphTests ;;
+    # The systems' modules and the engine's side of each (Sources/<Module>/<Feature>, Sources/MetalRenderer/<Feature>)
     Sources/MetalRenderer/VFX/VFXLive.swift) add VFXTests ParticleTests VFXEditorTests ;;
-    Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
-    Sources/MetalRenderer/Water/*.swift) add WaterTests ;;
-    Sources/MetalRenderer/Terrain/TerrainWater.swift) add WaterTests TerrainDocumentTests ;;
-    Sources/MetalRenderer/Terrain/*.swift) add TerrainDocumentTests TerrainEditorTests ;;
+    Sources/Effects/*.swift|Sources/MetalRenderer/VFX/*.swift) add VFXTests ParticleTests ;;
+    Sources/Landscape/Water/*.swift|Sources/MetalRenderer/Water/*.swift) add WaterTests ;;
+    Sources/Landscape/Terrain/TerrainWater.swift) add WaterTests TerrainDocumentTests ;;
+    Sources/Landscape/Terrain/*.swift|Sources/MetalRenderer/Terrain/*.swift) add TerrainDocumentTests TerrainEditorTests ;;
+    Sources/Landscape/World/*.swift) add WorldTests SceneBuffersTests ;;
     Sources/MetalRenderer/ProjectGraph/*.swift) add ProjectGraphTests ;;
-    Sources/MetalRenderer/Painter/UV*.swift|Sources/MetalRenderer/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
-    Sources/MetalRenderer/Painter/*.swift) add PainterTests ;;
-    Sources/MetalRenderer/MaterialGraph/*.swift) add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
+    Sources/Materials/Painter/UV*.swift|Sources/Materials/Painter/PaintMesh.swift) add PainterUnwrapTests PainterTests ;;
+    Sources/Materials/Painter/*.swift|Sources/MetalRenderer/Painter/*.swift) add PainterTests ;;
+    Sources/Materials/MaterialGraph/*.swift|Sources/MetalRenderer/MaterialGraph/*.swift) add MaterialGraphTests MaterialEngineTests MaterialEditorTests MaterialDisplacementTests ;;
+    Sources/Physics/*.swift) add PhysicsTests PhysicsThreadsTests RagdollTests HairTests SoftBodyTests MuscleTests FluidTests DestructionTests ;;
+    Sources/Characters/*.swift) add CharacterBaseTests CrowdTests CharacterEditorTests ;;
+    Sources/Buildings/*.swift) add BuildingTests CityTests BuildingPlanTests BuildingEditorTests WalkerTests ;;
+    Sources/Plants/*.swift) add FoliageTests PlantCatalogTests PlantEditorTests ;;
+    Sources/EngineCore/*.swift) add ShaderSourceTests CacheTests SceneBuffersTests ;;
     *) return 1 ;;
   esac
 }

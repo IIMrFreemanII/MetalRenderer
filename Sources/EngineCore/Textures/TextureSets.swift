@@ -11,14 +11,14 @@ import simd
 package struct TextureSet {
     package enum Map: String, CaseIterable { case albedo, normal, roughness, ao, height, opacity }
 
-    let name: String
-    let folder: URL
+    package let name: String
+    package let folder: URL
     /// The side of one repeat, metres (what the scan covers).
     package let metres: Float
 
     /// Scans are used (METALRENDERER_SCANS=0: never, as if none were there).
-    static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_SCANS"] != "0"
-    static var directory: URL { Assets.directory.appendingPathComponent("Textures") }
+    package static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_SCANS"] != "0"
+    package static var directory: URL { Assets.directory.appendingPathComponent("Textures") }
 
     private static var found: [String: TextureSet?] = [:]
     private static let lock = NSLock()
@@ -60,7 +60,7 @@ package struct TextureSet {
 
     /// A map decoded to one channel (its luminance), `size` × `size` (nil: as it is; `height`: that many rows instead).
     /// Nil if there is none.
-    func gray(_ map: Map, size: Int? = nil, height rows: Int? = nil) -> (pixels: [UInt8], width: Int, height: Int)? {
+    package func gray(_ map: Map, size: Int? = nil, height rows: Int? = nil) -> (pixels: [UInt8], width: Int, height: Int)? {
         guard let url = url(map), let src = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
         let w = size ?? image.width, h = rows ?? size ?? image.height
@@ -78,8 +78,8 @@ package struct TextureSet {
     /// A height map on the CPU (0...1), wrapping: what the meshes displaced by a scan read (the ground's relief, the
     /// bark's ridges). Sampled as the GPU samples the texture (row 0 at v = 0, texel centres at half texels).
     package struct HeightField {
-        let side: Int
-        let values: [Float]
+        package let side: Int
+        package let values: [Float]
         package func sample(_ u: Float, _ v: Float) -> Float {
             let n = Float(side)
             let x = u * n - 0.5, y = v * n - 0.5

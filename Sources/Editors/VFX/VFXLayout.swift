@@ -3,6 +3,7 @@ import Characters
 import CoreGraphics
 import Effects
 import EngineCore
+import Landscape
 import Materials
 import MetalRenderer
 import Physics
