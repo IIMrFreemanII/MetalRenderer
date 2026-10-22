@@ -7,3 +7,17 @@
 PhysicsShapes. -> SDFVolume.distance(_:)  # a call on main too (not inlined there either)
 # Once per rebuild of the plants' voxel structures, on their background queue: not per element.
 VoxelLOD.rebuild(for:queue:) -> TLASUpdate.  # once per rebuild (its init, its descriptor), not per element
+# Once per frame, not per body: the frame's hand-over with the physics (its stepper's latest steps, the mouse's grab).
+Renderer.writeFrameData(slot:lod:) -> PhysicsGPU.  # once per frame
+Renderer.writeFrameData(slot:lod:) -> PhysicsStepper  # once per frame
+Renderer.writeFrameData(slot:lod:) -> Scene.physicsGrab  # once per frame
+Scene.update(time:dayTime:) -> PhysicsStepper  # once per frame
+Scene.update(time:dayTime:) -> PhysicsWorld.claim  # once per frame
+Scene.update(time:dayTime:) -> swift_retain_n  # once per frame (the stepper and the world it hands over)
+Scene.placeBodies( -> PhysicsWorld.fractures  # read once a call, before its loop
+# Main called PhysicsWorld.transform here per body (and drawnScale, setTransform), which made this matrix: now the
+# transform is inlined (physicsBodyTransform) and only simd's matrix of a quaternion is a call.
+Scene.placeBodies( -> simd_float4x4.init(_:)  # fewer calls a body than main
+Scene.placeBodies(poses:) -> closure #2 in Scene.placeBodies(poses:)  # once a call (its buffer's closure)
+# setTransform is inlined now (main called it, and it inverted the matrix): the same work.
+Scene.update(time:dayTime:) -> __invert_f4  # setTransform's inverse, inlined

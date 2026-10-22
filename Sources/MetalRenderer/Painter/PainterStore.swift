@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Painted objects' documents on disk: `Assets/Painter/<slug>.painter/`, a folder each — its `document.json` (the

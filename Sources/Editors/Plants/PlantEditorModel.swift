@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import EngineCore
 import MetalRenderer
+import Physics
 import Plants
 import QuartzCore
 

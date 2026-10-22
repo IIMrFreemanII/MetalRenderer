@@ -7,6 +7,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The Project Graph: scenes' outlines (Scene+Outline.swift), their edits (SceneOverrides), the project's graph

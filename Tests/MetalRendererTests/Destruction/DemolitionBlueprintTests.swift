@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The demolition scene's office as blocks (DemolitionBlueprint): there for every size, nothing inside anything, each

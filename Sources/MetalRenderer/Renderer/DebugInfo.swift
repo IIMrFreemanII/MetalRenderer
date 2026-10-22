@@ -1,4 +1,5 @@
 import Foundation
+import Physics
 import Plants
 
 /// What the Debug window shows, as of the last stats tick (Renderer.debugInfo).

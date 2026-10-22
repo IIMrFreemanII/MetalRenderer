@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Which of a scene's materials a Material Designer graph replaces (click-to-pick, then Assign): per scene — its kind

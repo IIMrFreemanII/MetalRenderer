@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The walker (Walker.swift) among a generated building's colliders (Building+Interior.swift) and the ground: it

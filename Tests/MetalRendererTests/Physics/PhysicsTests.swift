@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Physics.swift, PhysicsCollide.swift, PhysicsCPU.swift, PhysicsGPU.swift and Shaders/Physics.metal: shapes' mass
@@ -26,6 +27,23 @@ final class PhysicsTests: XCTestCase {
     private func position(_ w: PhysicsWorld, _ i: Int) -> SIMD3<Float> { PhysicsMath.xyz(w.bodies[i].position) }
 
     // MARK: Shapes
+
+    /// The plain constants the scene's loops read from another module (Physics.swift) are the world's.
+    func testPlainConstantsAreTheWorlds() {
+        XCTAssertEqual(physicsNone, PhysicsWorld.none)
+        XCTAssertEqual(physicsAsleep, PhysicsWorld.asleep)
+        XCTAssertEqual(physicsDisabledBit, PhysicsWorld.disabledBit)
+        for (mass, flags): (Float, UInt32) in [(1, 0), (0, 0), (1, PhysicsWorld.asleep), (1, PhysicsWorld.disabledBit)] {
+            var b = GPUPhysicsBody()
+            b.position.w = mass
+            b.info.y = flags
+            XCTAssertEqual(physicsBodyMoves(position: b.position, info: b.info), PhysicsWorld.moves(b))
+        }
+        // physicsBodyTransform draws a hidden body at PhysicsWorld.hiddenScale.
+        let hidden = physicsBodyTransform(position: .zero, rotation: SIMD4(0, 0, 0, 1), comPosition: .zero,
+                                          comRotation: SIMD4(0, 0, 0, 1), scale: 0)
+        XCTAssertEqual(hidden.columns.0.x, PhysicsWorld.hiddenScale)
+    }
 
     func testEigenDiagonalisesASymmetricMatrix() {
         let m = simd_double3x3(rows: [SIMD3(4, 1, 0.5), SIMD3(1, 3, 0.2), SIMD3(0.5, 0.2, 2)])

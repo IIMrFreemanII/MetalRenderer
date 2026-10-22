@@ -1,5 +1,6 @@
 import EngineCore
 import Metal
+import Physics
 import Plants
 
 /// The pipelines of the passes that take theirs as a group (Pipelines is in the core; these groups are the engine's).

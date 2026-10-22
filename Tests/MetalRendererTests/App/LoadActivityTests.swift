@@ -3,6 +3,7 @@ import XCTest
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The loading overlay's model (LoadActivity): jobs, their steps, cancellation, streams and when it is idle.

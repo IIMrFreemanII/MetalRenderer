@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The light tree (LightTree.swift), the path tracer's many lights: every light but the suns at the end of its path, nodes

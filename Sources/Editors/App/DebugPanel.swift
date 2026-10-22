@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Physics
 import Plants
 
 /// Floating panel with live debug data: a frame-time graph, GPU pass timings, the scene, virtual geometry, texture

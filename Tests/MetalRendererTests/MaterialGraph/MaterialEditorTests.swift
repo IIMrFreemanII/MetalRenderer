@@ -7,6 +7,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The Material Designer without its window (MaterialEditorModel): its edits and undo, wiring, a pixel processor's

@@ -4,6 +4,7 @@ import Metal
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The texture streamer's bookkeeping (TextureStreamer.swift), on the GPU's device but without running a frame: the

@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// SDF shapes (SDFShapes.swift, SDFVolume.swift, SDFBuffers.swift): the distances the shaders march (Shaders/SDF.metal

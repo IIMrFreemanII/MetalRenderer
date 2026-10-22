@@ -6,6 +6,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Scanned materials from downloads (ScanMaterial): which file is which map, the name a download suggests, an import

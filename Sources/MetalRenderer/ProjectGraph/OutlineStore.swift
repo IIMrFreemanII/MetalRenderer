@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The scenes' outlines on disk: Assets/Scenes/Outlines/<scene>.json, one per kind of scene (its last one made), so the

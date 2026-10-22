@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The built-in plants as they were before the plant editor: the library's meshes, where the forest, the valley and

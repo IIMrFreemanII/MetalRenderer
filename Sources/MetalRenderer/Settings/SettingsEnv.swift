@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The settings as `METALRENDERER_*` environment variables, both ways, driven by `SettingsTable`: `export` writes the

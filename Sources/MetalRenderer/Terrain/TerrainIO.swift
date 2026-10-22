@@ -2,6 +2,7 @@ import CoreGraphics
 import EngineCore
 import Foundation
 import ImageIO
+import Physics
 import Plants
 import UniformTypeIdentifiers
 import simd

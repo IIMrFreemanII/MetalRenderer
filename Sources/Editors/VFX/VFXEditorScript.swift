@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Physics
 import Plants
 
 /// `METALRENDERER_VFX_SCRIPT=<folder>` (the app with its window): the VFX editor driven through what its controls do,

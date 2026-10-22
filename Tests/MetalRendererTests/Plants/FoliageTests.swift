@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Foliage.swift: the plants are a pure function of the seed (built in parallel or not), every mesh is sound (a

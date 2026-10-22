@@ -1,6 +1,7 @@
 import EngineCore
 import Metal
 import MetalFX
+import Physics
 import Plants
 
 /// What the running GPU and system can do, asked once at launch (`App.swift`). The settings panel disables the

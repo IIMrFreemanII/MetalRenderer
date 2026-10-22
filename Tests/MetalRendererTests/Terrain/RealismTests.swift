@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The realistic look (SceneSettings.realism): its ground maps, the terrain's table, the scans' names, and that the

@@ -1,6 +1,7 @@
 import EngineCore
 import Foundation
 import Metal
+import Physics
 import Plants
 
 /// The Material Designer's Mesh Map node's pictures: a painted object's bakes (PaintBake) under a context name while a

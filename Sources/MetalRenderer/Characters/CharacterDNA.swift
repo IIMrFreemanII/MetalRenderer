@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// A character as data: everything that makes one person different from another, and nothing else. The character

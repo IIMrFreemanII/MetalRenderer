@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The building editor's numbers (BuildingStyleDef's), described once like the plant editor's (PlantParams): the

@@ -5,6 +5,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// Virtual geometry's cut as the rays meet it: the per-instance BLAS over the CPU's cut (VirtualBLAS.selection).

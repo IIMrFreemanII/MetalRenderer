@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// A scene's sun along its day: where it is between morning (0) and evening (1) at time t of the scene's day clock.

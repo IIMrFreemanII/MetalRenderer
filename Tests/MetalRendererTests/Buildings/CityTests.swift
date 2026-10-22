@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The city's layout (CityPlan.swift) and the city scenes built from it (Scene+City.swift), on the CPU: scenes are

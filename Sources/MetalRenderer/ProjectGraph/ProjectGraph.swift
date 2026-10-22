@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// The project as one graph: the project, its scenes and what each is made of (their outlines, SceneOutline), the assets

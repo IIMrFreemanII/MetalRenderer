@@ -4,6 +4,7 @@ import Metal
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// ShaderSource.swift: Shaders.metal lists the pieces in Shaders/, and the loader splices them in.

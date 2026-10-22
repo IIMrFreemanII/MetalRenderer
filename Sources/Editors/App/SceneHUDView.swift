@@ -1,6 +1,7 @@
 import AppKit
 import EngineCore
 import MetalRenderer
+import Physics
 import Plants
 
 /// A scene's HUD (SceneHUD, from its behaviour: the destruction's tools, the demolition's player): a box of text in a

@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import Physics
 import Plants
 
 /// Keeps the app's `RenderSettings` between launches (UserDefaults, as JSON). Benchmarks never load or save them.

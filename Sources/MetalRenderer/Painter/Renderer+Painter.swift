@@ -3,6 +3,7 @@ import EngineCore
 import Foundation
 import Metal
 import MetalKit
+import Physics
 import Plants
 import simd
 

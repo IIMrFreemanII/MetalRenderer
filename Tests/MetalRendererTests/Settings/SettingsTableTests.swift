@@ -4,6 +4,7 @@ import simd
 @testable import EngineCore
 @testable import Game
 @testable import MetalRenderer
+@testable import Physics
 @testable import Plants
 
 /// The settings table (SettingsTable.swift) drives Copy as Env, the env parser and the panel. These check that the
