@@ -58,6 +58,7 @@ extension PhysicsWorld {
         settle(p, start)
         stepHair(start)
         if fractures { endFractureStep() }     // what broke, what came free, what faded
+        if fractures && hasCars { carsGiveWay() }   // a car through what gave way (Physics+Cars.swift)
         stepIndex += 1
     }
 }

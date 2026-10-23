@@ -189,12 +189,98 @@ phase 1's tip. Node-beam (BeamNG-style) cars that drive, dent and break. The pla
   set (worlds with cars), and the kernel's change is behind the car vertex bit.
 - 8 cars over the cost target; the window hand test (keys, HUD with damage lines, the dust in motion).
 
+## Detailed models in place of the pack (on `claude/car-collisions`, after phase 3's WIP commit)
+
+- The user downloaded four detailed Sketchfab models (KOElkast1007's, "Sketchfab Standard" as tagged) and asked for
+  them in place of the generic pack, every mesh drawn. They chose Git LFS, knowing the models carry parts that look to
+  come from BeamNG.drive (tyres, engines, gauges); the README's credit says so.
+- `CarStyle` is now the four: `.civic`, `.karoq`, `.panamera`, `.santaFe`, with their makers' mechanics in
+  `CarSpec.preset` (up to 8 gears now: `CarTune.gears`, `CarDrivetrain.ratio`).
+- `CarPack.entries`: per model its file, the variants to leave out (`exclude`, `preferLHD`), its rims' and tyres'
+  node names, its paint's, glass's and lamps' material names. Parts by node name for all of them (`partNames`), windows
+  by `windowNames`. `Tools/cars/inspect.py` prints a model's tree to write an entry. Loaded lazily per style
+  (`CarPack.model(style)`), once.
+- `CarModel` is a list of meshes with material, role (paint, other, lamp, window, lamp glass, glass), part and window.
+- `CarSpec.fitted` measures all of the model; `CarSpec.spans` puts the doors, hood and tailgate where the model's are
+  (`CarBlueprint.buildParts`); mirrors from the mirror nodes (the Karoq has none: the old search on the paint).
+- `CarSurface`: a mesh on a named part follows only that part's triangles; the rest the body's. A pane per window, the
+  lamps per corner, a lamp's glass with its corner's lamp (it folds, the lamp darkens). Nearest hull triangles through
+  a grid (`HullGrid`).
+- `Scene.addCarMaterials`: every material of the model is one run; the per-triangle offsets are model material
+  indices (paint as clear coat, glass as this renderer's). Textures keyed by file and image.
+- Parked cars cost no skinning or refit: `PhysicsGPU.noteStillCars` compares each car's nodes (and damage bytes) with
+  where they were when last drawn (0.2 mm); after two still frames the soft-mesh kernels skip its vertex range and
+  `PrimitiveRefit.skipping` its structures.
+- Tests: the model tests pass (fit, panels on the body, named parts on their parts, embedding 0.5-1.7 s a model);
+  0-100 km/h Civic 7.0-7.3 s, Karoq 9.8-10.3, Panamera 5.0, Santa Fe 6.8-7.0; Civic braking 35 m. `CarContactTests`
+  run on the Panamera (the nearest to the old sedan); only `testTyresStandOnBodies` fails (as at the WIP commit).
+- Loose parts (the user's window test, Oct 22): a part rested on its body by `.compression` supports that only
+  pushed, so between its hinges and latch a door's strip of nodes swung out (235 mm in a slalom and a bump:
+  `testPartsStayOnTheBodyWhileDriving`); the detailed doors ride on that strip, so they looked loose. Now
+  `CarBeamKind.support`: both ways, flows past the panel yield, never breaks, let go when its part tears (`letGo`).
+  0.8 mm in the same run. It also fixed P3's contact determinism (one core vs all cores, which failed for some old
+  styles at the WIP commit) and the head-on symmetry: the flapping parts were what differed.
+- Load time: embedding the panels was 3.9 of the scene's 4.9 s. `CarSurface.cached` (`CarSurfaceCache.swift`) keeps
+  each car's in `GeneratedCache`, named by a hash of the model's meshes and the blueprint (spec, nodes, hull, parts):
+  read back in 0.02 s; 137 MB for the four. A change of how `CarSurface` embeds takes `CarSurface.version` + 1.
+- `GLTFLoader`: a number too small for a Float (the Santa Fe's `-8.4e-53`) made JSONDecoder throw: flushed to 0 and
+  decoded again.
+
+## Phase 3: done (branch `claude/car-collisions`, stacked on PR #121)
+
+- Cars against cars (`CarContacts.swift`), bodies (mass-split pushes), fractured objects (knocks as strain), tyres on
+  bodies (`tyreKick`); the WIP commit 5993615c, then:
+  - **Tyres on bodies:** the test's platform stood on friction (under the car's weight it held three times the tyres'
+    push): now on frictionless ground, momentum kept to 0.3%. The assists compared wheel spin with the car's speed over
+    the world: on a sliding platform that read as wheelspin. `CarWheel.over`: each wheel's speed over what it stands on.
+  - **Determinism:** a car's nodes and tyres read the other cars' wheels while those cars' threads moved them.
+    `CarSystem.wheelBodies`: copies as each stage began (`copyCarWheels`, `CarSolver.met`). The test runs every car.
+  - **Breakables:** the car crumpled against held pieces and was stopped before they let go (a brick wall at 50 km/h
+    stood). `carsGiveWay`: after the fracture verdict, a car whose knocks broke or freed pieces gets back what it lost
+    this step, less their thresholds (the shots' `giveWay`). The test now asks for the car through the wall.
+  - Settings: `cardemo` `headon`, `breakables`, `props` (`carspeed`); env names now match case-blind (`santafe`,
+    `headon` never matched their camel-case cases: SettingsTableTests' round trip failed on them).
+  - `-m carscrash`: the three, each before, as and after.
+- Cost (release): see the README's "What it costs". The brick wall's 58 ms at 3 s is NOT its bricks: drawn as meshes
+  (Oct 23, `Scene.fracturedMeshes`) it stayed 58. It is the crashed car's own structures, refitted (never rebuilt)
+  with parts flung and panes folded: rebuilt every frame the ray passes fell 10.6/10.8/12.2 → 3.7/1.6/3.9 ms, but a
+  rebuild is ~11 ms a car. Done (Oct 23): `PhysicsGPU.noteStillCars` measures each car's node box in its own frame;
+  past 1.5x (grown or shrunk) since its last build, at most every 30 frames, its soft bodies queue for a rebuild,
+  one mesh a frame (`nextRebuild` → `PrimitiveRefit.rebuilding`, built in `rebuildScratch`, sized for
+  `Scene.rebuiltOnDemand`'s meshes). Brick wall 27.5/57.8 → 13.2/26.4 ms (t0.6/t3); the rest is the brick dust (11 ms
+  of particles). Laps unchanged (no rebuilds while driving). Not measured: the rebuild frame's hitch (~10 ms, from the
+  rebuild-every-frame test).
+- Not done: the window hand test of the crashes; Metal 4 / M4 Max.
+
+## Optimisation pass (Oct 23, after the user asked what else could be optimised)
+
+Measured on the M1 Max against a scratchpad copy of the tree (release, `METALRENDERER_ASSETS` set for the copy, whole
+frames with `METALRENDERER_BENCH_SPLIT=0`, best of 3-5, the order of the two builds swapped between rounds):
+- **Bugs:** `CarPack.entries`' regexes had `"\\\\."` (a regex backslash): the Panamera drew its `.001/.002` variants
+  (47k triangles, z-fighting doors and fenders, a second interior and engine) and found no lamps. And
+  `PhysicsGPU.noteStillCars` read `world.carSystem` on the frame thread while an async step had it lent out
+  (`withCarBuffers` leaves it empty): the car ranges are copied at PhysicsGPU's init now.
+- **Far cars** (README "Far cars"): 8 cars on laps 15.2 → 12.7 ms, 4 cars 12.5 → 11.9.
+- **Tried and dropped:** simplifying the near model's cabin (to 25%) and hidden parts (welded, to 10%): fewer
+  triangles, slower rays (near-car shots +0.15-0.3 ms, the crates +0.6-1.1; bisected with switches: each half alike).
+  One-triangle normals: skinning is 0.25-0.46 ms now, under 0.1 ms to win. A heap for the structures: in demolition
+  the mesh pieces' extra CPU didn't follow the structures' count, so it wouldn't have answered it.
+- **Particles:** the overlay traces only the thin particles again (README, Particles). Brick crash at 3 s: whole frame
+  21.0 → 19.8 ms best of 5 (23.3 → 20.1 the later rounds).
+- **SDF boxes** only for shapes an instance draws (the rest share one): fractured pieces drawn as meshes keep no boxes.
+  Demolition with mesh pieces then: solid 9.4 → 11.3 ms, full 13.3 → 12.3, CPU +1.3-1.6 ms: it stays on SDF pieces.
+- **CPU:** `endFractureStep` skipped when nothing was struck, held or may fade; `withCarBuffers` swaps the car system
+  (no retains); wheel copies only with 2+ cars. Laps 1.70/2.47/3.00 →
+  1.65/2.42/2.94 ms. Left: the world stages still chunk ~420 bodies (377 disabled pieces) into worker hand-offs:
+  0.14-0.45 ms a frame in the car scene (measured by leaving the walls out); a list of enabled bodies for the broad,
+  narrow, colour and settle stages, keeping them bit-identical.
+
+Final whole-frame A/B (best of 2, order alternated): laps 8 cars 15.45 → 12.94 ms GPU, 4 cars 12.67 → 11.90, CPU
+-0.06 to -0.11 ms; brick crash at 3 s 22.9 → 18.5; the courtyard paused 9.07 → 8.94 GPU and 1.54 → 1.34 CPU, moving
+2x CPU 3.41 → 2.74; the particles scene -0.1 ms in most shots. Near-car shots within ±0.1. Not settled: the
+courtyard's 1x moving shot +0.65 GPU in this run (+0.14 at 2x).
+
 ## Next phases
 
-- **P3 — car against car and the world:**
-  - car vs car (node vs hull triangles);
-  - node pushes into fractured pieces with `strike`;
-  - rigid props;
-  - tyres on bodies.
 - **P4 — cameras, slow motion, replay, demos:** hood/cockpit/orbit cams on C, slow motion, instant replay ring, crash
   demo modes with video.

@@ -17,7 +17,7 @@ import simd
 /// keep their dents.
 final class CarTests: XCTestCase {
     /// A world with a floor and car(s) of `styles` side by side (4 m apart), facing +z, `speed` m/s.
-    private func world(_ styles: [CarStyle] = [.sedan], speed: Float = 0, wall: Float? = nil) -> PhysicsWorld {
+    private func world(_ styles: [CarStyle] = [.civic], speed: Float = 0, wall: Float? = nil) -> PhysicsWorld {
         world(specs: styles.map { CarSpec.preset($0) }, speed: speed, wall: wall)
     }
 
@@ -62,20 +62,27 @@ final class CarTests: XCTestCase {
 
     // MARK: The blueprint
 
-    /// The car pack's models (CarPack, when Assets/Cars has it): every style there, its four wheels, and its crash frame
-    /// fitted to it well formed and standing on its springs (within 2 cm of where it began, nothing bent).
+    /// The models (CarPack, when Assets/Cars has them): every car's, its four wheels, and its crash frame fitted to it
+    /// well formed and standing on its springs (within 2 cm of where it began, nothing bent).
     func testPackModelsFit() throws {
-        guard let pack = CarPack.shared else { throw XCTSkip("no car pack in Assets/Cars") }
+        guard CarPack.enabled else { throw XCTSkip("models off") }
         for style in CarStyle.allCases {
-            guard let model = pack.models[style] else {
-                XCTFail("\(style): not in the pack")
+            let loading = Date()
+            guard let model = CarPack.model(style)?.model else {
+                XCTFail("\(style): no model in Assets/Cars (Git LFS)")
                 continue
+            }
+            print("\(style): loaded in \(Date().timeIntervalSince(loading)) s")
+            if let coarse = CarPack.coarseModel(style) {
+                let t = coarse.meshes.reduce(0) { $0 + $1.indices.count / 3 }
+                print("   far model: \(t) triangles over \(coarse.meshes.count) meshes")
+                XCTAssertLessThan(t, 4 * CarPack.coarseTriangles, "\(style)")
             }
             let spec = CarSpec.preset(style).fitted(to: model), b = CarBlueprint(spec)
             print(String(format: "%@: %.2f x %.2f, wheelbase %.2f, track %.2f, front overhang %.2f, wheels %.3f x %.3f, sill %.2f, belt %.2f, roof %.2f, windows %.2f...%.2f, %d nodes, %d paint + %d lamp + %d glass vertices",
                          style.title, spec.length, spec.width, spec.wheelbase, spec.track, spec.frontOverhang, spec.wheelRadius, spec.wheelWidth,
-                         spec.sill, spec.belt, spec.roof, spec.rearWindowBase, spec.windshieldBase, b.nodes.count, model.paint.positions.count,
-                         model.lamps.positions.count, model.glass.positions.count))
+                         spec.sill, spec.belt, spec.roof, spec.rearWindowBase, spec.windshieldBase, b.nodes.count, model.positions { $0 == .paint }.count,
+                         model.positions { $0 == .lamp }.count, model.positions(\.isGlass).count))
             XCTAssertEqual(model.wheels.count, 4, "\(style)")
             XCTAssert((2...3.4).contains(spec.wheelbase) && (1...1.8).contains(spec.track), "\(style): wheelbase \(spec.wheelbase), track \(spec.track)")
             let w = world(specs: [spec])
@@ -128,9 +135,8 @@ final class CarTests: XCTestCase {
     /// Full throttle from a stop: 100 km/h in each style's time, the car keeping straight; procedural, and fitted to
     /// its model when the car pack is there.
     func testItAccelerates() {
-        let windows: [CarStyle: ClosedRange<Float>] = [.sedan: 5.5...10, .hatchback: 7...13, .pickup: 6...12, .coupe: 4...8, .wagon: 6...12,
-                                                       .compact: 8...14, .minivan: 7...13, .sport: 3.5...7, .suv: 6...12, .offroad: 8...15]
-        let fitted = CarPack.shared.map { pack in CarStyle.allCases.compactMap { s in pack.models[s].map { CarSpec.preset(s).fitted(to: $0) } } } ?? []
+        let windows: [CarStyle: ClosedRange<Float>] = [.civic: 4.5...8, .karoq: 7.5...12, .panamera: 3.5...7, .santaFe: 6...11]
+        let fitted = CarStyle.allCases.compactMap { s in CarPack.model(s).map { CarSpec.preset(s).fitted(to: $0.model) } }
         for spec in CarStyle.allCases.map({ CarSpec.preset($0) }) + fitted {
             let style = spec.style
             let w = world(specs: [spec])
@@ -150,9 +156,10 @@ final class CarTests: XCTestCase {
         }
     }
 
-    /// Braking from 100 km/h: stopped in 36 to 47 m (about 0.85 g or more with ABS, the pedal's ramp included), straight.
+    /// Braking from 100 km/h: the Civic (on its sticky tyres) stopped in 31 to 42 m (about 0.95 g or more with ABS, the
+    /// pedal's ramp included), straight.
     func testItBrakes() {
-        let w = world([.sedan], speed: 100 / 3.6)
+        let w = world([.civic], speed: 100 / 3.6)
         run(w, 0.1)
         drive(w, decelerate: 1)
         let start = frame(w).position.z
@@ -163,13 +170,13 @@ final class CarTests: XCTestCase {
         }
         let f = frame(w)
         print("stopped in \(f.position.z - start) m, \(t) s, heading \(f.forward)")
-        XCTAssert((36...47).contains(f.position.z - start), "\(f.position.z - start) m")
+        XCTAssert((31...42).contains(f.position.z - start), "\(f.position.z - start) m")
         XCTAssertGreaterThan(f.forward.z, 0.99, "it slewed")
     }
 
     /// Steering left at 40 km/h turns the car left (toward +x), and it grips: 0.5 g or more round the turn.
     func testItTurns() {
-        let w = world([.sedan], speed: 40 / 3.6)
+        let w = world([.civic], speed: 40 / 3.6)
         run(w, 0.1)
         var input = CarInput()
         input.autopilot = false
@@ -187,7 +194,7 @@ final class CarTests: XCTestCase {
     func testAWallCrushesTheFront() {
         var crushed: [Float] = []
         for kmh: Float in [50, 100] {
-            let w = world([.sedan], speed: kmh / 3.6, wall: 4)
+            let w = world([.civic], speed: kmh / 3.6, wall: 4)
             let s = w.carSystem.cars[0]
             func cabin() -> Float { simd_distance(PhysicsMath.xyz(w.particles[Int(s.frame.x)].position), PhysicsMath.xyz(w.particles[Int(s.frame.y)].position)) }
             let before = length(w), cabin0 = cabin()
@@ -210,9 +217,9 @@ final class CarTests: XCTestCase {
     func testDentsStayAndReplay() {
         let w = PhysicsWorld(substeps: 16)
         w.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
-        w.addCar(CarBlueprint(CarSpec.preset(.hatchback)), transform: translate([0, 0.05, 0]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
+        w.addCar(CarBlueprint(CarSpec.preset(.civic)), transform: translate([0, 0.05, 0]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
         let roof = float4x4(simd_quatf(angle: .pi, axis: [0, 0, 1]))
-        w.addCar(CarBlueprint(CarSpec.preset(.hatchback)), transform: translate([5, 2.5, 0]) * roof, rimSDF: 101, wheelInstances: [0, 0, 0, 0])
+        w.addCar(CarBlueprint(CarSpec.preset(.civic)), transform: translate([5, 2.5, 0]) * roof, rimSDF: 101, wheelInstances: [0, 0, 0, 0])
         w.finish()
         run(w, 2)
         let dropped = w.carTelemetry(0), flipped = w.carTelemetry(1)
@@ -228,7 +235,7 @@ final class CarTests: XCTestCase {
     /// What a frame between two steps draws (PhysicsStepper.Drawn.between): a moving car's nodes, wheels and frame
     /// halfway, the wheels' rotations whole, the rest the later step's.
     func testDrawnBetweenSteps() {
-        let w = world([.sedan], speed: 20)
+        let w = world([.civic], speed: 20)
         run(w, 0.5)
         let a = PhysicsStepper.Drawn(w)
         w.advance(to: w.time + PhysicsWorld.stepLength)
@@ -247,7 +254,7 @@ final class CarTests: XCTestCase {
     /// the latest step, how far it moves a frame against the frame's length jumps about; drawn between the recent
     /// steps (Scene.drawnBetween), it keeps to its speed.
     func testFramesBetweenStepsAreSmooth() {
-        let w = world([.sedan], speed: 20)
+        let w = world([.civic], speed: 20)
         let scene = Scene()
         scene.physics = w
         let stepper = PhysicsStepper(world: w)
@@ -277,7 +284,7 @@ final class CarTests: XCTestCase {
         // (The car's own: its middle from step to step, the body's shake in it.)
         let own = PhysicsWorld(substeps: 16)
         own.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
-        own.addCar(CarBlueprint(.preset(.sedan)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 20])
+        own.addCar(CarBlueprint(.preset(.civic)), transform: matrix_identity_float4x4, rimSDF: 100, wheelInstances: [0, 0, 0, 0], velocity: [0, 0, 20])
         own.finish()
         var steps: [(t: Float, z: Float)] = []
         for k in 1...120 {
@@ -293,7 +300,7 @@ final class CarTests: XCTestCase {
     /// The steps are the same on one core as on all of them, with a car's input commands.
     func testThreadsAgree() {
         func run(everyCore: Bool) -> [SIMD4<Float>] {
-            let w = world([.sedan, .coupe, .pickup])
+            let w = world([.civic, .panamera, .santaFe])
             PhysicsPool.shared.enabled = everyCore
             defer { PhysicsPool.shared.enabled = true }
             var input = CarInput()
@@ -309,10 +316,23 @@ final class CarTests: XCTestCase {
     /// The panels follow the nodes: each drawn vertex of every model's body where the kernel puts it
     /// (PhysicsWorld.drawnSoftVertex, the CPU's copy of MSL physicsSoftMeshKernel) starts where the model put it.
     func testPanelsStartOnTheBody() throws {
-        guard let pack = CarPack.shared else { throw XCTSkip("no car pack in Assets/Cars") }
+        guard CarPack.enabled else { throw XCTSkip("models off") }
         for style in CarStyle.allCases {
-            guard let model = pack.models[style] else { continue }
-            let b = CarBlueprint(CarSpec.preset(style).fitted(to: model)), surface = CarSurface(b, model: model)
+            var clock = Date()
+            func lap() -> Double { defer { clock = Date() }; return Date().timeIntervalSince(clock) }
+            let file = (try? GLTFLoader.load(Assets.directory.appendingPathComponent(CarPack.entry(style).file)))
+            let parse = lap()
+            guard let file, let model = CarPack.model(file, CarPack.entry(style)) else { continue }
+            let read = lap()
+            let spec = CarSpec.preset(style).fitted(to: model)
+            let fit = lap()
+            let b = CarBlueprint(spec)
+            let build = lap()
+            let surface = CarSurface(b, model: model)
+            let embed = lap()
+            let took = fit + build + embed
+            print(String(format: "%@: glTF %.2f s, model %.2f s, fit %.2f s, blueprint %.2f s, embedding %.2f s", "\(style)", parse, read, fit, build, embed))
+            XCTAssertLessThan(took, 3, "\(style)")
             let w = PhysicsWorld(substeps: 16)
             let car = w.addCar(b, transform: translate([3, 0, -2]), rimSDF: 100, wheelInstances: [0, 0, 0, 0])
             w.addCarSurface(surface.body, car: car, hull: b.hull, vertexBase: 0)
@@ -324,7 +344,84 @@ final class CarTests: XCTestCase {
             }
             print("\(style): \(surface.body.mesh.positions.count) + \(surface.glass.mesh.positions.count) vertices, worst \(worst) m at \(at)")
             XCTAssertLessThan(worst, 0.005, "\(style)")
-            XCTAssertFalse(surface.glass.mesh.indices.isEmpty, "\(style)")
+        }
+    }
+
+    /// A car's panels from the cache (CarSurface.cached) are what embedding them makes, read back in a fraction of
+    /// the time; another crash frame (another spec) is another file.
+    func testSurfaceCacheMatchesEmbedding() throws {
+        guard GeneratedCache.enabled, let model = CarPack.model(.karoq)?.model else { throw XCTSkip("no model or no cache") }
+        let b = CarBlueprint(CarSpec.preset(.karoq).fitted(to: model))
+        let name = CarSurface.cacheName(b, model: model), url = GeneratedCache.folder.appendingPathComponent(name)
+        try? FileManager.default.removeItem(at: url)
+        var clock = Date()
+        let made = CarSurface.cached(b, model: model)
+        let making = Date().timeIntervalSince(clock)
+        XCTAssert(FileManager.default.fileExists(atPath: url.path), "not written")
+        clock = Date()
+        let read = CarSurface.cached(b, model: model)
+        let reading = Date().timeIntervalSince(clock)
+        print(String(format: "karoq's panels: embedded in %.2f s, read back in %.2f s", making, reading))
+        for (a, c) in [(made.body, read.body), (made.glass, read.glass)] {
+            XCTAssertEqual(a.mesh.positions, c.mesh.positions)
+            XCTAssertEqual(a.mesh.normals, c.mesh.normals)
+            XCTAssertEqual(a.mesh.indices, c.mesh.indices)
+            XCTAssertEqual(a.uvs, c.uvs)
+            XCTAssertEqual(a.materials, c.materials)
+            XCTAssertEqual(a.flags, c.flags)
+            XCTAssertEqual(a.rings, c.rings)
+            XCTAssertEqual(a.embedding.map { $0.map(\.triangle) }, c.embedding.map { $0.map(\.triangle) })
+            XCTAssertEqual(a.embedding.map { $0.map(\.bary) }, c.embedding.map { $0.map(\.bary) })
+        }
+        XCTAssertEqual(made.panes.map(\.lamp), read.panes.map(\.lamp))
+        XCTAssertEqual(made.panes.map(\.part), read.panes.map(\.part))
+        XCTAssertEqual(made.panes.map(\.hull), read.panes.map(\.hull))
+        XCTAssertLessThan(reading, making / 4)
+        var other = CarSpec.preset(.karoq).fitted(to: model)
+        other.wheelRadius += 0.01
+        XCTAssertNotEqual(CarSurface.cacheName(CarBlueprint(other), model: model), name)
+    }
+
+    /// Each model's named parts on their parts: every vertex of a mesh the model names as on a door, the hood, the trunk
+    /// lid, a bumper or a mirror follows only that part's triangles (CarBlueprint.Part), the crash frame has each part
+    /// the model names, and each window is a pane of its own.
+    func testModelPartsMapToTheirParts() throws {
+        guard CarPack.enabled else { throw XCTSkip("models off") }
+        for style in CarStyle.allCases {
+            guard let model = CarPack.model(style)?.model else { continue }
+            let b = CarBlueprint(CarSpec.preset(style).fitted(to: model)), surface = CarSurface(b, model: model)
+            let named = Set(model.meshes.compactMap { m in m.part.map { "\($0)\(m.side)" } })
+            let built = Set(b.parts.map { "\($0.kind)\($0.side)" })
+            print("\(style): named \(named.sorted()), built \(built.sorted()), \(model.windows) windows, \(surface.panes.count) panes")
+            XCTAssert(named.isSubset(of: built), "\(style): \(named.subtracting(built).sorted()) not built")
+            XCTAssertEqual(surface.panes.filter { !$0.lamp }.count, model.windows, "\(style)")
+            // (Its rules found its lamps, and left out every variant: no mesh twice, the same box, size and material; a
+            // lamp's lens over its emitter, lit lettering over plain, are layers of other materials.)
+            XCTAssertGreaterThan(model.meshes.filter { $0.role == .lamp }.count, 0, "\(style): no lamps")
+            var seen: [String: String] = [:]
+            for m in model.meshes where !m.positions.isEmpty {
+                let lo = m.positions.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }
+                let hi = m.positions.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+                let key = "\(SIMD3<Int32>((lo * 1000).rounded(.toNearestOrAwayFromZero))) \(SIMD3<Int32>((hi * 1000).rounded(.toNearestOrAwayFromZero))) \(m.positions.count) \(m.material)"
+                XCTAssertNil(seen[key], "\(style): \(m.node) repeats \(seen[key] ?? "")")
+                seen[key] = m.node
+            }
+            XCTAssertLessThanOrEqual(surface.panes.count, 16, "\(style)")
+            // (Each vertex follows triangles of one part: the hull's part of each.)
+            for part in [surface.body, surface.glass] {
+                var parts: [Set<Int>] = []
+                for e in part.embedding { parts.append(Set(e.map { b.hullPart[$0.triangle] })) }
+                XCTAssert(parts.allSatisfy { $0.count == 1 }, "\(style): a vertex follows two parts")
+            }
+            for p in b.parts.indices where b.parts[p].kind != .mirror || model.meshes.contains(where: { $0.part == .mirror }) {
+                let kind = b.parts[p].kind, side = b.parts[p].side
+                let meshes = model.meshes.filter { $0.part == kind && $0.side == side }
+                guard !meshes.isEmpty else { continue }
+                // (The body's vertices on this part: as many as its named meshes have, at least.)
+                let on = surface.body.embedding.filter { b.hullPart[$0[0].triangle] == p + 1 }.count
+                    + surface.glass.embedding.filter { b.hullPart[$0[0].triangle] == p + 1 }.count
+                XCTAssertGreaterThanOrEqual(on, meshes.reduce(0) { $0 + $1.positions.count } / 2, "\(style): \(kind) \(side)")
+            }
         }
     }
 }

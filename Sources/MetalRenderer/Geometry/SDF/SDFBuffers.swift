@@ -120,8 +120,15 @@ final class SDFBuffers {
             d.geometryDescriptors = [geometry]
             descriptors.append(d)
         }
+        // Only the shapes an instance draws: the rest (the physics' own, a fractured object's pieces drawn as meshes)
+        // name one of those, whose structure nobody's instance points at. (Demolition's 10,850 pieces as meshes kept
+        // as many boxes besides: every encoder bound them and the top level listed them, a frame's CPU twice as long.)
+        var drawn = Set(sdf.instances.compactMap { $0.sdf >= 0 ? $0.sdf : nil })
+        if drawn.isEmpty { drawn = [0] }
+        let built = (0..<shapeCount).filter { drawn.contains($0) }
         var structures: [MTLAccelerationStructure] = [], scratchOffsets: [Int] = [], scratchSize = 0
-        for d in descriptors {
+        for s in built {
+            let d = descriptors[s]
             let sizes = device.accelerationStructureSizes(descriptor: d)
             guard let s = device.makeAccelerationStructure(size: sizes.accelerationStructureSize) else {
                 throw RendererError.resourceCreation("SDF box structure")
@@ -135,12 +142,14 @@ final class SDFBuffers {
               let cmd = queue.makeCommandBuffer(), let enc = cmd.makeAccelerationStructureCommandEncoder() else {
             throw RendererError.resourceCreation("SDF box build")
         }
-        for (i, d) in descriptors.enumerated() {
-            enc.build(accelerationStructure: structures[i], descriptor: d, scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
+        for (i, s) in built.enumerated() {
+            enc.build(accelerationStructure: structures[i], descriptor: descriptors[s], scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
         }
         enc.endEncoding()
         cmd.commit()
         cmd.waitUntilCompleted()
-        boxes = structures
+        var at = [Int](repeating: 0, count: shapeCount)
+        for (i, s) in built.enumerated() { at[s] = i }
+        boxes = (0..<shapeCount).map { structures[at[$0]] }
     }
 }

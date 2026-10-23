@@ -44,6 +44,9 @@ package enum CarBeamKind: UInt32 {
     case spring
     /// A steering tie rod: its rest length is the steering's (CarBeamLimit.steer).
     case steer
+    /// What a part rests on its body by (CarBlueprint.addPart): it holds both ways and bends past its yield, as a
+    /// plastic beam does, but never breaks; it lets go when its part comes off (CarSolver.letGo).
+    case support
 }
 
 /// Where a beam is, for its strengths (CarBlueprint): the crumple zones front and rear, the cabin, the floor's rails,
@@ -93,6 +96,9 @@ package struct CarWheel {
     package var spin: Float = 0
     package var load: Float = 0
     package var slip = SIMD2<Float>()
+    /// Its speed over what it stands on, along its heading (m/s; 0 touching nothing): what the assists compare its spin
+    /// with (on a body that moves, a platform, the car's speed over the world isn't its speed over the road).
+    package var over: Float = 0
     /// The hardest knock its axle took this step: its pull on its hubs along the ground (level, the world's) in one
     /// substep (N; its XPBD lambdas / h^2). Past `axleStrength` (a curb's, not a bump's, which mostly lifts), it comes
     /// off, as it does when its knuckle's links break (`links`). And the hardest so far.
@@ -107,8 +113,8 @@ package struct CarWheel {
 }
 
 /// A part of a car's body that can come off (CarBlueprint.Part): its own nodes (`nodeCount` of the car's particles
-/// from `firstNode`) and panel beams, on the body's by its attachments (CarBeam.attachBit) and by supports that only
-/// push. Off, it is a free island of nodes; still for a second, it is frozen (its nodes held: no mass) until a body
+/// from `firstNode`) and panel beams, on the body's by its attachments (CarBeam.attachBit) and by supports that hold
+/// it both ways until it comes off. Off, it is a free island of nodes; still for a second, it is frozen (its nodes held: no mass) until a body
 /// comes near.
 package struct CarPart {
     package var firstNode: Int32 = 0
@@ -156,6 +162,11 @@ package struct CarPane {
 /// pane's shards, steam from a broken radiator, smoke from a burning engine, a part's bits as it comes off.
 package enum CarEvent: UInt32, CaseIterable {
     case glass = 0, steam, smoke, debris
+
+    /// Its kind of break in GPUBreakEvent.velocity.w: after the fractured objects' materials (FractureMaterial's 0...7),
+    /// so a scene with both has the particles of each.
+    package static let firstSlot: UInt32 = 8
+    package var slot: UInt32 { CarEvent.firstSlot + rawValue }
 }
 
 /// A car's state (Physics+Cars.swift): its ranges in the shared arrays, its tuning, its input and its drivetrain.
@@ -182,6 +193,9 @@ package struct CarState {
     package var candidateCount: Int32 = 0
     /// Its mass (kg, wheels included), the world's at the start.
     package var mass: Float = 0
+    /// Its momentum (kg m/s, its nodes' and wheels') as the step began: what it gets back of it when what it hit gives
+    /// way (PhysicsWorld.carsGiveWay).
+    package var stepMomentum = SIMD3<Float>()
     /// Its parts (`CarSystem.parts`), panes and lamps (`panes`), and its front end's nodes (`radiatorNodes`: how far
     /// they came back toward its engine is how far its front is crushed).
     package var firstPart: Int32 = 0
@@ -190,6 +204,13 @@ package struct CarState {
     package var paneCount: Int32 = 0
     package var firstRadiator: Int32 = 0
     package var radiatorCount: Int32 = 0
+    /// Its hull's triangles (`CarSystem.triangles`: the body's, then its parts'), what the other cars' nodes (and its
+    /// own parts', off) meet (CarContacts.swift).
+    package var firstTriangle: Int32 = 0
+    package var triangleCount: Int32 = 0
+    /// Its box this step (its nodes', grown by how far they may go): which cars it may meet.
+    package var lo = SIMD3<Float>()
+    package var hi = SIMD3<Float>()
 
     // Input, as the last command left it, and as the car has it now (ramped).
     package var input = CarInput()
@@ -291,6 +312,16 @@ package struct CarPush {
     package var count: Float = 0
 }
 
+/// A car's nodes' knocks on a fractured object's piece this substep (applyCarReactions strikes it: Physics+Fracture.swift's
+/// `strike`, its verdict at the step's end): their impulses summed (N s), where (the impulse-weighted sum of the points),
+/// which way (the pushes' directions, impulse-weighted).
+package struct CarHit {
+    package var body: Int32 = 0
+    package var impulse: Float = 0
+    package var point = SIMD3<Float>()
+    package var push = SIMD3<Float>()
+}
+
 /// The cars of a world (Physics+Cars.swift): their nodes are among its particles, their wheels among its bodies; the
 /// rest is here, in flat arrays the cars index by range.
 package struct CarSystem {
@@ -307,12 +338,25 @@ package struct CarSystem {
     package var tunes: [CarTune] = []
     /// The step's candidates for each car's nodes (statics with PhysicsWorld.staticBit, bodies), by range.
     package var candidates: [UInt32] = []
-    /// Per car `maxPushes` pushes on bodies a substep, and how many.
+    /// Per car `maxPushes` pushes on bodies a substep, and how many; `maxHits` knocks on fractured objects' pieces.
     package var pushes: [CarPush] = []
     package var pushCounts: [Int32] = []
-    /// Per body, the pushes the cars gave it this substep summed (w: how many), and their turns (applyCarReactions).
+    package var hits: [CarHit] = []
+    package var hitCounts: [Int32] = []
+    /// Per car the fractured objects' pieces it knocked this step (`maxHits` each), and how many.
+    package var stepHits: [Int32] = []
+    package var stepHitCounts: [Int32] = []
+    /// Per wheel its tyre's impulse on the body it stands on this substep (count 0: none), CarSolver.applyTyreKicks.
+    package var tyreKicks: [CarPush] = []
+    /// Per wheel its body as a stage began (PhysicsWorld.copyCarWheels), and per body its wheel (-1: none): what the
+    /// other cars meet of it while its own car's thread moves it (CarSolver.met).
+    package var wheelBodies: [GPUPhysicsBody] = []
+    package var bodyWheel: [Int32] = []
+    /// Per body, the pushes the cars gave it this substep summed (w: how many), and their turns (applyCarReactions);
+    /// how many it had the substep before (a node's push takes its mass as that many shares: CarSolver.nodeContacts).
     package var bodyPushes: [SIMD4<Float>] = []
     package var bodyTwists: [SIMD3<Float>] = []
+    package var bodyShares: [Float] = []
     package var telemetry: [CarTelemetry] = []
     /// The cars' parts, panes and lamps, their panes' frames (beams), the beams in front of their engines.
     package var parts: [CarPart] = []
@@ -327,6 +371,23 @@ package struct CarSystem {
     /// Per particle (a car's node's), how far (m) it has slid on what it touched fast (scrapes) and at all (dirt) and
     /// not yet worn into its damage (CarSolver.wearNodes).
     package var wear: [SIMD2<Float>] = []
+    /// The cars' hull triangles: their three nodes (particles) and their part (1 + its place among its car's, 0: the
+    /// body's); per particle (a car's node's) its part, so.
+    package var triangles: [SIMD4<UInt32>] = []
+    package var nodeParts: [UInt8] = []
+    /// Per car its triangles in a hash of cells (`gridBuckets` buckets: their starts in `gridStarts`, `gridBuckets + 1`
+    /// a car; their triangles in `gridItems`, `gridCells` x its triangles a car from its first triangle's place x
+    /// `gridCells`), made each substep for the cars that meet another (CarContacts.swift).
+    package var gridStarts: [UInt32] = []
+    package var gridItems: [UInt32] = []
+    /// This step's pairs of cars that may meet (a car with itself: its parts that came off and its body), in colours
+    /// (no car twice in one: a colour's pairs run side by side), each colour's from `pairStarts[colour]`.
+    package var pairs: [SIMD2<Int32>] = []
+    package var pairStarts: [Int32] = []
+    /// The cars in this step's pairs, once each (their triangles hashed each substep).
+    package var paired: [Int32] = []
+    /// Per part: a car's node met it while it was frozen (carBroadPhase wakes it).
+    package var partWake: [Int32] = []
     /// As built (reset puts them back).
     package var initialCars: [CarState] = []
     package var initialBeams: [CarBeam] = []
@@ -336,7 +397,10 @@ package struct CarSystem {
     package var initialPanes: [CarPane] = []
 
     package static let maxPushes = 256
+    package static let maxHits = 64
     package static let maxEvents = 16
+    /// The triangles' hash: its buckets a car (a power of two), its cells' size (m), the most cells a triangle is in.
+    package static let gridBuckets = 1024, gridCell: Float = 0.5, gridCells = 48
 
     package var isEmpty: Bool { cars.isEmpty }
 
@@ -350,6 +414,8 @@ package struct CarSystem {
         for i in loads.indices { loads[i] = 0 }
         for i in eventCounts.indices { eventCounts[i] = 0 }
         for i in wear.indices { wear[i] = .zero }
+        for i in partWake.indices { partWake[i] = 0 }
+        for i in bodyShares.indices { bodyShares[i] = 0 }
     }
 }
 
@@ -358,7 +424,7 @@ package struct CarSystem {
 package struct CarTune {
     package var rpm = SIMD8<Float>()
     package var torque = SIMD8<Float>()
-    /// Forward gears (up to 7), then 0s.
+    /// Forward gears (up to 8), then 0s.
     package var gears = SIMD8<Float>()
     package var gearCount: Int32 = 0
     package var reverse: Float = 0
@@ -391,8 +457,8 @@ package struct CarTune {
             rpm[k] = rpm[curve.count - 1] + Float(k - curve.count + 1)
             torque[k] = 0
         }
-        for (k, g) in s.gears.prefix(7).enumerated() { gears[k] = g }
-        gearCount = Int32(min(s.gears.count, 7))
+        for (k, g) in s.gears.prefix(8).enumerated() { gears[k] = g }
+        gearCount = Int32(min(s.gears.count, 8))
         reverse = s.reverse
         finalDrive = s.finalDrive
         idle = s.idle * .pi / 30

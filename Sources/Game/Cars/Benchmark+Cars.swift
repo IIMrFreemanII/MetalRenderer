@@ -15,7 +15,30 @@ import MetalRenderer
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
         "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
+        "carscrash": carsCrash,
     ]
+
+    /// Phase 3's crashes in the full look, each before, as and after it hits: two cars head on at 50 km/h each, the
+    /// player's car through the brick wall at 50 and into the crates at 40 (CarContacts.swift, Physics+Cars).
+    private static func carsCrash() -> [Config] {
+        let headOn = Scene.camera([9, 2.4, 8], yaw: -.pi / 2, pitch: -0.14)
+        let wall = Scene.camera([16.5, 2.4, 29.5], yaw: 2.45, pitch: -0.14)
+        let crates = Scene.camera([-0.5, 2.2, 25.5], yaw: -2.39, pitch: -0.14)
+        let shots: [(String, CarSettings.Demo, Float, Int, Camera, [Float])] = [
+            ("head on", .headOn, 50, 2, headOn, [0.6, 1.0, 3]), ("brick wall", .breakables, 50, 1, wall, [0.2, 0.6, 3]),
+            ("crates", .props, 40, 1, crates, [0.5, 0.9, 3]),
+        ]
+        return shots.flatMap { name, demo, kmh, cars, camera, times in
+            times.map { t in
+                carBase(String(format: "%@ t%03.1f", name, t)).with {
+                    $0.scene.cars.demo = demo
+                    $0.scene.cars.demoSpeed = kmh
+                    $0.scene.cars.cars = cars
+                    $0.solid = false
+                }.from(camera).still(at: t)
+            }
+        }
+    }
 
     /// The wall demo's damage in the full look, close (CarDamage.swift): at 50 km/h just after the hit (the shards, the
     /// steam) and stopped, and at 100 km/h stopped (the smoke), from the front three-quarters by the wall.
@@ -65,20 +88,22 @@ extension Benchmark {
         }
     }
 
-    /// Every style (the car pack's models, CarPack, when Assets/Cars has it) standing, in the full look: the parked lot
-    /// of eight from beside it, starting with the sedan, then with the SUV (the two the first leaves out), and the
-    /// player's car close from its front three-quarters.
+    /// Every car (its model: CarPack) standing, in the full look: the three parked from beside the lot, then each close
+    /// as the player's, from its front three-quarters and from its rear three-quarters.
     private static func carsModels() -> [Config] {
-        let lot = Scene.camera([21, 4.5, -8], yaw: 0.56, pitch: -0.2), close = Scene.camera([3.6, 1.5, -2.6], yaw: -0.62, pitch: -0.12)
-        return [("lot from sedan", CarStyle.sedan, lot), ("lot from suv", .suv, lot), ("close sedan", .sedan, close), ("close suv", .suv, close)]
-            .map { name, style, camera in
-                carBase(name).with {
-                    $0.scene.cars.demo = .none
-                    $0.scene.cars.cars = 8
-                    $0.scene.cars.style = style
-                    $0.solid = false
-                }.from(camera).still(at: 2)
-            }
+        let lot = Scene.camera([21, 4.5, -8], yaw: 0.56, pitch: -0.2), front = Scene.camera([3.6, 1.5, -2.6], yaw: -0.62, pitch: -0.12)
+        let rear = Scene.camera([-3.4, 1.5, -13.2], yaw: 2.5, pitch: -0.12)
+        let shots = [("lot", CarStyle.civic, lot)] + CarStyle.allCases.flatMap { style in
+            [("\(style) front", style, front), ("\(style) rear", style, rear)]
+        }
+        return shots.map { name, style, camera in
+            carBase(name).with {
+                $0.scene.cars.demo = .none
+                $0.scene.cars.cars = 4
+                $0.scene.cars.style = style
+                $0.solid = false
+            }.from(camera).still(at: 2)
+        }
     }
 
     /// The cars' steps moving: 1, 4 and 8 cars on autopilot laps.

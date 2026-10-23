@@ -9,11 +9,11 @@ extension Scene {
     /// What the cars' breaks give off (CarDamage.swift's events, CarEvent: ParticlesGPU.breakRing), per kind a proxy
     /// emitter that spawns nothing of its own, whose events are the breaks, and its children: a pane's or a lamp's
     /// shards that tumble and bounce, a broken radiator's steam, a burning engine's smoke, a part's bits as it comes off
-    /// and a puff of dust. Returns the proxies by kind (CarRig.breakProxies).
-    func addCarDust(_ kit: Kit) -> [UInt32] {
+    /// and a puff of dust: added to `emitters` (the scene's one particle system's, with its fractured objects'). Returns
+    /// the proxies by kind (CarRig.breakProxies' from CarEvent.firstSlot).
+    func carDust(_ kit: Kit, into emitters: inout [ParticleEmitter]) -> [UInt32] {
         let shard = addPBRMaterial(baseColor: [0.55, 0.62, 0.62], metallic: 0, roughness: 0.08)
         let bit = addPBRMaterial(baseColor: [0.08, 0.08, 0.085], metallic: 0, roughness: 0.6)
-        var emitters: [ParticleEmitter] = []
         var proxies: [UInt32] = []
         func proxy(_ kind: CarEvent) -> Int {
             var p = ParticleEmitter("Car \(kind) breaks", capacity: 64, at: .zero)
@@ -90,7 +90,6 @@ extension Scene {
                                       size: (0.25, 1.1)))
             }
         }
-        addParticles(ParticleSystem(emitters: emitters))
         return proxies
     }
 }

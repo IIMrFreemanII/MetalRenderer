@@ -2703,17 +2703,17 @@ kernel void physicsClothMeshKernel(constant uint&                count     [[buf
 // scrape, dirt, a byte each: CarDamage.swift) into `damage`, at its place, for the paint (Surface.metal carDamage);
 // on a broken pane (its bit in its car's first nodes' info.z, from bit 24) it folds away to its car's first node, on
 // a broken lamp it is dark (w).
-kernel void physicsSoftMeshKernel(constant uint&                  count     [[buffer(0)]],
+kernel void physicsSoftMeshKernel(constant uint2&                 range     [[buffer(0)]],   // first vertex, count
                                   device const PhysicsParticle*   particles [[buffer(1)]],
                                   device const PhysicsSoftVertex* vertices  [[buffer(2)]],
                                   device float3*                  positions [[buffer(3)]],
                                   device const PhysicsSoftEmbed*  embeds    [[buffer(4)]],
                                   device const PhysicsBody*       bodies    [[buffer(5)]],
                                   device uchar4*                  damage    [[buffer(6)]],
-                                  uint i [[thread_position_in_grid]])
+                                  uint t [[thread_position_in_grid]])
 {
-    if (i >= count) return;
-    PhysicsSoftVertex s = vertices[i];
+    if (t >= range.y) return;
+    PhysicsSoftVertex s = vertices[range.x + t];
     float3 p = float3(0.0f);
     for (uint k = s.embeds.x, end = k + s.embeds.y; k < end; ++k) {
         PhysicsSoftEmbed e = embeds[k];
@@ -2750,15 +2750,15 @@ kernel void physicsSoftMeshKernel(constant uint&                  count     [[bu
 }
 
 // ...and each one's normal across the triangles around it (PhysicsWorld.drawnSoftNormal).
-kernel void physicsSoftNormalsKernel(constant uint&                  count     [[buffer(0)]],
+kernel void physicsSoftNormalsKernel(constant uint2&                 range     [[buffer(0)]],   // first vertex, count
                                      device const PhysicsSoftVertex* vertices  [[buffer(1)]],
                                      device const uint2*             rings     [[buffer(2)]],
                                      device const float3*            positions [[buffer(3)]],
                                      device float3*                  normals   [[buffer(4)]],
-                                     uint i [[thread_position_in_grid]])
+                                     uint t [[thread_position_in_grid]])
 {
-    if (i >= count) return;
-    PhysicsSoftVertex s = vertices[i];
+    if (t >= range.y) return;
+    PhysicsSoftVertex s = vertices[range.x + t];
     float3 p = positions[s.info.x], n = float3(0.0f);
     for (uint k = s.info.w >> 5, end = k + (s.info.w & 31u); k < end; ++k) {
         n += cross(positions[rings[k].x] - p, positions[rings[k].y] - p);

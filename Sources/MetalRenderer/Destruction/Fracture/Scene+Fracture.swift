@@ -9,10 +9,17 @@ import Physics
 import Plants
 import simd
 
-/// Fractured objects in a scene (Physics+Fracture.swift): every node of an object's fracture tree an SDF shape, an
-/// instance and a body. A piece is its object's shape cut by its cell (the object's nodes, then the cell's cut planes
-/// intersected, whose faces take the interior material); a convex object's (a box's) pieces are their cells exactly,
-/// with mass properties from the polytope; any other object's are built from their fields, side by side.
+/// Fractured objects in a scene (Physics+Fracture.swift): every node of an object's fracture tree an SDF shape and a
+/// body (what it collides as), drawn as a mesh. A piece is its object's shape cut by its cell (the object's nodes, then
+/// the cell's cut planes intersected, whose faces take the interior material); a convex object's (a box's) pieces are
+/// their cells exactly, with mass properties from the polytope; any other object's are built from their fields, side
+/// by side.
+///
+/// Drawn as SDF instances, a broken brick wall's 140 pieces made a frame 6 times as slow (10 ms to 59 on the M1 Max):
+/// an SDF's hit is never committed to the traversal, so a ray marched every piece box it crossed; a mesh's triangles
+/// are, and the nearest cuts the ray short. A convex object's pieces are their cells' polygons (`ConvexCell.mesh`: a
+/// brick is 12 triangles); any other's, its surface (surface nets) cut by each cell, capped (MeshCutter), as a
+/// fractured model's are.
 extension Scene {
     /// Where a fractured object is held: nowhere (it falls, rolls, is knocked over), by the ground under it (its
     /// lowest pieces don't move until they come free), or round its edge (a pane in its frame: the pieces along its
@@ -37,11 +44,14 @@ extension Scene {
 
     /// Object `shape` (shape space) placed by `transform` (a rotation and a translation), fractured by `recipe`, drawn
     /// with `material` outside and `interior` (a later material) on its broken faces. `mask`: its instances' (glass's).
+    /// `meshes`: its pieces drawn as meshes, else as their SDF shapes (demolition's office: its 10,850 pieces as meshes,
+    /// whole frames, the solid look 9.4 → 11.3 ms, the full one 13.3 → 12.3, 1.3-1.6 ms more CPU a frame, and half a
+    /// minute more to build; even with no boxes for the SDF shapes no instance draws).
     @discardableResult
     package func addFractured(_ name: String, shape: SDFShape, recipe: FractureRecipe, transform: float4x4, material: Int, interior: Int,
                       anchor: FractureAnchor, mask: UInt32 = Scene.maskGeometry, toughness: Float = 1, strength: Float = 1,
-                      fadeRadius: Float = 0.1) -> Fractured {
-        precondition(interior >= material, "the interior material comes after the outside's")
+                      fadeRadius: Float = 0.1, meshes drawnAsMeshes: Bool = true) -> Fractured {
+        precondition(interior >= material && interior - material < 256, "the interior material comes after the outside's, near it")
         let world = physicsWorld()
         world.setVolumes(sdfVolumes)
         // A box at the shape's origin is its own cell; anything else is cut inside its box.
@@ -77,12 +87,16 @@ extension Scene {
                                 : PhysicsWorld.buildShape(shapes[k], index: sdfs[k], volumes: volumes)
             }
         }
+        let meshes = drawnAsMeshes ? Scene.fracturedMeshes(tree, shape: shape, convex: convex ? cell : nil, interior: UInt8(offset), volumes: volumes) : []
         let firstInstance = instances.count, firstBody = world.bodies.count
         let hidden = transform * scale(PhysicsWorld.hiddenScale)
         let m = recipe.material
         for k in tree.nodes.indices {
-            let i = addInstance(sdf: sdfs[k], material, k == 0 ? transform : hidden, mask: mask)
-            editInstance(i) { $0.simulated = true }
+            let place = k == 0 ? transform : hidden
+            let i = drawnAsMeshes ? addPieceMesh(meshes[k], at: tree.nodes[k].cell.centroid, interior: UInt8(offset), material: material, place,
+                                                 mask: mask, label: k == 0 ? name : "\(name) piece")
+                                  : addInstance(sdf: sdfs[k], material, place, mask: mask)
+            if !drawnAsMeshes { editInstance(i) { $0.simulated = true } }
             if let b = builds[k] {
                 world.addPiece(sdf: sdfs[k], shapes[k], build: b, transform: transform, instance: i, material: m)
             } else {
@@ -181,21 +195,77 @@ extension Scene {
         let hidden = transform * scale(PhysicsWorld.hiddenScale)
         let m = recipe.material
         for k in tree.nodes.indices {
-            var piece = pieces[k]
-            if piece.indices.isEmpty {   // (nothing of the mesh in it: a speck to keep its structure valid)
-                let c = tree.nodes[k].cell.centroid
-                for _ in 0..<3 { _ = piece.add(c, [0, 1, 0], .zero) }
-                piece.indices = [0, 1, 2]
-                piece.materials = [UInt8(inside)]
-            }
-            let mesh = addMesh((piece.positions, piece.normals, piece.indices), uvs: piece.uvs, materials: piece.materials,
-                               label: k == 0 ? name : "\(name) piece")
-            let i = addInstance(mesh, firstMaterial, k == 0 ? transform : hidden)
-            editInstance(i) { $0.simulated = true }
+            let i = addPieceMesh(pieces[k], at: tree.nodes[k].cell.centroid, interior: UInt8(inside), material: firstMaterial,
+                                 k == 0 ? transform : hidden, label: k == 0 ? name : "\(name) piece")
             world.addPiece(sdf: sdfs[k], colliders[k], build: builds[k]!, transform: transform, instance: i, material: m)
         }
         world.addFracture(tree, first: firstBody, transform: transform, anchored: Scene.anchored(tree, cell: cell, transform: transform, anchor),
                           toughness: toughness, strength: strength, fadeRadius: 0.06)
         return Fractured(tree: tree, firstBody: firstBody, firstInstance: firstInstance, name: name)
+    }
+
+    /// Piece `piece` (shape space) as a mesh and its instance, placed by `transform` and moved by its body (`simulated`):
+    /// a piece with no triangles (nothing of the object in its cell) a speck at `centre`, to keep its structure valid.
+    private func addPieceMesh(_ piece: MeshCutter.Mesh, at centre: SIMD3<Float>, interior: UInt8, material: Int, _ transform: float4x4,
+                              mask: UInt32 = Scene.maskGeometry, label: String) -> Int {
+        var piece = piece
+        if piece.indices.isEmpty {
+            for _ in 0..<3 { _ = piece.add(centre, [0, 1, 0], .zero) }
+            piece.indices = [0, 1, 2]
+            piece.materials = [interior]
+        }
+        let mesh = addMesh((piece.positions, piece.normals, piece.indices), uvs: piece.uvs, materials: piece.materials, label: label)
+        let i = addInstance(mesh, material, transform, mask: mask)
+        editInstance(i) { $0.simulated = true }
+        return i
+    }
+
+    /// The meshes of `tree`'s nodes, object `shape` cut by each node's cell, side by side: a convex object's (its cell
+    /// `convex`, or a single cell node's planes) the cells' polygons; any other's its surface cut by each cell and capped
+    /// with `interior` (MeshCutter).
+    package static func fracturedMeshes(_ tree: FractureTree, shape: SDFShape, convex: ConvexCell?, interior: UInt8,
+                                        volumes: [SDFVolume]) -> [MeshCutter.Mesh] {
+        var out = [MeshCutter.Mesh](repeating: MeshCutter.Mesh(), count: tree.nodes.count)
+        // (A single cell node, unturned at the origin, is convex too: its box clipped by its planes, those faces its own.)
+        var solid = convex
+        if solid == nil, shape.nodes.count == 1, case .cell(let planes, let lo, let hi) = shape.nodes[0].primitive, shape.nodes[0].position == .zero,
+           abs(shape.nodes[0].rotation.real) > 0.99999 {
+            var cell: ConvexCell? = ConvexCell(box: lo, hi)
+            for plane in planes { cell = cell?.clipped(by: plane, tag: ConvexCell.outer) ?? cell }
+            solid = cell
+        }
+        if let solid {
+            let planes = convex == nil ? solid.planes { _ in true } : []
+            out.withUnsafeMutableBufferPointer { meshes in
+                DispatchQueue.concurrentPerform(iterations: tree.nodes.count) { k in
+                    var cell: ConvexCell? = k == 0 ? solid : tree.nodes[k].cell
+                    for plane in planes where k > 0 { cell = cell?.clipped(by: plane, tag: ConvexCell.outer) }
+                    meshes[k] = cell?.mesh(interior: interior) ?? MeshCutter.Mesh()
+                }
+            }
+            return out
+        }
+        // Its surface, about 4 cm a triangle (at least 48 along its longest side), its normals the field's; the caps
+        // twice as coarse (at 2 cm and the caps' own, a pillar's pieces were 260k triangles).
+        let box = shape.bounds(volumes: volumes)
+        let cells = max(48, Int(simd_reduce_max(box.hi - box.lo) / 0.04))
+        let surface = shape.triangles(cells: cells, push: 0, volumes: volumes)
+        let size = simd_reduce_max(box.hi - box.lo) / Float(cells)
+        var merged = MeshCutter.Mesh()
+        for p in surface.positions {
+            let n = PhysicsMath.direction(shape.gradient(p, h: size * 0.1, volumes: volumes))
+            let (u, v) = ConvexCell.basis(n)
+            _ = merged.add(p, n, SIMD2(dot(p, u), dot(p, v)))
+        }
+        merged.indices = surface.indices
+        merged.materials = surface.materials.map { UInt8(clamping: $0) }
+        let cutter = MeshCutter(merged, inside: { shape.distance($0, volumes: volumes).d })
+        out.withUnsafeMutableBufferPointer { meshes in
+            DispatchQueue.concurrentPerform(iterations: tree.nodes.count) { k in
+                meshes[k] = k == 0 ? merged : cutter.piece(tree.nodes[k].cell, capped: { $0 != ConvexCell.outer }, interior: interior,
+                                                           cellSize: 2 * size)
+            }
+        }
+        return out
     }
 }

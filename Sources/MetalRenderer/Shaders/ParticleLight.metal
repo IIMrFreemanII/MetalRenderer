@@ -97,13 +97,13 @@ struct ParticleLayerParams {
 // they near that surface, and faded right in front of the camera. `footprint`: the ray's pixel across, a unit away
 // (radians): the billboards are at least about that wide. `detail`: the ones under PARTICLE_DETAIL of them are left
 // out, and set `thin` (particleCollect).
+// (`detailWidth`: particleCollect's `detail` as it is: < 0, only the thin ones.)
 inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant FogParams& fog, texture3d<float> fogGrid, float3 dir,
-                               float2 uv, float depth, float footprint, bool detail, thread bool& thin) {
+                               float2 uv, float depth, float footprint, float detailWidth, thread bool& thin) {
     float along = dot(dir, u.camForward.xyz);
     float tOpaque = depth > 0.0f ? depth / max(along, 1e-4f) : 1.0e5f;
     float meanT;
-    float4 gathered = particleGather<4>(u.camPos.xyz, dir, tOpaque, depth > 0.0f, sc, meanT, PARTICLE_WIDEN * footprint,
-                                        detail ? PARTICLE_DETAIL * footprint : 0.0f, thin);
+    float4 gathered = particleGather<4>(u.camPos.xyz, dir, tOpaque, depth > 0.0f, sc, meanT, PARTICLE_WIDEN * footprint, detailWidth, thin);
     float3 c = gathered.rgb;
     float hidden = gathered.a;
     if (hidden > 1e-4f && flagOn(u.flags, FLAG_FOG) && !flagOn(u.flags, FLAG_FOG_REFERENCE)) {
@@ -114,6 +114,11 @@ inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant Fo
         c = c * fogged.a + hidden * fogged.rgb;
     }
     return float4(c, hidden);
+}
+
+inline float4 particleLayerRay(constant Uniforms& u, SCENE_ACCEL sc, constant FogParams& fog, texture3d<float> fogGrid, float3 dir,
+                               float2 uv, float depth, float footprint, bool detail, thread bool& thin) {
+    return particleLayerRay(u, sc, fog, fogGrid, dir, uv, depth, footprint, detail ? PARTICLE_DETAIL * footprint : 0.0f, thin);
 }
 
 // The depth a steady ray through `uv` stops its particles at, from the traced frame's depths `nd` (jittered: its
@@ -188,9 +193,13 @@ kernel void particleOverlayKernel(constant Uniforms&                   u        
     bool thin;
     float4 l = particleUpsample(layer, layerDepth, uv, depth, thin);
     if (thin) {
+        // Only the particles too thin for the layer's texels, traced again for this pixel, over the layer's (which has
+        // the rest: dust behind a chip is drawn in front of it, a chip behind dust a little too bright).
         bool again;
-        l = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, particleClipDepth(nd, uv), particleFootprint(u, uv, float(size.y)),
-                             false, again);
+        float layerFootprint = particleFootprint(u, uv, float(layer.get_height()));
+        float4 t = particleLayerRay(u, sc, fog, fogGrid, normalize(viewDirection(u, uv)), uv, particleClipDepth(nd, uv),
+                                    particleFootprint(u, uv, float(size.y)), -PARTICLE_DETAIL * layerFootprint, again);
+        l = float4(t.rgb + (1.0f - t.a) * l.rgb, 1.0f - (1.0f - t.a) * (1.0f - l.a));
     }
     float4 c = out.read(tid);
     out.write(float4(l.rgb + (1.0f - l.a) * c.rgb, c.a), tid);

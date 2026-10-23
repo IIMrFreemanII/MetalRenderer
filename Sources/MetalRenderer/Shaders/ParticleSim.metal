@@ -1015,7 +1015,15 @@ struct ParticleInject {
     uint  step, parity, slots, perSlot;
     uint4 proxies0;   // FractureMaterial 0...3's proxy emitters
     uint4 proxies1;   // ...4...7's
+    uint4 proxies2;   // CarEvent 0...3's (8 + its kind)
+    uint4 proxies3;   // ...and four more
 };
+constant uint PARTICLE_BREAK_KINDS = 16;
+
+inline uint particleProxy(constant ParticleInject& inj, uint m) {
+    uint4 q = m < 4u ? inj.proxies0 : m < 8u ? inj.proxies1 : m < 12u ? inj.proxies2 : inj.proxies3;
+    return q[m & 3u];
+}
 
 // Before this step's begin: the physics' breaks of this step (its ring's slot, PhysicsGPU.breakRing, if its stamp is this
 // step) as events of each material's proxy emitter, which spawns none of its own; its children (dust, debris) take them
@@ -1035,11 +1043,11 @@ kernel void particleInjectKernel(constant ParticleInject&        inj      [[buff
     uint4 header = ring[inj.step % inj.slots];
     uint n = header.x == inj.step + 1u ? header.y : 0u;
     device const float4* events = (device const float4*)(ring + inj.slots) + (inj.step % inj.slots) * inj.perSlot * 2u;
-    uint counts[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+    uint counts[PARTICLE_BREAK_KINDS] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     for (uint k = 0; k < n; ++k) {
         float4 position = events[2u * k], velocity = events[2u * k + 1u];
-        uint m = min(uint(velocity.w), 7u);
-        uint proxy = m < 4u ? inj.proxies0[m] : inj.proxies1[m - 4u];
+        uint m = min(uint(velocity.w), PARTICLE_BREAK_KINDS - 1u);
+        uint proxy = particleProxy(inj, m);
         if (proxy == PARTICLE_NONE) continue;
         ParticleEmitter em = emitters[proxy];
         if (counts[m] >= em.ids.y) continue;
@@ -1049,8 +1057,8 @@ kernel void particleInjectKernel(constant ParticleInject&        inj      [[buff
         out[em.ids.x + counts[m]] = ev;
         counts[m] += 1u;
     }
-    for (uint m = 0; m < 8u; ++m) {
-        uint proxy = m < 4u ? inj.proxies0[m] : inj.proxies1[m - 4u];
+    for (uint m = 0; m < PARTICLE_BREAK_KINDS; ++m) {
+        uint proxy = particleProxy(inj, m);
         if (proxy != PARTICLE_NONE) atomic_store_explicit(&c.events[q][proxy], counts[m], memory_order_relaxed);
     }
 }

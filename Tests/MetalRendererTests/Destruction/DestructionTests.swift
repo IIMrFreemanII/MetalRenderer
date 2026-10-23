@@ -72,6 +72,49 @@ final class DestructionTests: XCTestCase {
         }
     }
 
+    /// The pieces as they are drawn (Scene.fracturedMeshes): a box's, each its cell's polygons (their area the cell's
+    /// surface, the object's faces at offset 0 and the cuts at the interior's, within the cell); a pillar's, its surface
+    /// cut by each cell and capped (every piece with triangles inside its cell and on or in the pillar); a single cell
+    /// node's (a demolition block's), within its planes.
+    func testThePiecesAreDrawnAsMeshes() {
+        let half = SIMD3<Float>(1, 0.8, 0.1), box = ConvexCell(box: -half, half)
+        let tree = FractureTree(recipe: FractureRecipe.defaults(.brick), cell: box)
+        let meshes = Scene.fracturedMeshes(tree, shape: SDFShape(.box(halfExtents: half)), convex: box, interior: 3, volumes: [])
+        func area(_ m: MeshCutter.Mesh) -> Float {
+            stride(from: 0, to: m.indices.count, by: 3).reduce(0) { a, t in
+                a + length(cross(m.positions[Int(m.indices[t + 1])] - m.positions[Int(m.indices[t])],
+                                 m.positions[Int(m.indices[t + 2])] - m.positions[Int(m.indices[t])])) / 2
+            }
+        }
+        for (k, node) in tree.nodes.enumerated() {
+            let m = meshes[k], b = node.cell.bounds
+            let surface = node.cell.faces.reduce(Float(0)) { $0 + ConvexCell.polygonArea($1.polygon).0 }
+            XCTAssertEqual(area(m), surface, accuracy: surface * 1e-4, "piece \(k)")
+            XCTAssert(m.positions.allSatisfy { all($0 .>= b.lo - 1e-4) && all($0 .<= b.hi + 1e-4) }, "piece \(k) outside its cell")
+            XCTAssert(Set(m.materials).isSubset(of: [0, 3]))
+            if k == 0 { XCTAssertEqual(Set(m.materials), [0]) }
+            if node.cell.faces.contains(where: { $0.tag != ConvexCell.outer }) { XCTAssert(m.materials.contains(3), "piece \(k): no cut faces") }
+        }
+        // A pillar: no cell of its own.
+        let pillar = SDFShape(.cylinder(halfHeight: 1.3, radius: 0.3, rounding: 0.02))
+        let pb = pillar.bounds()
+        let pt = FractureTree(recipe: FractureRecipe.defaults(.concrete), cell: ConvexCell(box: pb.lo, pb.hi), inside: { pillar.distance($0).d })
+        let pm = Scene.fracturedMeshes(pt, shape: pillar, convex: nil, interior: 1, volumes: [])
+        for (k, node) in pt.nodes.enumerated() where node.cell.volume > 1e-4 {
+            let m = pm[k], b = node.cell.bounds
+            XCTAssert(m.positions.allSatisfy { all($0 .>= b.lo - 1e-3) && all($0 .<= b.hi + 1e-3) }, "pillar piece \(k) outside its cell")
+            XCTAssert(m.positions.allSatisfy { pillar.distance($0).d < 0.02 }, "pillar piece \(k) off the pillar")
+        }
+        XCTAssertGreaterThan(pm.filter { $0.triangleCount > 0 }.count, pt.nodes.count * 9 / 10)
+        // A single cell node: a box less a corner.
+        let corner = SIMD4<Float>(PhysicsMath.direction([1, 1, 0]), 0.9)
+        let block = SDFShape([SDFShape.Node(.cell(planes: [corner], lo: -half, hi: half))])
+        let bt = FractureTree(recipe: FractureRecipe.defaults(.concrete), cell: ConvexCell(box: -half, half), inside: { block.distance($0).d })
+        let bm = Scene.fracturedMeshes(bt, shape: block, convex: nil, interior: 1, volumes: [])
+        for m in bm { XCTAssert(m.positions.allSatisfy { dot(SIMD3(corner.x, corner.y, corner.z), $0) <= corner.w + 1e-4 }) }
+        print("piece meshes: a brick wall's \(meshes.map(\.triangleCount).reduce(0, +)) triangles over \(tree.nodes.count) nodes, a pillar's \(pm.map(\.triangleCount).reduce(0, +)) over \(pt.nodes.count)")
+    }
+
     func testTheSameSeedMakesTheSamePieces() {
         let box = ConvexCell(box: [-1, -1, -1], [1, 1, 1])
         let a = FractureTree(recipe: FractureRecipe.defaults(.concrete), cell: box)

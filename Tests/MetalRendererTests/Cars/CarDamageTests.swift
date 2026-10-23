@@ -18,7 +18,7 @@ import simd
 final class CarDamageTests: XCTestCase {
     /// A world with a floor and one car of `spec` placed by `place` moving at `velocity`, with a windshield pane (the
     /// body's top between the roof's front and the windshield's base) and `statics` added first.
-    private func world(_ spec: CarSpec = .preset(.sedan), place: float4x4 = matrix_identity_float4x4, velocity: SIMD3<Float> = .zero,
+    private func world(_ spec: CarSpec = .preset(.civic), place: float4x4 = matrix_identity_float4x4, velocity: SIMD3<Float> = .zero,
                        statics: (PhysicsWorld) -> Void = { _ in }) -> PhysicsWorld {
         let w = PhysicsWorld(substeps: 16)
         w.addPlane(point: .zero, normal: [0, 1, 0], friction: 0.7, restitution: 0.1)
@@ -54,7 +54,7 @@ final class CarDamageTests: XCTestCase {
         return w.carSystem.parts[Int(s.firstPart)..<Int(s.firstPart + s.partCount)].filter { $0.kind == kind.rawValue }
     }
 
-    private func events(_ w: PhysicsWorld, _ kind: CarEvent) -> Int { w.breakLog.filter { UInt32($0.velocity.w) == kind.rawValue }.count }
+    private func events(_ w: PhysicsWorld, _ kind: CarEvent) -> Int { w.breakLog.filter { UInt32($0.velocity.w) == kind.slot }.count }
 
     // MARK: Building
 
@@ -124,7 +124,7 @@ final class CarDamageTests: XCTestCase {
     /// Sliding sideways into a pole, at 40 km/h at the front door's middle or at 60 km/h at its hinges: the body its
     /// hinges and latch are fixed to is crushed, they break, and it comes off.
     func testASidePoleTakesTheDoorOff() {
-        let spec = CarSpec.preset(.sedan), b = CarBlueprint(spec)
+        let spec = CarSpec.preset(.civic), b = CarBlueprint(spec)
         let door = b.parts.first { $0.kind == .frontDoor && $0.side < 0 }!
         for (name, z, kmh) in [("middle", (door.span.x + door.span.y) / 2, Float(40)), ("hinge", door.span.y, 60)] {
             let w = world(velocity: [-kmh / 3.6, 0, 0], statics: pole(-spec.width / 2 - 1.2, z))
@@ -138,7 +138,7 @@ final class CarDamageTests: XCTestCase {
     /// At 60 km/h into a curb in front of the front left wheel: its axle breaks and it comes off (a body of its own:
     /// no longer a car's wheel, its friction back).
     func testACurbTakesAWheelOff() {
-        let spec = CarSpec.preset(.sedan)
+        let spec = CarSpec.preset(.civic)
         let curb: (PhysicsWorld) -> Void = { w in
             w.addStatic(sdf: 92, SDFShape(.box(halfExtents: [0.4, 0.15, 0.3])), transform: translate([spec.track / 2, 0.15, 6]), friction: 0.7, restitution: 0.05)
         }
@@ -151,6 +151,42 @@ final class CarDamageTests: XCTestCase {
         XCTAssertNotEqual(wheel.flags & CarWheel.off, 0)
         XCTAssertEqual(body.info.y & PhysicsWorld.wheelBit, 0)
         XCTAssertGreaterThan(body.velocity.w, 0)
+    }
+
+    /// The parts stay on the body while it drives: through a slalom at 60 km/h and over a bump, each part's nodes (but
+    /// its hinges' and latch's) within 5 mm of how far they sat from their body nodes, none off. (A support that only
+    /// pushed let a door's middle swing out: the detailed models' doors looked loose.)
+    func testPartsStayOnTheBodyWhileDriving() {
+        let spec = CarPack.model(.civic).map { CarSpec.preset(.civic).fitted(to: $0.model) } ?? .preset(.civic)
+        let b = CarBlueprint(spec)
+        let bump: (PhysicsWorld) -> Void = { w in
+            w.addStatic(sdf: 93, SDFShape(.cylinder(halfHeight: 2, radius: 0.3)), transform: translate([0, -0.24, 8]) * float4x4(simd_quatf(angle: .pi / 2, axis: [0, 0, 1])),
+                        friction: 0.7, restitution: 0.05)
+        }
+        let w = world(spec, velocity: [0, 0, 60 / 3.6], statics: bump)
+        let first = Int(w.carSystem.cars[0].firstNode)
+        let held = b.beams.filter { $0.part > 0 && !$0.attach && $0.kind != .plastic && $0.kind != .rigid }.map { (first + $0.a, first + $0.b) }
+        func gap(_ pair: (Int, Int)) -> Float { simd_distance(PhysicsMath.xyz(w.particles[pair.0].position), PhysicsMath.xyz(w.particles[pair.1].position)) }
+        let rest = held.map(gap)
+        var worst: Float = 0, outward: Float = 0
+        for k in 0..<80 {
+            var input = CarInput()
+            input.accelerate = 0.4
+            input.steer = k < 20 ? 0 : ((k / 15) % 2 == 0 ? 0.5 : -0.5)
+            w.add(PhysicsWorld.carCommand(0, input))
+            run(w, 0.05)
+            for (i, pair) in held.enumerated() {
+                let d = gap(pair) - rest[i]
+                worst = max(worst, abs(d))
+                outward = max(outward, d)
+            }
+        }
+        let t = w.carTelemetry(0)
+        print(String(format: "parts on the body: %d supports, worst %.1f mm (outward %.1f mm), parts off %d, speed %.0f km/h",
+                     held.count, worst * 1000, outward * 1000, t.partsOff, t.speed * 3.6))
+        XCTAssertGreaterThan(held.count, 20)
+        XCTAssertEqual(t.partsOff, 0)
+        XCTAssertLessThan(worst, 0.005)
     }
 
     /// Over a speed bump (8 cm high) at 60 km/h: no wheel comes off.
@@ -169,8 +205,8 @@ final class CarDamageTests: XCTestCase {
     /// Steering to full lock and back at a standstill, then pulling away: the tie rods don't bend, the front wheels
     /// point where the steering does (each wheel's yaw against the body's), straight again when it is.
     func testSteeringLeavesTheTieRodsStraight() throws {
-        var specs = [CarSpec.preset(.offroad), CarSpec.preset(.sedan)]
-        if let pack = CarPack.shared, let model = pack.models[.offroad] { specs.append(CarSpec.preset(.offroad).fitted(to: model)) }
+        var specs = [CarSpec.preset(.santaFe), CarSpec.preset(.civic)]
+        if let model = CarPack.model(.santaFe)?.model { specs.append(CarSpec.preset(.santaFe).fitted(to: model)) }
         for spec in specs {
             let w = world(spec)
             func yaw(_ k: Int) -> Float {
@@ -208,7 +244,7 @@ final class CarDamageTests: XCTestCase {
     /// A car on its roof sliding at 12 m/s: its roof's nodes scraped and dirty, its sides not.
     func testSlidingScrapesTheRoof() {
         let roof = float4x4(simd_quatf(angle: .pi, axis: [0, 0, 1]))
-        let spec = CarSpec.preset(.sedan)
+        let spec = CarSpec.preset(.civic)
         let w = world(spec, place: translate([0, spec.roof + 0.08, 0]) * roof, velocity: [0, 0, 12])
         run(w, 2)
         let s = w.carSystem.cars[0]
@@ -240,8 +276,8 @@ final class CarDamageTests: XCTestCase {
     /// The car pack's sedan into the wall at 50 km/h: its drawn panes fold away when they break (each broken pane's
     /// vertices at its car's first node) and its panels near the front take its crush.
     func testDrawnDamage() throws {
-        guard let pack = CarPack.shared, let model = pack.models[.sedan] else { throw XCTSkip("no car pack in Assets/Cars") }
-        let b = CarBlueprint(CarSpec.preset(.sedan).fitted(to: model)), surface = CarSurface(b, model: model)
+        guard let model = CarPack.model(.civic)?.model else { throw XCTSkip("no model in Assets/Cars") }
+        let b = CarBlueprint(CarSpec.preset(.civic).fitted(to: model)), surface = CarSurface(b, model: model)
         print("panes: \(surface.panes.map { "\($0.lamp ? "lamp" : "pane") on \($0.part), \($0.hull.count) triangles" })")
         XCTAssertGreaterThan(surface.panes.filter(\.lamp).count, 1)
         XCTAssertGreaterThan(surface.panes.filter { !$0.lamp }.count, 2)

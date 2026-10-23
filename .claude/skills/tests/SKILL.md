@@ -79,7 +79,7 @@ name first, then by its folder (`by_name`, `by_folder`).
 | `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |
 | `SDF*.swift`, `Scene+Shapes`, `Shaders/SDF.metal` | SDFTests, SceneBuffersTests, PhysicsTests, CharacterBaseTests (sparse surface nets) (the shader: SDFTests + PhysicsTests + the shader pair) |
 | `Physics*.swift`, `Scene+Physics`, `Scene+Ragdolls`, `Scene+Hair`, `Scene+Soft`, `Scene+Muscles`, `Shaders/Physics.metal` | PhysicsTests, RagdollTests, HairTests, SoftBodyTests, MuscleTests, FluidTests (the shader: + the shader pair) |
-| `Cars/` (the physics', the engine's and the game's: `Physics+Cars`, `Car*.swift`, `Scene+Cars`, `Scene+CarGround`, `CarPlayer`, `CarDamage`) | CarTests, CarDamageTests, PhysicsThreadsTests |
+| `Cars/` (the physics', the engine's and the game's: `Physics+Cars`, `Car*.swift`, `Scene+Cars`, `Scene+CarGround`, `CarPlayer`, `CarDamage`) | CarTests, CarDamageTests, CarContactTests, PhysicsThreadsTests |
 | `FluidSurface`, `Scene+Fluids`, `Shaders/Fluid.metal`, `Shaders/FluidSurface.metal`, `Shaders/Liquid.metal` | FluidTests (the shaders: + the shader pair) |
 | `Particles`, `ParticleMath`, `ParticlesGPU`, `ParticleTextures`, `Scene+Particles`, `Scene+Effects`, `Shaders/ParticleSim.metal`, `Shaders/ParticleLight.metal`, `Shaders/ParticleTrace.metal` | ParticleTests VFXTests (the shaders: + the shader pair) |
 | `VFX/*` (the effects' graphs, `Scene+Stage`), `ShadersVFX.metal`, `LegacyEffects` (the golden test's fixture) | VFXTests ParticleTests (`ShadersVFX`: + ShaderSourceTests) |

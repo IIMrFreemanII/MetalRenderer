@@ -2,13 +2,11 @@ import EngineCore
 import Foundation
 import simd
 
-/// A car's body style (CarSpec.preset).
+/// A car (CarSpec.preset; drawn as its model: CarPack.entries).
 package enum CarStyle: Int, CaseIterable, Codable {
-    case sedan, hatchback, pickup, coupe, wagon, compact, minivan, sport, suv, offroad
+    case civic, karoq, panamera, santaFe
 
-    package var title: String {
-        ["Sedan", "Hatchback", "Pickup", "Coupe", "Wagon", "Compact", "Minivan", "Sports car", "SUV", "Off-roader"][rawValue]
-    }
+    package var title: String { ["Honda Civic Type R", "Skoda Karoq", "Porsche Panamera", "Hyundai Santa Fe"][rawValue] }
 }
 
 /// Which wheels the engine turns.
@@ -94,6 +92,9 @@ package struct CarSpec: Equatable {
     /// Where the model's left mirror is (its middle; the right one's is across), if it has them: a part of its own
     /// (CarBlueprint.addMirror).
     package var mirror: SIMD3<Float>?
+    /// Where the model's named parts are (`fitted`), nil without them: CarBlueprint.buildParts places the doors, the hood
+    /// and the trunk lid where they are, in place of the stations' rules.
+    package var spans: CarSpans?
 
     package var frontAxle: Float { wheelbase / 2 }
     package var rearAxle: Float { -wheelbase / 2 }
@@ -101,204 +102,110 @@ package struct CarSpec: Equatable {
     package var rearEnd: Float { frontEnd - length }
     package var peakTorque: Float { torqueCurve.map(\.y).max() ?? 0 }
 
+    /// Each car's mechanics (as its maker gives them, about), and a crash frame of key heights for the tests that have
+    /// no model (a scene's car is fitted to its model: `fitted`).
     package static func preset(_ style: CarStyle) -> CarSpec {
         switch style {
-        case .sedan:
-            return CarSpec(style: style, length: 4.7, width: 1.82, wheelbase: 2.75, track: 1.56, frontOverhang: 0.95, sill: 0.2, belt: 0.93,
-                           roof: 1.44, deckFront: 0.8, cowl: 0.98, deckRear: 0.98, windshieldBase: 0.8, roofFront: -0.05, roofRear: -1.05,
-                           rearWindowBase: -1.7, mass: 1350)
-        case .hatchback:
-            var s = CarSpec(style: style, length: 4.1, width: 1.76, wheelbase: 2.55, track: 1.52, frontOverhang: 0.85, sill: 0.19, belt: 0.92,
-                            roof: 1.46, deckFront: 0.8, cowl: 0.97, deckRear: 1.0, windshieldBase: 0.75, roofFront: -0.1, roofRear: -1.5,
-                            rearWindowBase: -1.85, mass: 1150)
+        case .civic:
+            // Honda Civic Type R (FL5): 2.0 turbo, 235 kW, 420 N m, six speeds, front-wheel drive with a limited-slip
+            // differential, 19-inch wheels.
+            var s = CarSpec(style: style, length: 4.59, width: 1.89, wheelbase: 2.735, track: 1.62, frontOverhang: 0.93, sill: 0.2, belt: 0.95,
+                            roof: 1.41, deckFront: 0.82, cowl: 0.98, deckRear: 1.0, windshieldBase: 0.95, roofFront: 0.05, roofRear: -1.2,
+                            rearWindowBase: -1.75, mass: 1430)
+            s.engineMass = 140
+            s.drive = .front
+            s.limitedSlip = 0.35
+            s.torqueCurve = [[1000, 250], [2000, 380], [2600, 420], [4000, 420], [5500, 390], [6500, 350], [7000, 300], [7500, 150]]
+            s.limiter = 7_000
+            s.gears = [3.63, 2.12, 1.53, 1.13, 0.92, 0.75]
+            s.finalDrive = 4.11
+            s.wheelRadius = 0.33
+            s.wheelWidth = 0.265
+            s.wheelMass = 22
+            s.wheelInertia = 1.1
+            s.spring = 42_000
+            s.damper = 2_400
+            s.travel = 0.1
+            s.tyreStiffness = 250_000
+            s.grip = 1.15
+            s.frontBrake = 2_600
+            s.rearBrake = 1_200
+            s.dragArea = 0.68
+            return s
+        case .karoq:
+            // Skoda Karoq 1.5 TSI: 110 kW, 250 N m, front-wheel drive, 17-inch wheels.
+            var s = CarSpec(style: style, length: 4.39, width: 1.84, wheelbase: 2.638, track: 1.52, frontOverhang: 0.89, sill: 0.25, belt: 1.05,
+                            roof: 1.6, deckFront: 0.95, cowl: 1.1, deckRear: 1.15, windshieldBase: 1.0, roofFront: 0.3, roofRear: -1.6,
+                            rearWindowBase: -1.85, mass: 1350)
             s.engineMass = 120
             s.drive = .front
-            s.torqueCurve = s.torqueCurve.map { SIMD2($0.x, $0.y * 0.755) }
-            s.wheelRadius = 0.3
-            s.wheelWidth = 0.195
-            s.spring = 26_000
-            s.damper = 1_700
-            s.frontBrake = 1_600
-            s.rearBrake = 700
-            s.dragArea = 0.66
+            s.torqueCurve = [[1000, 180], [1500, 250], [3500, 250], [4500, 235], [5500, 205], [6000, 185], [6300, 150], [6800, 80]]
+            s.limiter = 6_300
+            s.gears = [3.77, 2.12, 1.36, 1.03, 0.84, 0.69]
+            s.finalDrive = 4.17
+            s.wheelRadius = 0.35
+            s.wheelWidth = 0.215
+            s.wheelMass = 20
+            s.wheelInertia = 1.0
+            s.spring = 32_000
+            s.damper = 2_100
+            s.travel = 0.14
+            s.frontBrake = 1_900
+            s.rearBrake = 900
+            s.dragArea = 0.85
             return s
-        case .pickup:
-            var s = CarSpec(style: style, length: 5.0, width: 1.95, wheelbase: 3.0, track: 1.66, frontOverhang: 0.95, sill: 0.34, belt: 1.15,
-                            roof: 1.84, deckFront: 1.05, cowl: 1.2, deckRear: 1.12, windshieldBase: 0.85, roofFront: 0.15, roofRear: -0.75,
-                            rearWindowBase: -0.85, mass: 2000)
-            s.roofShare = 0.86
-            s.engineMass = 220
+        case .panamera:
+            // Porsche Panamera 4S: 2.9 V6 twin turbo, 324 kW, 550 N m, eight speeds, all-wheel drive, 19-inch wheels.
+            var s = CarSpec(style: style, length: 5.05, width: 1.94, wheelbase: 2.95, track: 1.65, frontOverhang: 0.95, sill: 0.17, belt: 0.9,
+                            roof: 1.42, deckFront: 0.72, cowl: 0.92, deckRear: 1.0, windshieldBase: 0.85, roofFront: 0.0, roofRear: -1.0,
+                            rearWindowBase: -1.8, mass: 2000)
+            s.engineMass = 190
             s.drive = .all
-            s.torqueCurve = [[1000, 300], [1500, 360], [2500, 400], [3500, 390], [4500, 340], [5200, 280], [5600, 200], [6000, 100]]
+            s.limitedSlip = 0.3
+            s.torqueCurve = [[1000, 300], [1750, 550], [5500, 550], [6000, 500], [6500, 440], [6800, 380], [7000, 300], [7300, 150]]
+            s.limiter = 6_800
+            s.gears = [5.0, 3.2, 2.14, 1.72, 1.31, 1.0, 0.82, 0.64]
+            s.finalDrive = 2.86
+            s.wheelRadius = 0.34
+            s.wheelWidth = 0.275
+            s.wheelMass = 25
+            s.wheelInertia = 1.3
+            s.spring = 48_000
+            s.damper = 3_000
+            s.travel = 0.11
+            s.tyreStiffness = 270_000
+            s.grip = 1.15
+            s.frontBrake = 3_200
+            s.rearBrake = 1_700
+            s.handbrake = 2_000
+            s.dragArea = 0.68
+            return s
+        case .santaFe:
+            // Hyundai Santa Fe 2.5T (2024): 207 kW, 422 N m, eight speeds, all-wheel drive, 20-inch wheels.
+            var s = CarSpec(style: style, length: 4.83, width: 1.9, wheelbase: 2.815, track: 1.64, frontOverhang: 0.93, sill: 0.27, belt: 1.15,
+                            roof: 1.78, deckFront: 1.1, cowl: 1.22, deckRear: 1.3, windshieldBase: 1.1, roofFront: 0.45, roofRear: -2.0,
+                            rearWindowBase: -2.25, mass: 1900)
+            s.roofShare = 0.88
+            s.engineMass = 170
+            s.drive = .all
+            s.torqueCurve = [[1000, 250], [1700, 422], [4000, 422], [5000, 390], [5800, 350], [6000, 300], [6300, 200], [6600, 100]]
             s.idle = 750
-            s.limiter = 5_400
-            s.engineInertia = 0.25
-            s.gears = [3.8, 2.3, 1.5, 1.1, 0.85]
-            s.finalDrive = 3.7
+            s.limiter = 6_000
+            s.gears = [4.81, 2.94, 1.94, 1.45, 1.0, 0.85, 0.68, 0.58]
+            s.finalDrive = 3.2
             s.wheelRadius = 0.38
             s.wheelWidth = 0.255
-            s.wheelMass = 28
+            s.wheelMass = 27
             s.wheelInertia = 1.6
             s.spring = 45_000
             s.damper = 3_000
             s.travel = 0.16
-            s.tyreStiffness = 280_000
-            s.tyreDamping = 600
-            s.frontBrake = 2_600
-            s.rearBrake = 1_400
-            s.handbrake = 2_000
-            s.dragArea = 1.05
-            return s
-        case .coupe:
-            var s = CarSpec(style: style, length: 4.5, width: 1.88, wheelbase: 2.65, track: 1.6, frontOverhang: 1.0, sill: 0.15, belt: 0.85,
-                            roof: 1.28, deckFront: 0.7, cowl: 0.92, deckRear: 0.92, windshieldBase: 0.6, roofFront: -0.35, roofRear: -0.95,
-                            rearWindowBase: -1.75, mass: 1400)
-            s.roofShare = 0.75
-            s.limitedSlip = 0.35
-            s.torqueCurve = [[1000, 220], [2000, 300], [3000, 370], [4500, 420], [5500, 410], [6500, 380], [7500, 330], [8000, 150]]
-            s.limiter = 7_500
-            s.gears = [3.2, 2.2, 1.6, 1.25, 1.0, 0.82]
-            s.finalDrive = 3.6
-            s.wheelRadius = 0.33
-            s.wheelWidth = 0.245
-            s.wheelMass = 22
-            s.wheelInertia = 1.1
-            s.spring = 50_000
-            s.damper = 2_600
-            s.travel = 0.09
-            s.tyreStiffness = 250_000
-            s.grip = 1.15
-            s.frontBrake = 2_400
-            s.rearBrake = 1_300
-            s.dragArea = 0.62
-            return s
-        case .wagon:
-            var s = CarSpec(style: style, length: 4.38, width: 1.8, wheelbase: 2.63, track: 1.4, frontOverhang: 0.86, sill: 0.18, belt: 0.91,
-                            roof: 1.38, deckFront: 0.78, cowl: 0.95, deckRear: 1.0, windshieldBase: 0.75, roofFront: -0.1, roofRear: -1.75,
-                            rearWindowBase: -1.95, mass: 1450)
-            s.wheelRadius = 0.304
-            s.wheelWidth = 0.215
-            s.drive = .front
-            s.torqueCurve = s.torqueCurve.map { SIMD2($0.x, $0.y * 1.05) }
-            s.spring = 33_000
-            s.damper = 2_000
-            s.dragArea = 0.72
-            return s
-        case .compact:
-            var s = CarSpec(style: style, length: 3.26, width: 1.6, wheelbase: 2.08, track: 1.13, frontOverhang: 0.66, sill: 0.16, belt: 0.85,
-                            roof: 1.32, deckFront: 0.75, cowl: 0.92, deckRear: 0.95, windshieldBase: 0.55, roofFront: -0.15, roofRear: -1.1,
-                            rearWindowBase: -1.45, mass: 980)
-            s.engineMass = 100
-            s.drive = .front
-            s.torqueCurve = s.torqueCurve.map { SIMD2($0.x, $0.y * 0.7) }
-            s.wheelRadius = 0.243
-            s.wheelWidth = 0.175
-            s.wheelMass = 16
-            s.wheelInertia = 0.65
-            s.spring = 22_000
-            s.damper = 1_500
-            s.frontBrake = 1_300
-            s.rearBrake = 550
-            s.dragArea = 0.6
-            return s
-        case .minivan:
-            var s = CarSpec(style: style, length: 4.61, width: 1.85, wheelbase: 2.84, track: 1.41, frontOverhang: 0.82, sill: 0.21, belt: 1.13,
-                            roof: 1.76, deckFront: 0.9, cowl: 1.1, deckRear: 1.15, windshieldBase: 0.95, roofFront: 0.35, roofRear: -2.0,
-                            rearWindowBase: -2.2, mass: 1800)
-            s.roofShare = 0.85
-            s.engineMass = 170
-            s.drive = .front
-            s.torqueCurve = s.torqueCurve.map { SIMD2($0.x, $0.y * 1.05) }
-            s.wheelRadius = 0.318
-            s.wheelWidth = 0.215
-            s.wheelMass = 23
-            s.wheelInertia = 1.1
-            s.spring = 40_000
-            s.damper = 2_600
-            s.travel = 0.13
-            s.tyreStiffness = 250_000
-            s.frontBrake = 2_300
-            s.rearBrake = 1_100
-            s.dragArea = 0.95
-            return s
-        case .sport:
-            var s = CarSpec(style: style, length: 3.91, width: 1.77, wheelbase: 2.45, track: 1.37, frontOverhang: 0.85, sill: 0.13, belt: 0.7,
-                            roof: 1.05, deckFront: 0.62, cowl: 0.78, deckRear: 0.82, windshieldBase: 0.45, roofFront: -0.25, roofRear: -0.75,
-                            rearWindowBase: -1.35, mass: 1300)
-            s.roofShare = 0.7
-            s.drive = .rear
-            s.limitedSlip = 0.4
-            s.torqueCurve = [[1000, 250], [2000, 340], [3000, 420], [4500, 480], [5500, 470], [6500, 440], [7500, 390], [8200, 150]]
-            s.limiter = 8_000
-            s.gears = [3.1, 2.2, 1.65, 1.3, 1.05, 0.85]
-            s.finalDrive = 3.5
-            s.wheelRadius = 0.308
-            s.wheelWidth = 0.255
-            s.wheelMass = 22
-            s.wheelInertia = 1.1
-            s.spring = 60_000
-            s.damper = 3_000
-            s.travel = 0.08
-            s.tyreStiffness = 260_000
-            s.grip = 1.2
-            s.frontBrake = 2_700
-            s.rearBrake = 1_500
-            s.dragArea = 0.58
-            return s
-        case .suv:
-            var s = CarSpec(style: style, length: 4.61, width: 1.95, wheelbase: 2.73, track: 1.46, frontOverhang: 0.87, sill: 0.24, belt: 1.19,
-                            roof: 1.73, deckFront: 1.0, cowl: 1.15, deckRear: 1.15, windshieldBase: 0.85, roofFront: 0.2, roofRear: -1.8,
-                            rearWindowBase: -2.0, mass: 1950)
-            s.roofShare = 0.85
-            s.engineMass = 200
-            s.drive = .all
-            s.torqueCurve = [[1000, 280], [1500, 330], [2500, 380], [3500, 375], [4500, 340], [5200, 290], [5800, 220], [6200, 100]]
-            s.idle = 750
-            s.limiter = 5_800
-            s.engineInertia = 0.22
-            s.gears = [3.8, 2.3, 1.5, 1.1, 0.85]
-            s.finalDrive = 3.6
-            s.wheelRadius = 0.376
-            s.wheelWidth = 0.255
-            s.wheelMass = 26
-            s.wheelInertia = 1.5
-            s.spring = 45_000
-            s.damper = 3_000
-            s.travel = 0.15
             s.tyreStiffness = 270_000
             s.tyreDamping = 550
-            s.frontBrake = 2_600
+            s.frontBrake = 2_800
             s.rearBrake = 1_400
             s.handbrake = 2_000
             s.dragArea = 1.0
-            return s
-        case .offroad:
-            var s = CarSpec(style: style, length: 3.94, width: 1.9, wheelbase: 2.32, track: 1.47, frontOverhang: 0.75, sill: 0.23, belt: 1.12,
-                            roof: 1.57, deckFront: 1.0, cowl: 1.1, deckRear: 1.1, windshieldBase: 0.7, roofFront: 0.3, roofRear: -1.45,
-                            rearWindowBase: -1.6, mass: 2050)
-            s.roofShare = 0.88
-            s.engineMass = 220
-            s.drive = .all
-            s.limitedSlip = 0.3
-            s.torqueCurve = [[1000, 330], [1500, 390], [2500, 420], [3500, 400], [4200, 350], [4800, 280], [5200, 200], [5600, 100]]
-            s.idle = 700
-            s.limiter = 5_000
-            s.engineInertia = 0.28
-            s.gears = [4.2, 2.5, 1.6, 1.15, 0.9]
-            s.finalDrive = 3.7
-            s.wheelRadius = 0.358
-            s.wheelWidth = 0.265
-            s.wheelMass = 28
-            s.wheelInertia = 1.6
-            s.spring = 40_000
-            s.damper = 3_000
-            s.travel = 0.18
-            s.tyreStiffness = 260_000
-            s.tyreDamping = 600
-            s.frontBrake = 2_600
-            s.rearBrake = 1_500
-            s.handbrake = 2_000
-            s.dragArea = 1.1
             return s
         }
     }
@@ -382,6 +289,15 @@ package struct CarSpec: Equatable {
     return t * t * (3 - 2 * t)
 }
 
+/// Where a model's parts are along its body (z): its front and rear doors' ends (nil: no rear doors), the hood's rear
+/// edge, the trunk lid's (or tailgate's) front edge (nil: none).
+package struct CarSpans: Equatable {
+    package var frontDoor: SIMD2<Float>?
+    package var rearDoor: SIMD2<Float>?
+    package var hood: Float?
+    package var trunk: Float?
+}
+
 /// A body's shape measured from a model (CarSpec.fitted): at stations evenly spaced from its rear end (`rear`) to its
 /// front (`front`), the top's height, the body's half width (below its belt line: not its mirrors) and the top's.
 package struct CarProfile: Equatable {
@@ -409,8 +325,11 @@ extension CarSpec {
     /// windows' ends (the crumple zones' ends) where the greenhouse rises from the hood and falls to the trunk.
     package func fitted(to model: CarModel) -> CarSpec {
         var s = self
-        let body = model.paint.positions + model.lamps.positions, all = body + model.glass.positions
-        guard !body.isEmpty, model.wheels.count == 4 else { return s }
+        // (Its shape: all of it, its glass's own aside; the interior and the engine are inside it. Its sill: the paint's.)
+        let all = model.positions { $0 != .glass }, glassAll = model.positions { $0 == .window }
+        let paint = model.positions { $0 == .paint }
+        guard !paint.isEmpty, model.wheels.count == 4 else { return s }
+        let body = model.positions { $0 != .glass && $0 != .window }
         let lo = all.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }
         let hi = all.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1) }
         let w = model.wheels
@@ -420,9 +339,9 @@ extension CarSpec {
         s.wheelWidth = w.reduce(0) { $0 + $1.width } / 4
         s.length = hi.z - lo.z
         s.frontOverhang = hi.z - s.wheelbase / 2
-        s.sill = max(body.map(\.y).min()! + 0.04, 0.12)
+        s.sill = max(paint.map(\.y).min()! + 0.04, 0.12)
         // The belt line: where the glass begins (most of it above), not below the sill's reach or the roof's.
-        let glass = model.glass.positions.map(\.y).sorted()
+        let glass = glassAll.map(\.y).sorted()
         let roof = hi.y
         s.roof = roof
         s.belt = simd_clamp(glass.isEmpty ? s.belt : glass[glass.count * 15 / 100], s.sill + 0.4, roof - 0.25)
@@ -464,8 +383,26 @@ extension CarSpec {
         s.cowl = s.topHeight(min(s.windshieldBase + 0.15, hi.z))
         s.deckFront = top[n - 2]
         s.deckRear = top[1]
-        s.mirror = CarSpec.mirror(model.paint.positions, s)
+        let mirror = model.positions(of: .mirror, side: 1)
+        if mirror.isEmpty {
+            s.mirror = CarSpec.mirror(paint, s)
+        } else {
+            let lo = mirror.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }, hi = mirror.reduce(-lo) { simd_max($0, $1) }
+            s.mirror = (lo + hi) / 2
+        }
+        s.spans = CarSpec.spans(model)
         return s
+    }
+
+    /// Where `model`'s named parts are (nil: it names no doors).
+    package static func spans(_ model: CarModel) -> CarSpans? {
+        func span(_ kind: CarPartKind) -> SIMD2<Float>? {
+            let z = model.positions(of: kind).map(\.z)
+            guard let a = z.min(), let b = z.max() else { return nil }
+            return SIMD2(a, b)
+        }
+        guard let front = span(.frontDoor) else { return nil }
+        return CarSpans(frontDoor: front, rearDoor: span(.rearDoor), hood: span(.hood)?.x, trunk: span(.trunk)?.y)
     }
 
     /// The left mirror's middle in `paint`: what sticks out past the body's side (`halfWidth`, below the belt line) a

@@ -64,7 +64,7 @@ extension Scene {
             let f = addFractured("\(block.kind.title) \(k)", shape: block.shape, recipe: recipe, transform: block.transform,
                                  material: outside[block.look.rawValue], interior: inside[block.look.rawValue], anchor: anchor,
                                  mask: block.kind == .glass ? Scene.maskGlass : Scene.maskGeometry,
-                                 toughness: settings.toughness, strength: settings.strength * strength)
+                                 toughness: settings.toughness, strength: settings.strength * strength, meshes: false)
             world.startAsleep(f.firstBody)
             rig.objects.append(f)
         }

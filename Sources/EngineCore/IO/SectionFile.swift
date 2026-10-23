@@ -98,7 +98,7 @@ package struct SectionFile {
                 put(s.id); put(UInt32(s.stride)); put(UInt64(offset)); put(UInt64(bytes))
                 offset = aligned(offset + bytes)
             }
-            let temporary = url.appendingPathExtension("tmp-\(ProcessInfo.processInfo.processIdentifier)")
+            let temporary = url.appendingPathExtension("tmp-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")   // (two writers of one file in a process: a scene and its outline built side by side)
             guard FileManager.default.createFile(atPath: temporary.path, contents: nil) else { throw CocoaError(.fileWriteUnknown) }
             let file = try FileHandle(forWritingTo: temporary)
             do {

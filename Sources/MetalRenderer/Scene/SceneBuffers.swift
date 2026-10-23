@@ -667,6 +667,7 @@ package struct SceneBuffers {
         }
         // The crowd's pose slots deform: their structures are built to be refitted every frame, and stay as built.
         var refitted: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
+        var rebuildScratch = 0   // (Scene.rebuiltOnDemand's builds: one a frame)
         // A liquid's surface changes its triangles: its structure is built again every frame (fast to build).
         var rebuilt: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, scratch: Int)] = []
         var jobs: [(index: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, sizes: MTLAccelerationStructureSizes, deforms: Bool)] = []
@@ -765,6 +766,7 @@ package struct SceneBuffers {
             else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
+            if deforms && scene.rebuiltOnDemand.contains(i) { rebuildScratch = max(rebuildScratch, sizes.buildScratchBufferSize) }
             if deforms, let first = firstPose[SIMD2(mesh.firstIndex, mesh.indexCount)] {
                 copies.append((refitted.count - 1, first))
                 continue
@@ -870,7 +872,14 @@ package struct SceneBuffers {
             primitiveRefit = PrimitiveRefit(structures: refitted.map { structures[$0.index]! }, descriptors: refitted.map(\.descriptor),
                                             scratch: scratch, scratchOffsets: offsets,
                                             rebuilt: rebuilt.indices.map { (structures[rebuilt[$0].index]!, rebuilt[$0].descriptor, rebuiltOffsets[$0]) },
-                                            rebuiltMeshes: rebuilt.map(\.index))
+                                            rebuiltMeshes: rebuilt.map(\.index), refittedMeshes: refitted.map(\.index))
+            if rebuildScratch > 0 {
+                guard let buffer = device.makeBuffer(length: rebuildScratch, options: .storageModePrivate) else {
+                    throw RendererError.resourceCreation("rebuild scratch buffer")
+                }
+                buffer.label = "blasRebuildScratch"
+                primitiveRefit?.rebuildScratch = buffer
+            }
         }
         if !displaced.isEmpty {
             guard let scratch = device.makeBuffer(length: displaced.map(\.scratch).max()!, options: .storageModePrivate) else {

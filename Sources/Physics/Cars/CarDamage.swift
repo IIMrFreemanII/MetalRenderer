@@ -204,7 +204,7 @@ extension CarSolver {
 
     /// Car `s`'s part `p` (1 + its place) let go: the supports it rested on the body by broken.
     @inline(__always) package static func letGo(_ p: Int, _ s: CarState, _ b: CarBuffers) {
-        for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) where b.beams[k].part == p && b.beams[k].kind == CarBeamKind.compression.rawValue {
+        for k in Int(s.firstBeam)..<Int(s.firstBeam + s.beamCount) where b.beams[k].part == p && b.beams[k].kind == CarBeamKind.support.rawValue {
             b.beams[k].info |= CarBeam.brokenBit
         }
     }
@@ -220,7 +220,7 @@ extension CarSolver {
     @inline(__always) package static func event(_ c: Int, _ kind: CarEvent, _ x: SIMD3<Float>, _ v: SIMD3<Float>, _ radius: Float, _ b: CarBuffers) {
         let n = Int(b.eventCounts[c])
         guard n < CarSystem.maxEvents else { return }
-        b.events[c * CarSystem.maxEvents + n] = GPUBreakEvent(position: SIMD4(x, radius), velocity: SIMD4(v, Float(kind.rawValue)))
+        b.events[c * CarSystem.maxEvents + n] = GPUBreakEvent(position: SIMD4(x, radius), velocity: SIMD4(v, Float(kind.slot)))
         b.eventCounts[c] = Int32(n + 1)
     }
 }

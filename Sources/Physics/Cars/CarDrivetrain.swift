@@ -20,7 +20,7 @@ extension CarSolver {
 
     /// The ratio from the engine to the wheels in gear `gear` (negative in reverse; 0 in neutral).
     @inline(__always) package static func ratio(_ t: CarTune, _ gear: Int32) -> Float {
-        gear > 0 ? t.gears[Int(min(gear, 7)) - 1] * t.finalDrive : gear < 0 ? -t.reverse * t.finalDrive : 0
+        gear > 0 ? t.gears[Int(min(gear, 8)) - 1] * t.finalDrive : gear < 0 ? -t.reverse * t.finalDrive : 0
     }
 
     @inline(__always) package static func carForces(_ c: Int, _ b: CarBuffers, _ p: GPUPhysicsParams, sub: Int) {
@@ -67,11 +67,16 @@ extension CarSolver {
         }
         meanSpin /= max(driven, 1)
 
-        // Traction control: the throttle eased off while the driven wheels spin faster than the car goes (by more than
-        // their peak's slip, and a little more at a standstill, where a launch slips).
+        // Traction control: the throttle eased off while the driven wheels spin faster than the car goes over what they
+        // stand on (by more than their peak's slip, and a little more at a standstill, where a launch slips).
         var spinning: Float = 0
         if t.assists && driven > 0 {
-            let ground = abs(speed), wheel = abs(meanSpin) * b.wheels[wf].radius
+            var over: Float = 0, touching: Float = 0
+            for k in 0..<wheels where b.wheels[wf + k].flags & CarWheel.driven != 0 && b.wheels[wf + k].load > 0 {
+                over += abs(b.wheels[wf + k].over)
+                touching += 1
+            }
+            let ground = touching > 0 ? over / touching : abs(speed), wheel = abs(meanSpin) * b.wheels[wf].radius
             spinning = simd_clamp((wheel - ground * (1 + tyrePeakRatio) - 0.3) / 1.0, 0, 1)
         }
         // The engine: its power cut by its damage and by its heat past half (CarDamage.swift); a seized one stopped.
@@ -147,14 +152,15 @@ extension CarSolver {
             var pedal = w.brake * s.brake
             // ABS: a wheel slower than the car by more than its peak's slip lets its brake off, smoothly from 0.8 to 1.3
             // of the peak.
-            if t.assists && abs(speed) > 2 {
-                let ratio = 1 - abs(spins[k]) * w.radius / abs(speed)
+            let ground = w.load > 0 ? abs(w.over) : abs(speed)
+            if t.assists && ground > 2 {
+                let ratio = 1 - abs(spins[k]) * w.radius / ground
                 pedal *= simd_clamp(1 - (ratio / tyrePeakRatio - 0.8) / 0.5, 0.15, 1)
             }
             // Traction control's brakes: a driven wheel spinning past its peak's slip is braked (an open differential
             // then gives its torque to the other wheel as well, and the car doesn't turn toward the one that grips).
             if t.assists && w.flags & CarWheel.driven != 0 {
-                let excess = abs(spins[k]) * w.radius - abs(speed) * (1 + tyrePeakRatio) - 0.2
+                let excess = abs(spins[k]) * w.radius - ground * (1 + tyrePeakRatio) - 0.2
                 if excess > 0 { pedal += min(excess * 1500, w.brake) }
             }
             let torque = pedal + (w.flags & CarWheel.handbraked != 0 ? t.handbrake * s.handbrake : 0)
