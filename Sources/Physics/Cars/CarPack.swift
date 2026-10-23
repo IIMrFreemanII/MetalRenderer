@@ -94,11 +94,11 @@ package enum CarPack {
               lamps: "^karoq_(taillight|chmsl|signal_[LR]|drl_signal_[LR]|reverselight|headlight|highbeam)$"),
         Entry(style: .panamera, file: "Cars/porsche_panamera.glb", title: "Porsche Panamera",
               source: "https://sketchfab.com/3d-models/porsche-panamera-a4045a52962f4301b34a839b9c4ed9b9",
-              exclude: "^pan_(?!wheel).*\\\\.00[0-9]$|^pan_engine_3\\\\.0$", rims: "^pan_wheel", tyres: "^tire_01a", paint: "^pan_paint",
-              glass: "^(sunburst_glass|pan_lightglass)", lamps: "^pan_(tail|rev|red|signal_[LR]1?|break|linz2?|hod)(\\\\.00[0-9])?$"),
+              exclude: "^pan_(?!wheel).*\\.00[0-9]$|^pan_engine_3\\.0$", rims: "^pan_wheel", tyres: "^tire_01a", paint: "^pan_paint",
+              glass: "^(sunburst_glass|pan_lightglass)", lamps: "^pan_(tail|rev|red|signal_[LR]1?|break|linz2?|hod)(\\.00[0-9])?$"),
         Entry(style: .santaFe, file: "Cars/hyundai_santa_fe_2024.glb", title: "2024 Hyundai Santa Fe",
               source: "https://sketchfab.com/3d-models/2024-hyundai-santa-fe-a1ee29b80c844b13ba56ac7e28971a53",
-              exclude: "_wide$|_(i6|v8)(_turbo)?$|^santafek_header_i4$|^cubedel$|^Cube\\\\.002$", rims: "^santafek_whe", tyres: "^santafek_tire",
+              exclude: "_wide$|_(i6|v8)(_turbo)?$|^santafek_header_i4$|^cubedel$|^Cube\\.002$", rims: "^santafek_whe", tyres: "^santafek_tire",
               paint: "^santafek_body$", glass: "^santafek_glass", lamps: "^santafek_(led2?|orange|re1?|red|stop|reverse|[LR])$"),
     ]
 
@@ -113,6 +113,68 @@ package enum CarPack {
     /// A glass mesh whose node is named so is a window (a pane of its own); a lamp's glass otherwise, or a mirror's or
     /// the dashboard's (`plainGlass`).
     package static let windowNames = "windshield|backlight|doorglass|sideglass|tailgateglass|sunroof|window"
+    /// Mesh `m` with one vertex a place, its normal the mean of its copies' (a flat-shaded mesh, a vertex per triangle
+    /// corner, is all seams to the simplifier: it kept 90% of it). For a far car: smooth enough.
+    package static func welded(_ m: CarModel.Mesh) -> CarModel.Mesh {
+        var out = m, index: [SIMD3<Int32>: UInt32] = [:], remap = [UInt32](repeating: 0, count: m.positions.count)
+        out.positions = []
+        out.normals = []
+        out.uvs = []
+        for (v, p) in m.positions.enumerated() {
+            let key = SIMD3<Int32>((p * 1e5).rounded(.toNearestOrAwayFromZero))
+            let n = m.normals.count == m.positions.count ? m.normals[v] : .zero
+            if let i = index[key] {
+                remap[v] = i
+                out.normals[Int(i)] += n
+                continue
+            }
+            let i = UInt32(out.positions.count)
+            index[key] = i
+            remap[v] = i
+            out.positions.append(p)
+            out.normals.append(n)
+            out.uvs.append(m.uvs.count == m.positions.count ? m.uvs[v] : .zero)
+        }
+        out.normals = out.normals.map { length_squared($0) > 1e-12 ? normalize($0) : SIMD3(0, 1, 0) }
+        out.indices = m.indices.map { remap[Int($0)] }
+        return out
+    }
+
+    /// Mesh `m` simplified to about `share` of its triangles (MeshSimplifier: its vertices a subset of its own, normals
+    /// and texture coordinates kept, its open edges and texture seams held).
+    package static func simplified(_ m: CarModel.Mesh, share: Float, least: Int = 12) -> CarModel.Mesh {
+        let target = max(Int(Float(m.indices.count / 3) * share), least)
+        guard m.indices.count / 3 > target else { return m }
+        // Welded positions (a seam's copies one place) for the simplifier's topology.
+        var ids = [Int32](repeating: 0, count: m.positions.count), seen: [SIMD3<Int32>: Int32] = [:]
+        for (v, p) in m.positions.enumerated() {
+            let key = SIMD3<Int32>((p * 1e5).rounded(.toNearestOrAwayFromZero))
+            if let id = seen[key] { ids[v] = id } else { seen[key] = Int32(v); ids[v] = Int32(v) }
+        }
+        let uvs = m.uvs.count == m.positions.count ? m.uvs : [SIMD2<Float>](repeating: .zero, count: m.positions.count)
+        let triangles = m.positions.withUnsafeBufferPointer { p in
+            ids.withUnsafeBufferPointer { i in
+                uvs.withUnsafeBufferPointer { u in
+                    MeshSimplifier.simplify(triangles: m.indices, positions: p, posId: i, uvs: u, targetTriangles: target, locked: { _ in false }).triangles
+                }
+            }
+        }
+        var out = m, remap = [Int32](repeating: -1, count: m.positions.count)
+        out.positions = []
+        out.normals = []
+        out.uvs = []
+        out.indices = []
+        for v in triangles {
+            if remap[Int(v)] < 0 {
+                remap[Int(v)] = Int32(out.positions.count)
+                out.positions.append(m.positions[Int(v)])
+                if m.normals.count == m.positions.count { out.normals.append(m.normals[Int(v)]) }
+                out.uvs.append(uvs[Int(v)])
+            }
+            out.indices.append(UInt32(remap[Int(v)]))
+        }
+        return out
+    }
     package static let plainGlass = "mirror|dash"
 
     /// The entry for `style`.
@@ -130,6 +192,35 @@ package enum CarPack {
     }
 
     nonisolated(unsafe) private static var loaded: [CarStyle: (model: CarModel, gltf: GLTFModel, url: URL)?] = [:]
+    nonisolated(unsafe) private static var coarseLoaded: [CarStyle: CarModel] = [:]
+
+    /// Style `style`'s far model (`coarse`), made once.
+    package static func coarseModel(_ style: CarStyle) -> CarModel? {
+        guard let model = model(style)?.model else { return nil }
+        lock.lock()
+        defer { lock.unlock() }
+        if let known = coarseLoaded[style] { return known }
+        let made = coarse(model)
+        coarseLoaded[style] = made
+        return made
+    }
+
+    /// About how many triangles a far car is drawn with (Scene.updateCarDetail): at 25 m a car is 60 px wide.
+    package static let coarseTriangles = 10_000
+
+    /// Model `m` for far away: every mesh welded and simplified to the same share (its parts and panes still its own),
+    /// about `triangles` in all.
+    package static func coarse(_ m: CarModel, triangles: Int = coarseTriangles) -> CarModel {
+        let total = m.meshes.reduce(0) { $0 + $1.indices.count / 3 }
+        let share = min(Float(triangles) / Float(max(total, 1)), 1)
+        var out = m
+        out.meshes.withUnsafeMutableBufferPointer { meshes in
+            DispatchQueue.concurrentPerform(iterations: meshes.count) { k in
+                meshes[k] = CarPack.simplified(CarPack.welded(meshes[k]), share: share, least: 4)
+            }
+        }
+        return out
+    }
     private static let lock = NSLock()
 
     /// Whether the models may be loaded at all (METALRENDERER_CARPACK=0: none).

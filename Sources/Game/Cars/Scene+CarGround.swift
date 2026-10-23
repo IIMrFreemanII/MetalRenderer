@@ -179,6 +179,7 @@ extension Scene {
         world.keepBuiltCommands()
         rig.player = 0
         rig.packTextures = carRig.packTextures
+        rig.dormant = carRig.dormant
         // The walls' dust (by material: CarRig.breakProxies' first 8) and the cars' (from CarEvent.firstSlot), one system.
         var emitters: [ParticleEmitter] = []
         var proxies = destructionDust(kit, interiors: [.brick: brickInside, .concrete: concreteInside], into: &emitters)

@@ -304,7 +304,9 @@ extension Renderer {
                                                                                    leafFall: Scene.leafFall(season: settings.foliage.season)))
         sceneBuffers = buffers
         makeLightProxies()
-        primitiveASResources = buffers.primitives.map { $0 as MTLResource }
+        // (Each once: the SDF shapes nothing draws share one structure.)
+        var seen = Set<ObjectIdentifier>()
+        primitiveASResources = buffers.primitives.filter { seen.insert(ObjectIdentifier($0)).inserted }.map { $0 as MTLResource }
         try createShadingResources(textures: prepared?.textures)
         if let crowd = scene.crowd, !crowd.slots.isEmpty {
             let curves = crowd.hair.map { (first: scene.meshes[$0.mesh].vertexOffset, previous: scene.meshes[$0.mesh].prevOffset) }

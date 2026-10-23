@@ -19,12 +19,22 @@ extension Scene {
             package var glass: Int
             package var wheels: [Int]
             package var start: float4x4
+            /// Its far model's body and glass instances (CarPack.coarse; empty: none), and the soft bodies of each
+            /// model's panels (Scene.softMeshes' indices); whether the far one is drawn (`updateCarDetail`).
+            package var coarse: [Int] = []
+            package var fineBodies: [Int] = []
+            package var coarseBodies: [Int] = []
+            package var showsCoarse = false
         }
         package var cars: [Car] = []
         /// The car the player drives.
         package var player = 0
         /// The models' textures added so far (by file, image and sRGB or not: indices into the scene's textures).
         package var packTextures: [String: UInt32] = [:]
+        /// The cars' panels' soft bodies that aren't drawn (the other model of each car), whose skinning and refits wait,
+        /// and those just shown, skinned twice this frame (their last frame's positions their own: no streak).
+        package var dormant: Set<Int> = []
+        package var fresh: Set<Int> = []
         /// Per kind of break its particle proxy (ParticlesGPU.breakProxies: an emitter whose events are those breaks): a
         /// fractured object's material's (the first 8), then each CarEvent's (from CarEvent.firstSlot);
         /// ParticleSystem.none for none; empty: no dust.
@@ -118,19 +128,83 @@ extension Scene {
             return i
         }
         let car = world.addCar(blueprint, transform: transform, rimSDF: rimSDF, wheelInstances: wheels, velocity: velocity, panes: surface.panes)
-        // The panels, in the scene's space where the nodes put them.
+        // The panels, in the scene's space where the nodes put them: the model's, and its far one's (hidden for now).
         let rotation = simd_float3x3(columns: (dropW(transform.columns.0), dropW(transform.columns.1), dropW(transform.columns.2)))
-        var drawn: [Int] = []
-        for (part, mask) in [(surface.body, Scene.maskGeometry), (surface.glass, Scene.maskGlass)] {
-            let positions = part.mesh.positions.map { dropW(transform * SIMD4($0, 1)) }
-            let mesh = addDeformingMesh((positions, part.mesh.normals.map { rotation * $0 }, part.mesh.indices), uvs: part.uvs, materials: part.materials,
-                                        bounds: bounds, label: mask == Scene.maskGlass ? "car glass" : "car body")
-            drawn.append(addDeformingInstance(mesh, material, mask: mask))
-            softMeshes.append(mesh)
-            world.addCarSurface(part, car: car, hull: blueprint.hull, vertexBase: deforming.last!.first)
+        func panels(_ s: CarSurface, shown: Bool, label: String) -> (instances: [Int], bodies: [Int]) {
+            var out: ([Int], [Int]) = ([], [])
+            for (part, mask) in [(s.body, Scene.maskGeometry), (s.glass, Scene.maskGlass)] {
+                let positions = part.mesh.positions.map { dropW(transform * SIMD4($0, 1)) }
+                let mesh = addDeformingMesh((positions, part.mesh.normals.map { rotation * $0 }, part.mesh.indices), uvs: part.uvs, materials: part.materials,
+                                            bounds: bounds, label: "\(label) \(mask == Scene.maskGlass ? "glass" : "body")")
+                let i = addDeformingInstance(mesh, material, mask: mask)
+                if !shown { hide(i, at: dropW(transform.columns.3)) }
+                out.0.append(i)
+                softMeshes.append(mesh)
+                rebuiltOnDemand.insert(mesh)
+                out.1.append(world.addCarSurface(part, car: car, hull: blueprint.hull, vertexBase: deforming.last!.first))
+            }
+            return out
         }
-        let entry = CarRig.Car(car: car, style: spec.style, body: drawn[0], glass: drawn[1], wheels: wheels, start: transform)
+        let fine = panels(surface, shown: true, label: "car")
+        var entry = CarRig.Car(car: car, style: spec.style, body: fine.instances[0], glass: fine.instances[1], wheels: wheels, start: transform)
+        entry.fineBodies = fine.bodies
+        // (Its panes are the model's: the far one's must name the same, else it has none.)
+        if let coarse = CarPack.coarseModel(spec.style).map({ CarSurface.cached(blueprint, model: $0) }), coarse.panes.count == surface.panes.count {
+            let far = panels(coarse, shown: false, label: "far car")
+            entry.coarse = far.instances
+            entry.coarseBodies = far.bodies
+            carRig.dormant.formUnion(far.bodies)
+        }
         carRig.cars.append(entry)
         return entry
+    }
+
+    /// Instance `i` (a car's model's panels, in the world's space) drawn: its mask, its transform none.
+    private func show(_ i: Int, mask: UInt32) {
+        editInstance(i) {
+            $0.mask = mask
+            $0.transform = matrix_identity_float4x4
+            $0.prevTransform = matrix_identity_float4x4
+            $0.normalMatrix = matrix_identity_float4x4
+        }
+    }
+
+    /// ...not drawn: masked out and shrunk to nothing at `centre` (masked alone, its box still covered its car's in the
+    /// top level, and every ray near the car walked it too: 0.3-0.6 ms a frame).
+    private func hide(_ i: Int, at centre: SIMD3<Float>) {
+        let gone = translate(centre) * scale(1e-4)
+        editInstance(i) {
+            $0.mask = 0
+            $0.transform = gone
+            $0.prevTransform = gone
+            $0.normalMatrix = gone.inverse.transpose
+        }
+    }
+
+    /// How far (m) from the camera a car (not the player's) is drawn as its far model, and how near it comes back.
+    package static let carCoarseFrom: Float = 25, carFineWithin: Float = 20
+
+    /// Each frame (Renderer.writeFrameData): which of each car's models is drawn, by its distance from the camera
+    /// (`viewer`), the player's always its own. A switch sets the two's masks (their records written again:
+    /// `instanceEdits`) and marks the shown one fresh; the hidden one's skinning and refits wait (`CarRig.dormant`).
+    package func updateCarDetail(_ drawn: PhysicsStepper.Drawn) {
+        carRig.fresh = []
+        guard let eye = viewer else { return }
+        for k in carRig.cars.indices where !carRig.cars[k].coarse.isEmpty {
+            let c = carRig.cars[k]
+            guard drawn.cars.indices.contains(c.car) else { continue }
+            let d = simd_distance(eye, drawn.cars[c.car].centre)
+            let far = k != carRig.player && (c.showsCoarse ? d > Scene.carFineWithin : d > Scene.carCoarseFrom)
+            guard far != c.showsCoarse else { continue }
+            carRig.cars[k].showsCoarse = far
+            let (shown, hidden) = far ? (c.coarse, [c.body, c.glass]) : ([c.body, c.glass], c.coarse)
+            for (i, mask) in zip(shown, [Scene.maskGeometry, Scene.maskGlass]) { show(i, mask: mask) }
+            for i in hidden { hide(i, at: drawn.cars[c.car].centre) }
+            instanceEdits.formUnion(shown + hidden)
+            let (on, off) = far ? (c.coarseBodies, c.fineBodies) : (c.fineBodies, c.coarseBodies)
+            carRig.dormant.subtract(on)
+            carRig.dormant.formUnion(off)
+            carRig.fresh.formUnion(on)
+        }
     }
 }

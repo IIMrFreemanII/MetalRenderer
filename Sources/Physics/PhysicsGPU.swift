@@ -240,6 +240,8 @@ package final class PhysicsGPU {
         colliders = try buffer([UInt32](), "physicsColliders", length: np * PhysicsWorld.maxColliders * 4)
         colliderCounts = try buffer([UInt32](repeating: 0, count: np), "physicsColliderCounts")
         clothTable = world.cloths.isEmpty ? nil : try buffer(world.clothTable(prevOffsets: clothPrevOffsets), "physicsCloths")
+        carStates = world.carSystem.cars
+        carSurfaces = world.carSurfaces
         uploads = simulates || world.cloths.isEmpty && world.softVertices.isEmpty ? []
             : try (0..<slots).map { try buffer(world.initialParticles, "physicsUpload\($0)") }
         constraints = try buffer(world.constraints, "physicsConstraints")
@@ -816,10 +818,14 @@ package final class PhysicsGPU {
     package func encodeSoftMesh(_ enc: ComputePass, pipelines: Pipelines, slot: Int, positions: MTLBuffer, normals: MTLBuffer, damage: MTLBuffer? = nil) {
         guard hasSoftBodies else { return }
         precondition(damage != nil || !world.hasCars, "a world with cars and no damage buffer")
-        // (A still car's vertices are where its last frame put them: only the rest's.)
+        // (A still car's vertices are where its last frame put them, a hidden model's wait: only the rest's. A model
+        // just shown twice, so that its last frame's positions are its own.)
         var ranges: [SIMD2<UInt32>] = [], next = 0
-        for s in world.carSurfaces where stillCars.contains(Int(s.x)) {
+        for s in carSurfaces {
+            let body = Int(s.w), fresh = freshSoftBodies.contains(body)
+            guard fresh || stillCars.contains(Int(s.x)) || dormantSoftBodies.contains(body) else { continue }
             if Int(s.y) > next { ranges.append(SIMD2(UInt32(next), UInt32(Int(s.y) - next))) }
+            if fresh { ranges += [SIMD2(UInt32(s.y), UInt32(s.z)), SIMD2(UInt32(s.y), UInt32(s.z))] }
             next = Int(s.y + s.z)
         }
         if world.softVertices.count > next { ranges.append(SIMD2(UInt32(next), UInt32(world.softVertices.count - next))) }
@@ -849,18 +855,66 @@ package final class PhysicsGPU {
     /// when their panels were last drawn, their damage and breaks the same, for two frames: the second leaves their
     /// last-frame positions where they are, for the motion vectors). The CPU's cars only (`simulates`: none).
     package private(set) var stillCars: Set<Int> = []
+    /// The cars' panels (soft bodies) not drawn this frame (each car's other model: Scene.updateCarDetail), and those
+    /// just shown.
+    package var dormantSoftBodies: Set<Int> = []
+    package var freshSoftBodies: Set<Int> = []
+    /// The cars' ranges and frame nodes, and their drawn panels (PhysicsWorld.carSurfaces), as the world was finished:
+    /// read on the frame's thread while an async step may have the car system lent out (withCarBuffers leaves it
+    /// empty meanwhile, and a frame that read it then forgot every car's still state).
+    private let carStates: [CarState]
+    private let carSurfaces: [SIMD4<Int32>]
     private var carReference: [[SIMD4<Float>]] = [], carSettled: [Int] = []
     package static let stillReach: Float = 2e-4
 
+    /// The soft bodies (Scene.softMeshes' indices) whose structures want building again, one a frame (`nextRebuild`): a
+    /// car's panels once it has come apart. Refitted, a structure keeps the tree it was built with, and after a crash
+    /// (a door and a wheel flung off, the front folded) its boxes had grown over everything: the brick wall's frame at
+    /// 3 s was 58 ms, its rays 33 ms of it; built again every frame they were 9, but a build is 11 ms a car.
+    private var rebuildQueue: [Int] = []
+    /// Per car the volume of its nodes' box in its own frame when its structures were last built, and the frames since.
+    private var carBuiltSize: [Float] = [], carSinceBuild: [Int] = []
+    /// How far a car's box (in its own frame: its turning doesn't count) grows or shrinks before its structures are
+    /// built again, and how many frames apart at least (a part still flying isn't rebuilt every frame).
+    package static let rebuildGrowth: Float = 1.5, rebuildFrames = 30
+
+    /// The soft body whose structure to build again this frame, if any.
+    package func nextRebuild() -> Int? {
+        while let body = rebuildQueue.first {
+            rebuildQueue.removeFirst()
+            if !dormantSoftBodies.contains(body) { return body }
+        }
+        return nil
+    }
+
     private func noteStillCars(_ particles: [GPUPhysicsParticle]) {
-        let cars = world.carSystem.cars
+        let cars = carStates
         if carReference.count != cars.count {
             carReference = [[SIMD4<Float>]](repeating: [], count: cars.count)
             carSettled = [Int](repeating: 0, count: cars.count)
+            carBuiltSize = [Float](repeating: 0, count: cars.count)
+            carSinceBuild = [Int](repeating: 0, count: cars.count)
         }
         stillCars = []
         for (c, car) in cars.enumerated() {
             let first = Int(car.firstNode), n = Int(car.nodeCount)
+            // Come apart: its box in its own frame grown or shrunk past `rebuildGrowth` since its last build.
+            let f = PhysicsWorld.carFrame(car, particles)
+            var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+            for k in first..<(first + n) {
+                let d = PhysicsMath.xyz(particles[k].position) - f.centre, q = SIMD3(dot(d, f.left), dot(d, f.up), dot(d, f.forward))
+                lo = simd_min(lo, q)
+                hi = simd_max(hi, q)
+            }
+            let e = simd_max(hi - lo, SIMD3(repeating: 0.3)), size = e.x * e.y * e.z
+            if carBuiltSize[c] == 0 { carBuiltSize[c] = size }
+            carSinceBuild[c] += 1
+            let change = max(size / carBuiltSize[c], carBuiltSize[c] / size)
+            if change > PhysicsGPU.rebuildGrowth && carSinceBuild[c] >= PhysicsGPU.rebuildFrames {
+                for s in carSurfaces where Int(s.x) == c && !rebuildQueue.contains(Int(s.w)) { rebuildQueue.append(Int(s.w)) }
+                carBuiltSize[c] = size
+                carSinceBuild[c] = 0
+            }
             var moved = carReference[c].count != n
             if !moved {
                 for k in 0..<n {
@@ -881,7 +935,7 @@ package final class PhysicsGPU {
     }
 
     /// The soft bodies (Scene.softMeshes' indices) still this frame: the still cars' panels, whose structures stay.
-    package var stillSoftBodies: [Int] { world.carSurfaces.filter { stillCars.contains(Int($0.x)) }.map { Int($0.w) } }
+    package var stillSoftBodies: [Int] { carSurfaces.filter { stillCars.contains(Int($0.x)) }.map { Int($0.w) } }
 
     /// The liquids' surfaces into the scene's vertex and index buffers, ahead of the structures' builds.
     package func encodeFluidSurfaces(_ enc: ComputePass, pipelines: Pipelines, positions: MTLBuffer, normals: MTLBuffer, indices: MTLBuffer) {

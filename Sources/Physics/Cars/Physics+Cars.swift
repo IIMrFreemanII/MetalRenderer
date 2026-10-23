@@ -450,6 +450,7 @@ extension PhysicsWorld {
     /// The cars' wheels' bodies as a stage begins, for the other cars to meet (each car's thread moves its own: read
     /// as they were, the steps are the same on any number of cores).
     func copyCarWheels() {
+        guard carSystem.cars.count > 1 else { return }   // (one car meets no other's wheels)
         for k in carSystem.wheels.indices { carSystem.wheelBodies[k] = bodies[Int(carSystem.wheels[k].body)] }
     }
 
@@ -587,9 +588,10 @@ extension PhysicsWorld {
     /// `body` with the cars' arrays (and the particles', the bodies', the statics') lent as raw buffers (CarBuffers).
     /// (The car system is moved out meanwhile: its arrays are then a local's, lent side by side.)
     func withCarBuffers<R>(_ body: (CarBuffers) throws -> R) rethrows -> R {
-        var system = carSystem
-        carSystem = CarSystem()
-        defer { carSystem = system }
+        // (Swapped, not copied out and back: each of its ~45 arrays retained and released twice a call, 49 calls a step.)
+        var system = CarSystem()
+        swap(&system, &carSystem)
+        defer { swap(&system, &carSystem) }
         let shapes = shapeData
         return try system.cars.withUnsafeMutableBufferPointer { cars in
         try system.beams.withUnsafeMutableBufferPointer { beams in

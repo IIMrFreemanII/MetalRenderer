@@ -26,6 +26,10 @@ extension Renderer {
                 scene.placeBodies(poses: physicsGPU.snapshot(slot: slot))
                 if scene.physics != nil { physicsGPU.setGrab(slot: slot, scene.physicsGrab) }
             } else if let drawn = scene.drawnPhysics {
+                // (Which of each car's models is drawn: the other's skinning and refits wait.)
+                scene.updateCarDetail(drawn)
+                physicsGPU.dormantSoftBodies = scene.carRig.dormant
+                physicsGPU.freshSoftBodies = scene.carRig.fresh
                 physicsGPU.upload(slot: slot, drawn)
             }
         }

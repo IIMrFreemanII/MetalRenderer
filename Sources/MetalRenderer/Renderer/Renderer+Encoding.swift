@@ -99,7 +99,13 @@ extension Renderer {
         }
         if deformed, var primitiveRefit {
             // (A parked car's panels stay where they were: their structures too.)
-            if let physicsGPU, !physicsGPU.stillCars.isEmpty { primitiveRefit.skipping = Set(physicsGPU.stillSoftBodies.map { scene.softMeshes[$0] }) }
+            // (And a car's hidden model's, but for the one just shown.)
+            if let physicsGPU, !physicsGPU.stillCars.isEmpty || !physicsGPU.dormantSoftBodies.isEmpty {
+                let skipped = Set(physicsGPU.stillSoftBodies).union(physicsGPU.dormantSoftBodies).subtracting(physicsGPU.freshSoftBodies)
+                primitiveRefit.skipping = Set(skipped.map { scene.softMeshes[$0] })
+            }
+            // (A car's that came apart built again, one a frame: PhysicsGPU.nextRebuild.)
+            if let physicsGPU, primitiveRefit.rebuildScratch != nil, let body = physicsGPU.nextRebuild() { primitiveRefit.rebuilding = scene.softMeshes[body] }
             // A liquid's surface: built over as many triangles as it last needed (read back a few frames late), with
             // room to grow by a fifth (a pour's surface grows by a few percent over those frames; past it, the
             // triangles left out wait a frame). The build's time is its triangles': on the M1 Max about 5 ms for 100k.

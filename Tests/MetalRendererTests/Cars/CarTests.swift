@@ -73,6 +73,11 @@ final class CarTests: XCTestCase {
                 continue
             }
             print("\(style): loaded in \(Date().timeIntervalSince(loading)) s")
+            if let coarse = CarPack.coarseModel(style) {
+                let t = coarse.meshes.reduce(0) { $0 + $1.indices.count / 3 }
+                print("   far model: \(t) triangles over \(coarse.meshes.count) meshes")
+                XCTAssertLessThan(t, 4 * CarPack.coarseTriangles, "\(style)")
+            }
             let spec = CarSpec.preset(style).fitted(to: model), b = CarBlueprint(spec)
             print(String(format: "%@: %.2f x %.2f, wheelbase %.2f, track %.2f, front overhang %.2f, wheels %.3f x %.3f, sill %.2f, belt %.2f, roof %.2f, windows %.2f...%.2f, %d nodes, %d paint + %d lamp + %d glass vertices",
                          style.title, spec.length, spec.width, spec.wheelbase, spec.track, spec.frontOverhang, spec.wheelRadius, spec.wheelWidth,
@@ -390,6 +395,17 @@ final class CarTests: XCTestCase {
             print("\(style): named \(named.sorted()), built \(built.sorted()), \(model.windows) windows, \(surface.panes.count) panes")
             XCTAssert(named.isSubset(of: built), "\(style): \(named.subtracting(built).sorted()) not built")
             XCTAssertEqual(surface.panes.filter { !$0.lamp }.count, model.windows, "\(style)")
+            // (Its rules found its lamps, and left out every variant: no mesh twice, the same box, size and material; a
+            // lamp's lens over its emitter, lit lettering over plain, are layers of other materials.)
+            XCTAssertGreaterThan(model.meshes.filter { $0.role == .lamp }.count, 0, "\(style): no lamps")
+            var seen: [String: String] = [:]
+            for m in model.meshes where !m.positions.isEmpty {
+                let lo = m.positions.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }
+                let hi = m.positions.reduce(SIMD3<Float>(repeating: -.infinity)) { simd_max($0, $1) }
+                let key = "\(SIMD3<Int32>((lo * 1000).rounded(.toNearestOrAwayFromZero))) \(SIMD3<Int32>((hi * 1000).rounded(.toNearestOrAwayFromZero))) \(m.positions.count) \(m.material)"
+                XCTAssertNil(seen[key], "\(style): \(m.node) repeats \(seen[key] ?? "")")
+                seen[key] = m.node
+            }
             XCTAssertLessThanOrEqual(surface.panes.count, 16, "\(style)")
             // (Each vertex follows triangles of one part: the hull's part of each.)
             for part in [surface.body, surface.glass] {

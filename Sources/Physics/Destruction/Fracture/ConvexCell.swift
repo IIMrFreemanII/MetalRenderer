@@ -234,3 +234,24 @@ package struct ConvexCell {
         faces.reduce(-Float.infinity) { max($0, dot(SIMD3($1.plane.x, $1.plane.y, $1.plane.z), p) - $1.plane.w) }
     }
 }
+
+extension ConvexCell {
+    /// The cell as a mesh (a convex object's piece drawn: Scene.addFractured): each face its polygon fanned into
+    /// triangles, flat (its plane's normal), texture coordinates `uvScale` per metre across it (as MeshCutter's caps
+    /// are), material offset 0 on the object's own faces (`outer`) and `interior` on its cuts. A brick is 12 triangles.
+    package func mesh(interior: UInt8, uvScale: Float = 1) -> MeshCutter.Mesh {
+        var out = MeshCutter.Mesh()
+        for face in faces where face.polygon.count >= 3 {
+            let n = SIMD3(face.plane.x, face.plane.y, face.plane.z)
+            let (u, v) = ConvexCell.basis(n)
+            let material: UInt8 = face.tag == ConvexCell.outer ? 0 : interior
+            let first = UInt32(out.positions.count)
+            for p in face.polygon { _ = out.add(p, n, SIMD2(dot(p, u), dot(p, v)) * uvScale) }
+            for k in 1..<(face.polygon.count - 1) {
+                out.indices += [first, first + UInt32(k), first + UInt32(k + 1)]
+                out.materials.append(material)
+            }
+        }
+        return out
+    }
+}

@@ -729,6 +729,9 @@ package final class Scene {
     /// again every frame (their triangles change).
     package var liquidMeshes: [(system: Int, mesh: Int, first: Int)] = []
     package var rebuiltMeshes: Set<Int> = []
+    /// Deforming meshes whose structures are refitted but sometimes built again (a car's panels once it has come
+    /// apart: PhysicsGPU.nextRebuild): the refit keeps a scratch buffer as big as their builds need.
+    package var rebuiltOnDemand: Set<Int> = []
     /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
     package var hasLiquid = false
     /// It has water (Scene+Water.swift). Set by `addWaterLook`.

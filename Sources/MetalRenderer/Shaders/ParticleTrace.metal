@@ -221,6 +221,9 @@ inline void particleInsert(thread ParticleFragment* k, thread uint& n, ParticleF
 // `detail` (> 0): a particle narrower than this x its distance (half-size) that shows sets `thin` and is left out (the
 // camera's layer: one its texels are too coarse for, which the overlay traces again at the output's size, where
 // only its own pixels show it: in the layer, the upsampling would spread it round them as a blurred halo).
+// (< 0): only those narrower than -detail x their distance (the overlay's: the rest are the layer's), the others left
+// before their atlas samples (a broken wall's dust, puffs a metre across, was sampled again at every output pixel
+// near a chip of its debris: 6.3 ms of overlay).
 // `full`: the camera's (motion-vector frames, six-way smoke); a reflection's go without.
 template <uint K>
 inline void particleCollect(primitive_acceleration_structure structure, uint base, float3 o, float3 d, float tmax, bool soft,
@@ -236,6 +239,7 @@ inline void particleCollect(primitive_acceleration_structure structure, uint bas
         float2 uv;
         float3 bu, bv;
         if (!particleBillboard(r, o, d, widen, t, uv, cover, bu, bv) || t <= 0.0f || t >= tmax || any(abs(uv) > 1.0f)) continue;
+        if (detail < 0.0f && r.centerRadius.w >= -detail * t) continue;
         ParticleFrames frames = particleFrames(r, uv, sc.particleAtlas, full);
         float4 tex = particleSample(frames, r.info.z >> 24, sc.particleAtlas);
         float distance = particleSoft(r);
@@ -289,6 +293,7 @@ inline void particleCollectTrails(float3 o, float3 d, float tmax, float widen, f
         float across = length(o + d * t - particleCatmullRom(c[0].xyz, c[1].xyz, c[2].xyz, c[3].xyz, u)) / wide;
         if (across >= 1.0f) continue;
         if (detail > 0.0f && real < detail * t) { thin = true; continue; }
+        if (detail < 0.0f && real >= -detail * t) continue;
         float along = (float(j) + u + 1.0f) / float(per + 1u);   // its end to its head
         ParticleFragment f;
         f.t = t;

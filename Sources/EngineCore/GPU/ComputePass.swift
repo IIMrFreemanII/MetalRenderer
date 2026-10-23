@@ -161,8 +161,14 @@ package struct PrimitiveRefit: PrimitiveWork {
     package var refittedMeshes: [Int] = []
     /// This frame's refits to leave out (meshes that didn't move: a parked car's panels).
     package var skipping: Set<Int> = []
+    /// The refitted mesh to build again this frame instead (a car's that came apart: PhysicsGPU.nextRebuild; -1 none),
+    /// in `rebuildScratch` (as big as the largest of those that may be: Scene.rebuiltOnDemand's).
+    package var rebuilding = -1
+    package var rebuildScratch: MTLBuffer?
     /// Whether this frame has anything to refit or build.
-    package var hasWork: Bool { !rebuilt.isEmpty || refittedMeshes.count != structures.count || refittedMeshes.contains { !skipping.contains($0) } }
+    package var hasWork: Bool {
+        !rebuilt.isEmpty || rebuilding >= 0 || refittedMeshes.count != structures.count || refittedMeshes.contains { !skipping.contains($0) }
+    }
 
     /// How many of rebuilt structure `i`'s triangles the next builds take (the rest are left out: a liquid's surface
     /// holds room for far more than it needs): at most what it was made for.
@@ -173,7 +179,12 @@ package struct PrimitiveRefit: PrimitiveWork {
     }
 
     package func encode(into enc: MTLAccelerationStructureCommandEncoder, part: Int) {
-        for (i, structure) in structures.enumerated() where i >= refittedMeshes.count || !skipping.contains(refittedMeshes[i]) {
+        for (i, structure) in structures.enumerated() {
+            if i < refittedMeshes.count && refittedMeshes[i] == rebuilding, let rebuildScratch {
+                enc.build(accelerationStructure: structure, descriptor: descriptors[i], scratchBuffer: rebuildScratch, scratchBufferOffset: 0)
+                continue
+            }
+            if i < refittedMeshes.count && skipping.contains(refittedMeshes[i]) { continue }
             enc.refit(sourceAccelerationStructure: structure, descriptor: descriptors[i], destinationAccelerationStructure: structure,
                       scratchBuffer: scratch, scratchBufferOffset: scratchOffsets[i])
         }

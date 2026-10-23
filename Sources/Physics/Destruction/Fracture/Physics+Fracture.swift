@@ -516,6 +516,12 @@ extension PhysicsWorld {
     /// physicsFractureApplyKernel): each piece breaks into its children, comes free, fades, or nothing; then each
     /// child of a piece that broke takes its place.
     package func endFractureStep() {
+        // (Nothing struck, held or free to fade: nothing to decide but each verdict's none. A car scene's two standing
+        // walls, 380 pieces, cost two hand-offs to the workers and two copies of every body a step.)
+        if fractureQuiet() {
+            for i in fractureState.indices where fractureState[i].strain.w != 0 { fractureState[i].strain.w = 0 }
+            return
+        }
         let tuning = fractureTuning, h = PhysicsWorld.stepLength, n = bodies.count
         let nodes = fractureNodes
         nodes.withUnsafeBufferPointer { nodes in
@@ -568,6 +574,19 @@ extension PhysicsWorld {
                 }
             }
         }
+    }
+
+    /// Whether no body was struck this step (no projectile's hit either), none is held after a break, and no piece is
+    /// free that may fade: then the verdicts are all nothing and phase B changes nothing.
+    private func fractureQuiet() -> Bool {
+        for i in fractureState.indices {
+            let s = fractureState[i]
+            if s.strain.x != 0 || s.strain.z != 0 || s.hold.x > 0 { return false }
+            let b = bodies[i]
+            if b.info.y & (PhysicsWorld.pieceBit | PhysicsWorld.disabledBit) == PhysicsWorld.pieceBit && b.position.w > 0
+                && fractureNodes[i].extra.z > 0 { return false }
+        }
+        return true
     }
 
     /// Every weld of body `i` broken (it came free).
