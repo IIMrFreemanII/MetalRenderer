@@ -41,7 +41,8 @@ TOOLS = [
             "camera), written to the scene's file at once. Settings: `renderer.settings` (RenderSettings), or "
             "`SettingsEnv.apply(.view, to: &renderer.settings, from: [\"METALRENDERER_VIEW\": \"solid=1\"])`. "
             "Switch scene: `renderer.settings.scene.kind = SceneRegistry.kind(named: \"stage\")!`. The `stage` scene is "
-            "an empty floor to build on. Returns the script's output and exit status (0 done, 1 failed, 2 compile "
+            "an empty floor to build on. The Modeller: the modeller tool, or `run.modeller` in a full-form script "
+            "(import Editors, Modeling). Returns the script's output and exit status (0 done, 1 failed, 2 compile "
             "error). A trap in the script crashes the app.")
         ,
         "inputSchema": {
@@ -115,6 +116,57 @@ TOOLS = [
             "fov": {"type": "number"}, "build": BUILD}},
     },
     {
+        "name": "modeller",
+        "description": (
+            "Drive the app's Modeller (the Blender-like modelling and sculpting editor) as a user would, offscreen: a "
+            "Modeller of its own in the app (headless or the window's), never the user's Modeller window. The steps run "
+            "in order; then its state (mode, selection, the operator running and its hints, the popup or F3 search "
+            "open, every object's vertex/edge/face counts, selection, modifiers, bounds; sculpt mode's mesh) and a "
+            "picture: 'viewport' (its raster viewport), 'window' (the whole window with its panels, as AppKit draws "
+            "it) or 'rendered' (the Rendered view's path-traced stage; {\"shading\": \"rendered\"} first). The "
+            "Modeller lasts between calls until {\"close\": true}; it starts with Blender's cube. Points are the "
+            "viewport's, in points from its top left (1000 x 640 by default; the centre is [500, 320]). Keys are "
+            "Blender's (README, Modeller), Mac style: tool keys with ctrl+, app keys with cmd+ (cmd+z undo). For "
+            "anything the steps don't reach, a full-form run_swift script has `run.modeller` (import Editors, Modeling): "
+            "keys(), click(), drag(), run(), pick(), document, edit {}, capture().")
+        ,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": (
+                        "Each step an object of one key: "
+                        "{\"keys\": \"tab 3 ctrl+r shift+a f3\"} chords through the keymap (ctrl+ shift+ alt+ cmd+; "
+                        "tab return esc space backspace delete up down left right f1-f4 numpad0-9 home `); "
+                        "{\"type\": \"1.5\"} each character a key (typed values; F3's query while it is open); "
+                        "{\"click\": [x, y], \"button\": \"left|right|middle\", \"mods\": \"shift ctrl alt cmd\", "
+                        "\"count\": 2}; {\"drag\": [[x, y], ...], \"button\", \"mods\", \"pressure\": [p, ...], "
+                        "\"steps\": n (moves per stretch)} press, moves, release (box select, gizmos, sculpt strokes); "
+                        "{\"move\": [x, y]} the mouse (modal operators follow it); {\"scroll\": dy, \"at\": [x, y]}; "
+                        "{\"run\": \"Bridge Edge Loops\"} an operator of the mode's menus by name or path (F3's list); "
+                        "{\"pick\": \"At Center\"} an item of the popup the last key opened (w, x, m, shift+a); "
+                        "{\"add\": \"cube|plane|circle|uvSphere|icoSphere|cylinder|cone|torus|grid|head\"}; "
+                        "{\"mode\": \"object|edit|sculpt\"}; {\"selectMode\": \"vertex|edge|face\"}; "
+                        "{\"tool\": \"select|move|extrude|knife|...\"}; "
+                        "{\"shading\": \"wireframe|solid|matcap|rendered\"}; "
+                        "{\"workspace\": \"layout|modeling|sculpting|uv\"}; {\"brush\": \"draw|clay|...\"}; "
+                        "{\"open\": {\"primitive\": \"cube\"} | {\"asset\": slug} | {\"file\": path} | "
+                        "{\"selection\": true}}; {\"new\": true}; {\"save\": \"Name\"} (into the asset library: "
+                        "Assets/Models, or METALRENDERER_MODELS); {\"place\": true} (the saved model into the app's "
+                        "scene as mesh:<slug>); {\"size\": [w, h]}; {\"wait\": seconds}; {\"close\": true}. A point is "
+                        "[x, y] in the viewport or {\"world\": [x, y, z]}, where the camera shows it."),
+                    "items": {"type": "object"},
+                },
+                "capture": {"type": "string", "enum": ["viewport", "window", "rendered"],
+                            "description": "A picture after the steps (default: none)."},
+                "scale": {"type": "number", "description": "The picture's size, times its pixels (default 0.5)."},
+                "state": {"type": "boolean", "description": "Return the state too (default true)."},
+                "build": BUILD,
+            },
+        },
+    },
+    {
         "name": "start_headless",
         "description": ("Start a MetalRenderer app without a window (METALRENDERER_BENCH=serve) for the other tools to "
                         "drive, and wait for it. Use when no app runs; the user's window is never opened."),
@@ -175,6 +227,22 @@ def call(name, a):
         body = {k: v for k, v in a.items() if k != "build"}
         status, result = client.command(COMMANDS[name], body, build)
         return text(json.dumps(result) if isinstance(result, dict) else result.rstrip(), status != 0)
+    if name == "modeller":
+        folder = os.path.join(client.scratch(build or "release"), "scripts", "captures")
+        os.makedirs(folder, exist_ok=True)
+        view = a.get("capture")
+        path = os.path.join(folder, "modeller-%s-%d.png" % (view, int(time.time() * 1000))) if view else None
+        status, result = client.modeller(a.get("steps", []), view, a.get("scale", 0.5), path, build, a.get("state", True))
+        if not isinstance(result, dict):
+            return text("%s\n(exit %d)" % (result.rstrip(), status), True)
+        notes = ["%d. %s" % (k + 1, n) for k, n in enumerate(result.get("steps", [])) if n]
+        body = "\n".join(notes + ([json.dumps(result["state"], indent=1)] if "state" in result else []))
+        content = [{"type": "text", "text": body or "done"}]
+        if result.get("capture"):
+            with open(result["capture"], "rb") as f:
+                content += [{"type": "image", "data": base64.b64encode(f.read()).decode(), "mimeType": "image/png"},
+                            {"type": "text", "text": result["capture"]}]
+        return {"content": content, "isError": False}
     if name == "scene_state":
         return text(json.dumps(client.state(build), indent=1))
     if name == "capture":

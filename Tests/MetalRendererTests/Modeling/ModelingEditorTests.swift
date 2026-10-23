@@ -281,8 +281,6 @@ final class ModelingEditorTests: XCTestCase {
     func testWindowPicture() throws {
         guard let path = ProcessInfo.processInfo.environment["MODELING_PNG"] else { throw XCTSkip("MODELING_PNG not set") }
         let folder = URL(fileURLWithPath: path)
-        ModelingViewport.pictures = true
-        defer { ModelingViewport.pictures = false }
         for (name, setup) in [("window-object", {}), ("window-edit", { self.key("tab") }),
                               ("window-sculpt", { self.model.add(.head); self.model.setWorkspace(.sculpting) }),
                               ("window-search", { self.key("tab"); self.key("f3"); self.model.search?.query = "edge" })] as [(String, () -> Void)] {
@@ -294,11 +292,7 @@ final class ModelingEditorTests: XCTestCase {
             model.pixelScale = 2
             setup()
             model.showSidebar = name == "window-object"
-            let host = NSHostingView(rootView: ModelingView().environmentObject(model).frame(width: 1440, height: 860))
-            host.frame = NSRect(x: 0, y: 0, width: 1440, height: 860)
-            host.layoutSubtreeIfNeeded()
-            let rep = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
-            host.cacheDisplay(in: host.bounds, to: rep)
+            let rep = try XCTUnwrap(ModelingPictures.window(model))
             try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: folder.appendingPathComponent(name + ".png"))
         }
     }

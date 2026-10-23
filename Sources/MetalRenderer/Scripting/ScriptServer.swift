@@ -11,6 +11,7 @@ import Foundation
 ///   {"capture": "<file.png>", "scale": 0.5}     the next frame as a PNG: {"capture": "<file.png>"}
 ///   {"place": {...}}, {"move": {...}},           typed edits of the scene's file and the camera, no compile
 ///   {"remove": {...}}, {"camera": {...}}        (SceneCommand): {"result": {...}}
+///   {"modeller": {...}}, …                      a request another module registered (ScriptRequests)
 ///   {"quit": true}                              a headless run quits (the window's app doesn't)
 ///
 /// The socket is `/tmp/metalrenderer-<uid>/<pid>.sock` (a path in the checkout would pass the 104 bytes a socket's
@@ -162,6 +163,16 @@ package final class ScriptServer {
                 if written { connection.send(["capture": path]) } else { connection.send(["out": "could not write \(path)\n"]) }
                 connection.send(["exit": written ? 0 : 1])
             }
+        } else if let (key, body, handle) = ScriptRequests.handler(for: request) {
+            // Another module's request (ScriptRequests): its handler answers on this thread.
+            switch handle(body) {
+            case .success(let answer):
+                connection.send(["result": answer])
+                connection.send(["exit": 0])
+            case .failure(let failure):
+                connection.send(["out": "\(key): \(failure)\n"])
+                connection.send(["exit": failure.badRequest ? 2 : 1])
+            }
         } else if request["quit"] != nil {
             guard Headless.isEnabled else {
                 connection.send(["out": "the window's app quits only by hand\n"])
@@ -171,7 +182,7 @@ package final class ScriptServer {
             connection.send(["exit": 0])
             DispatchQueue.main.async { NSApp.terminate(nil) }
         } else {
-            connection.send(["out": "unknown request: \(line)\n"])
+            connection.send(["out": "unknown request: \(line) (the keys: path, state, capture, quit, \(SceneCommand.keys.joined(separator: ", ")), \(ScriptRequests.keys.joined(separator: ", ")))\n"])
             connection.send(["exit": 2])
         }
     }

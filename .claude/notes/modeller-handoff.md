@@ -37,9 +37,20 @@ is; this note says where things are, what was checked and what is left.
   triangles: see the README section's numbers (dabs ~1 ms, tree build ~0.4 s, viewport frame at 2880×1800 ~11 ms with
   its readback).
 
+- Scripted, headless (`ScriptModeller`, the socket's `modeller`, MCP `modeller`, `Tools/script.py --modeller`,
+  `run.modeller`; README "Scripts", "The Modeller, scripted"): `Scripts/modeller-tour.swift <folder>` passes every check
+  in a `METALRENDERER_BENCH=serve` app (extrude, loop cut, GG slide, bridge, spin with a typed angle, F3 inset, a knife
+  cut ending in a face, a sculpt stroke and its undo) and writes the window after each and a Rendered picture (the
+  head path traced on the stage, from the Modeller's view). Save + place put `mesh:<slug>` in the app's scene.
+  Found and fixed that way: the stage renderer took the main view's saved settings (a Solid view showed in Rendered
+  mode) and its first scene reset the camera to the stage's default; it also ran a headless app's benchmark
+  (`Renderer(benchmarked: false)` now).
+
 ## Not done / next
 - The window itself was never shown or clicked by hand (the rule: no window unasked). A hand test is due: trackpad
-  orbit, pen pressure, popup menus' placement, the N panel's fields, Rendered mode's layer and camera.
+  orbit, pen pressure, popup menus' placement, the N panel's fields, Rendered mode's layer. What a script can reach
+  (keys, clicks, operators, popups' items, the window's picture, the Rendered frame) is checked headless by the tour;
+  what it can't is AppKit's own: real events, the menus as NSMenus, the search field's focus, the layer's resizing.
 - Rendered mode: a second `Renderer` on a `LayerSurface`; built and wired, not run in a window. It remakes its scene
   on every change (a moment after it); a refit path for sculpt strokes would be faster on big meshes.
 - Dynamic topology is local (`DynTopo`, `SculptLayout.swift`): leaves have room to grow, move to the end of the

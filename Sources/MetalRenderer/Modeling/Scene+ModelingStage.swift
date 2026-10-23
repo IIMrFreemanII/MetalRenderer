@@ -10,6 +10,7 @@ package enum ModelingStage {
     private static let lock = NSLock()
     private static var model: ModelAsset.Rendered?
     private static var count = 0
+    private static var view: Camera?
 
     /// The model the next stage is made with; returns its revision.
     @discardableResult
@@ -34,6 +35,22 @@ package enum ModelingStage {
                                        materials: [MaterialSlot(name: "Clay", baseColor: [0.8, 0.45, 0.3, 1], roughness: 0.45)])
         }
         return ModelStore.url(name).flatMap(ModelAsset.readRendered)
+    }
+
+    /// The Modeller's view as the stage's camera (its eye, direction and vertical field of view).
+    package static func camera(eye: SIMD3<Float>, forward f: SIMD3<Float>, fovY: Float) -> Camera {
+        var c = Camera()
+        c.position = eye
+        c.pitch = asin(max(-1, min(1, f.y)))
+        c.yaw = atan2(f.x, -f.z)
+        c.fovY = fovY
+        return c
+    }
+
+    /// The view the stage was last given: a stage made after it (the first one) starts there, not at its default.
+    package static var lastView: Camera? {
+        get { lock.lock(); defer { lock.unlock() }; return view }
+        set { lock.lock(); view = newValue; lock.unlock() }
     }
 
     package static var current: (model: ModelAsset.Rendered?, revision: Int) {
@@ -82,16 +99,16 @@ extension Scene {
         bounds.grow(lo)
         bounds.grow(hi)
         focus = bounds
+        // (Installing the first stage puts the camera at the scene's default: the Modeller's view, if it gave one.)
+        if let view = ModelingStage.lastView { defaultCamera = view }
     }
 }
 
 extension Renderer {
     /// The stage's camera: the Modeller's view (its eye, its direction, its vertical field of view).
     package func setStageCamera(eye: SIMD3<Float>, forward f: SIMD3<Float>, fovY: Float) {
-        camera.position = eye
-        camera.pitch = asin(max(-1, min(1, f.y)))
-        camera.yaw = atan2(f.x, -f.z)
-        camera.fovY = fovY
+        camera = ModelingStage.camera(eye: eye, forward: f, fovY: fovY)
+        ModelingStage.lastView = camera
     }
 
     /// The stage made again with the model as it now is.

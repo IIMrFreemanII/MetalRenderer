@@ -430,23 +430,3 @@ extension RendererController: MaterialEditorHost {
         }
     }
 }
-
-/// The Modeller's host: the renderer's selection as a model, saved assets back into the scene, placing one.
-extension RendererController: ModelingHost {
-    func modelOfSelection(_ done: @escaping (ModelingDocument?, String, ModelSource?) -> Void) {
-        renderer.perform { r in
-            let s = r.modelingSelection()
-            DispatchQueue.main.async {
-                done(s.document, s.message, s.document == nil ? nil : ModelSource(placedObject: s.placedObject, instances: s.instances))
-            }
-        }
-    }
-
-    func modelAssetSaved(_ slug: String, source: ModelSource?) {
-        renderer.perform { r in r.modelAssetSaved(slug, placedObject: source?.placedObject, instances: source?.instances ?? []) }
-    }
-
-    func placeModelAsset(_ slug: String) {
-        renderer.perform { r in r.addPlaced(asset: "mesh:\(slug)") }
-    }
-}

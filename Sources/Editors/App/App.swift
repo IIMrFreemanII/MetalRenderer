@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var materialEditor: MaterialEditorPanel?
     private var painterPanel: PainterPanel?
     private var modeller: ModelingPanel?
+    private var modelingHost: RendererModelingHost?
     private var terrainEditor: TerrainEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 fatalError("Renderer failed to start:\n\(error)")
             }
             renderer.startDevReload()   // (a benchmark's only with METALRENDERER_HOTRELOAD=1)
+            ScriptModeller.register(renderer: renderer)   // the socket's `modeller`: a Modeller of its own, offscreen
             renderer.startScripts()   // a `script` mode's runner; the socket only for `serve` or METALRENDERER_SCRIPT_SERVER=1
             renderer.startRenderThread()
             return
@@ -144,6 +146,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         renderer.startDevReload()
+        ScriptModeller.register(renderer: renderer)   // the socket's `modeller`: offscreen, never the Modeller window
         renderer.startScripts()   // Tools/script.py and the MCP server reach the app through its socket
         renderer.startRenderThread()
 
@@ -238,7 +241,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terrainEditor = terrain
         if TerrainEditorPanel.wasVisible || controller.settings.scene.kind == .terrain { terrain.show(nextTo: window) }
         controller.onToggleTerrain = { [weak self] in self?.toggleTerrain(nil) }
-        let modeller = ModelingPanel(host: controller)
+        let host = RendererModelingHost(renderer: renderer)
+        modelingHost = host
+        let modeller = ModelingPanel(host: host)
         self.modeller = modeller
         if ModelingPanel.wasVisible { modeller.show(nextTo: window) }
         controller.onToggleModeller = { [weak self] in self?.toggleModeller(nil) }

@@ -444,7 +444,9 @@ package final class Renderer: NSObject {
     package var sentDayTime: Float?
     /// The view's width over its height, for the cursor's ray.
     package var viewAspect: Float = 1.6
-    package let benchmark: Benchmark? = Benchmark.isEnabled ? Benchmark() : nil
+    /// The benchmark this renderer runs (`METALRENDERER_BENCH`); nil in the app, and for a second renderer that
+    /// isn't the benchmark's (the Modeller's stage in a headless app).
+    package let benchmark: Benchmark?
 
     // Stats
     package var gpuMs: Double = 0
@@ -468,7 +470,9 @@ package final class Renderer: NSObject {
     package var traversal: (stats: TraversalStats, frames: Int)?
 
     /// `surface`: the window's view (set up with `configureForRenderer`) or an `OffscreenSurface`; the caller keeps it.
-    package init(device: MTLDevice, surface: RenderSurface) throws {
+    /// `benchmarked`: whether it runs the process's benchmark, if there is one (false: it starts as the app's does).
+    package init(device: MTLDevice, surface: RenderSurface, benchmarked: Bool = true) throws {
+        benchmark = benchmarked && Benchmark.isEnabled ? Benchmark() : nil
         validateGPULayouts()
         // Every ray is traced through Metal's acceleration structures: there is nothing to fall back to.
         guard Capabilities.current.metalRayTracing else { throw RendererError.unsupported("Metal ray tracing") }

@@ -7,6 +7,10 @@
   Tools/script.py --capture out.png [--scale 0.5]     the next frame as a PNG
   Tools/script.py --send '{"place": {"asset": "prefab:box", "name": "Crate", "position": [0, 0.5, 0]}}'
                                                       a typed command (place, move, remove, camera): no compile
+  Tools/script.py --modeller '[{"keys": "tab 3"}, {"click": [500, 320]}]' [--view window --capture m.png]
+                                                      drive the app's scripted Modeller (offscreen): steps, its
+                                                      state, a picture (viewport, window or rendered); - reads stdin
+  Tools/script.py --modeller-state                    the scripted Modeller's state
   Tools/script.py --serve [--scene city]              start a headless app (no window) and wait for it
   Tools/script.py --quit                              quit a headless app
 
@@ -32,6 +36,9 @@ def main():
     parser.add_argument("--capture", metavar="PNG", help="save the next frame")
     parser.add_argument("--scale", type=float, default=1.0, help="the capture's size, times the frame's")
     parser.add_argument("--send", metavar="JSON", help="a typed command: place, move, remove or camera")
+    parser.add_argument("--modeller", metavar="STEPS", help="the scripted Modeller's steps, a JSON list (- reads stdin)")
+    parser.add_argument("--modeller-state", action="store_true", help="print the scripted Modeller's state")
+    parser.add_argument("--view", choices=["viewport", "window", "rendered"], help="with --modeller: what --capture shows")
     parser.add_argument("--serve", action="store_true", help="start a headless app (METALRENDERER_BENCH=serve)")
     parser.add_argument("--scene", help="with --serve: the scene it opens (default: the stage)")
     parser.add_argument("--quit", action="store_true", help="quit a headless app")
@@ -49,6 +56,25 @@ def main():
             (name, body), = message.items()
             status, result = client.command(name, body, a.build)
             print(json.dumps(result) if isinstance(result, dict) else result.rstrip())
+            return status
+        if a.modeller is not None or a.modeller_state:
+            steps = []
+            if a.modeller is not None:
+                steps = json.loads(sys.stdin.read() if a.modeller == "-" else a.modeller)
+                if isinstance(steps, dict):
+                    steps = [steps]
+            view = a.view or ("viewport" if a.capture else None)
+            status, result = client.modeller(steps, view, a.scale, a.capture, a.build)
+            if isinstance(result, dict):
+                for k, note in enumerate(result.get("steps", [])):
+                    if note:
+                        print("%d. %s" % (k + 1, note))
+                if "state" in result:
+                    print(json.dumps(result["state"], indent=1))
+                if "capture" in result:
+                    print(result["capture"])
+            else:
+                print(result.rstrip(), file=sys.stderr)
             return status
         if a.state:
             print(json.dumps(client.state(a.build), indent=2))
