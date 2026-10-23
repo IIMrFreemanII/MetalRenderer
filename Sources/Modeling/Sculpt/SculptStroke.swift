@@ -3,21 +3,31 @@ import simd
 
 /// What a stroke changed, to undo it: each leaf's vertices (positions and masks) and triangles' face sets and hidden
 /// flags as they were before the stroke first touched it. Swapping puts either state back, so one record undoes and
-/// redoes.
+/// redoes. A stroke with dynamic topology keeps its leaves' whole room instead (`layout`).
 package final class SculptUndoRecord {
     package var positions: [Int: [SIMD4<Float>]] = [:]
     package var faceSets: [Int: [Int32]] = [:]
     package var hidden: [Int: [Bool]] = [:]
-    /// A whole mesh (dynamic topology, remesh, multires level): the arrays before.
+    /// A whole mesh (remesh, multires level, a packing before dynamic topology): the arrays before.
     package var whole: SculptMesh.Snapshot?
+    /// Dynamic topology's: the leaves it changed, as they were.
+    package var layout: SculptLayoutUndo?
     package let topology: UInt64
 
     package init(topology: UInt64) { self.topology = topology }
 
-    package var isEmpty: Bool { positions.isEmpty && faceSets.isEmpty && hidden.isEmpty && whole == nil }
+    package var isEmpty: Bool { positions.isEmpty && faceSets.isEmpty && hidden.isEmpty && whole == nil && layout == nil }
+
+    /// From here on the stroke may change the topology: its leaves are saved whole.
+    package func beginLayout(_ m: SculptMesh) { layout = SculptLayoutUndo(m) }
+
+    /// A leaf about to change (dynamic topology's edits).
+    func touch(leaf l: Int, of m: SculptMesh) { layout?.touch(l, of: m) }
 
     /// Saves a leaf's state if this record hasn't yet.
     @inline(__always) package func save(leaf l: Int, of m: SculptMesh, faceSets withSets: Bool = false) {
+        if whole != nil { return }
+        if let layout { layout.touch(l, of: m); return }
         let node = m.nodes[Int(m.leaves[l])]
         if positions[l] == nil {
             let s = Int(node.vertStart), e = s + Int(node.vertCount)
@@ -36,6 +46,10 @@ package final class SculptUndoRecord {
         if let w = whole {
             whole = m.snapshot()
             m.restore(w)
+            return m.leaves.indices.map { $0 }
+        }
+        if let layout {
+            layout.swap(into: m)
             return m.leaves.indices.map { $0 }
         }
         for (l, saved) in positions {
@@ -69,23 +83,26 @@ package final class SculptUndoRecord {
 extension SculptMesh {
     /// Every array, for an undo step that changes the topology.
     package struct Snapshot {
-        var position: [SIMD4<Float>], normal: [SIMD4<Float>], source: [Int32], indices: [UInt32], triangleFace: [Int32]
-        var faceSet: [Int32], hidden: [Bool], vtStart: [Int32], vtList: [Int32], vnStart: [Int32], vnList: [Int32]
+        var position: [SIMD4<Float>], normal: [SIMD4<Float>], source: [Int32], owner: [Int32], indices: [UInt32], triangleFace: [Int32]
+        var faceSet: [Int32], hidden: [Bool], vtStart: [Int32], vtEnd: [Int32], vtList: [Int32], vnStart: [Int32], vnEnd: [Int32], vnList: [Int32]
         var nodes: [SculptNode], leaves: [Int32], leafOfNode: [Int32]
-        var sourceFaces: Int, sourceCorners: Int, sourceVertices: Int
+        var sourceFaces: Int, sourceCorners: Int, sourceVertices: Int, leafTriangles: Int
     }
 
     package func snapshot() -> Snapshot {
-        Snapshot(position: position, normal: normal, source: source, indices: indices, triangleFace: triangleFace, faceSet: faceSet,
-                 hidden: hidden, vtStart: vtStart, vtList: vtList, vnStart: vnStart, vnList: vnList, nodes: nodes, leaves: leaves,
-                 leafOfNode: leafOfNode, sourceFaces: sourceFaces, sourceCorners: sourceCorners, sourceVertices: sourceVertices)
+        Snapshot(position: position, normal: normal, source: source, owner: owner, indices: indices, triangleFace: triangleFace,
+                 faceSet: faceSet, hidden: hidden, vtStart: vtStart, vtEnd: vtEnd, vtList: vtList, vnStart: vnStart, vnEnd: vnEnd,
+                 vnList: vnList, nodes: nodes, leaves: leaves, leafOfNode: leafOfNode, sourceFaces: sourceFaces,
+                 sourceCorners: sourceCorners, sourceVertices: sourceVertices, leafTriangles: leafTriangles)
     }
 
     package func restore(_ s: Snapshot) {
-        position = s.position; normal = s.normal; source = s.source; indices = s.indices; triangleFace = s.triangleFace
-        faceSet = s.faceSet; hidden = s.hidden; vtStart = s.vtStart; vtList = s.vtList; vnStart = s.vnStart; vnList = s.vnList
+        position = s.position; normal = s.normal; source = s.source; owner = s.owner; indices = s.indices; triangleFace = s.triangleFace
+        faceSet = s.faceSet; hidden = s.hidden; vtStart = s.vtStart; vtEnd = s.vtEnd; vtList = s.vtList
+        vnStart = s.vnStart; vnEnd = s.vnEnd; vnList = s.vnList
         nodes = s.nodes; leaves = s.leaves; leafOfNode = s.leafOfNode
-        sourceFaces = s.sourceFaces; sourceCorners = s.sourceCorners; sourceVertices = s.sourceVertices
+        sourceFaces = s.sourceFaces; sourceCorners = s.sourceCorners; sourceVertices = s.sourceVertices; leafTriangles = s.leafTriangles
+        scratchVertex = []; scratchTriangle = []
         bumpTopology()
     }
 
@@ -191,16 +208,19 @@ package final class SculptStroke {
             m.position.withUnsafeMutableBufferPointer { p in
                 scratch.withUnsafeMutableBufferPointer { t in
                     m.vnStart.withUnsafeBufferPointer { vs in
-                        m.vnList.withUnsafeBufferPointer { vl in
-                            table.withUnsafeBufferPointer { f in
-                                let pp = p.baseAddress!, tp = t.baseAddress!, sp = vs.baseAddress!, lp = vl.baseAddress!, fp = f.baseAddress!
-                                DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
-                                    let (start, count) = ranges[k]
-                                    sculptSmoothTargets(UnsafePointer(pp), tp, sp, lp, start, start + count, dab, fp)
-                                }
-                                DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
-                                    let (start, count) = ranges[k]
-                                    sculptCopyRange(UnsafePointer(tp), pp, start, start + count)
+                        m.vnEnd.withUnsafeBufferPointer { ve in
+                            m.vnList.withUnsafeBufferPointer { vl in
+                                table.withUnsafeBufferPointer { f in
+                                    let pp = p.baseAddress!, tp = t.baseAddress!, sp = vs.baseAddress!, ep = ve.baseAddress!
+                                    let lp = vl.baseAddress!, fp = f.baseAddress!
+                                    DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
+                                        let (start, count) = ranges[k]
+                                        sculptSmoothTargets(UnsafePointer(pp), tp, sp, ep, lp, start, start + count, dab, fp)
+                                    }
+                                    DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
+                                        let (start, count) = ranges[k]
+                                        sculptCopyRange(UnsafePointer(tp), pp, start, start + count)
+                                    }
                                 }
                             }
                         }
@@ -305,7 +325,7 @@ extension SculptMesh {
         let old = position.map(\.w)
         for v in 0..<vertexCount {
             var m = old[v]
-            for k in Int(vnStart[v])..<Int(vnStart[v + 1]) {
+            for k in Int(vnStart[v])..<Int(vnEnd[v]) {
                 let o = old[Int(vnList[k])]
                 m = grow ? max(m, o) : min(m, o)
             }
@@ -319,9 +339,9 @@ extension SculptMesh {
         for l in leaves.indices { record.save(leaf: l, of: self, faceSets: true) }
         if let t = triangle {
             let set = faceSet[t]
-            for i in 0..<triangleCount { hidden[i] = faceSet[i] != set }
+            for i in 0..<triangleSlots { hidden[i] = faceSet[i] != set }
         } else {
-            for i in 0..<triangleCount { hidden[i] = false }
+            for i in 0..<triangleSlots { hidden[i] = false }
         }
         return true
     }
@@ -330,7 +350,7 @@ extension SculptMesh {
     package func faceSetsFromMask(record: SculptUndoRecord) {
         for l in leaves.indices { record.save(leaf: l, of: self, faceSets: true) }
         let new = (faceSet.max() ?? 0) + 1
-        for t in 0..<triangleCount {
+        for t in 0..<triangleSlots {
             let w = (position[Int(indices[3 * t])].w + position[Int(indices[3 * t + 1])].w + position[Int(indices[3 * t + 2])].w) / 3
             if w > 0.5 { faceSet[t] = new }
         }
@@ -344,14 +364,14 @@ extension SculptMesh {
             var stack = [v]
             part[v] = next
             while let x = stack.popLast() {
-                for k in Int(vnStart[x])..<Int(vnStart[x + 1]) {
+                for k in Int(vnStart[x])..<Int(vnEnd[x]) {
                     let o = Int(vnList[k])
                     if part[o] < 0 { part[o] = next; stack.append(o) }
                 }
             }
             next += 1
         }
-        for t in 0..<triangleCount { faceSet[t] = part[Int(indices[3 * t])] }
+        for t in 0..<triangleSlots { faceSet[t] = part[Int(indices[3 * t])] }
     }
 }
 

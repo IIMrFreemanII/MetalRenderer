@@ -13,7 +13,8 @@ is; this note says where things are, what was checked and what is left.
   - `Modifiers/`: `Modifier`, `ModifierStack` + `ModifierCache` (per-stage cache), `ModifierOps`, `CatmullClark`,
     `BooleanOps` (BSP exact, voxel).
   - `Sculpt/`: `SculptMesh` (leaf-ordered tree), `SculptBrush` (kernels), `SculptStroke` (dabs, symmetry, undo
-    records), `Multires`/`MultiresData`, `DynTopo`, `TriangleTree` + `VoxelRemesh`.
+    records), `Multires`/`MultiresData`, `DynTopo` + `SculptLayout` (its in-place edits of the layout, its undo),
+    `TriangleTree` + `VoxelRemesh`.
   - `UV/UVOps`: unwrap by seams / smart project on the painter's `UVUnwrap.flatten` and `UVPack` (made `package`).
   - `IO/`: OBJ, glTF in/out, `ModelAsset` (section file `modelasset/1`), `ModelStore`.
   - `Viewport/` + `Shaders/Viewport.metal`: the raster viewport, picking (`pick`, `pickRegion`), `SculptDrawing`.
@@ -39,8 +40,14 @@ is; this note says where things are, what was checked and what is left.
   orbit, pen pressure, popup menus' placement, the N panel's fields, Rendered mode's layer and camera.
 - Rendered mode: a second `Renderer` on a `LayerSurface`; built and wired, not run in a window. It remakes its scene
   on every change (a moment after it); a refit path for sculpt strokes would be faster on big meshes.
-- Dynamic topology rebuilds the sculpt tree once per mouse event: fine to a few hundred thousand triangles, slow past
-  that (it says so). Per-leaf slack would make it local.
+- Dynamic topology is local (`DynTopo`, `SculptLayout.swift`): leaves have room to grow, move to the end of the
+  arrays when they outgrow it, split past twice the leaf size; a stroke's undo keeps only the leaves it changed
+  (`SculptLayoutUndo`); `compact()` packs what moves left behind at a stroke's start. Per mouse event at 2M triangles
+  (release, M1 Max): ~2 ms with a brush 6× the detail, ~6.5 ms at 20×, ~23 ms at 48× — the same as on a 127k mesh
+  (`ModelingSculptPerfTests.testDynamicTopologyTwoMillion`, `ModelingDynTopoTests` for the layout's consistency and
+  undo). Collapses are below 2/5 of the split length (Blender's ratio; 4/5 made splits and collapses undo each other).
+  Not done: leaves that shrink aren't merged (many collapses leave small leaves); the detail is per mouse event, not
+  per dab; a stroke's first event moves the untouched leaves it meets (up to ~18 ms at 20×); packing is ~100 ms at 2M.
 - Mirror's clipping and bisect, bevel's patches with segments > 1 at corners (an n-gon, not a grid), edge slide (GG),
   bridge loops, spin, F3 search, the knife's cuts ending inside a face — not there.
 - Builder-made objects: saving places the model where they stand, but the builder's original stays.

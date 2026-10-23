@@ -106,7 +106,7 @@ by_folder() {
   case $1 in
     # The editors (Sources/Editors, a module of its own: the editors' UI on the engine's models)
     Sources/Editors/Modeling/*.swift) add ModelingEditorTests ModelingViewportTests ;;
-    Sources/Modeling/Sculpt/*.swift) add ModelingSculptTests ModelingEditorTests ;;
+    Sources/Modeling/Sculpt/*.swift) add ModelingSculptTests ModelingDynTopoTests ModelingEditorTests ;;
     Sources/Modeling/Modifiers/*.swift) add ModelingModifierTests ModelingSculptTests ;;
     Sources/Modeling/Viewport/*.swift) add ModelingViewportTests ModelingEditorTests ;;
     Sources/Modeling/IO/*.swift|Sources/Modeling/UV/*.swift) add ModelingIOTests ModelingOpsTests ;;

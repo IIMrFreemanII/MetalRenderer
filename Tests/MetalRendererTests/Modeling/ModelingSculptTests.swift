@@ -175,22 +175,4 @@ final class ModelingSculptTests: XCTestCase {
         XCTAssertGreaterThan((0..<remeshed.faceCount).filter { remeshed.faceSize($0) == 4 }.count, remeshed.faceCount * 9 / 10)
         for p in remeshed.positions { XCTAssertEqual(simd_length(p), 1, accuracy: 0.05) }
     }
-
-    func testDynamicTopology() throws {
-        // Fine detail under the brush: more triangles there, still a closed surface.
-        let m = SculptMesh(Primitives.icoSphere(subdivisions: 2, radius: 1), leafSize: 64)
-        let refined = try XCTUnwrap(DynTopo.refine(m, centre: [0, 1, 0], radius: 0.6, detail: 0.08))
-        XCTAssertGreaterThan(refined.triangleCount, m.triangleCount * 2)
-        let mesh = refined.editMesh()
-        XCTAssertNil(mesh.validate())
-        XCTAssertTrue(mesh.isClosedManifold())
-        // The far side untouched: its triangles as long as before.
-        let bottom = (0..<refined.vertexCount).min { refined.position[$0].y < refined.position[$1].y }!
-        XCTAssertEqual(refined.position[bottom].y, -1, accuracy: 1e-5)
-        // Coarse detail: edges collapsed, fewer triangles, still closed.
-        let dense = SculptMesh(Primitives.icoSphere(subdivisions: 4, radius: 1), leafSize: 64)
-        let coarse = try XCTUnwrap(DynTopo.refine(dense, centre: [0, 1, 0], radius: 0.6, detail: 0.3))
-        XCTAssertLessThan(coarse.triangleCount, dense.triangleCount)
-        XCTAssertTrue(coarse.editMesh().isClosedManifold())
-    }
 }
