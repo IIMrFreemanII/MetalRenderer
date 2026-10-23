@@ -357,6 +357,7 @@ struct ViewportOverlay: View {
                 NavigationGizmo(view: model.view).padding(.top, 8).padding(.trailing, 6)
                 if model.showSidebar { NPanel().frame(width: 240).padding(6) }
             }
+            if model.search != nil { OperatorSearchView().frame(maxWidth: .infinity).padding(.top, 40) }
         }
     }
 

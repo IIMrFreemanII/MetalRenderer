@@ -129,6 +129,17 @@ final class TransformModal: ModalOperator {
         case "return", "space", "numpadenter": return .finished
         case "x", "y", "z":
             op.press(axis: ["x": 0, "y": 1, "z": 2][k.key]!, plane: k.shift)
+        case "g" where edit && op.kind == .translate && !op.numeric.isActive:
+            // G G: edge slide (vertex slide for lone vertices), from where the grab started.
+            var doc = m.document
+            if let i = m.activeIndex { doc.objects[i].mesh.positions = startPositions }
+            m.setDocument(doc)
+            guard let slide = EdgeSlideModal(m, before: before, undoName: undoName == op.kind.title ? nil : undoName) else {
+                m.report("Edge Slide: the selected edges must make loops or paths")
+                return .cancelled
+            }
+            m.replaceModal(with: slide)
+            return .running
         case "g": op.kind = .translate
         case "r": op.kind = .rotate
         case "s": op.kind = .scale

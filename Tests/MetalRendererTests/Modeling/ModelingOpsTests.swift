@@ -357,4 +357,140 @@ final class ModelingOpsTests: XCTestCase {
         c.autoSmooth(angle: 30 * .pi / 180)
         XCTAssertEqual(c.edgeFlags.filter { $0 & EditMesh.Flag.sharp != 0 }.count, 12)
     }
+
+    // MARK: Slide, bridge, spin
+
+    func testEdgeSlide() throws {
+        // A loop cut round the cube: its loop slides toward either side, staying on the cube.
+        var m = Primitive.cube.mesh()
+        m.loopCut(0)
+        var slide = try XCTUnwrap(EdgeSlide(m))
+        XCTAssertEqual(slide.chains, 1)
+        XCTAssertEqual(slide.items.count, 4)
+        XCTAssertTrue(slide.items.allSatisfy { $0.sideA != nil && $0.sideB != nil && $0.sideA != $0.sideB })
+        let axes = slide.alignSides { SIMD2($0.x, $0.y) }
+        XCTAssertGreaterThan(simd_length(axes.a - axes.b), 0)
+        let corners = Primitive.cube.mesh().positions
+        for (factor, lands) in [(Float(0.5), false), (1, true), (-1, true)] {
+            var s = m
+            slide.apply(to: &s, factor: factor)
+            assertSound(s)
+            XCTAssertEqual(volume(s), 8, accuracy: 1e-4, "on the cube's faces")
+            if lands {
+                for i in slide.items {
+                    XCTAssertTrue(corners.contains { simd_distance($0, s.positions[Int(i.vertex)]) < 1e-5 }, "at the ring's edge's end")
+                }
+            }
+        }
+        // A vertex alone: along the edge the screen direction points down.
+        var g = Primitives.grid(x: 2, y: 2, size: 2)
+        let centre = (0..<g.vertexCount).first { simd_length(g.positions[$0]) < 1e-5 }!
+        g.select(vertices: [centre])
+        let lone = try XCTUnwrap(EdgeSlide(g))
+        XCTAssertEqual(lone.items.first?.ends.count, 4)
+        let project: (SIMD3<Float>) -> SIMD2<Float>? = { SIMD2($0.x, -$0.z) }
+        lone.apply(to: &g, factor: 0, toward: [0.5, 0], project: project)
+        XCTAssertEqual(g.positions[centre].x, 0.5, accuracy: 1e-5)
+        XCTAssertEqual(g.positions[centre].z, 0, accuracy: 1e-5)
+        // Three selected edges at a corner have no two sides.
+        var corner = Primitive.cube.mesh()
+        let v0 = Int32(0)
+        corner.select(edges: (0..<corner.edgeCount).filter { corner.edges[$0].x == v0 || corner.edges[$0].y == v0 })
+        XCTAssertNil(EdgeSlide(corner))
+    }
+
+    func testBridgeEdgeLoops() {
+        // Two circles of 8: a tube of 8 quads, every edge between the loops shared by two of them.
+        var a = Primitives.circle(vertices: 8, radius: 1, fill: false)
+        var up = matrix_identity_float4x4
+        up.columns.3 = [0, 2, 0, 1]
+        a.join([a.transformed(by: up)])
+        a.selectAll(true)
+        XCTAssertNil(a.bridgeEdgeLoops())
+        XCTAssertNil(a.validate())
+        XCTAssertEqual(a.faceCount, 8)
+        XCTAssertTrue((0..<a.faceCount).allSatisfy { a.faceSize($0) == 4 })
+        XCTAssertEqual(a.selectedFaces.count, 8)
+        // Facing away from the tube's axis.
+        for f in 0..<a.faceCount {
+            let c = a.faceCenter(f)
+            XCTAssertGreaterThan(simd_dot(a.faceNormal(f), SIMD3(c.x, 0, c.z)), 0)
+        }
+        // 8 and 12: triangles, one per step along either loop.
+        var b = Primitives.circle(vertices: 8, radius: 1, fill: false)
+        b.join([Primitives.circle(vertices: 12, radius: 1.5, fill: false).transformed(by: up)])
+        b.selectAll(true)
+        XCTAssertNil(b.bridgeEdgeLoops())
+        XCTAssertNil(b.validate())
+        XCTAssertEqual(b.faceCount, 20)
+        // Two cubes' facing faces: they go, and the cubes become one closed solid.
+        var two = Primitive.cube.mesh()
+        var right = matrix_identity_float4x4
+        right.columns.3 = [4, 0, 0, 1]
+        two.join([Primitive.cube.mesh().transformed(by: right)])
+        let facing = (0..<two.faceCount).filter { f in
+            let c = two.faceCenter(f), n = two.faceNormal(f)
+            return (abs(c.x - 1) < 1e-4 && n.x > 0.9) || (abs(c.x - 3) < 1e-4 && n.x < -0.9)
+        }
+        XCTAssertEqual(facing.count, 2)
+        two.select(faces: facing)
+        XCTAssertNil(two.bridgeEdgeLoops())
+        assertSound(two)
+        XCTAssertEqual(two.faceCount, 14)
+        XCTAssertEqual(volume(two), 8 + 8 + 2 * 2 * 2, accuracy: 1e-3)
+        // One loop: nothing to bridge.
+        var one = Primitives.circle(vertices: 8, radius: 1, fill: false)
+        one.selectAll(true)
+        XCTAssertNotNil(one.bridgeEdgeLoops())
+        XCTAssertEqual(one.faceCount, 0)
+    }
+
+    func testSpin() {
+        // A profile of two edges at x = 1, a full turn round y: a tube, its faces out.
+        func profile(_ points: [SIMD3<Float>]) -> EditMesh {
+            var d = EditMesh.Draft()
+            for p in points { d.addVertex(p) }
+            for i in 0..<(points.count - 1) { d.looseEdges.append(SIMD2(Int32(i), Int32(i + 1))) }
+            var m = EditMesh(d)
+            m.selectAll(true)
+            return m
+        }
+        var tube = profile([[1, 0, 0], [1, 1, 0], [1, 2, 0]])
+        tube.spin(steps: 8, angle: 2 * .pi, centre: .zero, axis: [0, 1, 0])
+        XCTAssertNil(tube.validate())
+        XCTAssertEqual(tube.vertexCount, 24)
+        XCTAssertEqual(tube.faceCount, 16)
+        for f in 0..<tube.faceCount {
+            let c = tube.faceCenter(f)
+            XCTAssertGreaterThan(simd_dot(tube.faceNormal(f), SIMD3(c.x, 0, c.z)), 0)
+        }
+        XCTAssertEqual(tube.selectedVertices.count, 3, "the last step's (the first, closed)")
+        // A quarter turn in 4 steps: 5 rows of 3.
+        var quarter = profile([[1, 0, 0], [1, 1, 0], [1, 2, 0]])
+        quarter.spin(steps: 4, angle: .pi / 2, centre: .zero, axis: [0, 1, 0])
+        XCTAssertEqual(quarter.vertexCount, 15)
+        XCTAssertEqual(quarter.faceCount, 8)
+        // A half circle from pole to pole: a closed sphere (the poles stay single vertices).
+        let half = (0...6).map { k -> SIMD3<Float> in let a = Float(k) / 6 * .pi; return [sin(a), cos(a), 0] }
+        var sphere = profile(half)
+        sphere.spin(steps: 12, angle: 2 * .pi, centre: .zero, axis: [0, 1, 0])
+        assertSound(sphere)
+        XCTAssertEqual(sphere.vertexCount, 2 + 5 * 12)
+        // A face on its own, either way round: a closed solid with a cap at each end; a full turn: a ring (no caps).
+        for angle in [Float.pi / 2, -.pi / 2] {
+            var quad = EditMesh(positions: [[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], faces: [[0, 1, 2, 3]])
+            quad.selectAll(true)
+            quad.spin(steps: 4, angle: angle, centre: .zero, axis: [0, 1, 0])
+            assertSound(quad)
+            XCTAssertEqual(quad.faceCount, 2 + 4 * 4)
+        }
+        var ring = EditMesh(positions: [[1, 0, 0], [2, 0, 0], [2, 1, 0], [1, 1, 0]], faces: [[0, 1, 2, 3]])
+        ring.selectAll(true)
+        ring.spin(steps: 16, angle: 2 * .pi, centre: .zero, axis: [0, 1, 0])
+        XCTAssertNil(ring.validate())
+        XCTAssertTrue(ring.isClosedManifold())
+        XCTAssertEqual(ring.eulerCharacteristic, 0, "a torus")
+        XCTAssertGreaterThan(volume(ring), 0)
+        XCTAssertEqual(ring.faceCount, 64)
+    }
 }

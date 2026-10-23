@@ -31,6 +31,7 @@ final class ModelingViewportView: MTKView, MTKViewDelegate {
         model.scene = scene
         model.needsDisplay = { [weak self] in self?.needsDisplay = true }
         model.presentMenu = { [weak self] menu, at in self?.popUp(menu, at: at) }
+        model.focusViewport = { [weak self] in if let self { window?.makeFirstResponder(self) } }
         if renderer == nil { model.report("The viewport's shaders didn't compile (Sources/Modeling/Shaders/Viewport.metal)") }
     }
 

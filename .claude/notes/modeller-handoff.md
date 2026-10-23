@@ -8,7 +8,9 @@ is; this note says where things are, what was checked and what is left.
   - `Mesh/`: `EditMesh` (Blender's Mesh layout, `Draft` remakes it), `MeshTopology` (CSR tables, `validate`),
     `MeshNormals` (triangulation, corner normals with sharp edges, `TriangleMesh`), `Selection`, `Primitives`.
   - `Ops/`: delete/dissolve, extrude/inset, loops/rings/loop cut, bevel (edges, vertices, segments), merge, fill,
-    connect, subdivide, normals, triangulate/tris to quads, duplicate/separate/join/split, marks, knife.
+    connect, subdivide, normals, triangulate/tris to quads, duplicate/separate/join/split, marks, knife (points
+    inside faces, cuts ending inside one go on to its nearest corner), `EdgeSlide` (SlideOps), bridge edge loops
+    (BridgeOps: same counts quads, else a zipper of triangles), spin (SpinOps).
   - `Transform/`: `TransformOperation` (G/R/S, constraints, typed values, snap), proportional weights, `BlenderAxes`.
   - `Modifiers/`: `Modifier`, `ModifierStack` + `ModifierCache` (per-stage cache), `ModifierOps`, `CatmullClark`,
     `BooleanOps` (BSP exact, voxel).
@@ -48,8 +50,10 @@ is; this note says where things are, what was checked and what is left.
   undo). Collapses are below 2/5 of the split length (Blender's ratio; 4/5 made splits and collapses undo each other).
   Not done: leaves that shrink aren't merged (many collapses leave small leaves); the detail is per mouse event, not
   per dab; a stroke's first event moves the untouched leaves it meets (up to ~18 ms at 20×); packing is ~100 ms at 2M.
-- Mirror's clipping and bisect, bevel's patches with segments > 1 at corners (an n-gon, not a grid), edge slide (GG),
-  bridge loops, spin, F3 search, the knife's cuts ending inside a face — not there.
+- Mirror's clipping and bisect, bevel's patches with segments > 1 at corners (an n-gon, not a grid) — not there.
+  Edge slide has no Even (E) or Flip (F); bridge has no cuts, twist or merge options (no redo panel to set them);
+  spin has no Dupli; F3 lists menu operators only (not panel settings). Edge slide's GG, Shift-V, spin and the F3
+  popup (`OperatorSearch.swift`, an NSTextField for its keys) are tested headless, not clicked in the window.
 - Builder-made objects: saving places the model where they stand, but the builder's original stays.
 - `SceneKind.modelingStage` is a scene of its own; the settings panel may list it.
 - M4 Max: time the same perf test; Metal 4 untested.

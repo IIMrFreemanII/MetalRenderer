@@ -107,6 +107,7 @@ enum ModelingAction: Equatable {
     case join, applyMenu, subdivisionLevel(Int), shadeSmooth, shadeFlat
     // Edit mode.
     case extrude, extrudeMenu, inset, bevel(vertices: Bool), loopCut, knife, fill, connect, merge, separate
+    case slide, bridge, spin
     case selectLinked(pick: Bool), selectMore, selectLess
     case edgeMenu, faceMenu, vertexMenu, normalsMenu, recalcNormals, uvMenu
     case triangulate, trisToQuads, toggleProportional, splitFaces
@@ -217,6 +218,7 @@ enum ModelingKeymap {
         case ("k", false, false, false): return .knife
         case ("f", false, false, false): return .fill
         case ("j", false, false, false): return .connect
+        case ("v", false, true, false): return .slide
         case ("m", false, false, false): return .merge
         case ("p", false, false, false): return .separate
         case ("y", false, false, false): return .splitFaces
