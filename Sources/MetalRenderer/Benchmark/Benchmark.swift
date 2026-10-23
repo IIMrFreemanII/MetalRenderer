@@ -54,6 +54,9 @@ package final class Benchmark {
             case terrain([TerrainStep])
             /// A Swift script run (ScriptRunner); the setting holds its frame until it is done and its scene is in.
             case script(String, arguments: [String])
+            /// A key pressed and let go, for the scene's behaviour (SceneBehaviour.keyDown: a car scene's camera, its
+            /// slow motion).
+            case key(String)
         }
         /// The setting never ends: it draws its frame a few dozen times a second while scripts and the tools drive the
         /// app through its socket, until one asks it to quit (the `serve` mode).

@@ -45,6 +45,8 @@ package protocol SceneBehaviour: AnyObject {
     func lateUpdate(_ renderer: Renderer, dt: Float)
     /// What the view shows over the frame (SceneHUDView), or nil.
     var hud: SceneHUD? { get }
+    /// The scene's own slow motion: the clock runs at this times the Time scale setting's rate.
+    var timeScale: Float { get }
 }
 
 package extension SceneBehaviour {
@@ -60,6 +62,7 @@ package extension SceneBehaviour {
     func drawn(_ scene: Scene, _ drawn: PhysicsStepper.Drawn) {}
     func lateUpdate(_ renderer: Renderer, dt: Float) {}
     var hud: SceneHUD? { nil }
+    var timeScale: Float { 1 }
 }
 
 /// What a scene's behaviour shows over the frame (SceneHUDView): a box of text in a corner, and a crosshair (while

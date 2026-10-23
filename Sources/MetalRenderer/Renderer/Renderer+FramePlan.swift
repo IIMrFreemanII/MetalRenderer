@@ -284,13 +284,22 @@ extension Renderer {
         viewAspect = Float(size.outWidth) / Float(max(size.outHeight, 1))
         moveGrab()
         previousAnimTime = animTime
-        // Paint mode holds the scene still (a character's pose is where the brush's tiles were measured).
-        if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale }
+        // Paint mode holds the scene still (a character's pose is where the brush's tiles were measured). The scene's
+        // own slow motion on top (SceneBehaviour.timeScale).
+        if !settings.paused && painter.active == nil { animTime += dt * settings.timeScale * (scene.behaviour?.timeScale ?? 1) }
         scene.viewer = camera.position
         scene.update(time: animTime, dayTime: dayTime)
         scene.behaviour?.lateUpdate(self, dt: dt)
         sendDayTime()
         scene.setLeaves(season: settings.foliage.season, translucency: settings.foliage.translucency)
+    }
+
+    /// The picture cuts (a scene's camera jumps to another): this frame keeps none of the last ones' history (the
+    /// denoisers', TAA's, MetalFX's).
+    package func cut() {
+        historyValid = false
+        taaHistory = false
+        upscalerReset = true
     }
 
     /// The open world's scene is one with its cities' lights from a little before the sun sets until a little after

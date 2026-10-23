@@ -22,6 +22,12 @@ extension Renderer {
                 benchmarkFired.insert(k)
                 runBenchmarkScript(path, arguments: arguments)
             }
+            // (A key from the setting's second frame: its first has moved the scene to its start time.)
+            if case .key(let key) = e.event, benchmark.frameInConfig > 0, let behaviour = scene.behaviour {
+                benchmarkFired.insert(k)
+                _ = behaviour.keyDown(self, key, isRepeat: false)
+                behaviour.keyUp(self, key)
+            }
         }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time && benchmark.frameInConfig > 2 {
             if case .paint(let steps) = e.event {
@@ -43,12 +49,13 @@ extension Renderer {
             if case .paint = e.event { continue }
             if case .terrain = e.event { continue }
             if case .script = e.event { continue }
+            if case .key = e.event { continue }
             benchmarkFired.insert(k)
             switch e.event {
             case .callLift(let n, let floor): if controls.lifts.indices.contains(n) { controls.lifts[n].call(floor) }
             case .lights(let on, let within): controls.setSwitches(near: camera.position, within: within, on: on)
             case .flashlight(let on): controls.flashlight.on = on
-            case .paint, .terrain, .script: break
+            case .paint, .terrain, .script, .key: break
             }
         }
         if let n = c.ride, controls.lifts.indices.contains(n), let base = controls.lifts[n].floors.first {

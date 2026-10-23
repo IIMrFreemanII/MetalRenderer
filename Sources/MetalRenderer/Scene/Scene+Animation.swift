@@ -87,7 +87,10 @@ extension Scene {
                 let paused = physicsTime == t
                 if paused { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
                 physicsTime = t
-                let drawn = physics.hasCars ? drawnBetween(stepper, at: t, paused: paused) : stepper.latest
+                // (Whether it has cars from what its steps drew: the world's own car system is moved out while a step
+                // runs its car stages, Physics+Cars.withCarBuffers.)
+                let latest = stepper.latest, cars = !latest.cars.isEmpty
+                let drawn = cars ? drawnBetween(stepper, at: t, paused: paused) : latest
                 placeBodies(drawn)
                 behaviour?.drawn(self, drawn)
             } else {

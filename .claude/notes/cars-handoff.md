@@ -280,7 +280,25 @@ Final whole-frame A/B (best of 2, order alternated): laps 8 cars 15.45 → 12.94
 2x CPU 3.41 → 2.74; the particles scene -0.1 ms in most shots. Near-car shots within ±0.1. Not settled: the
 courtyard's 1x moving shot +0.65 GPU in this run (+0.14 at 2x).
 
+## Phase 4: cameras, slow motion, directed demos (branch `claude/car-cameras-replay`, from main)
+
+- **Cameras** (`Sources/Game/Cars/CarCameras.swift`): C cycles chase, hood, cockpit (`CarPack.Entry.eye` per model,
+  measured from its seat and steering wheel with `Tools/cars/inspect.py`), orbit, trackside. A switch calls
+  `Renderer.cut()` (no history for denoisers/TAA/MetalFX).
+- **Slow motion:** `SceneBehaviour.timeScale` multiplies the clock (`Renderer.simulate`); T cycles 1, ½, ¼, 1/10.
+- **Director** (`CarDirector.swift`): crash demos only, until a key; hit = speed −2.5 m/s in 0.1 s or +25 beams; from
+  the hit 1.2 s of world time at 0.3×, on the chase camera, then real time.
+- **Benchmarks:** `carsvideo` (with `video.sh`), `carscams`; `Benchmark.Config.Event.key`. A scene's behaviour
+  survives from one setting to the next while the settings match: key presses accumulate.
+- **Replay removed:** an instant replay (B: a ring of the last 10 s of `PhysicsStepper.Drawn`, the world held while it
+  played, the dust re-made from its first step) was built and worked, then taken out at the user's request (Oct 23):
+  pressed late it showed a standing wreck and was easy to miss. No rewind of any kind is wanted.
+- **Found on the way:** the async path read `physics.hasCars` while the stepper had the car system swapped out; it now
+  decides from `stepper.latest.cars`.
+- **Open:** the window hand test (C/T, the HUD, the directed demos); M4 Max; a still car whose structures degraded by a
+  time jump is never rebuilt (the brick wall from 6.5 s straight: 44 ms of rays) — not phase 4's, seen in a benchmark
+  that jumps.
+
 ## Next phases
 
-- **P4 — cameras, slow motion, replay, demos:** hood/cockpit/orbit cams on C, slow motion, instant replay ring, crash
-  demo modes with video.
+- Ideas: rolling resistance, roll on the cameras.

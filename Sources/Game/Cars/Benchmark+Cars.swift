@@ -15,8 +15,43 @@ import MetalRenderer
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
         "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
-        "carscrash": carsCrash,
+        "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo,
     ]
+
+    /// Each model's cockpit (CarPack.Entry.eye), then each camera (CarCameras.swift: C goes round them) on the
+    /// player's car standing, in the full look. (A scene and its player stay from one setting to the next while its
+    /// settings do: a new style's starts at the chase camera, one C each after it.)
+    private static func carsCams() -> [Config] {
+        let base = { (name: String, style: CarStyle) in
+            carBase(name).with {
+                $0.scene.cars.demo = .none
+                $0.scene.cars.style = style
+                $0.solid = false
+            }.still(at: 2)
+        }
+        return CarStyle.allCases.map { base("cockpit \($0)", $0).at(0, .key("c")).at(0, .key("c")) }
+            + CarCamera.allCases.map { cam in
+                cam == .chase ? base("camera chase", .civic) : base("camera \(cam.title.lowercased())", .civic).at(0, .key("c"))
+            }
+    }
+
+    /// Phase 3's crashes and the wall as their director films them (CarDirector.swift: the run-up, the crash in slow
+    /// motion from the hit, real time again), for `video.sh -m carsvideo`: one mp4 each.
+    private static func carsVideo() -> [Config] {
+        let demos: [(String, CarSettings.Demo, Float, Int)] = [
+            ("wall", .wall, 50, 1), ("head on", .headOn, 50, 2), ("brick wall", .breakables, 50, 1), ("crates", .props, 40, 1),
+        ]
+        return demos.map { name, demo, kmh, cars in
+            var c = carBase("video \(name)").with {
+                $0.scene.cars.demo = demo
+                $0.scene.cars.demoSpeed = kmh
+                $0.scene.cars.cars = cars
+                $0.solid = false
+            }.recording().frames(480)
+            c.startTime = -1   // (the warm-up's second: the clock at 0 on the first recorded frame)
+            return c
+        }
+    }
 
     /// Phase 3's crashes in the full look, each before, as and after it hits: two cars head on at 50 km/h each, the
     /// player's car through the brick wall at 50 and into the crates at 40 (CarContacts.swift, Physics+Cars).
