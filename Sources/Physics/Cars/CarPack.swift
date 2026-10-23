@@ -80,6 +80,9 @@ package enum CarPack {
         package var glass: String
         package var lamps: String
         package var front = SIMD3<Float>(0, 0, 1)
+        /// The driver's eye in car space (the cockpit camera's: CarCameras.swift), from its seat's and steering wheel's
+        /// boxes (Tools/cars/inspect.py): left-hand drive, the driver on +x.
+        package var eye = SIMD3<Float>(0.37, 1.15, -0.15)
     }
 
     /// The four cars (KOElkast1007's, Sketchfab: README, "Cars").
@@ -87,19 +90,21 @@ package enum CarPack {
         Entry(style: .civic, file: "Cars/honda_civic_type_r.glb", title: "Honda Civic Type-R",
               source: "https://sketchfab.com/3d-models/honda-civic-type-r-6bc1e361969849eb99b45c933fb85e2f",
               exclude: "_OLD$", preferLHD: true, rims: "_wheel_a", tyres: "_tires_19x9", paint: "^CivicTypeR_paint", glass: "^CivicTypeR_glass",
-              lamps: "^CivicTypeR_(lowhighbeam|fog|running_[LR]|signal_[LR]|taillight|reverse|brake|redfog)$"),
+              lamps: "^CivicTypeR_(lowhighbeam|fog|running_[LR]|signal_[LR]|taillight|reverse|brake|redfog)$", eye: [0.36, 1.15, -0.1]),
         Entry(style: .karoq, file: "Cars/skoda_karoq.glb", title: "Skoda Karoq",
               source: "https://sketchfab.com/3d-models/skoda-karoq-4806b6917fe3465882c50fc28f9b990d",
               exclude: "^$", rims: "^karoq_wheel_", tyres: "^tire_01a", paint: "^karoq_color$", glass: "^karoq_glass$",
-              lamps: "^karoq_(taillight|chmsl|signal_[LR]|drl_signal_[LR]|reverselight|headlight|highbeam)$"),
+              lamps: "^karoq_(taillight|chmsl|signal_[LR]|drl_signal_[LR]|reverselight|headlight|highbeam)$", eye: [0.37, 1.28, -0.2]),
         Entry(style: .panamera, file: "Cars/porsche_panamera.glb", title: "Porsche Panamera",
               source: "https://sketchfab.com/3d-models/porsche-panamera-a4045a52962f4301b34a839b9c4ed9b9",
               exclude: "^pan_(?!wheel).*\\.00[0-9]$|^pan_engine_3\\.0$", rims: "^pan_wheel", tyres: "^tire_01a", paint: "^pan_paint",
-              glass: "^(sunburst_glass|pan_lightglass)", lamps: "^pan_(tail|rev|red|signal_[LR]1?|break|linz2?|hod)(\\.00[0-9])?$"),
+              glass: "^(sunburst_glass|pan_lightglass)", lamps: "^pan_(tail|rev|red|signal_[LR]1?|break|linz2?|hod)(\\.00[0-9])?$",
+              eye: [0.37, 1.02, -0.32]),
         Entry(style: .santaFe, file: "Cars/hyundai_santa_fe_2024.glb", title: "2024 Hyundai Santa Fe",
               source: "https://sketchfab.com/3d-models/2024-hyundai-santa-fe-a1ee29b80c844b13ba56ac7e28971a53",
               exclude: "_wide$|_(i6|v8)(_turbo)?$|^santafek_header_i4$|^cubedel$|^Cube\\.002$", rims: "^santafek_whe", tyres: "^santafek_tire",
-              paint: "^santafek_body$", glass: "^santafek_glass", lamps: "^santafek_(led2?|orange|re1?|red|stop|reverse|[LR])$"),
+              paint: "^santafek_body$", glass: "^santafek_glass", lamps: "^santafek_(led2?|orange|re1?|red|stop|reverse|[LR])$",
+              eye: [0.45, 1.36, -0.02]),
     ]
 
     /// The parts by the names the models give them (a mesh is on one when a node on its path matches): what the

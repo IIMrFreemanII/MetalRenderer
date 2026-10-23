@@ -14,7 +14,8 @@ import simd
 /// (reverse from a stop), A and D steer, Space the handbrake, Q and E shift down and up (M: manual or automatic), R the
 /// scene again from the start. The keys go to the physics as `car` commands (Scene.physicsCommand: with the next
 /// frame's steps), sent when they change, so a replay drives the same; the physics ramps the pedals and the steering.
-/// The camera chases the car on a spring; with the mouse captured, it turns round it.
+/// The camera chases the car on a spring; with the mouse captured, it turns round it; C goes round the others
+/// (CarCameras.swift). T slows time (1×, ½, ¼, 1/10).
 final class CarPlayer: SceneBehaviour {
     private weak var scene: Scene?
     var captured = false
@@ -23,24 +24,46 @@ final class CarPlayer: SceneBehaviour {
     /// The input last sent, and shifts asked for since.
     var sent = CarInput()
     var shiftUp = false, shiftDown = false
-    /// The chase camera: turned round the car (yaw, pitch, radians) by the captured mouse; where it is (smoothed).
-    var orbit = SIMD2<Float>(0, 0)
-    var eye: SIMD3<Float>?
+    /// The camera, and each style's spec (fitted to its model: where the hood's and the driver's eyes are).
+    var camera = CarCameraRig()
+    private var specs: [CarStyle: CarSpec] = [:]
+    /// The slow motion (an index into `speeds`).
+    var speed = 0
     var message: String?
 
-    /// The chase camera's place behind and above the car (m), what it looks at above the car's middle (its body's
-    /// rings' nodes': CarTelemetry.centre), how fast it follows (s).
-    static let behind: Float = 6.5, above: Float = 2.2, target: Float = 0.4, lag: Float = 0.12
+    /// The crash demos' director (CarDirector.swift), until a key is pressed.
+    var director: CarDirector?
 
-    init(_ scene: Scene) { self.scene = scene }
+    static let speeds: [Float] = [1, 0.5, 0.25, 0.1]
+
+    init(_ scene: Scene) {
+        self.scene = scene
+        director = scene.settings.cars.demo.crashes ? CarDirector() : nil
+    }
 
     private var player: Int? {
         guard let rig = scene?.carRig, rig.cars.indices.contains(rig.player) else { return nil }
         return rig.cars[rig.player].car
     }
 
+    var timeScale: Float { director?.timeScale ?? CarPlayer.speeds[speed] }
+
     func keyDown(_ r: Renderer, _ key: String, isRepeat: Bool) -> Bool {
+        if key != "r" { director = nil }   // (the player's from now on; R plays the demo again, directed)
         switch key {
+        case "c":
+            if !isRepeat {
+                camera.next()
+                r.cut()
+                message = "Camera: \(camera.mode.title)"
+            }
+            return true
+        case "t":
+            if !isRepeat {
+                speed = (speed + 1) % CarPlayer.speeds.count
+                message = speed == 0 ? "Real time" : "Slow motion: \(speedTitle)"
+            }
+            return true
         case " ":
             handbrake = true
             return true
@@ -71,17 +94,28 @@ final class CarPlayer: SceneBehaviour {
     }
 
     func look(_ r: Renderer, dx: Float, dy: Float) {
-        orbit.x -= dx * Camera.turnRate
-        orbit.y = min(max(orbit.y - dy * Camera.turnRate, -0.3), 1.1)
+        camera.orbit.x -= dx * Camera.turnRate
+        camera.orbit.y = min(max(camera.orbit.y - dy * Camera.turnRate, -0.3), 1.1)
     }
 
     /// The scene as built: the player's commands dropped, time back to 0 (the world replays from its start).
     func restart(_ r: Renderer) {
         r.scene.withPhysics { $0.dropPlayerCommands() }
         sent = CarInput()
-        eye = nil
+        camera = CarCameraRig()
+        director = r.scene.settings.cars.demo.crashes ? CarDirector() : nil
         r.setTime(0)
         message = "Restarted"
+    }
+
+    private var speedTitle: String { ["1×", "½×", "¼×", "1/10×"][speed] }
+
+    /// Style `style`'s spec as its cars are built (once a style).
+    private func spec(_ style: CarStyle) -> CarSpec {
+        if let s = specs[style] { return s }
+        let s = Scene.carSpec(style)
+        specs[style] = s
+        return s
     }
 
     /// A frame: the keys as the car's input (sent when they change); true while the chase camera has the view.
@@ -104,22 +138,14 @@ final class CarPlayer: SceneBehaviour {
         return r.benchmark?.current.camera == nil
     }
 
-    /// The chase camera, after the scene has moved: behind the car as this frame draws it.
+    /// The camera, after the scene has moved: on the car as this frame draws it.
     func lateUpdate(_ r: Renderer, dt: Float) {
-        guard let car = player, r.benchmark?.current.camera == nil, let drawn = r.scene.drawnPhysics, drawn.cars.indices.contains(car) else { return }
-        let t = drawn.cars[car]
-        // Behind the car (its heading on the ground), turned by the mouse, a little above; easing after it.
-        var ahead = SIMD3<Float>(t.forward.x, 0, t.forward.z)
-        ahead = length(ahead) > 1e-3 ? normalize(ahead) : [0, 0, 1]
-        let turn = simd_quatf(angle: orbit.x, axis: [0, 1, 0])
-        let back = turn.act(-ahead)
-        let target = t.centre + SIMD3(0, CarPlayer.target, 0)
-        let wanted = target + back * (CarPlayer.behind * cos(orbit.y)) + SIMD3(0, CarPlayer.above + CarPlayer.behind * sin(orbit.y), 0)
-        let k = 1 - exp(-dt / CarPlayer.lag)
-        let smooth = eye.map { $0 + (wanted - $0) * k } ?? wanted
-        eye = smooth
-        let look = normalize(target - smooth)
-        r.camera.position = smooth
+        guard let player, r.benchmark?.current.camera == nil, let drawn = r.scene.drawnPhysics, drawn.cars.indices.contains(player),
+              let rig = scene?.carRig, rig.cars.indices.contains(rig.player) else { return }
+        let t = drawn.cars[player], spec = spec(rig.cars[rig.player].style)
+        director?.update(t, time: Float(drawn.stepIndex) * PhysicsWorld.stepLength)
+        let (eye, look) = camera.place(t, spec: spec, dt: dt)
+        r.camera.position = eye
         r.camera.yaw = atan2(look.x, -look.z)
         r.camera.pitch = asin(simd_clamp(look.y, -1, 1))
     }
@@ -141,8 +167,15 @@ final class CarPlayer: SceneBehaviour {
         } else if t.coolant < 1 || t.engineDamage > 0 {
             lines.append(String(format: "engine: coolant %.0f%%, heat %.0f%%, damage %.0f%%", t.coolant * 100, t.heat * 100, t.engineDamage * 100))
         }
+        if director?.stage == .slow {
+            lines.insert("SLOW MOTION \(CarDirector.slow)×", at: 0)
+        } else if speed != 0 {
+            lines.insert("SLOW MOTION \(speedTitle)", at: 0)
+        }
         lines.append("W/S throttle, brake   A/D steer   Space handbrake")
         lines.append("\(manual ? "Q/E shift   " : "")M \(manual ? "automatic" : "manual")   R restart   \(captured ? "Esc: free the mouse" : "click: turn the camera")")
+        lines.append("C camera: \(camera.mode.title)   T slow motion")
+        if director != nil { lines.append("Demo: any key to take the wheel") }
         if let m = message { lines.append(m) }
         return SceneHUD(lines: lines, corner: .bottomLeft, monospaced: true, capturesMouse: true)
     }

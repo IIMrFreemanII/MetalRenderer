@@ -51,14 +51,16 @@ package final class ScriptRun {
 
     private func onRenderThread<T>(_ body: @escaping (Renderer) -> T) -> T {
         if renderer.renderThread.isCurrent { return body(renderer) }
-        var result: T?
+        // (`body` through a box the render thread empties before it signals: the closure `perform` keeps may outlive the
+        // signal, and `withoutActuallyEscaping` traps if `body` is still held when `render` returns.)
+        let call = RenderCall(body)
         let done = DispatchSemaphore(value: 0)
         renderer.perform { r in
-            result = body(r)
+            call.run(r)
             done.signal()
         }
         done.wait()
-        return result!
+        return call.result!
     }
 
     /// Whether waiting here would never end: on the render thread (inside `render`, a short script, `onFrame`).
@@ -151,6 +153,19 @@ package final class ScriptOutput {
         lock.lock()
         send = nil
         lock.unlock()
+    }
+}
+
+/// A closure for the render thread and what it returned (ScriptRun.render): run once, then let go.
+private final class RenderCall<T> {
+    private var body: ((Renderer) -> T)?
+    var result: T?
+
+    init(_ body: @escaping (Renderer) -> T) { self.body = body }
+
+    func run(_ r: Renderer) {
+        result = body?(r)
+        body = nil
     }
 }
 
