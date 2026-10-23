@@ -135,4 +135,34 @@ final class ModelingTransformTests: XCTestCase {
         XCTAssertEqual(all.faceCount, 10)
         XCTAssertTrue(all.isClosedManifold())
     }
+
+    func testKnifeCutsEndingInsideAFace() {
+        var cam = ViewportCamera()
+        cam.align(.front)
+        func view(_ p: SIMD3<Float>) -> SIMD2<Float> { let s = cam.project(p, size: size)!; return SIMD2(s.x, s.y) }
+        // From above the cube to the middle of its front face: the cut goes on to a corner, splitting the face.
+        var into = Primitive.cube.mesh()
+        let split = into.knife([view([0, 1.5, 1]), view([0, 0, 1])], camera: cam, viewSize: size, objectMatrix: matrix_identity_float4x4)
+        XCTAssertEqual(split, 1)
+        XCTAssertEqual(into.vertexCount, 10, "the crossing and the point inside")
+        XCTAssertEqual(into.faceCount, 7)
+        XCTAssertNil(into.validate())
+        XCTAssertTrue(into.isClosedManifold())
+        XCTAssertTrue(into.positions.contains { simd_distance($0, [0, 0, 1]) < 1e-3 }, "a vertex where the cut ended")
+        // Both points inside the face: each end goes on to its nearest corner.
+        var inside = Primitive.cube.mesh()
+        inside.knife([view([-0.5, 0.2, 1]), view([0.5, -0.2, 1])], camera: cam, viewSize: size, objectMatrix: matrix_identity_float4x4)
+        XCTAssertEqual(inside.vertexCount, 10)
+        XCTAssertEqual(inside.faceCount, 7)
+        XCTAssertNil(inside.validate())
+        XCTAssertTrue(inside.isClosedManifold())
+        // Across the face through a point inside it: split along the bend.
+        var bent = Primitive.cube.mesh()
+        bent.knife([view([0, 1.5, 1]), view([0.4, 0, 1]), view([0, -1.5, 1])], camera: cam, viewSize: size, objectMatrix: matrix_identity_float4x4)
+        XCTAssertEqual(bent.vertexCount, 11)
+        XCTAssertEqual(bent.faceCount, 7)
+        XCTAssertNil(bent.validate())
+        XCTAssertTrue(bent.isClosedManifold())
+        XCTAssertTrue(bent.positions.contains { simd_distance($0, [0.4, 0, 1]) < 1e-3 })
+    }
 }

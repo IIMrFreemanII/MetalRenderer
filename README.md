@@ -2196,10 +2196,13 @@ Properties (Object, Modifiers, Material, Data) and the status bar with the mouse
   Ctrl-Tab the mode menu; 1 2 3 select modes; A, Alt-A, Ctrl-I; B box, C circle; click, Shift-click, Alt-click loops
   (Ctrl-Alt rings), L and Ctrl-L linked; G R S with X Y Z (twice: local; Shift: the plane), typed values and Tab, Ctrl
   snaps, Shift slows, O proportional editing; E extrude, I inset, Ctrl-B bevel (Shift: vertices), Ctrl-R loop cut and
-  slide, K knife, F fill, J connect, M merge, X / Delete, P separate, Y split, Shift-D duplicate, H / Alt-H, Shift-N,
-  Alt-N, Ctrl-E / Ctrl-F / Ctrl-V menus, U unwrap, Ctrl-T / Alt-J; object mode Shift-A, Ctrl-J, Ctrl-A, Ctrl-1…5
-  (a Subdivision Surface), Alt-G / R / S; the numpad's views, Home, numpad . and Shift-C. Blender's axes: Z is up (the
-  engine's Y), so G Z moves up.
+  slide, G G edge slide (Shift-V: vertex slide), K knife, F fill, J connect, M merge, X / Delete, P separate, Y split,
+  Shift-D duplicate, H / Alt-H, Shift-N, Alt-N, Ctrl-E / Ctrl-F / Ctrl-V menus, U unwrap, Ctrl-T / Alt-J; Bridge Edge
+  Loops (Edge menu) and Spin (Edge and Extrude menus: round the 3D cursor, the mouse the angle, the wheel the steps);
+  object mode Shift-A, Ctrl-J, Ctrl-A, Ctrl-1…5 (a Subdivision Surface), Alt-G / R / S; the numpad's views, Home,
+  numpad . and Shift-C; F3 searches every operator the mode's menus have. Blender's axes: Z is up (the engine's Y), so
+  G Z moves up. The knife's points inside a face are vertices there; a cut that ends inside a face goes on to its
+  nearest corner.
 * **Mouse, trackpad, pen**: middle drag orbits (Shift pans, Ctrl zooms), the wheel zooms; on a trackpad two fingers
   orbit (Shift pans, Ctrl zooms) and a pinch zooms; Edit › Emulate 3 Button Mouse makes Option-drag orbit (loop select
   is then a double-click); Emulate Numpad for keyboards without one. A pen's pressure sets the brush's strength (and

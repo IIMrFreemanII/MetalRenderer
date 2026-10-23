@@ -187,6 +187,11 @@ final class ModelingModel: ObservableObject {
     @Published var voxelSize: Float = 0.05
     @Published var dyntopo = false
     @Published var dyntopoDetail: Float = 12
+    /// F3's operator search while it is open, and the operators it ran last (first in its list).
+    @Published var search: OperatorSearch?
+    var recentOperators: [String] = []
+    /// Gives the viewport the keyboard again (after the search).
+    var focusViewport: () -> Void = {}
     /// What the current press began (navigation, a click, a stroke).
     var gesture: Gesture = .none
     /// Box select's rectangle and circle select's circle (points), drawn over the viewport.

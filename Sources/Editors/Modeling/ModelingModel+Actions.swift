@@ -59,7 +59,7 @@ extension ModelingModel {
         case .duplicate: duplicate()
         case .hide(let selected): hide(selected: selected)
         case .reveal: reveal()
-        case .search: report("Search: use the menus (F3 search isn't there yet)")
+        case .search: openSearch()
         case .join: join()
         case .applyMenu: presentMenu(applyMenu(), mouse)
         case .subdivisionLevel(let n): setSubdivision(levels: n)
@@ -71,6 +71,13 @@ extension ModelingModel {
         case .bevel(let v): start(AmountModal(self, kind: .bevel(vertices: v)))
         case .loopCut: start(LoopCutModal(self))
         case .knife: start(KnifeModal(self))
+        case .slide:
+            guard mode == .edit else { break }
+            if let m = EdgeSlideModal(self) { start(m) } else { report("Slide: select vertices, or edges that make loops or paths") }
+        case .bridge: bridgeEdgeLoops()
+        case .spin:
+            guard mode == .edit else { break }
+            if let m = SpinModal(self) { start(m) } else { report("Spin: select something to spin") }
         case .fill: editMesh("Make Edge/Face") { $0.fill() }
         case .connect: editMesh("Connect Vertex Path") { $0.connectVertices() }
         case .merge: presentMenu(mergeMenu(), mouse)
@@ -315,6 +322,14 @@ extension ModelingModel {
         }
     }
 
+    /// Bridge Edge Loops, as one undo step (none if it couldn't: why is reported).
+    func bridgeEdgeLoops() {
+        guard mode == .edit, let i = activeIndex else { return }
+        var mesh = document.objects[i].mesh
+        if let problem = mesh.bridgeEdgeLoops() { report(problem); return }
+        editMesh("Bridge Edge Loops") { $0 = mesh }
+    }
+
     // MARK: Menus
 
     func modeMenu() -> ModelingMenu {
@@ -482,6 +497,7 @@ extension ModelingModel {
         ModelingMenu(title: "Extrude", items: [
             .init(title: "Extrude Region", action: { [weak self] in self?.extrudeAndMove() }),
             .init(title: "Extrude Individual Faces", action: { [weak self] in self?.extrudeAndMove(individual: true) }),
+            .init(title: "Spin", action: { [weak self] in self?.perform(.spin) }),
         ])
     }
 
@@ -490,6 +506,9 @@ extension ModelingModel {
             .init(title: "Subdivide", action: { [weak self] in self?.editMesh("Subdivide") { $0.subdivide() } }),
             .init(title: "Bevel Edges", shortcut: "Ctrl B", action: { [weak self] in self?.perform(.bevel(vertices: false)) }),
             .init(title: "Loop Cut and Slide", shortcut: "Ctrl R", action: { [weak self] in self?.perform(.loopCut) }),
+            .init(title: "Edge Slide", shortcut: "G G", action: { [weak self] in self?.perform(.slide) }),
+            .init(title: "Bridge Edge Loops", action: { [weak self] in self?.perform(.bridge) }),
+            .init(title: "Spin", action: { [weak self] in self?.perform(.spin) }),
             .separator,
             .init(title: "Mark Seam", action: { [weak self] in self?.editMesh("Mark Seam") { $0.markEdges(EditMesh.Flag.seam, true) } }),
             .init(title: "Clear Seam", action: { [weak self] in self?.editMesh("Clear Seam") { $0.markEdges(EditMesh.Flag.seam, false) } }),
@@ -519,6 +538,7 @@ extension ModelingModel {
         ModelingMenu(title: "Vertex", items: [
             .init(title: "Merge", shortcut: "M", action: { [weak self] in self?.perform(.merge) }),
             .init(title: "Connect Vertex Path", shortcut: "J", action: { [weak self] in self?.perform(.connect) }),
+            .init(title: "Slide Vertices", shortcut: "Shift V", action: { [weak self] in self?.perform(.slide) }),
             .init(title: "Bevel Vertices", shortcut: "Ctrl Shift B", action: { [weak self] in self?.perform(.bevel(vertices: true)) }),
             .init(title: "Smooth Vertices", action: { [weak self] in self?.editMesh("Smooth Vertices") { $0.smoothVertices() } }),
             .init(title: "Separate", shortcut: "P", action: { [weak self] in self?.perform(.separate) }),

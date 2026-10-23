@@ -55,6 +55,14 @@ extension ModelingModel {
         redraw()
     }
 
+    /// The running operator gives way to another without finishing or cancelling (G G: grab to edge slide).
+    func replaceModal(with m: ModalOperator) {
+        modal = m
+        _ = m.mouseMoved(self, to: mouse, flags: [])
+        refreshStatus()
+        redraw()
+    }
+
     func cancelModal() {
         guard let m = modal else { return }
         modal = nil

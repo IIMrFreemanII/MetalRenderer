@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1792774484.2559998,
-    "seen": 1792774522.446075,
-    "ast_hash": "d6cb569d7d786fbe7bb84c8e25d0ca30",
+    "mtime": 1792779650.136598,
+    "seen": 1792779673.4721541,
+    "ast_hash": "e3b688bc223d309c3980e185cf105d74",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -2118,8 +2118,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Encoding.swift": {
-    "mtime": 1792759810.638611,
-    "seen": 1792760408.866008,
+    "mtime": 1792778433.97424,
+    "seen": 1792779673.461833,
     "ast_hash": "770ad9e6ccd9ef272419f789ad1fd0a5",
     "semantic_hash": ""
   },
@@ -2178,8 +2178,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer.swift": {
-    "mtime": 1792683152.0355527,
-    "seen": 1792689268.898703,
+    "mtime": 1792778433.9745433,
+    "seen": 1792779673.4621282,
     "ast_hash": "5a001b5318fe27ffb21c3b2229fa8530",
     "semantic_hash": ""
   },
@@ -2220,14 +2220,14 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/Scene.swift": {
-    "mtime": 1792759810.6392915,
-    "seen": 1792760408.8664498,
+    "mtime": 1792778433.97479,
+    "seen": 1792779673.462347,
     "ast_hash": "0d597e875d62d92a7335dc463117e807",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/SceneBuffers.swift": {
-    "mtime": 1792708987.4395964,
-    "seen": 1792709449.2905731,
+    "mtime": 1792778433.9750779,
+    "seen": 1792779673.4623759,
     "ast_hash": "c8c2a90668dd90b896436cdda0e3a3e5",
     "semantic_hash": ""
   },
@@ -4998,26 +4998,26 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModalOperators.swift": {
-    "mtime": 1792766094.7334023,
-    "seen": 1792769332.145182,
-    "ast_hash": "bdc47c2d491bb38d68dfc59827820048",
+    "mtime": 1792778932.4604251,
+    "seen": 1792779673.4536672,
+    "ast_hash": "4dda4b0d521525f6fe7781b433b9042c",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingKeymap.swift": {
-    "mtime": 1792765789.2632363,
-    "seen": 1792769332.145182,
-    "ast_hash": "1547f4b5da0a0771096f2a6cc0bd2326",
+    "mtime": 1792778932.4609573,
+    "seen": 1792779673.453669,
+    "ast_hash": "e83a3b88d7e73b8a8c9d3263a89e2d1c",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Actions.swift": {
-    "mtime": 1792766209.4500732,
-    "seen": 1792769332.145184,
-    "ast_hash": "b6815e081f25420d3ce6030b1be4b127",
+    "mtime": 1792778932.4613829,
+    "seen": 1792779673.4536698,
+    "ast_hash": "79e828c7c05c777cbe8bfcc466ccb7b8",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Files.swift": {
-    "mtime": 1792767724.0858948,
-    "seen": 1792769332.145186,
+    "mtime": 1792778433.9730964,
+    "seen": 1792779673.4536698,
     "ast_hash": "6c6e984fac997456e59656855ff3d129",
     "semantic_hash": ""
   },
@@ -5028,9 +5028,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Input.swift": {
-    "mtime": 1792767092.3476546,
-    "seen": 1792769332.1451871,
-    "ast_hash": "47ae43118e0750e50219e50649c2f80c",
+    "mtime": 1792778932.4606223,
+    "seen": 1792779673.453699,
+    "ast_hash": "aa8cf55d095645d3733e4dee5ea6608e",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Panels.swift": {
@@ -5046,9 +5046,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel.swift": {
-    "mtime": 1792768210.0192084,
-    "seen": 1792769332.14519,
-    "ast_hash": "30698a1161d8d2926aa9ea8b9f44eda3",
+    "mtime": 1792778947.195609,
+    "seen": 1792779673.453753,
+    "ast_hash": "49eb54c807fda5710aae8b31175f2a43",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingPanel.swift": {
@@ -5064,26 +5064,26 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingView.swift": {
-    "mtime": 1792768210.0194166,
-    "seen": 1792769332.145192,
-    "ast_hash": "dadc174221ad315ffa297e08a23d748f",
+    "mtime": 1792778947.1961746,
+    "seen": 1792779673.453808,
+    "ast_hash": "6848e2557d76bd6a812aa56d3a519f22",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingViewportView.swift": {
-    "mtime": 1792767843.2468598,
-    "seen": 1792769332.1451929,
-    "ast_hash": "2bec6d3ea6611eac16b984fb95b5c4c0",
+    "mtime": 1792778947.1957657,
+    "seen": 1792779673.4538088,
+    "ast_hash": "c434b807c3edaa81d8e911ca9bea398c",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/SculptController.swift": {
-    "mtime": 1792770904.6097374,
-    "seen": 1792774522.429172,
+    "mtime": 1792778433.973474,
+    "seen": 1792779673.453811,
     "ast_hash": "c5694f72052ef85755e16f7f1948a219",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/StageRenderer.swift": {
-    "mtime": 1792768195.4575667,
-    "seen": 1792769332.145194,
+    "mtime": 1792778433.9736269,
+    "seen": 1792779673.453812,
     "ast_hash": "d54911e316468401fdb18015992917c7",
     "semantic_hash": ""
   },
@@ -5100,8 +5100,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Modeling/Scene+ModelingStage.swift": {
-    "mtime": 1792768941.2457402,
-    "seen": 1792769332.151594,
+    "mtime": 1792778433.9739947,
+    "seen": 1792779673.4606452,
     "ast_hash": "6a86ba045cfc2feb64f9adf9972308a4",
     "semantic_hash": ""
   },
@@ -5208,9 +5208,9 @@
     "semantic_hash": ""
   },
   "Sources/Modeling/Ops/KnifeOps.swift": {
-    "mtime": 1792765616.806821,
-    "seen": 1792769332.1552,
-    "ast_hash": "afba78bd1040e7f888823ce07c3148e1",
+    "mtime": 1792779079.1180382,
+    "seen": 1792779673.464839,
+    "ast_hash": "898a0b36d797b9f2d3dc80aea1122f6a",
     "semantic_hash": ""
   },
   "Sources/Modeling/Ops/LoopOps.swift": {
@@ -5340,9 +5340,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingEditorTests.swift": {
-    "mtime": 1792767860.1849134,
-    "seen": 1792769332.157569,
-    "ast_hash": "6dbf44a6502ee1e929cb8177394fe4e5",
+    "mtime": 1792779555.5455563,
+    "seen": 1792779673.468181,
+    "ast_hash": "27c8e1304cf7f4bf89369311ce0aa4f3",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingIOTests.swift": {
@@ -5364,9 +5364,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingOpsTests.swift": {
-    "mtime": 1792765501.7226021,
-    "seen": 1792769332.157572,
-    "ast_hash": "1a1ba2dedaba35decd786f8b684e97e7",
+    "mtime": 1792779112.9048982,
+    "seen": 1792779673.468269,
+    "ast_hash": "bc1e329e888d0e25201910db96c3d62b",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingSculptPerfTests.swift": {
@@ -5382,9 +5382,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingTransformTests.swift": {
-    "mtime": 1792765672.9910269,
-    "seen": 1792769332.157575,
-    "ast_hash": "8af960c261e3ba004badf525ea9878a8",
+    "mtime": 1792779112.9052343,
+    "seen": 1792779673.468329,
+    "ast_hash": "796748598d86bc4cfc2611d1c6f18058",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Modeling/ModelingViewportTests.swift": {
@@ -5394,9 +5394,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/modeller-handoff.md": {
-    "mtime": 1792774501.2236843,
-    "seen": 1792774522.44508,
-    "ast_hash": "ca3b1ef4c7bffea3a74c321b36c61eb0",
+    "mtime": 1792779650.1368122,
+    "seen": 1792779673.4709709,
+    "ast_hash": "15c8761265803c33e5924316f8c3c7ca",
     "semantic_hash": ""
   },
   "Sources/Modeling/Sculpt/SculptLayout.swift": {
@@ -5409,6 +5409,36 @@
     "mtime": 1792771009.4454012,
     "seen": 1792774522.4424279,
     "ast_hash": "2b8fef322c6a5d8e412408ead63194b1",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/EditToolModals.swift": {
+    "mtime": 1792778914.1994038,
+    "seen": 1792779673.453666,
+    "ast_hash": "b42c81d622a52df8296d11f3f3341e1b",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/OperatorSearch.swift": {
+    "mtime": 1792778978.0477076,
+    "seen": 1792779673.45381,
+    "ast_hash": "063f9d346314f59d75adb78b92860943",
+    "semantic_hash": ""
+  },
+  "Sources/Modeling/Ops/BridgeOps.swift": {
+    "mtime": 1792778715.6070826,
+    "seen": 1792779673.4647639,
+    "ast_hash": "5656e6f6986a03d966dc6127a484be3e",
+    "semantic_hash": ""
+  },
+  "Sources/Modeling/Ops/SlideOps.swift": {
+    "mtime": 1792778991.5818417,
+    "seen": 1792779673.4649441,
+    "ast_hash": "a1d82140805e455d6e76bbd0c1357217",
+    "semantic_hash": ""
+  },
+  "Sources/Modeling/Ops/SpinOps.swift": {
+    "mtime": 1792779151.4183967,
+    "seen": 1792779673.464946,
+    "ast_hash": "213b2498796bd9d6e6ef049897b6aa50",
     "semantic_hash": ""
   }
 }

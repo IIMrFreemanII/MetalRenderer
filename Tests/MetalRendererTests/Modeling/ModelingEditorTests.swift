@@ -92,6 +92,68 @@ final class ModelingEditorTests: XCTestCase {
         XCTAssertEqual(cube.faceCount, 10)
     }
 
+    func testGrabTwiceSlidesEdges() {
+        key("tab")
+        var d = model.document
+        d.objects[0].mesh.loopCut(0)
+        model.setDocument(d)
+        let cut = cube
+        // G, a move, G again: edge slide, from where the grab started.
+        key("g")
+        model.mouseMoved(to: [430, 320], flags: [])
+        XCTAssertNotEqual(cube.positions, cut.positions)
+        key("g")
+        XCTAssertEqual(model.modal?.name, "Edge Slide")
+        XCTAssertEqual(cube.positions, cut.positions, "back where the grab started")
+        for k in ["0", ".", "5", "return"] { key(k) }
+        XCTAssertNil(model.modal)
+        XCTAssertNotEqual(cube.positions, cut.positions)
+        XCTAssertEqual(cube.bounds.lo, cut.bounds.lo, "along the cube's faces")
+        XCTAssertEqual(cube.bounds.hi, cut.bounds.hi)
+        XCTAssertTrue(cube.isClosedManifold())
+        // One undo step back to before the grab.
+        key("z", cmd: true)
+        XCTAssertEqual(cube.positions, cut.positions)
+        // Shift-V on a lone vertex: vertex slide.
+        d = model.document
+        d.objects[0].mesh.select(vertices: [0])
+        model.setDocument(d)
+        key("v", shift: true)
+        XCTAssertEqual(model.modal?.name, "Vertex Slide")
+        key("esc")
+        XCTAssertEqual(cube.positions, cut.positions)
+    }
+
+    func testOperatorSearchAndSpin() {
+        key("tab")
+        key("f3")
+        XCTAssertNotNil(model.search)
+        XCTAssertTrue(model.searchEntries().contains { $0.path == "Edge ▸ Bridge Edge Loops" })
+        XCTAssertEqual(model.searchResults("bridge").first?.title, "Bridge Edge Loops")
+        XCTAssertEqual(model.searchResults("edge slide").first?.title, "Edge Slide")
+        XCTAssertTrue(model.searchResults("zzqq").isEmpty)
+        // Spin, run from the search: the top face a quarter turn in 12 steps round the view's axis.
+        let top = (0..<cube.faceCount).first { cube.faceNormal($0).y > 0.9 }!
+        var d = model.document
+        d.objects[0].mesh.select(faces: [top])
+        model.setDocument(d)
+        model.search?.query = "spin"
+        model.searchRun()
+        XCTAssertNil(model.search)
+        XCTAssertEqual(model.modal?.name, "Spin")
+        for k in ["9", "0", "return"] { key(k) }
+        XCTAssertNil(model.modal)
+        XCTAssertNil(cube.validate())
+        XCTAssertEqual(cube.faceCount, 6 + 4 * 12, "the four sides' walls; the face at the end")
+        // What ran last comes first.
+        key("f3")
+        XCTAssertEqual(model.searchResults("").first?.title, "Spin")
+        model.closeSearch()
+        XCTAssertNil(model.search)
+        key("z", cmd: true)
+        XCTAssertEqual(cube.faceCount, 6)
+    }
+
     func testGrabRotateScaleInObjectMode() {
         model.mouse = [400, 300]
         key("g")
@@ -222,7 +284,8 @@ final class ModelingEditorTests: XCTestCase {
         ModelingViewport.pictures = true
         defer { ModelingViewport.pictures = false }
         for (name, setup) in [("window-object", {}), ("window-edit", { self.key("tab") }),
-                              ("window-sculpt", { self.model.add(.head); self.model.setWorkspace(.sculpting) })] as [(String, () -> Void)] {
+                              ("window-sculpt", { self.model.add(.head); self.model.setWorkspace(.sculpting) }),
+                              ("window-search", { self.key("tab"); self.key("f3"); self.model.search?.query = "edge" })] as [(String, () -> Void)] {
             model = ModelingModel()
             let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
             model.renderer = try ViewportRenderer(device: device)
