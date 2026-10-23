@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fractureEditor: FractureEditorPanel?
     private var materialEditor: MaterialEditorPanel?
     private var painterPanel: PainterPanel?
+    private var modeller: ModelingPanel?
     private var terrainEditor: TerrainEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
@@ -184,6 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           Shift-F / Shift-Cmd-F   show the Fracture Editor (the Destruction scene's objects: pattern, pieces, toughness,
                        a preview of the pieces held apart; Save keeps them in Assets/Fracture); in that scene 1, 2, 3
                        pick what a click does: grab a piece, shoot a ball from the camera, blast where you point
+          Shift-M / Shift-Cmd-L   show the Modeller (Blender-like modelling and sculpting in a window of its own: Tab edit
+                       mode, Ctrl-Tab sculpt mode, Shift-A add, G R S, E extrude, Ctrl-R loop cut, Ctrl-B bevel; Cmd-S
+                       saves the model to Assets/Models, which scenes place as mesh: objects; Edit Mesh in Modeller opens
+                       the selection)
           Shift-V      walk (in the building workshop, the city): drag looks, W A S D, Shift runs, Space jumps, C or Control
                        crouches, E or a click opens a door or flips a switch, F the flashlight, 0-9 a lift's floor
           Cmd-O        add glTF models (.glb / .gltf) in front of the camera, or an HDR sky (.hdr / .exr); or drop them
@@ -233,6 +238,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         terrainEditor = terrain
         if TerrainEditorPanel.wasVisible || controller.settings.scene.kind == .terrain { terrain.show(nextTo: window) }
         controller.onToggleTerrain = { [weak self] in self?.toggleTerrain(nil) }
+        let modeller = ModelingPanel(host: controller)
+        self.modeller = modeller
+        if ModelingPanel.wasVisible { modeller.show(nextTo: window) }
+        controller.onToggleModeller = { [weak self] in self?.toggleModeller(nil) }
         let graph = ProjectGraphPanel(host: controller) { [weak self] target in self?.open(target) }
         projectGraph = graph
         if ProjectGraphPanel.wasVisible { graph.show(nextTo: window) }
@@ -272,6 +281,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let vfx = vfxEditor, vfx.isVisible, controller.settings.scene.kind != .plants { return vfx.model.undo }
         return plantEditor?.model.undo
+    }
+
+    @objc private func toggleModeller(_ sender: Any?) {
+        modeller?.toggle(nextTo: window)
+    }
+
+    /// The main view's selection, opened in the Modeller.
+    @objc private func editSelectionInModeller(_ sender: Any?) {
+        guard let m = modeller else { return }
+        m.show(nextTo: window)
+        m.model.editSceneSelection()
     }
 
     @objc private func toggleProjectGraph(_ sender: Any?) {
@@ -423,6 +443,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let fractureItem = appMenu.addItem(withTitle: "Fracture Editor…", action: #selector(toggleFracture(_:)), keyEquivalent: "f")
         fractureItem.keyEquivalentModifierMask = [.command, .shift]
         fractureItem.target = self
+        let modellerItem = appMenu.addItem(withTitle: "Modeller…", action: #selector(toggleModeller(_:)), keyEquivalent: "l")
+        modellerItem.keyEquivalentModifierMask = [.command, .shift]
+        modellerItem.target = self
+        appMenu.addItem(withTitle: "Edit Mesh in Modeller", action: #selector(editSelectionInModeller(_:)), keyEquivalent: "").target = self
         let graphItem = appMenu.addItem(withTitle: "Project Graph…", action: #selector(toggleProjectGraph(_:)), keyEquivalent: "g")
         graphItem.keyEquivalentModifierMask = [.command, .shift]
         graphItem.target = self

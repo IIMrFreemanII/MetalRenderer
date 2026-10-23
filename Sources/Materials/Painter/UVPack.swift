@@ -9,17 +9,17 @@ import simd
 /// (its outline's underside on the horizon, so a chart's notch takes another's bump): its top lowest, the room it
 /// leaves under it counted against it; at the largest scale they all fit at (a binary search). Each keeps a gutter of `padding` texels all round (at least twice that between two),
 /// which the painting dilates into so that filtering and the first mip levels never read past a chart's edge.
-enum UVPack {
+package enum UVPack {
     /// Where each chart goes, in texels: `origins[i] + turn(uv, turns[i]) x scale`, `turn` a quarter turn
     /// `(x, y) -> (-y, x)` (the winding kept) `turns[i]` times.
-    struct Result {
+    package struct Result {
         package var scale: Float              // texels per metre
         package var origins: [SIMD2<Float>]
         package var padding: Int
         package var turns: [Int] = []
     }
 
-    static func turn(_ p: SIMD2<Float>, _ times: Int) -> SIMD2<Float> {
+    package static func turn(_ p: SIMD2<Float>, _ times: Int) -> SIMD2<Float> {
         switch times & 3 {
         case 1: return SIMD2(-p.y, p.x)
         case 2: return -p
@@ -29,7 +29,7 @@ enum UVPack {
     }
 
     /// `charts`: each chart's triangles' corners (3 a triangle, in metres).
-    static func pack(_ charts: [[SIMD2<Float>]], resolution: Int, padding: Int) -> Result {
+    package static func pack(_ charts: [[SIMD2<Float>]], resolution: Int, padding: Int) -> Result {
         var pad = padding
         // So many charts that their gutters alone don't fit: narrower gutters.
         while pad > 1 && charts.count * (2 * pad + 1) * (2 * pad + 1) > resolution * resolution / 2 { pad /= 2 }

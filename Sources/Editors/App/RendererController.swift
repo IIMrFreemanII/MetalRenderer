@@ -7,6 +7,7 @@ import Landscape
 import Materials
 import Metal
 import MetalRenderer
+import Modeling
 import Physics
 import Plants
 
@@ -63,6 +64,7 @@ final class RendererController: InputHandler {
     private var terrainObservers: [(TerrainStatus) -> Void] = []
     var onToggleTerrain: (() -> Void)?          // Shift-T
     var onToggleFracture: (() -> Void)?         // Shift-F
+    var onToggleModeller: (() -> Void)?         // Shift-M
     /// An armed pick's answer (the Material Designer's).
     var onMaterialPicked: ((MaterialPick?) -> Void)?
     /// Who wants to know what a click in the view selected (its instance; nil: nothing).
@@ -246,6 +248,11 @@ final class RendererController: InputHandler {
             if !event.isARepeat { onToggleFracture?() }
             return
         }
+        // Shift-M: the Modeller's window (M alone cycles the GI method).
+        if key == "m" && event.modifierFlags.contains(.shift) {
+            if !event.isARepeat { onToggleModeller?() }
+            return
+        }
         // Shift-T: the Terrain Editor's window (T alone is Reference mode).
         if key == "t" && event.modifierFlags.contains(.shift) {
             if !event.isARepeat { onToggleTerrain?() }
@@ -421,5 +428,25 @@ extension RendererController: MaterialEditorHost {
             self?.onMaterialPicked?(p)
             self?.onMaterialPicked = nil
         }
+    }
+}
+
+/// The Modeller's host: the renderer's selection as a model, saved assets back into the scene, placing one.
+extension RendererController: ModelingHost {
+    func modelOfSelection(_ done: @escaping (ModelingDocument?, String, ModelSource?) -> Void) {
+        renderer.perform { r in
+            let s = r.modelingSelection()
+            DispatchQueue.main.async {
+                done(s.document, s.message, s.document == nil ? nil : ModelSource(placedObject: s.placedObject, instances: s.instances))
+            }
+        }
+    }
+
+    func modelAssetSaved(_ slug: String, source: ModelSource?) {
+        renderer.perform { r in r.modelAssetSaved(slug, placedObject: source?.placedObject, instances: source?.instances ?? []) }
+    }
+
+    func placeModelAsset(_ slug: String) {
+        renderer.perform { r in r.addPlaced(asset: "mesh:\(slug)") }
     }
 }
