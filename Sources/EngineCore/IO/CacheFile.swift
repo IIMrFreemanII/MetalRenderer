@@ -12,7 +12,7 @@ package enum CacheFile {
 
     /// Writes `data` to a temporary file next to `url`, then moves it into place: a reader never sees half a file.
     package static func write(_ data: Data, to url: URL) throws {
-        let temporary = url.appendingPathExtension("tmp-\(ProcessInfo.processInfo.processIdentifier)")
+        let temporary = url.appendingPathExtension("tmp-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")   // (two writers of one file in a process: a scene and its outline built side by side)
         try data.write(to: temporary)
         _ = try? FileManager.default.removeItem(at: url)
         try FileManager.default.moveItem(at: temporary, to: url)
