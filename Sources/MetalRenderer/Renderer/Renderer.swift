@@ -225,11 +225,12 @@ package final class Renderer: NSObject {
     package var skyRefreshed: (sky: SkySettings, scene: Int)?   // what the sky texture was fully drawn for
     package var atmosphereCache: (sun: SIMD3<Float>, ground: SIMD3<Float>)?
     /// Shading-argument layout (MSL SceneShading): seven buffer addresses, the sky and cloud-shadow textures, SkyParams
-    /// (16-byte aligned), then the extras', the programs' parameters' and the water's addresses.
+    /// (16-byte aligned), then the extras', the programs' parameters', the water's and the cars' damage's addresses.
     package static let shadingSkyOffset = 56, shadingParamsOffset = 80
     package static let shadingExtrasOffset = 80 + MemoryLayout<GPUSkyParams>.stride   // MaterialExtra's address (MATERIAL_EXTRAS)
     package static let shadingProcParamsOffset = shadingExtrasOffset + 8   // the programs' parameters (PROCEDURAL_CODE)
     package static let shadingWaterOffset = shadingExtrasOffset + 16   // WaterScene's address (WATER), or 0
+    package static let shadingDamageOffset = shadingExtrasOffset + 24   // the cars' damage's address (SceneBuffers.damage), or 0
     package static let shadingArgsLength = shadingExtrasOffset + 32   // 304 (16-byte aligned): the shader asserts it
 
     // Per-frame-in-flight resources (the CPU writes these while the GPU may still read older ones)

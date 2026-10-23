@@ -211,6 +211,9 @@ package struct SceneBuffers {
 
     /// The scene's arrays (what its borrowed meshes have is in `blocks`), and its mesh table.
     let positions, normals, indices, meshes, uvs, emissive, triangleMaterials: MTLBuffer
+    /// With cars: per vertex (the positions'), its car's damage (crush, scrape, dirt; a dark lamp in w), which the soft
+    /// mesh kernel writes and the shading reads (MSL SceneShading.damage).
+    let damage: MTLBuffer?
     /// Per mesh: the block of a borrowed mesh, nil for a mesh of the arrays. Empty if no mesh is borrowed.
     let blocks: [MeshBlock?]
     private(set) var namedBlocks: [String: MeshBlock] = [:]
@@ -325,6 +328,9 @@ package struct SceneBuffers {
         }
         options.load?.step("Buffers", detail: scene.hasSDFShapes ? "arrays, SDF shapes" : "arrays")
         positions = try buffer(scene.positions, "positions")
+        let carDamage = scene.physics?.hasCars == true ? try empty(scene.positions.count * 4, "carDamage") : nil
+        if let carDamage { memset(carDamage.contents(), 0, carDamage.length) }
+        damage = carDamage
         sdf = try SDFBuffers(device: device, scene: scene)
         normals = try buffer(scene.normals, "normals")
         indices = try buffer(scene.indices, "indices")

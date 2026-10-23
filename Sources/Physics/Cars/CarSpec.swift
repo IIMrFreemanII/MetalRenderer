@@ -91,6 +91,9 @@ package struct CarSpec: Equatable {
     package var assists = true
     /// The body's shape measured from a model (`fitted`), in place of the key heights' lines: nil, the procedural one.
     package var profile: CarProfile?
+    /// Where the model's left mirror is (its middle; the right one's is across), if it has them: a part of its own
+    /// (CarBlueprint.addMirror).
+    package var mirror: SIMD3<Float>?
 
     package var frontAxle: Float { wheelbase / 2 }
     package var rearAxle: Float { -wheelbase / 2 }
@@ -461,6 +464,19 @@ extension CarSpec {
         s.cowl = s.topHeight(min(s.windshieldBase + 0.15, hi.z))
         s.deckFront = top[n - 2]
         s.deckRear = top[1]
+        s.mirror = CarSpec.mirror(model.paint.positions, s)
         return s
+    }
+
+    /// The left mirror's middle in `paint`: what sticks out past the body's side (`halfWidth`, below the belt line) a
+    /// little above the belt line, near the windshield's base.
+    package static func mirror(_ paint: [SIMD3<Float>], _ s: CarSpec) -> SIMD3<Float>? {
+        let out = paint.filter { p in
+            p.x > s.halfWidth(p.z) + 0.03 && p.y > s.belt - 0.05 && p.y < s.belt + 0.3 && abs(p.z - s.windshieldBase - 0.1) < 0.5
+        }
+        guard out.count >= 12 else { return nil }
+        let lo = out.reduce(SIMD3<Float>(repeating: .infinity)) { simd_min($0, $1) }, hi = out.reduce(-lo) { simd_max($0, $1) }
+        // (Its body: the half of it farthest out, not the stalk.)
+        return SIMD3((lo.x + hi.x) / 2 + 0.02, (lo.y + hi.y) / 2, (lo.z + hi.z) / 2)
     }
 }

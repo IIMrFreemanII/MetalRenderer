@@ -14,8 +14,20 @@ import MetalRenderer
 /// look and in the full one; what the cars' steps cost on autopilot laps (the `cpu` column).
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
-        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels,
+        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
     ]
+
+    /// The wall demo's damage in the full look, close (CarDamage.swift): at 50 km/h just after the hit (the shards, the
+    /// steam) and stopped, and at 100 km/h stopped (the smoke), from the front three-quarters by the wall.
+    private static func carsDamage() -> [Config] {
+        let near = Scene.camera([4.2, 1.9, Scene.carWallZ - 4.8], yaw: -2.3, pitch: -0.2)
+        return [(Float(50), Float(1.4)), (50, 4), (100, 4)].map { kmh, t in
+            carBase(String(format: "damage %.0f t%03.1f", kmh, t)).with {
+                $0.scene.cars.demoSpeed = kmh
+                $0.solid = false
+            }.from(near).still(at: t)
+        }
+    }
 
     /// The wall demo's moments: running up, the hit, crushed and stopped.
     static let carMoments: [Float] = [0.5, 1.1, 1.4, 3]

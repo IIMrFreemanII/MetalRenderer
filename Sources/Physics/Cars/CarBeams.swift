@@ -32,16 +32,16 @@ extension CarSolver {
         let s = b.cars[c], h = p.gravity.w
         b.pushCounts[c] = 0
         for _ in 0..<PhysicsWorld.axlePasses {
-            for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) { solveAxle(b.wheels[w], b, h) }
+            for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) where b.wheels[w].flags & CarWheel.off == 0 { solveAxle(w, b, h) }
         }
         let first = Int(s.firstBeam), count = Int(s.beamCount)
         for k in first..<(first + count) { b.lambdas[k] = 0 }
         for pass in 0..<carIterations { for k in first..<(first + count) { solveBeam(k, b, h, first: pass == 0) } }
+        let corners = Int(s.firstCorner)..<(first + count)
         for _ in 0..<cornerPasses {
-            for k in first..<(first + count) where b.beams[k].info & CarBeam.cornerBit != 0 && abs(b.beams[k].load) < 0.5 * b.beams[k].yield {
-                solveBeam(k, b, h, first: false)
-            }
+            for k in corners where abs(b.beams[k].load) < 0.5 * b.beams[k].yield { solveBeam(k, b, h, first: false) }
         }
+        for k in corners where (b.beams[k].info >> 8) & 0xFF == CarBeamZone.arm.rawValue { armLoad(k, b, h) }
         let candidates = Int(s.firstCandidate)..<Int(s.firstCandidate + s.candidateCount)
         for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) { nodeContacts(i, c, b, candidates, h) }
         for k in first..<(first + count) where b.beams[k].info & (CarBeam.hullBit | CarBeam.brokenBit) == CarBeam.hullBit {
@@ -58,11 +58,14 @@ extension CarSolver {
         }
     }
 
-    /// Wheel `w`'s axle: its two hub points (its axle's ends, `hubOffset` out from its centre) held to its hub nodes.
-    @inline(__always) package static func solveAxle(_ w: CarWheel, _ b: CarBuffers, _ h: Float) {
-        let i = Int(w.body)
+    /// Wheel `k`'s axle: its two hub points (its axle's ends, `hubOffset` out from its centre) held to its hub nodes;
+    /// the knock it took (what breaks it: CarDamage.swift).
+    @inline(__always) package static func solveAxle(_ k: Int, _ b: CarBuffers, _ h: Float) {
+        let w = b.wheels[k], i = Int(w.body)
         var body = b.bodies[i]
         let soft = PhysicsWorld.axleCompliance / (h * h)
+        var taken = SIMD3<Float>()
+        defer { b.wheels[k].axleKnock = max(b.wheels[k].axleKnock, length(SIMD2(taken.x, taken.z)) / (h * h)) }
         for end in 0..<2 {
             let node = Int(end == 0 ? w.hubIn : w.hubOut)
             let r = PhysicsMath.qrot(body.rotation, w.axle * (end == 0 ? -w.hubOffset : w.hubOffset))
@@ -73,6 +76,7 @@ extension CarSolver {
             let n = d / l, wn = b.particles[node].prevPosition.w, wb = PhysicsWorld.weight(body, r, n)
             guard wn + wb > 0 else { continue }
             let lambda = l / (wn + wb + soft)
+            taken += n * lambda
             b.particles[node].position = SIMD4(x + n * (lambda * wn), b.particles[node].position.w)
             PhysicsWorld.shove(&body, -n * lambda, r)
         }
@@ -101,18 +105,35 @@ extension CarSolver {
         b.lambdas[k] += lambda
         b.particles[ia].position = SIMD4(xa + n * (lambda * wa), qa.position.w)
         b.particles[ib].position = SIMD4(xb - n * (lambda * wb), qb.position.w)
-        guard kind == CarBeamKind.plastic.rawValue && first else { return }
-        let force = stretch / alpha
+        guard kind == CarBeamKind.plastic.rawValue && first && (beam.info >> 8) & 0xFF != CarBeamZone.arm.rawValue else { return }
+        flow(k, &beam, stretch / alpha, b)
+        b.beams[k] = beam
+    }
+
+    /// Wheel arm `k`'s substep, after the corners' passes: its load and flow. (An arm is as stiff as a rigid beam: a
+    /// millimetre the passes leave would read as 50 kN. Its load is its constraint's force, its lambdas over the
+    /// substep / h^2, which the averaging and the step's sum take the jolts out of.)
+    @inline(__always) package static func armLoad(_ k: Int, _ b: CarBuffers, _ h: Float) {
+        var beam = b.beams[k]
+        guard beam.info & CarBeam.brokenBit == 0 else { return }
+        flow(k, &beam, -b.lambdas[k] / (h * h), b)
+        b.beams[k] = beam
+    }
+
+    /// Beam `k`'s (`beam`'s) load this substep `force` (N, + pulled): summed for its step, averaged into its load, and
+    /// its rest flowed past its yield (a tie rod's flow kept apart: its length is the steering's each substep).
+    @inline(__always) package static func flow(_ k: Int, _ beam: inout CarBeam, _ force: Float, _ b: CarBuffers) {
+        let alpha = beam.compliance
         b.loads[k] += force
         beam.load += carLoadAverage * (force - beam.load)
         let over = abs(beam.load) - beam.yield
         if over > 0 {
-            let flow = min(over * alpha, carFlow)
-            beam.rest += beam.load > 0 ? flow : -flow
+            let flow = min(over * alpha, carFlow), change = beam.load > 0 ? flow : -flow
+            beam.rest += change
             let limit = b.limits[k]
             beam.yield *= 1 + limit.hardening * flow / limit.rest0
+            if beam.kind == CarBeamKind.steer.rawValue { b.limits[k].bend += change }
         }
-        b.beams[k] = beam
     }
 
     /// Node `i` of car `c` pushed out of the statics and bodies among `candidates` (by no more than it went in this
@@ -124,6 +145,7 @@ extension CarSolver {
         guard wn > 0 else { return }
         let r = q.position.w, prev = PhysicsMath.xyz(q.prevPosition)
         var x = PhysicsMath.xyz(q.position)
+        var slid = SIMD2<Float>()
         for k in candidates {
             let code = b.candidates[k]
             if code & PhysicsWorld.staticBit != 0 {
@@ -136,6 +158,7 @@ extension CarSolver {
                 let moved = x - prev
                 let overlap = min(-depth, max(-dot(moved, n), 0) + PhysicsWorld.pushSpeed * h)
                 x += PhysicsWorld.particlePush(n, overlap, moved, (q.velocity.w * o.velocity.w).squareRoot())
+                slid += sliding(moved, n, h)
             } else {
                 let j = Int(code), o = b.bodies[j], centre = PhysicsMath.xyz(o.position)
                 let reach = r + o.invInertia.w
@@ -149,6 +172,7 @@ extension CarSolver {
                 let slide = (x - prev) - surface * h
                 let overlap = min(-depth, max(-dot(slide, n), 0) + PhysicsWorld.pushSpeed * h)
                 let push = PhysicsWorld.particlePush(n, overlap, slide, (q.velocity.w * o.velocity.w).squareRoot())
+                slid += sliding(slide, n, h)
                 let l = length(push)
                 guard l > 1e-9 else { continue }
                 // The body's share kept in a push of its own or, the car's list full, added to the last push to the same
@@ -177,7 +201,18 @@ extension CarSolver {
         }
         q.position = SIMD4(x, q.position.w)
         b.particles[i] = q
+        if slid != .zero { b.wear[i] += slid }
     }
+
+    /// How far a node that went `moved` this substep against a surface of normal `n` slid along it: fast (a scrape:
+    /// faster than `scrapeSpeed`), and at all (dirt).
+    @inline(__always) package static func sliding(_ moved: SIMD3<Float>, _ n: SIMD3<Float>, _ h: Float) -> SIMD2<Float> {
+        let along = length(moved - n * dot(moved, n))
+        return SIMD2(along > scrapeSpeed * h ? along : 0, along)
+    }
+
+    /// The speed (m/s) a node slides at on what it touches that scrapes its paint off.
+    package static let scrapeSpeed: Float = 3
 
     /// A hull beam's middle against the statics: a pole between its two nodes pushes both out.
     @inline(__always) package static func beamMiddle(_ beam: CarBeam, _ b: CarBuffers, _ candidates: Range<Int>, _ h: Float) {
@@ -207,7 +242,8 @@ extension CarSolver {
     }
 
     /// Car `c`'s step end: each beam's load over the step (its sum over the substeps), the beams it broke, and how many
-    /// of its plastic beams are bent and broken (only theirs: a tie rod's length is the steering's).
+    /// of its plastic beams (and tie rods) are bent and broken (a tie rod's flow is its bend: its length is the
+    /// steering's).
     @inline(__always) package static func breakBeams(_ c: Int, _ b: CarBuffers, substeps: Float) {
         var s = b.cars[c]
         var bent: Int32 = 0, broken: Int32 = 0
@@ -215,14 +251,14 @@ extension CarSolver {
             let load = b.loads[k] / substeps
             b.loads[k] = 0
             var beam = b.beams[k]
-            guard beam.kind == CarBeamKind.plastic.rawValue else { continue }
-            let limit = b.limits[k]
-            if beam.info & CarBeam.brokenBit == 0
-                && (abs(load) > limit.strength || abs(beam.rest - limit.rest0) > limit.strainLimit * limit.rest0) {
+            let steer = beam.kind == CarBeamKind.steer.rawValue
+            guard beam.kind == CarBeamKind.plastic.rawValue || steer else { continue }
+            let limit = b.limits[k], flow = steer ? limit.bend : beam.rest - limit.rest0
+            if beam.info & CarBeam.brokenBit == 0 && (abs(load) > limit.strength || abs(flow) > limit.strainLimit * limit.rest0) {
                 beam.info |= CarBeam.brokenBit
                 b.beams[k] = beam
             }
-            if beam.info & CarBeam.brokenBit != 0 { broken += 1 } else if abs(beam.rest - limit.rest0) > 0.01 * limit.rest0 { bent += 1 }
+            if beam.info & CarBeam.brokenBit != 0 { broken += 1 } else if abs(flow) > 0.01 * limit.rest0 { bent += 1 }
         }
         s.bent = bent
         s.broken = broken

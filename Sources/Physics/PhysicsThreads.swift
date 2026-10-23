@@ -1,5 +1,6 @@
 import EngineCore
 import Foundation
+import simd
 import CPhysicsAtomics
 
 /// The CPU physics step's workers (PhysicsCPU.swift): a pool of threads that, while a step runs, spin waiting for the
@@ -553,6 +554,34 @@ package final class PhysicsStepper {
         package var cars: [CarTelemetry]
         package var stepIndex: Int
 
+        /// What a frame between `before`'s steps and `after`'s draws, `t` of the way (0...1) from one to the other: the
+        /// bodies' and particles' places (and the cars' frames) blended, the rest `after`'s. (A car scene's frames come
+        /// faster than its steps: drawn from the latest, the cars moved on some frames and not on others, and the chase
+        /// camera stuttered.)
+        package static func between(_ before: Drawn, _ after: Drawn, _ t: Float) -> Drawn {
+            var d = after
+            guard t < 1, before.bodies.count == after.bodies.count, before.particles.count == after.particles.count,
+                  before.cars.count == after.cars.count else { return d }
+            for i in d.bodies.indices {
+                let a = before.bodies[i], b = after.bodies[i]
+                d.bodies[i].position = SIMD4(PhysicsMath.xyz(a.position) + (PhysicsMath.xyz(b.position) - PhysicsMath.xyz(a.position)) * t, b.position.w)
+                let qa = dot(a.rotation, b.rotation) < 0 ? -a.rotation : a.rotation
+                d.bodies[i].rotation = normalize(qa + (b.rotation - qa) * t)
+            }
+            for i in d.particles.indices {
+                let a = PhysicsMath.xyz(before.particles[i].position), b = after.particles[i].position
+                d.particles[i].position = SIMD4(a + (PhysicsMath.xyz(b) - a) * t, b.w)
+            }
+            for c in d.cars.indices {
+                let a = before.cars[c], b = after.cars[c]
+                d.cars[c].position = a.position + (b.position - a.position) * t
+                d.cars[c].centre = a.centre + (b.centre - a.centre) * t
+                d.cars[c].forward = normalize(a.forward + (b.forward - a.forward) * t)
+                d.cars[c].up = normalize(a.up + (b.up - a.up) * t)
+            }
+            return d
+        }
+
         package init(_ w: PhysicsWorld) {
             bodies = w.bodies
             particles = w.particles
@@ -580,6 +609,10 @@ package final class PhysicsStepper {
     private var busy = false
     private var stopping = false
     private var drawn: Drawn
+    /// What the last few frames' steps left, oldest first, `drawn` last (only it after a restart): a frame draws the two
+    /// round its time blended.
+    private var history: [Drawn] = []
+    package static let historyLength = 4
     private let finished = DispatchSemaphore(value: 0)
     /// How many frames' steps may wait their turn before a frame waits for them (the frame then runs at the steps'
     /// pace, a frame behind).
@@ -636,6 +669,13 @@ package final class PhysicsStepper {
         return drawn
     }
 
+    /// ...and those the last few frames' steps left before them, oldest first, the latest last.
+    package var recent: [Drawn] {
+        condition.lock()
+        defer { condition.unlock() }
+        return history.isEmpty ? [drawn] : history
+    }
+
     /// Ends the thread (after the step it is on); the world is the caller's again.
     package func stop() {
         condition.lock()
@@ -663,6 +703,11 @@ package final class PhysicsStepper {
             world.advance(to: next.time)
             let now = Drawn(world)
             condition.lock()
+            if now.stepIndex < drawn.stepIndex { history.removeAll() }
+            if now.stepIndex != drawn.stepIndex || history.isEmpty {
+                history.append(now)
+                if history.count > PhysicsStepper.historyLength { history.removeFirst() }
+            }
             drawn = now
             busy = false
             condition.broadcast()

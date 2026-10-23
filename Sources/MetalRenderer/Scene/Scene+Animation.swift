@@ -84,9 +84,10 @@ extension Scene {
                 let stepper = physicsStepper ?? PhysicsStepper(world: physics)
                 physicsStepper = stepper
                 stepper.request(to: t)
-                if physicsTime == t { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
+                let paused = physicsTime == t
+                if paused { stepper.waitIdle() }   // (paused, or a still: the frame shows where they are)
                 physicsTime = t
-                let drawn = stepper.latest
+                let drawn = physics.hasCars ? drawnBetween(stepper, at: t, paused: paused) : stepper.latest
                 placeBodies(drawn)
                 behaviour?.drawn(self, drawn)
             } else {
@@ -122,6 +123,47 @@ extension Scene {
                 }
             }
         }
+    }
+
+    /// What a frame at `t` draws of a world with cars (`drawnFrame`): the two of its stepper's recent steps round a
+    /// time that moves with the frames, blended there: it moves on by each frame's length, eased toward half a step
+    /// behind the latest steps on average (`physicsLag`: how far behind the frame they are), so the cars and the
+    /// camera that chases them move every frame by as much as the frame lasted (from that average itself, each frame
+    /// moved by a little more or less), and a frame whose steps came late (or two at once) still has two round it.
+    /// Paused, the latest.
+    func drawnBetween(_ stepper: PhysicsStepper, at t: Float, paused: Bool) -> PhysicsStepper.Drawn {
+        let recent = stepper.recent, latest = recent[recent.count - 1], h = PhysicsWorld.stepLength
+        physicsLag += (min(max(t - Float(latest.stepIndex) * h, 0), 0.25) - physicsLag) * 0.1
+        let target = t - physicsLag - h / 2
+        var shown = target
+        if let last = physicsShown, t > last.at, abs(last.shown + (t - last.at) - target) < 0.1 {
+            shown = last.shown + (t - last.at)
+            shown += (target - shown) * 0.05
+        }
+        physicsShown = (shown, t)
+        var drawn = latest
+        if !paused, recent.count > 1 {
+            var k = recent.count - 2
+            while k > 0 && Float(recent[k].stepIndex) * h > shown { k -= 1 }
+            let from = Float(recent[k].stepIndex) * h, to = Float(recent[k + 1].stepIndex) * h
+            drawn = PhysicsStepper.Drawn.between(recent[k], recent[k + 1], simd_clamp((shown - from) / max(to - from, 1e-6), 0, 1))
+            // (The later state's damage, breaks and gauges are what it shows; only the places are blended.)
+            if k + 1 < recent.count - 1 {
+                drawn.particles = drawn.particles.indices.map { i in
+                    var q = latest.particles[i]
+                    q.position = drawn.particles[i].position
+                    return q
+                }
+                drawn.cars = latest.cars.indices.map { c in
+                    var car = latest.cars[c]
+                    (car.position, car.centre, car.forward, car.up) = (drawn.cars[c].position, drawn.cars[c].centre, drawn.cars[c].forward, drawn.cars[c].up)
+                    return car
+                }
+                (drawn.breakLog, drawn.breakSteps, drawn.breakTotal, drawn.stepIndex) = (latest.breakLog, latest.breakSteps, latest.breakTotal, latest.stepIndex)
+            }
+        }
+        drawnFrame = drawn
+        return drawn
     }
 
     /// The rigid bodies' and particles' instances where the physics has them.
@@ -194,7 +236,7 @@ extension Scene {
 
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
     package var drawnPhysics: PhysicsStepper.Drawn? {
-        if let physicsStepper { return physicsStepper.latest }
+        if let physicsStepper { return drawnFrame ?? physicsStepper.latest }
         return physics.map { PhysicsStepper.Drawn($0) }
     }
 

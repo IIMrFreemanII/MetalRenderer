@@ -237,7 +237,8 @@ package struct GPUSoftVertex {
     package var info = SIMD4<UInt32>()               // x = its place in the scene's vertex buffer, y = its mesh's last-frame offset
                                              // (GPUMesh.prevOffset), z = its soft body, w = its ring of triangles: where it
                                              // starts in PhysicsWorld.softRings << 5 | how many
-    package var embeds = SIMD4<UInt32>()             // x = its first place in its tets (PhysicsWorld.softEmbeds), y = how many
+    package var embeds = SIMD4<UInt32>()             // x = its first place in its tets (PhysicsWorld.softEmbeds), y = how many; a
+                                             // car's: z = PhysicsWorld.carVertexBit | its pane | lampBit, w = its car's first node
 }
 
 /// Where a soft body's drawn vertex is in one of the tets it follows (PhysicsSoft.swift): MSL PhysicsSoftEmbed. Or,

@@ -129,10 +129,13 @@ struct SceneShading {
     device const MaterialExtra*   extras;      // with MATERIAL_EXTRAS: per material (procedural materials' extras)
     device const float4*          procParams;  // with PROCEDURAL_CODE: the programs' parameters (MatShaderCode)
     device const WaterScene*      water;       // with WATER: this frame's water (Renderer+Water.swift)
+    device const uchar4*          damage;      // with cars: per vertex, its car's crush, scrape, dirt, dark lamp (SceneBuffers.damage),
+                                               // or null
 };
 static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, extras) == 272 && __builtin_offsetof(SceneShading, procParams) == 280
-              && __builtin_offsetof(SceneShading, water) == 288,
-              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingExtrasOffset, shadingWaterOffset)");
+              && __builtin_offsetof(SceneShading, water) == 288 && __builtin_offsetof(SceneShading, damage) == 296,
+              "SceneShading: Renderer writes these offsets (shadingSkyOffset, shadingParamsOffset, shadingExtrasOffset, shadingWaterOffset, "
+              "shadingDamageOffset)");
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 

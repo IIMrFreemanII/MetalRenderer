@@ -25,6 +25,9 @@ extension Scene {
         package var player = 0
         /// The car pack's textures added so far (by image, x 2, + 1 for sRGB: indices into the scene's textures).
         package var packTextures: [Int: UInt32] = [:]
+        /// Per CarEvent (glass, steam, smoke, debris) its particle proxy (ParticlesGPU.breakProxies: an emitter whose
+        /// events are the cars' breaks), ParticleSystem.none for none; empty: no dust.
+        package var breakProxies: [UInt32] = []
         package init() {}
     }
 
@@ -114,7 +117,7 @@ extension Scene {
             instances[i].simulated = true
             return i
         }
-        let car = world.addCar(blueprint, transform: transform, rimSDF: rimSDF, wheelInstances: wheels, velocity: velocity)
+        let car = world.addCar(blueprint, transform: transform, rimSDF: rimSDF, wheelInstances: wheels, velocity: velocity, panes: surface.panes)
         // The panels, in the scene's space where the nodes put them.
         let rotation = simd_float3x3(columns: (dropW(transform.columns.0), dropW(transform.columns.1), dropW(transform.columns.2)))
         var drawn: [Int] = []

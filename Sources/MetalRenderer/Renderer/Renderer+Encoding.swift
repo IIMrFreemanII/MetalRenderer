@@ -68,7 +68,7 @@ extension Renderer {
                                       descriptorStride: instanceDescriptorStride)
             }
             physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
-            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer, damage: sceneBuffers.damage)
             physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
             // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
             let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0

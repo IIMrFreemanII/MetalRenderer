@@ -15,7 +15,7 @@ package struct CarBeam {
     package var yield: Float = .infinity
     package var load: Float = 0
     /// Its kind (CarBeamKind) in the low byte, `brokenBit`, its zone (CarBeamZone) in the second byte, `hullBit`,
-    /// `cornerBit`.
+    /// `cornerBit`, `attachBit`, and its part (1 + its place in the car's parts, 0: the body's) from `partShift`.
     package var info: UInt32 = 0
 
     package static let brokenBit: UInt32 = 1 << 7
@@ -23,8 +23,13 @@ package struct CarBeam {
     package static let hullBit: UInt32 = 1 << 16
     /// A wheel's corner's (its knuckle, wishbones, tie rod, spring, mounts): solved again (CarSolver.cornerPasses).
     package static let cornerBit: UInt32 = 1 << 17
+    /// What holds a part on (a hinge, a latch, a clip): the part comes off when all of its are broken.
+    package static let attachBit: UInt32 = 1 << 18
+    package static let partShift: UInt32 = 24
 
     @inline(__always) package var kind: UInt32 { info & 0x7F }
+    /// 1 + its part's place among its car's, 0 for the body's.
+    @inline(__always) package var part: Int { Int(info >> CarBeam.partShift) }
 }
 
 /// CarBeam.info's low byte.
@@ -42,9 +47,10 @@ package enum CarBeamKind: UInt32 {
 }
 
 /// Where a beam is, for its strengths (CarBlueprint): the crumple zones front and rear, the cabin, the floor's rails,
-/// the engine, the suspension.
+/// the engine, the suspension, a wheel's arms (its wishbones and tie rods: they bend and break), a part's panel, what
+/// holds a part on.
 package enum CarBeamZone: UInt32 {
-    case crumple = 0, cabin, roof, rail, cabinRail, bumper, engine, suspension, bend
+    case crumple = 0, cabin, roof, rail, cabinRail, bumper, engine, suspension, bend, arm, panel, attach
 }
 
 /// What a beam breaks at, and its rest at the start: read at the step's end, and by the steering.
@@ -57,7 +63,9 @@ package struct CarBeamLimit {
     package var hardening: Float = 0
     /// A steering tie rod's change of length (m) at full lock to the left (sin of the angle).
     package var steer: Float = 0
-    package var pad = SIMD3<Float>()
+    /// A tie rod's bend (m): how far its flow has moved its length from the steering's (rest0 + steer x turn).
+    package var bend: Float = 0
+    package var pad = SIMD2<Float>()
 }
 
 /// One of a car's wheels: a rigid body (a rim) held by its axle to two hub nodes of the car's knuckle, turned by the
@@ -85,8 +93,69 @@ package struct CarWheel {
     package var spin: Float = 0
     package var load: Float = 0
     package var slip = SIMD2<Float>()
+    /// The hardest knock its axle took this step: its pull on its hubs along the ground (level, the world's) in one
+    /// substep (N; its XPBD lambdas / h^2). Past `axleStrength` (a curb's, not a bump's, which mostly lifts), it comes
+    /// off, as it does when its knuckle's links break (`links`). And the hardest so far.
+    package var axleKnock: Float = 0
+    package var knockPeak: Float = 0
+    /// What holds its knuckle (its corner's links: CarBlueprint.Corner.links; beams of CarSystem.beams, -1 none).
+    package var links = SIMD8<Int32>(repeating: -1)
 
     package static let driven: UInt32 = 1, steered: UInt32 = 2, handbraked: UInt32 = 4, front: UInt32 = 8
+    /// Off its axle: a body of its own (it has its friction back and rolls away).
+    package static let off: UInt32 = 16
+}
+
+/// A part of a car's body that can come off (CarBlueprint.Part): its own nodes (`nodeCount` of the car's particles
+/// from `firstNode`) and panel beams, on the body's by its attachments (CarBeam.attachBit) and by supports that only
+/// push. Off, it is a free island of nodes; still for a second, it is frozen (its nodes held: no mass) until a body
+/// comes near.
+package struct CarPart {
+    package var firstNode: Int32 = 0
+    package var nodeCount: Int32 = 0
+    /// Its nodes' inverse mass (they weigh the same), for when it wakes.
+    package var inverseMass: Float = 0
+    /// CarPartKind.
+    package var kind: UInt32 = 0
+    /// `off`, `frozen`.
+    package var flags: UInt32 = 0
+    /// How long (s) it has been still, off.
+    package var still: Float = 0
+    /// Its attachments not yet broken, as of its car's last step, and at the start: with less than half of them
+    /// left, the rest tear off too (`CarSolver.tornBelow`).
+    package var holding: Int32 = 0
+    package var attachments: Int32 = 0
+
+    package static let off: UInt32 = 1, frozen: UInt32 = 2
+}
+
+/// What a car's part is (CarBlueprint.Part).
+package enum CarPartKind: UInt32, CaseIterable {
+    case hood, trunk, frontBumper, rearBumper, frontDoor, rearDoor, mirror
+
+    package var title: String { ["hood", "trunk lid", "front bumper", "rear bumper", "front door", "rear door", "mirror"][Int(rawValue)] }
+}
+
+/// A pane of a car's glass, or a lamp (CarSurface.Pane): it breaks when the beams of its frame strain past
+/// `glassStrain` (or, a lamp, bend past `lampStrain`), or when the part it is on comes off; its drawn vertices then
+/// fold away (a pane) or go dark (a lamp), and it scatters shards.
+package struct CarPane {
+    /// Its frame's beams (`CarSystem.paneFrames` from `firstFrame`).
+    package var firstFrame: Int32 = 0
+    package var frameCount: Int32 = 0
+    /// The part it is on (1 + its place among its car's parts), 0: the body.
+    package var part: Int32 = 0
+    /// A lamp's (its glass breaks and its light goes out), not a window's.
+    package var lamp: Bool = false
+    package var broken: Bool = false
+    /// Four nodes round it: where its shards fly from.
+    package var corners = SIMD4<UInt32>()
+}
+
+/// What a car's step leaves for the dust and debris (PhysicsWorld.breakLog's events, GPUBreakEvent.velocity.w): a
+/// pane's shards, steam from a broken radiator, smoke from a burning engine, a part's bits as it comes off.
+package enum CarEvent: UInt32, CaseIterable {
+    case glass = 0, steam, smoke, debris
 }
 
 /// A car's state (Physics+Cars.swift): its ranges in the shared arrays, its tuning, its input and its drivetrain.
@@ -96,6 +165,8 @@ package struct CarState {
     package var nodeCount: Int32 = 0
     package var firstBeam: Int32 = 0
     package var beamCount: Int32 = 0
+    /// Its wheels' corners' beams, its last (CarBlueprint.firstCorner).
+    package var firstCorner: Int32 = 0
     package var firstWheel: Int32 = 0
     package var wheelCount: Int32 = 0
     /// The engine's nodes (its torque's reaction), in `CarSystem.reactionNodes`.
@@ -103,11 +174,22 @@ package struct CarState {
     package var reactionCount: Int32 = 0
     /// The nodes its frame is measured from: the floor's middle at the rear, at the front, and the left sill.
     package var frame = SIMD3<UInt32>()
+    /// Its body's rings' nodes: its first `ringNodes` (CarBlueprint.rings, built first), whose middle a camera looks at
+    /// (CarTelemetry.centre).
+    package var ringNodes: Int32 = 0
     /// The step's candidates (`CarSystem.candidates`): statics (staticBit set), then bodies.
     package var firstCandidate: Int32 = 0
     package var candidateCount: Int32 = 0
     /// Its mass (kg, wheels included), the world's at the start.
     package var mass: Float = 0
+    /// Its parts (`CarSystem.parts`), panes and lamps (`panes`), and its front end's nodes (`radiatorNodes`: how far
+    /// they came back toward its engine is how far its front is crushed).
+    package var firstPart: Int32 = 0
+    package var partCount: Int32 = 0
+    package var firstPane: Int32 = 0
+    package var paneCount: Int32 = 0
+    package var firstRadiator: Int32 = 0
+    package var radiatorCount: Int32 = 0
 
     // Input, as the last command left it, and as the car has it now (ramped).
     package var input = CarInput()
@@ -133,6 +215,20 @@ package struct CarState {
     /// (breakBeams).
     package var bent: Int32 = 0
     package var broken: Int32 = 0
+
+    // Damage (CarDamage.swift), as of its last step's end.
+    /// How far (m) its front is crushed in front of the engine; its radiator's coolant left (1 full), the engine's heat
+    /// (0 cold, 1 seizing), how broken the engine is (1: seized, it won't run).
+    package var frontCrush: Float = 0
+    package var coolant: Float = 1
+    package var heat: Float = 0
+    package var engineDamage: Float = 0
+    /// Parts come off, wheels off their axles, panes and lamps broken.
+    package var partsOff: Int32 = 0
+    package var wheelsOff: Int32 = 0
+    package var panesBroken: Int32 = 0
+    /// Steps since it last gave off steam or smoke.
+    package var sinceSmoke: Int32 = 0
 }
 
 /// A car's input (a `car` command's: Physics+Cars.swift): the pedals' and the wheel's targets, from -1 to 1 for the
@@ -156,6 +252,8 @@ package struct CarInput: Equatable {
 package struct CarTelemetry {
     /// Its frame: the middle of its floor, its forward and up (unit, the world).
     package var position = SIMD3<Float>()
+    /// The middle of its body's rings' nodes: where a camera looks (the whole body's middle, not two of its nodes').
+    package var centre = SIMD3<Float>()
     package var forward = SIMD3<Float>(0, 0, 1)
     package var up = SIMD3<Float>(0, 1, 0)
     /// Speed along its forward (m/s), engine rpm, gear (-1 reverse, 0 neutral), the pedals, the steering (rad).
@@ -168,6 +266,16 @@ package struct CarTelemetry {
     /// Beams bent and broken so far.
     package var bent: Int32 = 0
     package var broken: Int32 = 0
+    /// Its damage (CarState's): the front's crush (m), coolant left, the engine's heat and damage, whether it runs;
+    /// parts and wheels off, panes and lamps broken.
+    package var frontCrush: Float = 0
+    package var coolant: Float = 1
+    package var heat: Float = 0
+    package var engineDamage: Float = 0
+    package var running = true
+    package var partsOff: Int32 = 0
+    package var wheelsOff: Int32 = 0
+    package var panesBroken: Int32 = 0
 
     package init() {}
 }
@@ -206,20 +314,42 @@ package struct CarSystem {
     package var bodyPushes: [SIMD4<Float>] = []
     package var bodyTwists: [SIMD3<Float>] = []
     package var telemetry: [CarTelemetry] = []
+    /// The cars' parts, panes and lamps, their panes' frames (beams), the beams in front of their engines.
+    package var parts: [CarPart] = []
+    package var panes: [CarPane] = []
+    package var paneFrames: [UInt32] = []
+    /// The cars' front ends' nodes, and how far ahead of their engine's middle each was at the start (m).
+    package var radiatorNodes: [UInt32] = []
+    package var radiatorReach: [Float] = []
+    /// Per car `maxEvents` events its last step left (CarEvent), and how many: endCarStep logs them in the cars' order.
+    package var events: [GPUBreakEvent] = []
+    package var eventCounts: [Int32] = []
+    /// Per particle (a car's node's), how far (m) it has slid on what it touched fast (scrapes) and at all (dirt) and
+    /// not yet worn into its damage (CarSolver.wearNodes).
+    package var wear: [SIMD2<Float>] = []
     /// As built (reset puts them back).
     package var initialCars: [CarState] = []
     package var initialBeams: [CarBeam] = []
+    package var initialLimits: [CarBeamLimit] = []
     package var initialWheels: [CarWheel] = []
+    package var initialParts: [CarPart] = []
+    package var initialPanes: [CarPane] = []
 
     package static let maxPushes = 256
+    package static let maxEvents = 16
 
     package var isEmpty: Bool { cars.isEmpty }
 
     package mutating func reset() {
         cars = initialCars
         beams = initialBeams
+        limits = initialLimits
         wheels = initialWheels
+        parts = initialParts
+        panes = initialPanes
         for i in loads.indices { loads[i] = 0 }
+        for i in eventCounts.indices { eventCounts[i] = 0 }
+        for i in wear.indices { wear[i] = .zero }
     }
 }
 

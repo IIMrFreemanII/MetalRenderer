@@ -27,6 +27,19 @@ extension PhysicsWorld {
     /// A particle's flag: a car's node. A body's: a car's wheel (its tyre is the car's, not a contact's).
     package static let carBit: UInt32 = 8
     package static let wheelBit: UInt32 = 128
+    /// A car's drawn vertex (GPUSoftVertex.embeds.z): `carVertexBit`, its pane or lamp (1 + its place among its car's,
+    /// in the low byte; 0: none) and `lampBit` (a lamp goes dark when it breaks; a pane folds away). MSL
+    /// PHYS_CAR_VERTEX, PHYS_CAR_LAMP.
+    package static let carVertexBit: UInt32 = 1 << 31, lampBit: UInt32 = 1 << 8
+    /// The front's crush (m) a radiator starts to leak at, and how far more it leaks at its worst; the crush the
+    /// engine block starts to break at, and how much more breaks it. (Floats: a SIMD constant's literal is made at run
+    /// time, behind a swift_once the step's loop would call.)
+    package static let radiatorCrush: Float = 0.08, radiatorSpan: Float = 0.25, blockCrush: Float = 0.5, blockSpan: Float = 0.3
+    /// What a wheel's axle breaks at (N, along the ground, in a substep: CarWheel.axleKnock; a 60 km/h curb knocks
+    /// 39 kN, a speed bump at 60 km/h 23 kN).
+    package static let axleStrength: Float = 32_000
+    /// How much a pane's frame strains before it shatters, a lamp's before it breaks.
+    package static let glassStrain: Float = 0.008, lampStrain: Float = 0.03
     /// A car's wheels' axles: their bushing's compliance (m/N), passes a substep.
     package static let axleCompliance: Float = 1e-9
     package static let axlePasses = 2
@@ -41,9 +54,11 @@ extension PhysicsWorld {
 
     /// A car made of `blueprint`, placed by `transform` (a rotation and a translation), moving at `velocity` (its
     /// wheels rolling with it); its wheels are bodies of SDF shape `rimSDF` (`CarBlueprint.rimShape`), moving
-    /// `wheelInstances` (one per corner, in the blueprint's order). Returns the car.
+    /// `wheelInstances` (one per corner, in the blueprint's order); its glass's panes and its lamps `panes` (its
+    /// surface's: CarSurface.panes, whose order the drawn vertices' flags name). Returns the car.
     @discardableResult
-    package func addCar(_ blueprint: CarBlueprint, transform: float4x4, rimSDF: Int, wheelInstances: [Int], velocity: SIMD3<Float> = .zero) -> Int {
+    package func addCar(_ blueprint: CarBlueprint, transform: float4x4, rimSDF: Int, wheelInstances: [Int], velocity: SIMD3<Float> = .zero,
+                        panes: [CarSurface.Pane] = []) -> Int {
         let spec = blueprint.spec, rim = blueprint.rimShape
         let r = spec.wheelRadius - CarBlueprint.tyreDepth
         let density = spec.wheelMass / (.pi * r * r * spec.wheelWidth)
@@ -58,12 +73,13 @@ extension PhysicsWorld {
             bodies[i].invInertia = SIMD4(PhysicsMath.xyz(bodies[i].invInertia) * (solid / spec.wheelInertia), bodies[i].invInertia.w)
             wheels.append(i)
         }
-        return addCar(blueprint, transform: transform, wheels: wheels, velocity: velocity)
+        return addCar(blueprint, transform: transform, wheels: wheels, velocity: velocity, panes: panes)
     }
 
     /// ...with its wheels' bodies made (`wheels`, one per corner in the blueprint's order).
     @discardableResult
-    package func addCar(_ blueprint: CarBlueprint, transform: float4x4, wheels wheelBodies: [Int], velocity: SIMD3<Float> = .zero) -> Int {
+    package func addCar(_ blueprint: CarBlueprint, transform: float4x4, wheels wheelBodies: [Int], velocity: SIMD3<Float> = .zero,
+                        panes: [CarSurface.Pane] = []) -> Int {
         precondition(wheelBodies.count == blueprint.corners.count, "a body per corner")
         let car = carSystem.cars.count, first = particles.count, spec = blueprint.spec
         for (p, m) in zip(blueprint.nodes, blueprint.masses) {
@@ -75,22 +91,57 @@ extension PhysicsWorld {
         state.firstNode = Int32(first)
         state.nodeCount = Int32(blueprint.nodes.count)
         state.firstBeam = Int32(carSystem.beams.count)
-        var tieOf: [Int: Int] = [:]
+        var tieOf: [Int: Int] = [:], beamOf: [SIMD2<Int>: Int] = [:]
+        for (k, beam) in blueprint.beams.enumerated() { beamOf[SIMD2(min(beam.a, beam.b), max(beam.a, beam.b))] = k }
         for beam in blueprint.beams {
-            let (k, c, yield, strength, hardening, strain) = CarBlueprint.strength(beam.zone)
+            var (k, c, yield, strength, hardening, strain) = CarBlueprint.strength(beam.zone)
+            if let s = beam.strength { (yield, strength) = (0.6 * s, s) }
             let rigid = beam.kind == .rigid || beam.kind == .steer
             let stiffness = beam.stiffness ?? (rigid ? 5e7 : k)
             let rest = beam.rest ?? simd_distance(blueprint.nodes[beam.a], blueprint.nodes[beam.b])
-            let plastic = beam.kind == .plastic
+            if let f = beam.flowLimit { strain = f / max(rest, 1e-3) }
+            // (A tie rod bends as an arm does: its flow is kept apart from the steering's length, CarBeamLimit.bend.)
+            let yields = beam.kind == .plastic || beam.kind == .steer
             if beam.kind == .steer { tieOf[beam.a] = carSystem.beams.count }
             carSystem.beams.append(CarBeam(nodes: SIMD2(UInt32(first + beam.a), UInt32(first + beam.b)), rest: rest, compliance: 1 / stiffness,
-                                           damping: beam.damping ?? (rigid ? 0 : c), yield: plastic ? yield : .infinity, load: 0,
+                                           damping: beam.damping ?? (rigid ? 0 : c), yield: yields ? yield : .infinity, load: 0,
                                            info: beam.kind.rawValue | beam.zone.rawValue << 8 | (beam.hull ? CarBeam.hullBit : 0)
-                                               | (beam.corner ? CarBeam.cornerBit : 0)))
-            carSystem.limits.append(CarBeamLimit(rest0: rest, strength: plastic ? strength : .infinity, strainLimit: plastic ? strain : .infinity,
+                                               | (beam.corner ? CarBeam.cornerBit : 0) | (beam.attach ? CarBeam.attachBit : 0)
+                                               | UInt32(beam.part) << CarBeam.partShift))
+            carSystem.limits.append(CarBeamLimit(rest0: rest, strength: yields ? strength : .infinity, strainLimit: yields ? strain : .infinity,
                                                  hardening: hardening, steer: beam.steer))
         }
         state.beamCount = Int32(carSystem.beams.count) - state.firstBeam
+        state.firstCorner = state.firstBeam + Int32(blueprint.firstCorner)
+        state.firstRadiator = Int32(carSystem.radiatorNodes.count)
+        let engine = blueprint.engine.reduce(SIMD3<Float>()) { $0 + blueprint.nodes[$1] } / Float(max(blueprint.engine.count, 1))
+        carSystem.radiatorNodes += blueprint.radiator.map { UInt32(first + $0) }
+        carSystem.radiatorReach += blueprint.radiator.map { blueprint.nodes[$0].z - engine.z }
+        state.radiatorCount = Int32(blueprint.radiator.count)
+        state.firstPart = Int32(carSystem.parts.count)
+        for (p, part) in blueprint.parts.enumerated() {
+            let holding = blueprint.beams.filter { $0.attach && $0.part == p + 1 }.count
+            carSystem.parts.append(CarPart(firstNode: Int32(first + part.firstNode), nodeCount: Int32(part.nodeCount),
+                                           inverseMass: Float(part.nodeCount) / part.mass, kind: part.kind.rawValue, holding: Int32(holding),
+                                           attachments: Int32(holding)))
+        }
+        state.partCount = Int32(blueprint.parts.count)
+        // Its panes and lamps: each one's frame the plastic beams among the nodes of the triangles it is on.
+        state.firstPane = Int32(carSystem.panes.count)
+        for pane in panes {
+            let on = Set(pane.hull.flatMap { t in [Int(blueprint.hull[t].x), Int(blueprint.hull[t].y), Int(blueprint.hull[t].z)] }).sorted()
+            let frame = blueprint.beams.indices.filter { k in
+                let beam = blueprint.beams[k]
+                return beam.kind == .plastic && !beam.attach && on.contains(beam.a) && on.contains(beam.b)
+            }
+            guard !on.isEmpty else { continue }
+            let corners = [0, on.count / 3, 2 * on.count / 3, on.count - 1].map { UInt32(first + on[$0]) }
+            carSystem.panes.append(CarPane(firstFrame: Int32(carSystem.paneFrames.count), frameCount: Int32(frame.count), part: Int32(pane.part),
+                                           lamp: pane.lamp, corners: SIMD4(corners[0], corners[1], corners[2], corners[3])))
+            carSystem.paneFrames += frame.map { UInt32(Int(state.firstBeam) + $0) }
+        }
+        state.paneCount = Int32(carSystem.panes.count) - state.firstPane
+        precondition(state.paneCount <= 16, "a car of more than 16 panes and lamps")
         let rotation = simd_float3x3(columns: (PhysicsMath.xyz(transform.columns.0), PhysicsMath.xyz(transform.columns.1),
                                                PhysicsMath.xyz(transform.columns.2)))
         let across = rotation * SIMD3<Float>(1, 0, 0), ahead = rotation * SIMD3<Float>(0, 0, 1)
@@ -108,6 +159,9 @@ extension PhysicsWorld {
             let driven = spec.drive == .all || (spec.drive == .front) == corner.front
             w.flags = (driven ? CarWheel.driven : 0) | (corner.front ? CarWheel.steered | CarWheel.front : CarWheel.handbraked)
             w.tie = corner.front ? Int32(tieOf[corner.arm] ?? -1) : -1
+            for (k, l) in corner.links.prefix(8).enumerated() {
+                w.links[k] = beamOf[SIMD2(min(l.x, l.y), max(l.x, l.y))].map { Int32(Int(state.firstBeam) + $0) } ?? -1
+            }
             // Its axle (the car's +x, whichever side: a wheel rolling forward spins positive) in its body's space.
             bodies[i].info.y |= PhysicsWorld.wheelBit
             bodies[i].velocity = SIMD4(velocity, 0)   // (no friction of its own: its tyre's)
@@ -120,6 +174,8 @@ extension PhysicsWorld {
         carSystem.reactionNodes += blueprint.engine.map { UInt32(first + $0) }
         state.reactionCount = Int32(blueprint.engine.count)
         state.frame = SIMD3(UInt32(first + blueprint.frame.x), UInt32(first + blueprint.frame.y), UInt32(first + blueprint.frame.z))
+        state.ringNodes = Int32(blueprint.rings.reduce(0) { $0 + $1.count })
+        precondition(blueprint.rings.joined().max().map { $0 < Int(state.ringNodes) } ?? true, "the rings' nodes first")
         state.mass = blueprint.bodyMass + Float(wheelBodies.count) * spec.wheelMass
         let tune = CarTune(spec)
         state.engine = tune.idle
@@ -129,7 +185,9 @@ extension PhysicsWorld {
     }
 
     /// Car `car`'s panels `part` drawn (CarSurface), their vertices from `vertexBase` in the scene's vertex buffer: as a
-    /// soft body's surface (PhysicsSoft.swift), each vertex on the node hull's triangles (GPUSoftEmbed.triangleKind).
+    /// soft body's surface (PhysicsSoft.swift), each vertex on the node hull's triangles (GPUSoftEmbed.triangleKind),
+    /// with its car's flags (GPUSoftVertex.embeds.z: `carVertexBit`, its pane or lamp) and first node (.w: where its
+    /// damage and its panes' breaks are read, `carDamage`).
     /// Returns its soft body (Scene.softMeshes' index).
     @discardableResult
     package func addCarSurface(_ part: CarSurface.Part, car: Int, hull: [SIMD3<Int32>], vertexBase: Int) -> Int {
@@ -139,7 +197,8 @@ extension PhysicsWorld {
             precondition(part.rings[v].count < 32 && softRings.count < 1 << 27, "a ring of 32 triangles or more")
             softRings += part.rings[v].map { $0 &+ UInt32(vertexBase) }
             softVertices.append(GPUSoftVertex(info: SIMD4(UInt32(vertexBase + v), 0, UInt32(body), ring),
-                                              embeds: SIMD4(UInt32(softEmbeds.count), UInt32(follows.count), 0, 0)))
+                                              embeds: SIMD4(UInt32(softEmbeds.count), UInt32(follows.count), PhysicsWorld.carVertexBit | part.flags[v],
+                                                            UInt32(s.firstNode))))
             let share = 1 / Float(follows.count)
             softEmbeds += follows.map { f in
                 let t = hull[f.triangle] &+ base
@@ -160,9 +219,15 @@ extension PhysicsWorld {
         carSystem.telemetry = [CarTelemetry](repeating: CarTelemetry(), count: carSystem.cars.count)
         carSystem.bodyPushes = [SIMD4<Float>](repeating: .zero, count: bodies.count)
         carSystem.bodyTwists = [SIMD3<Float>](repeating: .zero, count: bodies.count)
+        carSystem.events = [GPUBreakEvent](repeating: GPUBreakEvent(), count: carSystem.cars.count * CarSystem.maxEvents)
+        carSystem.eventCounts = [Int32](repeating: 0, count: carSystem.cars.count)
+        carSystem.wear = [SIMD2<Float>](repeating: .zero, count: particles.count)
         carSystem.initialCars = carSystem.cars
         carSystem.initialBeams = carSystem.beams
+        carSystem.initialLimits = carSystem.limits
         carSystem.initialWheels = carSystem.wheels
+        carSystem.initialParts = carSystem.parts
+        carSystem.initialPanes = carSystem.panes
         for c in carSystem.cars.indices { carSystem.telemetry[c] = carTelemetry(c) }
     }
 
@@ -250,6 +315,17 @@ extension PhysicsWorld {
                 }
             }
             s.candidateCount = Int32(carSystem.candidates.count) - s.firstCandidate
+            // Its parts that came off and froze, woken by a body that comes near (their nodes have their mass back).
+            for p in Int(s.firstPart)..<Int(s.firstPart + s.partCount) where carSystem.parts[p].flags & CarPart.frozen != 0 {
+                let part = carSystem.parts[p], x = PhysicsMath.xyz(particles[Int(part.firstNode)].position)
+                let near = carSystem.candidates[Int(s.firstCandidate)...].contains { code in
+                    code & PhysicsWorld.staticBit == 0 && simd_distance(PhysicsMath.xyz(bodies[Int(code)].position), x) < bodies[Int(code)].invInertia.w + 1
+                }
+                guard near else { continue }
+                for i in Int(part.firstNode)..<Int(part.firstNode + part.nodeCount) { particles[i].prevPosition.w = part.inverseMass }
+                carSystem.parts[p].flags &= ~CarPart.frozen
+                carSystem.parts[p].still = 0
+            }
             if active {
                 for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) {
                     let i = Int(carSystem.wheels[w].body)
@@ -286,12 +362,32 @@ extension PhysicsWorld {
         withCarBuffers { CarSolver.applyCarReactions($0) }
     }
 
-    /// The step's end: beams that broke, and what a frame shows of each car.
+    /// The step's end: beams that broke, the damage (CarDamage.swift: dents, scrapes, parts, wheels, panes, the engine),
+    /// the events it left for the dust in the cars' order, and what a frame shows of each car.
     func endCarStep() {
         let substeps = Float(self.substeps)
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { CarSolver.breakBeams(c, b, substeps: substeps) }
+                for c in range {
+                    CarSolver.breakBeams(c, b, substeps: substeps)
+                    CarSolver.damage(c, b, substeps: substeps)
+                }
+            }
+        }
+        var logged = 0
+        for c in carSystem.cars.indices {
+            for k in 0..<Int(carSystem.eventCounts[c]) {
+                breakLog.append(carSystem.events[c * CarSystem.maxEvents + k])
+                breakSteps.append(stepIndex)
+                logged += 1
+            }
+            carSystem.eventCounts[c] = 0
+        }
+        if logged > 0 {
+            breakTotal += logged
+            if breakLog.count > PhysicsWorld.breakLogLength {
+                breakLog.removeFirst(breakLog.count - PhysicsWorld.breakLogLength)
+                breakSteps.removeFirst(breakSteps.count - PhysicsWorld.breakLogLength)
             }
         }
         for c in carSystem.cars.indices {
@@ -307,6 +403,9 @@ extension PhysicsWorld {
         let f = PhysicsWorld.carFrame(s, particles)
         var t = CarTelemetry()
         t.position = f.centre
+        var centre = SIMD3<Float>()
+        for i in Int(s.firstNode)..<Int(s.firstNode + s.ringNodes) { centre += PhysicsMath.xyz(particles[i].position) }
+        t.centre = centre / Float(max(s.ringNodes, 1))
         t.forward = f.forward
         t.up = f.up
         t.speed = dot(f.velocity, f.forward)
@@ -317,6 +416,14 @@ extension PhysicsWorld {
         t.steer = s.steer
         t.bent = s.bent
         t.broken = s.broken
+        t.frontCrush = s.frontCrush
+        t.coolant = s.coolant
+        t.heat = s.heat
+        t.engineDamage = s.engineDamage
+        t.running = s.running
+        t.partsOff = s.partsOff
+        t.wheelsOff = s.wheelsOff
+        t.panesBroken = s.panesBroken
         return t
     }
 
@@ -345,43 +452,36 @@ extension PhysicsWorld {
         defer { carSystem = system }
         let shapes = shapeData
         return try system.cars.withUnsafeMutableBufferPointer { cars in
-            try system.beams.withUnsafeMutableBufferPointer { beams in
-                try system.limits.withUnsafeMutableBufferPointer { limits in
-                    try system.lambdas.withUnsafeMutableBufferPointer { lambdas in
-                        try system.loads.withUnsafeMutableBufferPointer { loads in
-                            try system.wheels.withUnsafeMutableBufferPointer { wheels in
-                                try system.reactionNodes.withUnsafeBufferPointer { reactions in
-                                    try system.tunes.withUnsafeBufferPointer { tunes in
-                                        try system.candidates.withUnsafeBufferPointer { candidates in
-                                            try system.pushes.withUnsafeMutableBufferPointer { pushes in
-                                                try system.pushCounts.withUnsafeMutableBufferPointer { pushCounts in
-                                                    try system.bodyPushes.withUnsafeMutableBufferPointer { bodyPushes in
-                                                        try system.bodyTwists.withUnsafeMutableBufferPointer { bodyTwists in
-                                                            try particles.withUnsafeMutableBufferPointer { particles in
-                                                                try bodies.withUnsafeMutableBufferPointer { bodies in
-                                                                    try statics.withUnsafeBufferPointer { statics in
-                                                                        try staticBounds.withUnsafeBufferPointer { bounds in
-                                                                            try body(CarBuffers(cars: cars, beams: beams, limits: limits, loads: loads, lambdas: lambdas, wheels: wheels,
-                                                                                                reactions: reactions, tunes: tunes, candidates: candidates, pushes: pushes,
-                                                                                                pushCounts: pushCounts, bodyPushes: bodyPushes, bodyTwists: bodyTwists, particles: particles,
-                                                                                                bodies: bodies, statics: statics, staticBounds: bounds, shapes: shapes))
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        try system.beams.withUnsafeMutableBufferPointer { beams in
+        try system.limits.withUnsafeMutableBufferPointer { limits in
+        try system.lambdas.withUnsafeMutableBufferPointer { lambdas in
+        try system.loads.withUnsafeMutableBufferPointer { loads in
+        try system.wheels.withUnsafeMutableBufferPointer { wheels in
+        try system.reactionNodes.withUnsafeBufferPointer { reactions in
+        try system.tunes.withUnsafeBufferPointer { tunes in
+        try system.candidates.withUnsafeBufferPointer { candidates in
+        try system.pushes.withUnsafeMutableBufferPointer { pushes in
+        try system.pushCounts.withUnsafeMutableBufferPointer { pushCounts in
+        try system.bodyPushes.withUnsafeMutableBufferPointer { bodyPushes in
+        try system.bodyTwists.withUnsafeMutableBufferPointer { bodyTwists in
+        try system.parts.withUnsafeMutableBufferPointer { parts in
+        try system.panes.withUnsafeMutableBufferPointer { panes in
+        try system.paneFrames.withUnsafeBufferPointer { paneFrames in
+        try system.radiatorNodes.withUnsafeBufferPointer { radiator in
+        try system.radiatorReach.withUnsafeBufferPointer { reach in
+        try system.events.withUnsafeMutableBufferPointer { events in
+        try system.eventCounts.withUnsafeMutableBufferPointer { eventCounts in
+        try system.wear.withUnsafeMutableBufferPointer { wear in
+        try particles.withUnsafeMutableBufferPointer { particles in
+        try bodies.withUnsafeMutableBufferPointer { bodies in
+        try statics.withUnsafeBufferPointer { statics in
+        try staticBounds.withUnsafeBufferPointer { bounds in
+            try body(CarBuffers(cars: cars, beams: beams, limits: limits, loads: loads, lambdas: lambdas, wheels: wheels, reactions: reactions,
+                                tunes: tunes, candidates: candidates, pushes: pushes, pushCounts: pushCounts, bodyPushes: bodyPushes,
+                                bodyTwists: bodyTwists, parts: parts, panes: panes, paneFrames: paneFrames, radiator: radiator, reach: reach, events: events,
+                                eventCounts: eventCounts, wear: wear, particles: particles, bodies: bodies, statics: statics, staticBounds: bounds,
+                                shapes: shapes))
+        }}}}}}}}}}}}}}}}}}}}}}}}}
     }
 }
 
@@ -434,6 +534,14 @@ package struct CarBuffers {
     let pushCounts: UnsafeMutableBufferPointer<Int32>
     let bodyPushes: UnsafeMutableBufferPointer<SIMD4<Float>>
     let bodyTwists: UnsafeMutableBufferPointer<SIMD3<Float>>
+    let parts: UnsafeMutableBufferPointer<CarPart>
+    let panes: UnsafeMutableBufferPointer<CarPane>
+    let paneFrames: UnsafeBufferPointer<UInt32>
+    let radiator: UnsafeBufferPointer<UInt32>
+    let reach: UnsafeBufferPointer<Float>
+    let events: UnsafeMutableBufferPointer<GPUBreakEvent>
+    let eventCounts: UnsafeMutableBufferPointer<Int32>
+    let wear: UnsafeMutableBufferPointer<SIMD2<Float>>
     let particles: UnsafeMutableBufferPointer<GPUPhysicsParticle>
     let bodies: UnsafeMutableBufferPointer<GPUPhysicsBody>
     let statics: UnsafeBufferPointer<GPUPhysicsBody>
