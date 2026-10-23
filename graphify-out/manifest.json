@@ -3876,9 +3876,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPU.swift": {
-    "mtime": 1792762087.305726,
-    "seen": 1792769332.1560729,
-    "ast_hash": "b1166dd57e0fb5240a5f51ad2fba7098",
+    "mtime": 1792769478.705763,
+    "seen": 1792769509.912768,
+    "ast_hash": "98fbd56db961e81bbb90f7f6e68ebe5f",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPUTypes.swift": {
@@ -4914,9 +4914,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/cars-handoff.md": {
-    "mtime": 1792762087.3051178,
-    "seen": 1792769332.1596758,
-    "ast_hash": "d4bedf1bc1bf8756d888622f2119a8a6",
+    "mtime": 1792769478.7054975,
+    "seen": 1792769509.916673,
+    "ast_hash": "590ff7d6b2c6eb27b4f2749f201ffa75",
     "semantic_hash": ""
   },
   "Sources/Physics/Cars/CarPack.swift": {
