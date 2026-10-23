@@ -2183,6 +2183,76 @@ height, emissive, opacity), through masks, into a texture set of its own (1K, 2K
   box; paint is on a character's
   bind pose (a DNA edit that changes its mesh drops it); painted objects aren't displaced; Metal 4 untried.
 
+### The Modeller
+
+A Blender-like modelling and sculpting editor in a window of its own: **Shift-M** in the main view, **Shift-Cmd-L**, or
+*Edit Mesh in Modeller* in the app menu (it opens the main view's selected object). The window is laid out as
+Blender's, in its dark theme: the top bar (File, Edit, the Layout / Modeling / Sculpting / UV Editing workspaces), the
+3D view's header (mode, select modes, View / Select / Add / Mesh menus, pivot, proportional editing, overlays, X-ray,
+the four shading modes) and tool settings, the toolbar (T), the sidebar (N), the navigation gizmo, the Outliner, the
+Properties (Object, Modifiers, Material, Data) and the status bar with the mouse's hints and the scene's statistics.
+
+* **Keys are Blender's** (Ctrl for tool shortcuts, Cmd for the app's: Cmd-Z, Shift-Cmd-Z, Cmd-S). Tab edit mode,
+  Ctrl-Tab the mode menu; 1 2 3 select modes; A, Alt-A, Ctrl-I; B box, C circle; click, Shift-click, Alt-click loops
+  (Ctrl-Alt rings), L and Ctrl-L linked; G R S with X Y Z (twice: local; Shift: the plane), typed values and Tab, Ctrl
+  snaps, Shift slows, O proportional editing; E extrude, I inset, Ctrl-B bevel (Shift: vertices), Ctrl-R loop cut and
+  slide, K knife, F fill, J connect, M merge, X / Delete, P separate, Y split, Shift-D duplicate, H / Alt-H, Shift-N,
+  Alt-N, Ctrl-E / Ctrl-F / Ctrl-V menus, U unwrap, Ctrl-T / Alt-J; object mode Shift-A, Ctrl-J, Ctrl-A, Ctrl-1…5
+  (a Subdivision Surface), Alt-G / R / S; the numpad's views, Home, numpad . and Shift-C. Blender's axes: Z is up (the
+  engine's Y), so G Z moves up.
+* **Mouse, trackpad, pen**: middle drag orbits (Shift pans, Ctrl zooms), the wheel zooms; on a trackpad two fingers
+  orbit (Shift pans, Ctrl zooms) and a pinch zooms; Edit › Emulate 3 Button Mouse makes Option-drag orbit (loop select
+  is then a double-click); Emulate Numpad for keyboards without one. A pen's pressure sets the brush's strength (and
+  its radius, if asked).
+* **Shading**: Solid (studio light, material, object, single or random colours, backface culling), Material Preview
+  (eight MatCaps made in code), Wireframe, X-ray, and **Rendered**: a second engine renderer, path traced with the
+  engine's GI on a studio stage, drawn into the viewport's place (the editing still works through it).
+* **Sculpt mode** (the Sculpting workspace, or Ctrl-Tab): Draw, Clay Strips, Inflate, Smooth, Grab, Crease, Flatten,
+  Pinch, Mask and Draw Face Sets, with X / Y / Z symmetry, falloff curves, autosmooth, Ctrl to invert, Shift to smooth,
+  F / Shift-F radius and strength, [ ]; masks (Ctrl-I, Alt-M, grow, shrink), face sets (from the mask, by loose parts,
+  H isolates, Alt-H shows all); **multires** levels (Modifiers › Multiresolution: Subdivide, Delete Higher, Apply Base;
+  sculpt any level, the finer ones keep their detail), **dynamic topology** (Ctrl-D, detail in pixels) and **voxel
+  remesh** (Ctrl-R, R sets the voxel size).
+* **Modifiers**: Mirror, Array, Solidify, Subdivision Surface (Catmull-Clark, creases), Bevel, Boolean (exact BSP, or
+  voxel for big or open meshes), Triangulate, Weld; each with viewport, render and edit-mode toggles, Apply, moving
+  and deleting; evaluated once per change (the stack keeps every stage's result).
+* **UVs and materials**: seams (Ctrl-E), Unwrap along them or Smart UV Project (the Material Painter's least-squares
+  conformal unwrap and outline packing), a UV view in Properties › Data; material slots with PBR values, Assign /
+  Select / Deselect in edit mode.
+* **Files**: Cmd-S saves the model to the asset library, `Assets/Models/<slug>.mrmesh` (or `METALRENDERER_MODELS`):
+  the editable document and, beside it, the evaluated triangles a scene draws. Scenes place it as a scene file's
+  `mesh:<slug>` object (File › Place in Scene); an object opened from the main view is replaced there by the saved
+  model (a placed object takes the asset; a builder's object gets the model placed where it stands). File › Import
+  takes OBJ (with its .mtl) and glTF/GLB, Export writes OBJ or GLB with the modifiers applied.
+
+How it is made: `Sources/Modeling` holds the mesh (`EditMesh`: polygons over shared vertices as flat arrays, Blender's
+`Mesh` layout, an operation remaking it through a `Draft` that brings every edge's marks back by its vertices), the
+operations, the transform maths, the modifiers, the sculpt mesh (`SculptMesh`: triangles laid out by a tree whose
+leaves own contiguous ranges of vertices, so a dab's brushes run per leaf on every core and the viewport copies only
+the leaves a dab touched), multires, dynamic topology, voxel remeshing (surface nets over a distance field), UVs, the
+files, and the viewport's own raster renderer (`Sources/Modeling/Shaders/Viewport.metal`: reverse Z, 4× MSAA, depth-
+tested overlays, an id pass for picking and the selection outline). The window is `Sources/Editors/Modeling`; the
+engine's part (`mesh:` assets, the Rendered stage, the selection as a model) is `Sources/MetalRenderer/Modeling`.
+Tests: `ModelingMeshTests`, `ModelingIOTests`, `ModelingOpsTests`, `ModelingTransformTests`, `ModelingModifierTests`,
+`ModelingSculptTests`, `ModelingViewportTests` and `ModelingEditorTests` (the window driven by keys and clicks,
+headless; `MODELING_PNG=<folder>` writes its pictures); `ModelingSculptPerfTests` times sculpting at 2M triangles
+(`MODELING_PERF=1`, in release). `METALRENDERER_SCENE=modelingstage METALRENDERER_MODEL=<asset or primitive>` renders
+the Rendered view's stage offscreen.
+
+Sculpting at 2.0M triangles (1.0M vertices), M1 Max, release:
+
+| Step | Time |
+|---|---|
+| The sculpt mesh's tree and tables (entering sculpt mode) | 380 ms |
+| Draw dab over ~96k vertices, mirrored on X | 4.4 ms |
+| Draw dab over ~14k vertices, mirrored | 1.1 ms |
+| Smooth dab over ~14k vertices, mirrored | 1.3 ms |
+| The viewport's copy of a big dab's 550 leaves | 1.2 ms |
+| A viewport frame at 2880×1800 (MatCap), GPU | 2.3 ms |
+| The shape back into the mesh (leaving sculpt mode) | 9 ms |
+
+The brushes' per-vertex loops, the normals and the viewport's copy are in `Tools/perf/hot-functions.txt` (clean).
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
@@ -2365,6 +2435,7 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | `Materials` | `Sources/Materials` | The Material Designer's graphs and nodes, their plan, compiler, engine and bakes (generated Metal and Swift), the library (Mireland's, the scans') and store, scanned materials; the Material Painter's documents, brushes, bakes, smart materials, unwrapping and packing, its GPU structs; on the effects (the graphs' curves and gradients). Their part of a scene and a frame (assignments, displacement, the painter's session) is the engine's |
 | `Buildings` | `Sources/Buildings` | The building generator (plans, the planner, facades, roofs, styles and their definitions, plan edits), interiors (furnishing, furniture, props, lifts, controls), the city's plan, the catalog and store, the walker and its colliders, the workshop's settings; on the physics (an interior's doors and loose furniture are bodies). Putting them in a scene (`Scene+Buildings`, `Scene+Interiors`, `Renderer+Interiors`) is the engine's |
 | `Landscape` | `Sources/Landscape` | Terrain (its fields, grid, base, brushes, generator, erosion, painting, scatter, sector meshes, documents and store, the ground's look), water (its fields, looks, waves and spectrum, the world's) and the open world (its places and tiles), which reference each other; on the plants, the physics and the buildings (the ground and the world are dressed with them). Putting them in a scene and a frame (`Scene+Terrain`, `Renderer+Terrain`, `Renderer+Water`, `Scene+World` …) is the engine's |
+| `Modeling` | `Sources/Modeling` | The modeller: editable polygon meshes (`EditMesh`) and their operations (edit mode, the modifier stack, UV seams and unwraps), sculpting (the sculpt tree, brushes, masks and face sets, multires, dynamic topology, voxel remesh), model assets (`Assets/Models`) and OBJ/glTF files, and the modelling window's raster viewport and its shaders (`Sources/Modeling/Shaders`); on the materials (the painter's unwrap, its glTF writer). Putting a model asset in a scene and the Rendered view's stage are the engine's |
 | `MetalRenderer` | `Sources/MetalRenderer` | The engine: `Scene` and `Renderer`, and each system's part of a scene and a frame (`Scene+Feature`, `Renderer+Feature`: building it into a scene, its GPU work, its descriptors), the settings, the benchmark harness, the editors' workshop scenes and the Cornell room. The shaders sit at its top |
 | `Editors` | `Sources/Editors` | The app around the renderer: the window, its menus and panels (`App/`), the settings panel, and every editor's UI, each in its feature's folder |
 | `Game` | `Sources/Game` | The demo scenes (below) |
@@ -2375,7 +2446,7 @@ The modules reach each other through `package` declarations (nothing is `public`
 ```
 EngineCore ─┬─ Plants ──────────────────────────┬─ Characters (Plants, Physics)
             ├─ Physics (CPhysicsAtomics) ───────┼─ Buildings (Physics)
-            │                                   └─ Effects (Physics) ── Materials (Effects)
+            │                                   └─ Effects (Physics) ── Materials (Effects) ── Modeling (Materials)
             └─ Landscape (Plants, Physics, Buildings)
 MetalRenderer, the engine (every system) ── Editors, Game (the engine and the systems they name) ── MetalRendererApp
 ```

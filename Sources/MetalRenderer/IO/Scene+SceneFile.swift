@@ -5,6 +5,7 @@ import EngineCore
 import Foundation
 import Landscape
 import Materials
+import Modeling
 import Physics
 import Plants
 import simd
@@ -53,6 +54,8 @@ extension Scene {
             object(o.name) {
                 if o.asset.hasPrefix("prefab:"), let make = SceneFile.prefab(String(o.asset.dropFirst("prefab:".count))) {
                     _ = make(self, transform, material)
+                } else if o.asset.hasPrefix("mesh:") {
+                    addModelAsset(String(o.asset.dropFirst("mesh:".count)), transform: transform, material: material)
                 } else if o.asset.hasPrefix("model:") {
                     let url = Scene.assetsDirectory.appendingPathComponent(String(o.asset.dropFirst("model:".count)))
                     do {

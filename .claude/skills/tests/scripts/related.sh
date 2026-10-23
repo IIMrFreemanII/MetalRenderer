@@ -105,6 +105,13 @@ by_name() {
 by_folder() {
   case $1 in
     # The editors (Sources/Editors, a module of its own: the editors' UI on the engine's models)
+    Sources/Editors/Modeling/*.swift) add ModelingEditorTests ModelingViewportTests ;;
+    Sources/Modeling/Sculpt/*.swift) add ModelingSculptTests ModelingEditorTests ;;
+    Sources/Modeling/Modifiers/*.swift) add ModelingModifierTests ModelingSculptTests ;;
+    Sources/Modeling/Viewport/*.swift) add ModelingViewportTests ModelingEditorTests ;;
+    Sources/Modeling/IO/*.swift|Sources/Modeling/UV/*.swift) add ModelingIOTests ModelingOpsTests ;;
+    Sources/Modeling/*.swift) add ModelingMeshTests ModelingOpsTests ModelingTransformTests ModelingModifierTests ModelingIOTests ;;
+    Sources/MetalRenderer/Modeling/*.swift) add SceneFileTests ModelingIOTests ;;
     Sources/Editors/VFX/*.swift) add VFXEditorTests ;;
     Sources/Editors/Terrain/*.swift) add TerrainEditorTests ;;
     Sources/Editors/MaterialGraph/*.swift) add MaterialEditorTests ;;
@@ -158,6 +165,7 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
+      Sources/Modeling/Shaders/*.metal) add ModelingViewportTests ModelingEditorTests ;;
       Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;
       Sources/MetalRenderer/Shaders/*.metal|Sources/MetalRenderer/Shaders.metal) add ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/MaterialShaders/Paint*.metal) add PainterTests ;;
