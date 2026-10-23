@@ -331,9 +331,9 @@ extension PhysicsWorld {
         return (buckets.flatMap { $0 }, starts)
     }
 
-    /// Whether particles `q` and `o` may push each other: not a cloth's, nor two of one soft body's.
+    /// Whether particles `q` and `o` may push each other: not a cloth's, nor two of one soft body's, nor a car's node.
     @inline(__always) package static func meets(_ q: GPUPhysicsParticle, _ o: GPUPhysicsParticle) -> Bool {
-        (q.info.y | o.info.y) & clothBit == 0 && !(q.info.y & o.info.y & softBit != 0 && q.info.w == o.info.w)
+        (q.info.y | o.info.y) & (clothBit | carBit) == 0 && !(q.info.y & o.info.y & softBit != 0 && q.info.w == o.info.w)
     }
 
     /// The tets' volumes, a colour at a time (Gauss-Seidel), each an XPBD constraint on six times its volume with

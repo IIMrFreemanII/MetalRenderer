@@ -40,6 +40,11 @@ extension PhysicsWorld {
                                                      kept: UnsafeMutableBufferPointer<(Float, UInt32)>) {
         let k = PhysicsWorld.maxNeighbours, kc = PhysicsWorld.maxColliders
         let q = s.particles[i]
+        if q.info.y & PhysicsWorld.carBit != 0 {   // (a car's node: its car finds what it meets, Physics+Cars.swift)
+            s.neighbourCounts[i] = 0
+            s.colliderCounts[i] = 0
+            return
+        }
         let x = PhysicsMath.xyz(q.position), r = PhysicsWorld.particleReach(q, p)
         let c = PhysicsWorld.cell(x, p.particleGrid.x)
         var count = 0
@@ -94,7 +99,7 @@ extension PhysicsWorld {
         let h = p.gravity.w, n = particles.count
         withParticleBuffers { s in
             PhysicsPool.shared.parallel(n, grain: 256) { range in
-                for i in range where s.particles[i].prevPosition.w > 0 {   // (a pinned cloth vertex stays)
+                for i in range where s.particles[i].prevPosition.w > 0 && s.particles[i].info.y & PhysicsWorld.carBit == 0 {   // (a pinned cloth vertex stays; a car's nodes are its own)
                     var q = s.particles[i]
                     q.prevPosition = SIMD4(PhysicsMath.xyz(q.position), q.prevPosition.w)
                     let rate = q.info.y & PhysicsWorld.clothBit != 0 ? p.particleGrid.z : q.info.y & PhysicsWorld.softBit != 0 ? p.softDamping.x : 0
@@ -136,7 +141,7 @@ extension PhysicsWorld {
         withParticleBuffers { s in
             s.before.baseAddress!.update(from: s.particles.baseAddress!, count: n)   // (Jacobi: every particle against these)
             PhysicsPool.shared.parallel(n, grain: 64) { range in
-                for i in range where s.before[i].prevPosition.w > 0 { PhysicsWorld.solveParticle(i, s, shapes, p) }
+                for i in range where s.before[i].prevPosition.w > 0 && s.before[i].info.y & PhysicsWorld.carBit == 0 { PhysicsWorld.solveParticle(i, s, shapes, p) }
             }
         }
     }

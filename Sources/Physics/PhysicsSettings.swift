@@ -105,6 +105,36 @@ package struct DemolitionSettings: Equatable, Codable {
     }
 }
 
+/// The car scene's (Scene+CarGround.swift, Physics+Cars.swift). Changing any of it builds the scene again.
+package struct CarSettings: Equatable, Codable {
+    /// What the scene does by itself: nothing (the player drives), the player's car into the wall at `demoSpeed`, every
+    /// car round its own lap on autopilot (the benchmark's).
+    package enum Demo: Int, CaseIterable, Codable {
+        case none, wall, laps
+        package var title: String { ["None", "Into the wall", "Laps"][rawValue] }
+    }
+    /// The player's car, and how many cars there are (the player's, and the other styles parked in turn).
+    package var style = CarStyle.sedan
+    package var cars = 4
+    package var demo = Demo.none
+    /// The wall demo's speed (km/h).
+    package var demoSpeed: Float = 50
+    /// Traction control and ABS (CarTune.assists).
+    package var assists = true
+
+    package static let carRange = 1...8
+    package static let speedRange: ClosedRange<Float> = 20...150
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(style: CarStyle = CarStyle.sedan, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true) {
+        self.style = style
+        self.cars = cars
+        self.demo = demo
+        self.demoSpeed = demoSpeed
+        self.assists = assists
+    }
+}
+
 /// The physics scene's (Physics.swift). Changing any of it rebuilds the scene, which starts the simulation again.
 package struct PhysicsSettings: Equatable, Codable {
     /// Where the steps run: the GPU (Shaders/Physics.metal), the CPU (PhysicsCPU.swift), or whichever suits the

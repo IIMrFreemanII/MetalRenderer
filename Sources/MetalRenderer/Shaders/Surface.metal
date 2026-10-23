@@ -136,6 +136,7 @@ struct Surface {
     float  metallic;
     float  roughness;
     float  specular;      // specular weight: 0 = diffuse-only material
+    float  coat;          // a clear coat over metallic paint (Material.params.x >= 2): the paint's roughness; -1: none
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
@@ -146,6 +147,9 @@ struct Surface {
     float  skin;          // skin (Material.params.w < 0): its strength, 0...1, + 2 where it is thin (ears): Hair.metal
     float  leaf;          // LEAF_TRANSMIT: a two-sided leaf's share of light through it, where the camera sees it
 };
+
+// A material's specular weight (Material.params.x): as it is, but 1 for a clear coat's (2 and up: Scene.addPaintMaterial).
+inline float specularWeight(float x) { return x >= 2.0f ? 1.0f : x; }
 
 // Where across a strand along `tangent` its normal `n` is, seen from `view` (pbrt's h: in the strand's frame x =
 // tangent, y = the view across it, z = x cross y, the normal is (cos gamma) y - (sin gamma) z and h = sin gamma).
@@ -485,7 +489,7 @@ inline void terrainLayers(thread Surface& sf, thread const HitVertices& hv, floa
         albedo += c * share;
         roughness += rough * share;
         metallic += metal * share;
-        specular += m.params.x * share;
+        specular += specularWeight(m.params.x) * share;
         normal += n * share;
     }
     sf.albedo = albedo;
@@ -737,7 +741,7 @@ inline void terrainRealistic(thread Surface& sf, thread const HitVertices& hv, f
         normal += n * share;
         roughness += m.emission.a * ormh.g * share;
         metallic += m.albedo.a * ormh.b * share;
-        specular += m.params.x * share;
+        specular += specularWeight(m.params.x) * share;
     }
     // The large-scale noise: ±18% brightness, a little toward yellow or grey, roughness.
     albedo *= (0.82f + 0.36f * macro.r) * (0.88f + 0.24f * macro2.r);
@@ -756,13 +760,27 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.emission = mat.emission.rgb;
     sf.metallic = mat.albedo.a;
     sf.roughness = mat.emission.a;
-    sf.specular = mat.params.x;
+    sf.specular = specularWeight(mat.params.x);
+    sf.coat = mat.params.x >= 2.0f ? mat.params.x - 2.0f : -1.0f;
     sf.lightEmitter = mat.params.z > 0.0f;
     sf.skin = max(-mat.params.w, 0.0f);
 }
 
 // Metallic-roughness, once the textures are in: metals reflect their base colour, dielectrics 4% (x weight).
+// A clear coat over metallic paint (a car's): the coat is the specular lobe, a dielectric's 4% at its roughness (the
+// material's), so it is what the reflection rays, the lights' highlights and the path tracer see; the paint under it,
+// its colour and its metallic flakes' own GGX lobe (of the paint's roughness: `coat`), is what the coat lets through,
+// the flakes' lobe there as its split-sum albedo (it is broad: as good as diffuse in light from all round).
 inline void surfaceSpecular(thread Surface& sf) {
+    if (sf.specular > 0.0f && sf.coat >= 0.0f) {
+        float3 flakes = mix(float3(0.04f), sf.albedo, sf.metallic);
+        float3 paint = sf.albedo * (1.0f - sf.metallic) + specularAlbedo(flakes, 1.0f, max(sf.coat, MIN_ROUGHNESS), 1.0f);
+        float3 coat = float3(0.04f);
+        sf.albedo = paint * (1.0f - specularAlbedo(coat, 1.0f, max(sf.roughness, MIN_ROUGHNESS), 1.0f));
+        sf.f0 = coat;
+        sf.metallic = 0.0f;
+        return;
+    }
     if (sf.specular > 0.0f) {
         sf.f0 = mix(float3(0.04f * sf.specular), sf.albedo, sf.metallic);
         sf.albedo *= 1.0f - sf.metallic;
@@ -775,6 +793,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
     sf.metallic = sf.specular = 0.0f;
+    sf.coat = -1.0f;
     sf.roughness = 1.0f;
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;

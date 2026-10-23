@@ -549,6 +549,8 @@ package final class PhysicsStepper {
         package var breakTotal: Int
         /// The rockets, the fireballs, the walker (PhysicsWorld.demolition), and the step these are before.
         package var demolition: DemolitionState
+        /// The cars' frames and gauges (Physics+Cars.swift).
+        package var cars: [CarTelemetry]
         package var stepIndex: Int
 
         package init(_ w: PhysicsWorld) {
@@ -560,6 +562,7 @@ package final class PhysicsStepper {
             breakSteps = w.breakSteps
             breakTotal = w.breakTotal
             demolition = w.demolition
+            cars = w.carSystem.telemetry
             stepIndex = w.stepIndex
         }
     }

@@ -500,6 +500,8 @@ package final class Scene {
     package var destructionRig: DestructionRig?
     /// The demolition scene's tools (Scene+Demolition.swift), if it is that scene.
     package var demolitionRig: DemolitionRig?
+    /// The cars (Scene+Cars.swift), if it has any.
+    package var carRig = CarRig()
     /// Its gameplay (SceneDefinition.behaviour: the destruction's tools, the demolition's player), made once it is built.
     package var behaviour: SceneBehaviour?
     /// What its scene file placed (Scene.place), for the editor to move; nil when it had none.

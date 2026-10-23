@@ -86,9 +86,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         controller = RendererController(renderer: renderer)
         view.inputHandler = controller
         controller.renderView = view
-        // The mouse let go as soon as the window or the app is left (not at the next tick).
+        // The mouse and the keys let go as soon as the window or the app is left (not at the next tick): their key-ups
+        // go elsewhere.
         for name in [NSWindow.didResignKeyNotification, NSApplication.didResignActiveNotification] {
-            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.controller.setCaptured(false) }
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                self?.controller.setCaptured(false)
+                self?.controller.releaseKeys()
+            }
         }
         view.onDropModels = { [weak self] urls in self?.controller.addModels(urls) }
 

@@ -16,6 +16,7 @@ extension Renderer {
 
     /// A key went down: `key` is its character without modifiers, lowercased.
     package func keyDown(_ key: String, isRepeat: Bool) {
+        downKeys.insert(key)
         if scene.behaviour?.keyDown(self, key, isRepeat: isRepeat) == true { return }
         if key == "v" && !isRepeat { toggleWalk(); return }
         if let w = walker {
@@ -84,8 +85,15 @@ extension Renderer {
     }
 
     package func keyUp(_ key: String) {
+        downKeys.remove(key)
         heldKeys.remove(key)
+        scene.behaviour?.keyUp(self, key)
         if key == "c" { crouchHeld = false }
+    }
+
+    /// The window or the app left: every key down let go (their key-ups go elsewhere), so none stays held.
+    package func releaseKeys() {
+        for key in downKeys.union(heldKeys) { keyUp(key) }
     }
 
     /// Control: crouching, while walking.

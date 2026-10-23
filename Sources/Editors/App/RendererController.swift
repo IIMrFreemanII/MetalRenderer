@@ -311,6 +311,9 @@ final class RendererController: InputHandler {
     }
 
     /// The mouse captured for the scene's aim, or let go (the window's view and the scene's behaviour both told).
+    /// The window or the app left: the keys held let go (Renderer.releaseKeys).
+    func releaseKeys() { renderer.perform { $0.releaseKeys() } }
+
     func setCaptured(_ on: Bool) {
         guard let view = renderView, view.captured != on else { return }
         view.captured = on
