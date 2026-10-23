@@ -242,6 +242,7 @@ package final class PhysicsGPU {
         clothTable = world.cloths.isEmpty ? nil : try buffer(world.clothTable(prevOffsets: clothPrevOffsets), "physicsCloths")
         carStates = world.carSystem.cars
         carSurfaces = world.carSurfaces
+        carRestSize = carStates.map { PhysicsGPU.carSize($0, world.initialParticles) }
         uploads = simulates || world.cloths.isEmpty && world.softVertices.isEmpty ? []
             : try (0..<slots).map { try buffer(world.initialParticles, "physicsUpload\($0)") }
         constraints = try buffer(world.constraints, "physicsConstraints")
@@ -872,8 +873,11 @@ package final class PhysicsGPU {
     /// (a door and a wheel flung off, the front folded) its boxes had grown over everything: the brick wall's frame at
     /// 3 s was 58 ms, its rays 33 ms of it; built again every frame they were 9, but a build is 11 ms a car.
     private var rebuildQueue: [Int] = []
-    /// Per car the volume of its nodes' box in its own frame when its structures were last built, and the frames since.
+    /// Per car the volume of its nodes' box in its own frame when its structures were last built, and the frames since;
+    /// at first the size they were built at with the scene (as the world began: a frame that starts later, a still at
+    /// 3 s or a jump in time, sees a car already crushed, and taken as its first size it was never built again).
     private var carBuiltSize: [Float] = [], carSinceBuild: [Int] = []
+    private let carRestSize: [Float]
     /// How far a car's box (in its own frame: its turning doesn't count) grows or shrinks before its structures are
     /// built again, and how many frames apart at least (a part still flying isn't rebuilt every frame).
     package static let rebuildGrowth: Float = 1.5, rebuildFrames = 30
@@ -892,22 +896,14 @@ package final class PhysicsGPU {
         if carReference.count != cars.count {
             carReference = [[SIMD4<Float>]](repeating: [], count: cars.count)
             carSettled = [Int](repeating: 0, count: cars.count)
-            carBuiltSize = [Float](repeating: 0, count: cars.count)
-            carSinceBuild = [Int](repeating: 0, count: cars.count)
+            carBuiltSize = carRestSize
+            carSinceBuild = [Int](repeating: PhysicsGPU.rebuildFrames, count: cars.count)
         }
         stillCars = []
         for (c, car) in cars.enumerated() {
             let first = Int(car.firstNode), n = Int(car.nodeCount)
             // Come apart: its box in its own frame grown or shrunk past `rebuildGrowth` since its last build.
-            let f = PhysicsWorld.carFrame(car, particles)
-            var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
-            for k in first..<(first + n) {
-                let d = PhysicsMath.xyz(particles[k].position) - f.centre, q = SIMD3(dot(d, f.left), dot(d, f.up), dot(d, f.forward))
-                lo = simd_min(lo, q)
-                hi = simd_max(hi, q)
-            }
-            let e = simd_max(hi - lo, SIMD3(repeating: 0.3)), size = e.x * e.y * e.z
-            if carBuiltSize[c] == 0 { carBuiltSize[c] = size }
+            let size = PhysicsGPU.carSize(car, particles)
             carSinceBuild[c] += 1
             let change = max(size / carBuiltSize[c], carBuiltSize[c] / size)
             if change > PhysicsGPU.rebuildGrowth && carSinceBuild[c] >= PhysicsGPU.rebuildFrames {
@@ -932,6 +928,19 @@ package final class PhysicsGPU {
                 carReference[c] = (first..<(first + n)).map { SIMD4(PhysicsMath.xyz(particles[$0].position), Float(bitPattern: particles[$0].info.z)) }
             }
         }
+    }
+
+    /// The volume of car `car`'s nodes' box in its own frame (its turning doesn't count; 0.3 m a side at least).
+    private static func carSize(_ car: CarState, _ particles: [GPUPhysicsParticle]) -> Float {
+        let first = Int(car.firstNode), f = PhysicsWorld.carFrame(car, particles)
+        var lo = SIMD3<Float>(repeating: .infinity), hi = -lo
+        for k in first..<(first + Int(car.nodeCount)) {
+            let d = PhysicsMath.xyz(particles[k].position) - f.centre, q = SIMD3(dot(d, f.left), dot(d, f.up), dot(d, f.forward))
+            lo = simd_min(lo, q)
+            hi = simd_max(hi, q)
+        }
+        let e = simd_max(hi - lo, SIMD3(repeating: 0.3))
+        return e.x * e.y * e.z
     }
 
     /// The soft bodies (Scene.softMeshes' indices) still this frame: the still cars' panels, whose structures stay.

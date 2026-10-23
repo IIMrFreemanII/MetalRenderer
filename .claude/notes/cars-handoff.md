@@ -295,9 +295,16 @@ courtyard's 1x moving shot +0.65 GPU in this run (+0.14 at 2x).
   pressed late it showed a standing wreck and was easy to miss. No rewind of any kind is wanted.
 - **Found on the way:** the async path read `physics.hasCars` while the stepper had the car system swapped out; it now
   decides from `stepper.latest.cars`.
-- **Open:** the window hand test (C/T, the HUD, the directed demos); M4 Max; a still car whose structures degraded by a
-  time jump is never rebuilt (the brick wall from 6.5 s straight: 44 ms of rays) — not phase 4's, seen in a benchmark
-  that jumps.
+- **Open:** the window hand test (C/T, the HUD, the directed demos); M4 Max.
+
+## A crashed car first seen after a jump in time (Oct 23, branch `claude/car-still-rebuild`)
+
+`PhysicsGPU.noteStillCars` took a car's size at its last structure build from the first frame it saw: a scene started
+past the crash (`METALRENDERER_BENCH_ONLY="brick wall t3.0"` alone, a still at 3 s, a jump) saw the car already
+crushed, took that as the built size, and never built its structures again: 43-44 ms a frame against 18.8 when the
+same still followed t0.2 and t0.6. Now the built size starts at the car's box as the world began (`carRestSize`, from
+`world.initialParticles`: what the scene built them from) and the first frame may already queue a rebuild. Alone
+18.7 ms (picture against before: 59.9 dB PSNR, noise); the sequence unchanged (8.65 / 11.43 / 18.74).
 
 ## Next phases
 
