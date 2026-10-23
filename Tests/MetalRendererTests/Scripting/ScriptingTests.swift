@@ -153,4 +153,18 @@ final class ScriptingTests: XCTestCase {
         let names = Set(Scene.stageColours.map(\.0))
         XCTAssertTrue(names.isSuperset(of: ["red", "white", "wood"]))
     }
+
+    func testOtherModulesRequestsGoToTheirHandlers() throws {
+        ScriptRequests.register("scriptingtest") { body in
+            guard let n = body as? Int else { return .failure(.init("give a number", badRequest: true)) }
+            return .success(["twice": n * 2])
+        }
+        XCTAssertNil(ScriptRequests.handler(for: ["state": true]))
+        let found = try XCTUnwrap(ScriptRequests.handler(for: ["scriptingtest": 21]))
+        XCTAssertEqual(found.key, "scriptingtest")
+        XCTAssertEqual(try found.handle(found.body).get()["twice"] as? Int, 42)
+        let wrong = try XCTUnwrap(ScriptRequests.handler(for: ["scriptingtest": "x"]))
+        XCTAssertThrowsError(try wrong.handle(wrong.body).get()) { XCTAssertTrue(($0 as? ScriptRequests.Failure)?.badRequest == true) }
+        XCTAssertTrue(ScriptRequests.keys.contains("scriptingtest"))
+    }
 }

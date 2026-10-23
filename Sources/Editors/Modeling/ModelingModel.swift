@@ -3,6 +3,7 @@ import Combine
 import EngineCore
 import Foundation
 import Metal
+import MetalRenderer
 import Modeling
 import simd
 
@@ -107,6 +108,8 @@ final class ModelingModel: ObservableObject {
     }
     /// The Rendered view's renderer, while it shows.
     var stage: StageRenderer?
+    /// Where the Rendered view's stage draws when it isn't the window (a scripted Modeller's offscreen textures).
+    var stageSurface: ((MTLDevice) -> RenderSurface)?
     @Published var overlays = ViewportOverlays() { didSet { redraw() } }
     @Published var showToolbar = true
     @Published var showSidebar = false

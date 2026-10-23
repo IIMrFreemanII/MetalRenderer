@@ -19,7 +19,7 @@ package final class RenderThread {
     private let exited = DispatchSemaphore(value: 0)
 
     /// Whether this is the render thread.
-    var isCurrent: Bool { thread != nil && Thread.current === thread }
+    package var isCurrent: Bool { thread != nil && Thread.current === thread }
 
     /// Runs `work` on the render thread before its next frame. Any thread; work posted before `start` waits for it.
     func perform(_ work: @escaping () -> Void) {

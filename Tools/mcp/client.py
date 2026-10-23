@@ -128,14 +128,27 @@ def capture(path, scale=1.0, build=None):
     return status, "".join(a.get("out", "") for a in answers)
 
 
-def command(name, body, build=None):
-    """A typed scene command (SceneCommand: place, move, remove, camera), no compile; returns (exit status, the
-    app's result or its message)."""
-    status, answers = request({name: body}, build, timeout=120)
+def command(name, body, build=None, timeout=120):
+    """A typed command (SceneCommand: place, move, remove, camera; or another module's, as `modeller`), no compile;
+    returns (exit status, the app's result or its message)."""
+    status, answers = request({name: body}, build, timeout=timeout)
     for a in answers:
         if "result" in a:
             return status, a["result"]
     return status, "".join(a.get("out", "") for a in answers)
+
+
+def modeller(steps=(), capture=None, scale=1.0, path=None, build=None, state=True):
+    """Drives the app's scripted Modeller (ScriptModeller: offscreen, never the window's): `steps` in order, then its
+    state and a picture of `capture` ('viewport', 'window', 'rendered'); returns (exit status, the app's result or its
+    message). The result has "steps" (what each said), "state" and "capture" (the PNG's path)."""
+    body = {"steps": list(steps), "state": state}
+    if capture:
+        c = {"view": capture, "scale": scale}
+        if path:
+            c["path"] = os.path.abspath(path)
+        body["capture"] = c
+    return command("modeller", body, build, timeout=600)
 
 
 def quit_app(build=None):

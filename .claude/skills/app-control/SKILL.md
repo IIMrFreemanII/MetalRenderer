@@ -1,6 +1,6 @@
 ---
 name: app-control
-description: Drive a running MetalRenderer app without relaunching it - place, move or remove objects, set the camera, switch scenes, change settings, run Swift scripts against the live engine, read its state and capture frames - through the metalrenderer MCP tools or Tools/script.py. Use whenever you would change a scene or the app's state to try, check or show something, build a test setup or a scene step by step, reproduce a bug at a pose, or A/B a setting, and whenever you choose between a typed tool and a Swift script. Also use when the same small script keeps being written: it says when and how to promote it to a typed tool.
+description: Drive a running MetalRenderer app without relaunching it - place, move or remove objects, set the camera, switch scenes, change settings, run Swift scripts against the live engine, read its state and capture frames - through the metalrenderer MCP tools or Tools/script.py; and drive the Modeller headless (keys, clicks, sculpt strokes, operators, its pictures) through the modeller tool. Use whenever you would change a scene or the app's state to try, check or show something, build a test setup or a scene step by step, reproduce a bug at a pose, or A/B a setting, and whenever you choose between a typed tool and a Swift script. Also use when the same small script keeps being written: it says when and how to promote it to a typed tool.
 ---
 
 # Driving a running app
@@ -10,7 +10,7 @@ The app takes requests through its script socket (README, "Scripts"). The `metal
 
 * **Typed tools:** small fixed edits with a JSON schema, done at once with no compile, which can't crash the app:
   `place_object`, `move_object`, `remove_objects`, `set_camera`, `switch_scene`, `set_settings`, plus `scene_state`
-  and `capture` for reading.
+  and `capture` for reading; `modeller` for the Modeller (steps, then its state and a picture).
 * **Swift scripts** (`run_swift`, `Tools/script.py <file>` or `-e`): any code against the engine's `package` API,
   compiled against the running binary (about 0.5 s, 4 s with a cold cache).
 
@@ -32,8 +32,13 @@ The app takes requests through its script socket (README, "Scripts"). The `metal
    | What is loaded, where things are | `scene_state` |
    | To see it | `capture` (a scale of 0.5 is plenty), or `run_swift` with `capture: true` |
    | Many objects, loops, a layout computed from numbers, steps with waits in between, motion every frame, anything in the engine no tool covers (lights, buildings, plants, terrain, physics, materials) | `run_swift` |
+   | The Modeller: keys, clicks, drags, sculpt strokes, operators by name, popups, F3, Rendered mode, its state and pictures (viewport, window, rendered) | `modeller` (`Tools/script.py --modeller`), or `run.modeller` in a full-form script for checks in a loop (`Scripts/modeller-tour.swift`) |
 
-   Several typed calls in a row for what one loop would do is the sign to write a script instead.
+   Several typed calls in a row for what one loop would do is the sign to write a script instead. The `modeller` tool
+   drives a Modeller of the app's own, offscreen; never the user's Modeller window. Click with `{"world": [x, y, z]}`
+   when you know where a thing is, not with guessed pixels; after a step, read the state's counts and look at a
+   `window` picture. Start a headless app for it with `METALRENDERER_MODELS=<scratch folder>` so saved models stay out of
+   `Assets/Models`, and remove what `place` wrote to `Assets/Scenes`.
 3. **See before you claim.** After a change, `capture` and look at the PNG (Read), or check `scene_state`. Say what
    you saw.
 4. **Scripts:** the short form for one-off statements; the full form (`func run(_ run: ScriptRun)`) when it waits

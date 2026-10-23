@@ -2209,7 +2209,8 @@ Properties (Object, Modifiers, Material, Data) and the status bar with the mouse
   its radius, if asked).
 * **Shading**: Solid (studio light, material, object, single or random colours, backface culling), Material Preview
   (eight MatCaps made in code), Wireframe, X-ray, and **Rendered**: a second engine renderer, path traced with the
-  engine's GI on a studio stage, drawn into the viewport's place (the editing still works through it).
+  engine's GI on a studio stage, drawn into the viewport's place (the editing still works through it). It starts from
+  the app's default settings, not the main view's last session, and from the Modeller's view.
 * **Sculpt mode** (the Sculpting workspace, or Ctrl-Tab): Draw, Clay Strips, Inflate, Smooth, Grab, Crease, Flatten,
   Pinch, Mask and Draw Face Sets, with X / Y / Z symmetry, falloff curves, autosmooth, Ctrl to invert, Shift to smooth,
   F / Shift-F radius and strength, [ ]; masks (Ctrl-I, Alt-M, grow, shrink), face sets (from the mask, by loose parts,
@@ -2241,8 +2242,10 @@ engine's part (`mesh:` assets, the Rendered stage, the selection as a model) is 
 Tests: `ModelingMeshTests`, `ModelingIOTests`, `ModelingOpsTests`, `ModelingTransformTests`, `ModelingModifierTests`,
 `ModelingSculptTests`, `ModelingDynTopoTests`, `ModelingViewportTests` and `ModelingEditorTests` (the window driven by keys and clicks,
 headless; `MODELING_PNG=<folder>` writes its pictures); `ModelingSculptPerfTests` times sculpting at 2M triangles
-(`MODELING_PERF=1`, in release). `METALRENDERER_SCENE=modelingstage METALRENDERER_MODEL=<asset or primitive>` renders
-the Rendered view's stage offscreen.
+(`MODELING_PERF=1`, in release); `ModelingScriptTests` the scripted Modeller. `METALRENDERER_SCENE=modelingstage
+METALRENDERER_MODEL=<asset or primitive>` renders the Rendered view's stage offscreen. A running app's Modeller can be
+driven and pictured offscreen through its socket, the MCP server's `modeller` tool or a script
+([Scripts](#scripts), "The Modeller, scripted").
 
 Sculpting at 2.0M triangles (1.0M vertices), M1 Max, release:
 
@@ -2373,7 +2376,8 @@ Tools/script.py -e 'renderer.camera.position = [0, 2, 8]'
 ```
 
 `Tools/script.py` also has `--state` (the app's state as JSON), `--capture out.png [--scale 0.5]` (the next frame),
-`--serve` (a headless app, no window) and `--quit` (a headless one). `--build dev|release` picks the app of that build.
+`--modeller STEPS` and `--modeller-state` (the scripted Modeller, below), `--serve` (a headless app, no window) and
+`--quit` (a headless one). `--build dev|release` picks the app of that build.
 
 **Two forms.**
 
@@ -2416,7 +2420,9 @@ says "no asset" until it runs again.
 **The socket.** The windowed app always listens (`METALRENDERER_SCRIPTS=0` turns it off). A benchmark listens only in
 `serve` or with `METALRENDERER_SCRIPT_SERVER=1`. The socket is `/tmp/metalrenderer-<uid>/<pid>.sock`, and its path is
 in `<build>/script.socket`. Each request is one JSON line (`{"path":…}`, `{"state":true}`, `{"capture":…}`,
-`{"place":…}`, `{"move":…}`, `{"remove":…}`, `{"camera":…}`, `{"quit":true}`), answered with JSON lines up to `{"exit": n}`.
+`{"place":…}`, `{"move":…}`, `{"remove":…}`, `{"camera":…}`, `{"modeller":…}`, `{"quit":true}`), answered with JSON lines
+up to `{"exit": n}`. Another module's requests (`modeller`) come through `ScriptRequests`, where it registers them: the
+engine names none.
 
 **Typed commands.** The common single edits need no script and no compile (`SceneCommand`): `place` (an object by
 asset, name, position, rotation in degrees or a quaternion, scale and material; one of the same name is replaced),
@@ -2429,8 +2435,42 @@ Tools/script.py --send '{"place": {"asset": "prefab:box", "name": "Crate", "posi
 
 **Claude (MCP).** `.mcp.json` registers `Tools/mcp/metalrenderer.py`, a stdio MCP server with no dependencies. Its
 tools: `run_swift` (optionally with the frame after it), `scene_state`, `capture`, `place_object`, `move_object`,
-`remove_objects`, `set_camera`, `switch_scene`, `set_settings`, `start_headless` and `quit_headless`. The `app-control`
-skill says which to use when, and when a script written again and again becomes a typed command.
+`remove_objects`, `set_camera`, `switch_scene`, `set_settings`, `modeller`, `start_headless` and `quit_headless`. The
+`app-control` skill says which to use when, and when a script written again and again becomes a typed command.
+
+**The Modeller, scripted.** The socket's `modeller` request drives a [Modeller](#the-modeller) of the app's own,
+offscreen: in a headless app, or beside the window's, whose Modeller it never touches (`ScriptModeller`,
+`Sources/Editors/Modeling/Scripting/`). Its steps are what a user does, in order:
+
+| Step | Does |
+|---|---|
+| `{"keys": "tab 3 ctrl+r shift+a f3"}` | Chords through the keymap (`ctrl+`, `shift+`, `alt+`, `cmd+`) |
+| `{"type": "1.5"}` | Each character a key: a typed value, or F3's query while the search is open |
+| `{"click": P, "button": "left", "mods": "shift", "count": 2}` | A click; `P` is `[x, y]` in the viewport (points from its top left, 1000 × 640) or `{"world": [x, y, z]}`, where the camera shows it |
+| `{"drag": [P, …], "pressure": [p, …], "steps": n}` | Press, moves, release: box select, gizmos, sculpt strokes |
+| `{"move": P}`, `{"scroll": dy, "at": P}` | The mouse (a modal operator follows it), the wheel |
+| `{"run": "Bridge Edge Loops"}` | An operator of the mode's menus by name or path (F3's list); a name several have lists them |
+| `{"pick": "At Center"}` | An item of the popup the last key opened (W, X, M, Shift-A …) |
+| `{"add": …}`, `{"mode": …}`, `{"selectMode": …}`, `{"tool": …}`, `{"shading": …}`, `{"workspace": …}`, `{"brush": …}` | The window's buttons |
+| `{"open": {"primitive"\|"asset"\|"file"\|"selection": …}}`, `{"new": true}`, `{"save": "Name"}`, `{"place": true}` | Documents; `place` puts the saved model in the app's scene (`mesh:<slug>`) |
+| `{"size": [w, h]}`, `{"wait": s}`, `{"close": true}` | The viewport's size; a pause; the Modeller gone (the next step makes a new one, with Blender's cube) |
+
+After the steps come its state (the mode, the operator running and its hints, the popup or search open, each object's
+counts, selection, modifiers and bounds, sculpt mode's mesh) and a picture: `viewport` (its raster viewport), `window`
+(the whole window as AppKit draws it, sized so its viewport is the script's) or `rendered` (the Rendered view's
+path-traced stage, after `{"shading": "rendered"}`, once its scene is in and 32 frames on).
+
+```bash
+Tools/script.py --modeller '[{"keys": "tab 3"}, {"click": {"world": [1, 0, 0]}}, "e", {"type": "1"}, "return"]' --view window --capture m.png
+```
+
+A full-form script has the same through `run.modeller` (`import Editors`, `Modeling`): `keys`, `type`, `click`,
+`click(world:)`, `point(_:)` (where the camera shows a point), `drag`, `run`, `pick`, `open`, `mode`, `document`,
+`edit { }` (one undo step), `json` (the state), `capture(_:scale:to:)`, `perform(json:)` and `close`. From the render
+thread (a short script) it refuses. `Scripts/modeller-tour.swift [folder]` tries the edit tools one after another
+(extrude, loop cut, edge slide, bridge, spin, F3, knife, a sculpt stroke and its undo), checks each, and with a folder
+writes the window after each and the Rendered view. Saving writes `Assets/Models`: start the headless app with
+`METALRENDERER_MODELS=<folder>` to keep a test's models out of the repo.
 
 **Limits:**
 

@@ -9,15 +9,20 @@ import simd
 /// Modeller stage into the window. Made when the mode is chosen, stopped when it is left or the window closes; it never
 /// saves settings or touches the main view's scene.
 final class StageRenderer {
-    let surface: LayerSurface
+    /// The window's layer, or offscreen textures (a scripted Modeller's, ScriptModeller).
+    let surface: RenderSurface
     let renderer: Renderer
     private var pending: DispatchWorkItem?
 
-    init?(device: MTLDevice) {
-        surface = LayerSurface(device: device)
-        guard let r = try? Renderer(device: device, surface: surface) else { return nil }
+    /// `surface`: nil draws into a layer of its own, for the window.
+    init?(device: MTLDevice, surface: RenderSurface? = nil) {
+        self.surface = surface ?? LayerSurface(device: device)
+        // Never the process's benchmark (a headless app's): the stage starts as the app's renderer does.
+        guard let r = try? Renderer(device: device, surface: self.surface, benchmarked: false) else { return nil }
         renderer = r
         renderer.perform { r in
+            // The app's defaults, not the main view's last session (its scene, a Solid view, debug views …).
+            r.settings = r.defaultSettings
             r.settings.scene.kind = .modelingStage
             r.settings.renderScale = 0.5
         }
@@ -40,9 +45,12 @@ final class StageRenderer {
         renderer.perform { $0.setStageCamera(eye: eye, forward: f, fovY: fov) }
     }
 
+    /// The layer it draws into in the window (nil offscreen).
+    var layerSurface: LayerSurface? { surface as? LayerSurface }
+
     func stop() {
         pending?.cancel()
-        surface.isVisible = false
+        layerSurface?.isVisible = false
         renderer.stopRenderThread()
     }
 }
@@ -57,22 +65,24 @@ struct RenderedViewport: NSViewRepresentable {
             self.stage = stage
             super.init(frame: .zero)
             wantsLayer = true
-            layer = stage.surface.layer
-            stage.surface.layer.contentsGravity = .resize
+            if let surface = stage.layerSurface {
+                layer = surface.layer
+                surface.layer.contentsGravity = .resize
+            }
         }
         required init?(coder: NSCoder) { fatalError("not used") }
         override func hitTest(_ point: NSPoint) -> NSView? { nil }   // the input stays the viewport's
         override func layout() {
             super.layout()
             let scale = window?.backingScaleFactor ?? 2
-            stage.surface.setSize(bounds.size, backingScale: scale, refreshRate: window?.screen?.maximumFramesPerSecond ?? 60)
-            stage.surface.isVisible = true
+            stage.layerSurface?.setSize(bounds.size, backingScale: scale, refreshRate: window?.screen?.maximumFramesPerSecond ?? 60)
+            stage.layerSurface?.isVisible = true
         }
     }
 
     func makeNSView(context: Context) -> View { View(stage: stage) }
     func updateNSView(_ view: View, context: Context) { view.needsLayout = true }
-    static func dismantleNSView(_ view: View, coordinator: ()) { view.stage.surface.isVisible = false }
+    static func dismantleNSView(_ view: View, coordinator: ()) { view.stage.layerSurface?.isVisible = false }
 }
 
 extension ModelingModel {
@@ -80,7 +90,7 @@ extension ModelingModel {
     func updateStage() {
         if shading.mode == .rendered {
             if stage == nil, let device = renderer?.device ?? host?.metalDevice {
-                stage = StageRenderer(device: device)
+                stage = StageRenderer(device: device, surface: stageSurface?(device))
                 if stage == nil { report("The Rendered view needs Metal ray tracing") }
             }
             stage?.setCamera(camera)
