@@ -2,9 +2,10 @@ import Foundation
 import simd
 
 /// A node of the sculpt tree (Blender's PBVH): its box; children, or (a leaf) its range of triangles and of the
-/// vertices it owns. Every vertex is owned by exactly one leaf, among whose triangles it is, so a brush that changes a
-/// leaf's vertices writes only that leaf's range (in parallel with the other leaves) and the viewport copies only
-/// that range.
+/// vertices it owns. Every vertex is owned by exactly one leaf, so a brush that changes a leaf's vertices writes only
+/// that leaf's range (in parallel with the other leaves) and the viewport copies only that range. A leaf's ranges have
+/// room to grow (`triCapacity`, `vertCapacity`; dynamic topology adds triangles and vertices in place), and so have
+/// its vertices' lists of triangles and neighbours (`vtRegion`, `vnRegion`).
 package struct SculptNode {
     package var lo = SIMD3<Float>(repeating: .infinity)
     package var hi = SIMD3<Float>(repeating: -.infinity)
@@ -13,8 +14,15 @@ package struct SculptNode {
     package var parent: Int32 = -1
     package var triStart: Int32 = 0
     package var triCount: Int32 = 0
+    package var triCapacity: Int32 = 0
     package var vertStart: Int32 = 0
+    /// Slots in use, dead ones among them (vertices no triangle uses any more, for dynamic topology to take again).
     package var vertCount: Int32 = 0
+    package var vertCapacity: Int32 = 0
+    package var vtRegion: Int32 = 0
+    package var vtCapacity: Int32 = 0
+    package var vnRegion: Int32 = 0
+    package var vnCapacity: Int32 = 0
     package var isLeaf: Bool { left < 0 }
 }
 
@@ -23,33 +31,51 @@ package struct SculptNode {
 /// masked). Made from the object's mesh (or its multires level); `source` maps each vertex back to the mesh's, and
 /// `triangleFace` each triangle to the face it came from, so the shape goes back without touching the mesh's UVs and
 /// faces while the topology is unchanged (dynamic topology and remeshing change it: then the mesh is made again).
+///
+/// Dynamic topology leaves slots no leaf uses (a leaf that outgrew its room moved to the end of the arrays): their
+/// triangles are degenerate (drawn as nothing, `triangleFace` −1), their vertices have no source and no owner.
+/// `compact()` packs them away.
 package final class SculptMesh {
     package var position: [SIMD4<Float>]
     package var normal: [SIMD4<Float>]
     package var source: [Int32]
+    /// The leaf each vertex slot belongs to (−1: none).
+    package var owner: [Int32]
     package var indices: [UInt32]
     package var triangleFace: [Int32]
     package var faceSet: [Int32]
     /// Hidden triangles (their face set hidden, H): not drawn, not sculpted.
     package var hidden: [Bool]
-    // CSR: each vertex's triangles and neighbours.
+    // Each vertex's triangles and neighbours: `vtList[vtStart[v]..<vtEnd[v]]`, in its leaf's region of the list.
     package var vtStart: [Int32] = []
+    package var vtEnd: [Int32] = []
     package var vtList: [Int32] = []
     package var vnStart: [Int32] = []
+    package var vnEnd: [Int32] = []
     package var vnList: [Int32] = []
     package var nodes: [SculptNode] = []
     package var leaves: [Int32] = []
     /// Each node's index in `leaves` (−1: not a leaf).
     package var leafOfNode: [Int32] = []
-    /// Changes when the triangles change (dynamic topology, remesh): the viewport's buffers are made again.
+    /// Changes when the arrays are made again (remesh, undo of dynamic topology, compaction): the viewport's buffers
+    /// are made again.
     package private(set) var topologyGeneration: UInt64 = EditMesh.nextGeneration()
     /// The source mesh's topology it was made from (its face and corner counts): whether shapes can go back.
     package var sourceFaces = 0
     package var sourceCorners = 0
     package var sourceVertices = 0
+    /// The tree's leaf size: dynamic topology splits a leaf that grows past twice it.
+    package var leafTriangles = SculptMesh.leafSize
+    /// Dynamic topology's numbering of the vertices and triangles under the brush (all −1 between its calls).
+    var scratchVertex: [Int32] = []
+    var scratchTriangle: [Int32] = []
 
+    /// Vertex slots (some unused after dynamic topology).
     package var vertexCount: Int { position.count }
-    package var triangleCount: Int { indices.count / 3 }
+    /// Triangle slots (some unused after dynamic topology).
+    package var triangleSlots: Int { indices.count / 3 }
+    /// The triangles the leaves hold.
+    package var triangleCount: Int { leaves.reduce(0) { $0 + Int(nodes[Int($1)].triCount) } }
     package static let leafSize = 1024
 
     /// The mesh of an object (its faces triangulated, its vertices smooth).
@@ -86,12 +112,15 @@ package final class SculptMesh {
         pos.reserveCapacity(positions.count)
         var src: [Int32] = []
         src.reserveCapacity(positions.count)
+        var own: [Int32] = []
+        own.reserveCapacity(positions.count)
         var idx = [UInt32](repeating: 0, count: indices.count)
         var tf = [Int32](repeating: 0, count: nt), fs = [Int32](repeating: 0, count: nt)
         var hid = [Bool](repeating: false, count: nt)
         var nodes = built
         var leaves: [Int32] = []
         for (n, node) in built.enumerated() where node.isLeaf {
+            let leaf = Int32(leaves.count)
             leaves.append(Int32(n))
             let vStart = pos.count
             for k in Int(node.triStart)..<Int(node.triStart + node.triCount) {
@@ -102,6 +131,7 @@ package final class SculptMesh {
                         newIndex[v] = Int32(pos.count)
                         pos.append(SIMD4(positions[v], masks?[v] ?? 0))
                         src.append(v < source.count ? source[v] : -1)
+                        own.append(leaf)
                     }
                     idx[3 * k + j] = UInt32(newIndex[v])
                 }
@@ -109,18 +139,22 @@ package final class SculptMesh {
                 fs[k] = faceSet[t]
                 hid[k] = hidden[t]
             }
+            nodes[n].triCapacity = node.triCount
             nodes[n].vertStart = Int32(vStart)
             nodes[n].vertCount = Int32(pos.count - vStart)
+            nodes[n].vertCapacity = nodes[n].vertCount
         }
         // Vertices no triangle uses: kept at the end (owned by no leaf).
         for v in 0..<positions.count where newIndex[v] < 0 {
             newIndex[v] = Int32(pos.count)
             pos.append(SIMD4(positions[v], masks?[v] ?? 0))
             src.append(v < source.count ? source[v] : -1)
+            own.append(-1)
         }
         position = pos
         normal = [SIMD4<Float>](repeating: SIMD4(0, 1, 0, 0), count: pos.count)
         self.source = src
+        owner = own
         self.indices = idx
         self.triangleFace = tf
         self.faceSet = fs
@@ -130,6 +164,7 @@ package final class SculptMesh {
         var leafOf = [Int32](repeating: -1, count: nodes.count)
         for (i, n) in leaves.enumerated() { leafOf[Int(n)] = Int32(i) }
         leafOfNode = leafOf
+        leafTriangles = leafSize
         buildAdjacency()
         updateNormals(leaves: leaves.indices.map { $0 })
         updateBoxes(leaves: leaves.indices.map { $0 })
@@ -193,8 +228,9 @@ package final class SculptMesh {
         }
     }
 
-    /// Leaves' boxes from their triangles (leaf indices into `leaves`), then their ancestors'.
-    package func updateBoxes(leaves which: [Int]) {
+    /// Leaves' boxes from their triangles and the vertices they own (leaf indices into `leaves`), then their
+    /// ancestors'.
+    package func updateBoxes(leaves which: some Sequence<Int>) {
         var touched = Set<Int32>()
         position.withUnsafeBufferPointer { p in
             indices.withUnsafeBufferPointer { ix in
@@ -207,6 +243,12 @@ package final class SculptMesh {
                         let v = SIMD3(q.x, q.y, q.z)
                         lo = simd_min(lo, v)
                         hi = simd_max(hi, v)
+                    }
+                    let vs = Int(nodes[n].vertStart)
+                    for v in vs..<(vs + Int(nodes[n].vertCount)) {
+                        let q = p[v]
+                        lo = simd_min(lo, SIMD3(q.x, q.y, q.z))
+                        hi = simd_max(hi, SIMD3(q.x, q.y, q.z))
                     }
                     nodes[n].lo = lo
                     nodes[n].hi = hi
@@ -232,7 +274,7 @@ package final class SculptMesh {
         while let n = stack.popLast() {
             let node = nodes[Int(n)]
             let q = simd_clamp(c, node.lo, node.hi)
-            if simd_length_squared(q - c) > r2 { continue }
+            if !(simd_length_squared(q - c) <= r2) { continue }
             if node.isLeaf { if leafOfNode[Int(n)] >= 0 { out.append(Int(leafOfNode[Int(n)])) } } else { stack.append(node.left); stack.append(node.right) }
         }
         return out
@@ -286,57 +328,80 @@ package final class SculptMesh {
 
     // MARK: Adjacency and normals
 
-    /// Each vertex's triangles and neighbours (CSR).
+    /// Each vertex's triangles and neighbours, every leaf's in a region of its own (in vertex order, without room to
+    /// spare: dynamic topology moves a region that outgrows itself to the end).
     package func buildAdjacency() {
-        let nv = vertexCount, nt = triangleCount
-        var start = [Int32](repeating: 0, count: nv + 1)
-        for i in indices { start[Int(i) + 1] += 1 }
-        for v in 0..<nv { start[v + 1] += start[v] }
-        var fill = start
-        var list = [Int32](repeating: 0, count: indices.count)
-        for t in 0..<nt {
-            for j in 0..<3 {
-                let v = Int(indices[3 * t + j])
-                list[Int(fill[v])] = Int32(t)
-                fill[v] += 1
+        let nv = vertexCount
+        var count = [Int32](repeating: 0, count: nv)
+        for l in leaves {
+            let n = nodes[Int(l)]
+            for i in (3 * Int(n.triStart))..<(3 * Int(n.triStart + n.triCount)) { count[Int(indices[i])] += 1 }
+        }
+        var start = [Int32](repeating: 0, count: nv)
+        var total: Int32 = 0
+        for v in 0..<nv { start[v] = total; total += count[v] }
+        var end = start
+        var list = [Int32](repeating: 0, count: Int(total))
+        for l in leaves {
+            let n = nodes[Int(l)]
+            for t in Int(n.triStart)..<Int(n.triStart + n.triCount) {
+                for j in 0..<3 {
+                    let v = Int(indices[3 * t + j])
+                    list[Int(end[v])] = Int32(t)
+                    end[v] += 1
+                }
             }
         }
         vtStart = start
+        vtEnd = end
         vtList = list
         // Neighbours: the other corners of each vertex's triangles, without repeats.
-        var nStart = [Int32](repeating: 0, count: nv + 1)
+        var nStart = [Int32](repeating: 0, count: nv), nEnd = [Int32](repeating: 0, count: nv)
         var nList: [Int32] = []
-        nList.reserveCapacity(indices.count * 2)
+        nList.reserveCapacity(Int(total) * 2)
         var seen: [Int32] = []
         for v in 0..<nv {
             seen.removeAll(keepingCapacity: true)
-            for k in Int(start[v])..<Int(start[v + 1]) {
+            for k in Int(start[v])..<Int(end[v]) {
                 let t = Int(list[k])
                 for j in 0..<3 {
                     let o = Int32(indices[3 * t + j])
                     if o != Int32(v) && !seen.contains(o) { seen.append(o) }
                 }
             }
+            nStart[v] = Int32(nList.count)
             nList += seen
-            nStart[v + 1] = Int32(nList.count)
+            nEnd[v] = Int32(nList.count)
         }
         vnStart = nStart
+        vnEnd = nEnd
         vnList = nList
+        for l in leaves {
+            let n = Int(l), vs = Int(nodes[n].vertStart), ve = vs + Int(nodes[n].vertCount)
+            guard ve > vs else { continue }
+            nodes[n].vtRegion = start[vs]
+            nodes[n].vtCapacity = end[ve - 1] - start[vs]
+            nodes[n].vnRegion = nStart[vs]
+            nodes[n].vnCapacity = nEnd[ve - 1] - nStart[vs]
+        }
     }
 
     /// The normals of the leaves' vertices (area-weighted, from their triangles wherever those are), in parallel.
-    package func updateNormals(leaves which: [Int]) {
+    package func updateNormals(leaves which: some Collection<Int>) {
         guard !which.isEmpty else { return }
         let ranges = which.map { (Int(nodes[Int(leaves[$0])].vertStart), Int(nodes[Int(leaves[$0])].vertCount)) }
         position.withUnsafeBufferPointer { p in
             normal.withUnsafeMutableBufferPointer { n in
                 indices.withUnsafeBufferPointer { ix in
                     vtStart.withUnsafeBufferPointer { vs in
-                        vtList.withUnsafeBufferPointer { vl in
-                            let pp = p.baseAddress!, np = n.baseAddress!, ip = ix.baseAddress!, sp = vs.baseAddress!, lp = vl.baseAddress!
-                            DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
-                                let (start, count) = ranges[k]
-                                sculptVertexNormals(pp, np, ip, sp, lp, start, start + count)
+                        vtEnd.withUnsafeBufferPointer { ve in
+                            vtList.withUnsafeBufferPointer { vl in
+                                let pp = p.baseAddress!, np = n.baseAddress!, ip = ix.baseAddress!
+                                let sp = vs.baseAddress!, ep = ve.baseAddress!, lp = vl.baseAddress!
+                                DispatchQueue.concurrentPerform(iterations: ranges.count) { k in
+                                    let (start, count) = ranges[k]
+                                    sculptVertexNormals(pp, np, ip, sp, ep, lp, start, start + count)
+                                }
                             }
                         }
                     }
@@ -364,7 +429,7 @@ package final class SculptMesh {
             let p = position[v]
             mesh.positions[Int(source[v])] = SIMD3(p.x, p.y, p.z)
         }
-        for t in 0..<triangleCount where triangleFace[t] >= 0 && Int(triangleFace[t]) < mesh.faceCount {
+        for t in 0..<triangleSlots where triangleFace[t] >= 0 && Int(triangleFace[t]) < mesh.faceCount {
             mesh.faceSet[Int(triangleFace[t])] = faceSet[t]
             if hidden[t] { mesh.faceFlags[Int(triangleFace[t])] |= EditMesh.Flag.hide } else { mesh.faceFlags[Int(triangleFace[t])] &= ~EditMesh.Flag.hide }
         }
@@ -382,14 +447,28 @@ package final class SculptMesh {
         for v in 0..<vertexCount where source[v] >= 0 && Int(source[v]) < masks.count { position[v].w = masks[Int(source[v])] }
     }
 
+    /// The leaves' triangles' corners (without the slots no leaf uses).
+    package func liveIndices() -> [UInt32] {
+        var out: [UInt32] = []
+        out.reserveCapacity(triangleCount * 3)
+        for l in leaves {
+            let n = nodes[Int(l)]
+            out += indices[(3 * Int(n.triStart))..<(3 * Int(n.triStart + n.triCount))]
+        }
+        return out
+    }
+
     /// The triangles as a mesh of their own (after the topology changed): smooth faces with their face sets.
     package func editMesh() -> EditMesh {
         var d = EditMesh.Draft()
         d.positions = position.map { SIMD3($0.x, $0.y, $0.z) }
         d.vertFlags = [UInt8](repeating: 0, count: vertexCount)
-        for t in 0..<triangleCount {
-            d.addFace([Int32(indices[3 * t]), Int32(indices[3 * t + 1]), Int32(indices[3 * t + 2])], set: faceSet[t],
-                      flags: EditMesh.Flag.smooth | (hidden[t] ? EditMesh.Flag.hide : 0))
+        for l in leaves {
+            let n = nodes[Int(l)]
+            for t in Int(n.triStart)..<Int(n.triStart + n.triCount) {
+                d.addFace([Int32(indices[3 * t]), Int32(indices[3 * t + 1]), Int32(indices[3 * t + 2])], set: faceSet[t],
+                          flags: EditMesh.Flag.smooth | (hidden[t] ? EditMesh.Flag.hide : 0))
+            }
         }
         var m = EditMesh(d)
         m.removeUnusedVertices()
@@ -405,12 +484,13 @@ package final class SculptMesh {
 /// The normals of vertices `start..<end`: the sum of their triangles' area normals, made unit length.
 @inline(never)
 func sculptVertexNormals(_ p: UnsafePointer<SIMD4<Float>>, _ n: UnsafeMutablePointer<SIMD4<Float>>, _ ix: UnsafePointer<UInt32>,
-                         _ vtStart: UnsafePointer<Int32>, _ vtList: UnsafePointer<Int32>, _ start: Int, _ end: Int) {
+                         _ vtStart: UnsafePointer<Int32>, _ vtEnd: UnsafePointer<Int32>, _ vtList: UnsafePointer<Int32>,
+                         _ start: Int, _ end: Int) {
     var v = start
     while v < end {
         var sum = SIMD3<Float>.zero
         var k = Int(vtStart[v])
-        let e = Int(vtStart[v + 1])
+        let e = Int(vtEnd[v])
         while k < e {
             let t = Int(vtList[k]) &* 3
             let a = p[Int(ix[t])], b = p[Int(ix[t &+ 1])], c = p[Int(ix[t &+ 2])]

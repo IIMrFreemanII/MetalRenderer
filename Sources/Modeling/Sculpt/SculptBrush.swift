@@ -151,7 +151,8 @@ func sculptDabKernel(_ p: UnsafeMutablePointer<SIMD4<Float>>, _ n: UnsafePointer
 /// positions aren't changed, so the leaves can do it at the same time.
 @inline(never)
 func sculptSmoothTargets(_ p: UnsafePointer<SIMD4<Float>>, _ target: UnsafeMutablePointer<SIMD4<Float>>, _ vnStart: UnsafePointer<Int32>,
-                         _ vnList: UnsafePointer<Int32>, _ start: Int, _ end: Int, _ dab: SculptDab, _ falloff: UnsafePointer<Float>) {
+                         _ vnEnd: UnsafePointer<Int32>, _ vnList: UnsafePointer<Int32>, _ start: Int, _ end: Int, _ dab: SculptDab,
+                         _ falloff: UnsafePointer<Float>) {
     let r2 = dab.radius * dab.radius
     let inv = 1 / max(dab.radius, 1e-12)
     let s = min(1, abs(dab.strength))
@@ -163,7 +164,7 @@ func sculptSmoothTargets(_ p: UnsafePointer<SIMD4<Float>>, _ target: UnsafeMutab
         if dd < r2 {
             var sum = SIMD3<Float>.zero
             var k = Int(vnStart[v])
-            let e = Int(vnStart[v + 1])
+            let e = Int(vnEnd[v])
             let count = e - k
             while k < e {
                 let o = p[Int(vnList[k])]

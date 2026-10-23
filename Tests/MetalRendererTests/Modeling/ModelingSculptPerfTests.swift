@@ -79,4 +79,67 @@ final class ModelingSculptPerfTests: XCTestCase {
         XCTAssertLessThan(big, 40)
         XCTAssertLessThan(small, 15)
     }
+
+    /// Dynamic topology: strokes of mouse events, each a dab, its refinement (×2, mirrored) and the viewport's copy,
+    /// finer than the mesh and coarser, with brushes of a few times the detail to some tens of times; then undoing and
+    /// redoing each stroke, and packing what they left. On the 2M-triangle sphere, and (the same edge length, brush and
+    /// detail) on one of 126k triangles: the work is local, so the two should take about the same.
+    func testDynamicTopologyTwoMillion() throws {
+        guard ProcessInfo.processInfo.environment["MODELING_PERF"] != nil else { throw XCTSkip("MODELING_PERF not set") }
+        let device = MTLCreateSystemDefaultDevice()
+        var worst: Double = 0
+        for (n, size) in [(410, Float(1)), (103, Float(0.25))] {
+            let mesh = SculptMesh(Primitives.quadSphere(n: n, radius: size))
+            let drawing = device.map { SculptDrawing(device: $0) }
+            _ = drawing?.prepare(mesh)
+            _ = drawing?.prepare(mesh)
+            print("Dynamic topology: \(mesh.triangleCount) triangles, edges ~\(String(format: "%.4f", 2 * size / Float(n)))")
+            // Detail 0.0025: edges split (the mesh's are ~0.005); 0.008: collapsed.
+            for (detail, radius) in [(Float(0.0025), Float(0.015)), (0.0025, 0.05), (0.0025, 0.12), (0.008, 0.05), (0.008, 0.12)] {
+                let stroke = SculptStroke(mesh: mesh, brush: SculptBrush(kind: .draw))
+                if mesh.needsCompaction {
+                    _ = time("  packing first (compact)") { mesh.compact() }
+                    drawing?.markTrianglesDirty(mesh)
+                    _ = drawing?.prepare(mesh)
+                }
+                stroke.record.beginLayout(mesh)
+                var dab = 0.0, refine = 0.0, copy = 0.0, peak = 0.0
+                let events = 40
+                for i in 0..<events {
+                    // Along an arc 0.25 long, wherever the sphere's size.
+                    let a = (Float(i) / Float(events) - 0.5) * 0.25 / size
+                    let q = SIMD3<Float>(sin(a), cos(a), 0) * size
+                    let t0 = DispatchTime.now().uptimeNanoseconds
+                    stroke.move(to: q, radius: radius, strength: 0.3)
+                    let t1 = DispatchTime.now().uptimeNanoseconds
+                    var change = DynTopo.Change()
+                    for mirror in stroke.mirrors {
+                        if let c = DynTopo.refine(mesh, centre: q * mirror, radius: radius, detail: detail, record: stroke.record) {
+                            change.leaves.formUnion(c.leaves); change.triangles += c.triangles
+                        }
+                    }
+                    let t2 = DispatchTime.now().uptimeNanoseconds
+                    drawing?.markDirty(stroke.dirty); drawing?.markDirty(change.leaves); drawing?.markTriangles(change.triangles)
+                    stroke.dirty.removeAll()
+                    _ = drawing?.prepare(mesh)
+                    let t3 = DispatchTime.now().uptimeNanoseconds
+                    dab += Double(t1 - t0) / 1e6; refine += Double(t2 - t1) / 1e6; copy += Double(t3 - t2) / 1e6
+                    if i > 0 { peak = max(peak, Double(t3 - t0) / 1e6) }
+                }
+                let e = Double(events)
+                let label = String(format: "%@, r %.3f (%.0f× detail)", detail < 0.005 ? "finer" : "coarser", radius, radius / detail)
+                print(String(format: "  %-30@ per event: dab %.2f, refine %.2f, viewport %.2f ms; slowest %.1f ms; %d triangles",
+                             label as NSString, dab / e, refine / e, copy / e, peak, mesh.triangleCount))
+                worst = max(worst, (dab + refine + copy) / e)
+                let undo = time("    undo the stroke") { stroke.record.swap(into: mesh) }
+                _ = time("    redo it") { stroke.record.swap(into: mesh) }
+                _ = undo
+                drawing?.markTrianglesDirty(mesh)
+            }
+            XCTAssertNil(mesh.check(boxes: false))
+            _ = time("  packing (compact)") { mesh.compact() }
+        }
+        // Release target: a mouse event in a frame (16 ms) for brushes of up to ~20× the detail; a generous margin here.
+        XCTAssertLessThan(worst, 60)
+    }
 }

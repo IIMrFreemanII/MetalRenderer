@@ -136,8 +136,17 @@ final class SculptController {
         var brush = m.sculptBrush
         if inverted { brush.subtract.toggle() }
         stroke = SculptStroke(mesh: mesh, brush: brush)
-        // Dynamic topology changes the triangles: its undo step is the whole mesh.
-        if m.dyntopo && dyntopoApplies(brush.kind) { stroke?.record.whole = mesh.snapshot() }
+        // Dynamic topology changes the triangles: its undo step keeps the leaves it changes whole. What earlier strokes
+        // left behind is packed away first, when there's enough of it (then the step is the whole mesh).
+        if m.dyntopo && dyntopoApplies(brush.kind), let record = stroke?.record {
+            if mesh.needsCompaction {
+                record.whole = mesh.snapshot()
+                mesh.compact()
+                drawing?.markTrianglesDirty(mesh)
+            } else {
+                record.beginLayout(mesh)
+            }
+        }
         lastHit = h.point
         hover = h
         apply(h.point, pressure: pressure, model: m)
@@ -174,8 +183,9 @@ final class SculptController {
             let depth = max(simd_dot(SIMD3(wp.x, wp.y, wp.z) - m.camera.eye, m.camera.forward), m.camera.near)
             let detail = objectRadius(m, m.dyntopoDetail * m.camera.metresPerPoint(depth: depth, viewHeight: m.viewSize.y))
             for mirror in stroke.mirrors {
-                if let refined = DynTopo.refine(mesh, centre: q * mirror, radius: radius, detail: detail) {
-                    mesh.replace(with: refined)
+                if let change = DynTopo.refine(mesh, centre: q * mirror, radius: radius, detail: detail, record: stroke.record) {
+                    drawing?.markDirty(change.leaves)
+                    drawing?.markTriangles(change.triangles)
                 }
             }
         }

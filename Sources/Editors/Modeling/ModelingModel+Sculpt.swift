@@ -40,7 +40,6 @@ extension ModelingModel {
             // Multires levels and dynamic topology don't mix (as in Blender): the level becomes the mesh.
             if s.multiresLevel != nil { report("Dynamic Topology: the multires level is the mesh now") }
             s.multiresLevel = nil
-            if s.mesh.triangleCount > 600_000 { report("Dynamic Topology on a mesh this dense is slow: remesh it coarser first") ; return }
         }
         report(dyntopo ? "Dynamic Topology on (detail \(Int(dyntopoDetail)) px)" : "Dynamic Topology off")
     }
@@ -51,14 +50,16 @@ extension ModelingModel {
         guard mode == .sculpt, let s = sculpt else { return }
         let m = s.mesh
         let positions = m.position.map { SIMD3($0.x, $0.y, $0.z) }
+        let indices = m.liveIndices()
         let started = Date()
-        var remeshed = VoxelRemesh.remesh(positions: positions, indices: m.indices, voxel: voxelSize)
+        var remeshed = VoxelRemesh.remesh(positions: positions, indices: indices, voxel: voxelSize)
         guard remeshed.faceCount > 0 else { report("Voxel Remesh: nothing came out (voxel size too large?)"); return }
         // Face sets from the old mesh's nearest triangle.
-        let tree = TriangleTree(positions: positions, indices: m.indices)
+        let tree = TriangleTree(positions: positions, indices: indices)
+        let sets = m.leaves.flatMap { l in m.faceSet[Int(m.nodes[Int(l)].triStart)..<Int(m.nodes[Int(l)].triStart + m.nodes[Int(l)].triCount)] }
         for f in 0..<remeshed.faceCount {
             let h = tree.nearest(remeshed.faceCenter(f))
-            if h.triangle >= 0 { remeshed.faceSet[f] = m.faceSet[h.triangle] }
+            if h.triangle >= 0 { remeshed.faceSet[f] = sets[h.triangle] }
         }
         let new = SculptMesh(remeshed)
         // Masks by nearest point.
@@ -67,8 +68,8 @@ extension ModelingModel {
             let h = tree.nearest(SIMD3(p.x, p.y, p.z))
             guard h.triangle >= 0 else { continue }
             let t = h.triangle
-            new.position[v].w = m.position[Int(m.indices[3 * t])].w * h.bary.x + m.position[Int(m.indices[3 * t + 1])].w * h.bary.y
-                + m.position[Int(m.indices[3 * t + 2])].w * h.bary.z
+            new.position[v].w = m.position[Int(indices[3 * t])].w * h.bary.x + m.position[Int(indices[3 * t + 1])].w * h.bary.y
+                + m.position[Int(indices[3 * t + 2])].w * h.bary.z
         }
         let record = SculptUndoRecord(topology: m.topologyGeneration)
         record.whole = m.snapshot()

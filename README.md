@@ -2229,12 +2229,14 @@ How it is made: `Sources/Modeling` holds the mesh (`EditMesh`: polygons over sha
 `Mesh` layout, an operation remaking it through a `Draft` that brings every edge's marks back by its vertices), the
 operations, the transform maths, the modifiers, the sculpt mesh (`SculptMesh`: triangles laid out by a tree whose
 leaves own contiguous ranges of vertices, so a dab's brushes run per leaf on every core and the viewport copies only
-the leaves a dab touched), multires, dynamic topology, voxel remeshing (surface nets over a distance field), UVs, the
+the leaves a dab touched), multires, dynamic topology (in place: the triangles under the brush refined and written
+back into their leaves' room, a leaf that outgrows it moved to the end of the arrays or split, only the lists of the
+vertices round the change made again; a stroke's undo keeps just the leaves it changed), voxel remeshing (surface nets over a distance field), UVs, the
 files, and the viewport's own raster renderer (`Sources/Modeling/Shaders/Viewport.metal`: reverse Z, 4× MSAA, depth-
 tested overlays, an id pass for picking and the selection outline). The window is `Sources/Editors/Modeling`; the
 engine's part (`mesh:` assets, the Rendered stage, the selection as a model) is `Sources/MetalRenderer/Modeling`.
 Tests: `ModelingMeshTests`, `ModelingIOTests`, `ModelingOpsTests`, `ModelingTransformTests`, `ModelingModifierTests`,
-`ModelingSculptTests`, `ModelingViewportTests` and `ModelingEditorTests` (the window driven by keys and clicks,
+`ModelingSculptTests`, `ModelingDynTopoTests`, `ModelingViewportTests` and `ModelingEditorTests` (the window driven by keys and clicks,
 headless; `MODELING_PNG=<folder>` writes its pictures); `ModelingSculptPerfTests` times sculpting at 2M triangles
 (`MODELING_PERF=1`, in release). `METALRENDERER_SCENE=modelingstage METALRENDERER_MODEL=<asset or primitive>` renders
 the Rendered view's stage offscreen.
@@ -2250,6 +2252,20 @@ Sculpting at 2.0M triangles (1.0M vertices), M1 Max, release:
 | The viewport's copy of a big dab's 550 leaves | 1.2 ms |
 | A viewport frame at 2880×1800 (MatCap), GPU | 2.3 ms |
 | The shape back into the mesh (leaving sculpt mode) | 9 ms |
+
+Dynamic topology on the same sphere, per mouse event (a dab, its refinement on both sides of the X mirror, the
+viewport's copy), detail 0.0025 against the mesh's edges of ~0.005 (so the brush splits what it touches):
+
+| Brush radius | 2.0M triangles | 127k triangles |
+|---|---|---|
+| 6× the detail | 2.2 ms | 2.0 ms |
+| 20× the detail | 6.5 ms | 6.0 ms |
+| 48× the detail | 23 ms | 20 ms |
+
+The same on both meshes: the work is what the brush touches, not the mesh (before, every event rebuilt the whole
+sculpt mesh, ~400 ms at 2M). A stroke's first event is slower (the leaves it first touches have no room yet and
+move: up to ~18 ms at 20×); undoing a stroke takes 3–7 ms; packing what strokes leave behind (at a stroke's start,
+when there's enough of it) ~100 ms at 2M.
 
 The brushes' per-vertex loops, the normals and the viewport's copy are in `Tools/perf/hot-functions.txt` (clean).
 

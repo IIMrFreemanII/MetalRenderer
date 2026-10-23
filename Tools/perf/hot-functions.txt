@@ -98,8 +98,8 @@ static CarSolver.letGo(_:_:_:)
 
 # The Modeller's sculpting, per vertex of the leaves a dab touches, on every core (Modeling/Sculpt, Viewport/SculptDrawing).
 sculptDabKernel(_:_:_:_:_:_:)
-sculptSmoothTargets(_:_:_:_:_:_:_:_:)
+sculptSmoothTargets(_:_:_:_:_:_:_:_:_:)
 sculptCopyRange(_:_:_:_:)
 sculptAreaSums(_:_:_:_:_:_:)
-sculptVertexNormals(_:_:_:_:_:_:_:)
-sculptWriteVertices(_:_:_:_:_:_:_:_:)
+sculptVertexNormals(_:_:_:_:_:_:_:_:)
+sculptWriteVertices(_:_:_:_:_:_:_:_:_:)
