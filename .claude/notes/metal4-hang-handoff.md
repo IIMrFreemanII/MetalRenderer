@@ -123,6 +123,15 @@ Next to try: Metal System Trace or a GPU capture of a hung run (which kernel is 
 what it reads); the cascades' merge with its `traceSurface` replaced by a plain closest hit; a build of the trace,
 cascades and reflections' kernels without the particle queries compiled in (PARTICLES off).
 
+## Interludes timing out after a switch (2026-10-26): not a hang
+`Metal 3 command buffer blas failed: … ErrorTimeout`, then `upscale` and `interpolate`, then every frame's interludes
+`SubmissionsIgnored`, right after a switch to Muscles and skin. The cause was the frame's Metal 4 `physics` pass: the
+renderer's clock ran on through the switch, and the GPU's soft bodies replayed from zero to it in one command buffer
+(450-1,100 steps, 3.4-8 s). The interlude after it gave up its 2 s wait, was committed, and waited on the GPU past the
+watchdog. Fixed by starting a switched-to scene at its clock's zero (`Renderer.install`). `Metal4Frame.commit` now
+says when an interlude's wait gives up ("the frame's work before … took over 2000 ms"): look at the Metal 4 work
+before it, not the interlude.
+
 ## Still open
 - **Scene loads** build their BLASes on a Metal 3 queue in the background (`SceneBuffers`, `VirtualTracing`'s
   placeholder, `MaterialTextures`). Virtual geometry's case says Metal 3 work beside the frames isn't enough to hang
