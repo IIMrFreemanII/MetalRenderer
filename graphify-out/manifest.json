@@ -5532,15 +5532,15 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeKind+Cook.swift": {
-    "mtime": 1793056724.0539098,
-    "seen": 1793056827.658483,
-    "ast_hash": "a4f7ca877db86f126726033ebd2e8733",
+    "mtime": 1793056962.5410652,
+    "seen": 1793057055.5011709,
+    "ast_hash": "b434c178c54e37392dc4d68167ca5c00",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeKind.swift": {
-    "mtime": 1793056724.0538106,
-    "seen": 1793056827.658483,
-    "ast_hash": "2786f877dc6c0b4b10571824f1948e93",
+    "mtime": 1793056962.540973,
+    "seen": 1793057055.501172,
+    "ast_hash": "04c7ad8a20a420547220038c1118cba0",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeSpec.swift": {
@@ -5631,6 +5631,18 @@
     "mtime": 1793056759.708261,
     "seen": 1793056827.659897,
     "ast_hash": "b94c9e723e0db4a55375f9a1ea26baa5",
+    "semantic_hash": ""
+  },
+  "Sources/Procedural/Nodes/CurveNodes.swift": {
+    "mtime": 1793056962.5408163,
+    "seen": 1793057055.501122,
+    "ast_hash": "6760c718d9184e1ec1cf9bfa2786b03e",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/Procedural/ProceduralCurveTests.swift": {
+    "mtime": 1793057023.3044844,
+    "seen": 1793057055.502574,
+    "ast_hash": "e7c2b8eedc46ce9d545892b837719917",
     "semantic_hash": ""
   }
 }

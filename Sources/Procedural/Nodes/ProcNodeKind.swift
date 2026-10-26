@@ -16,6 +16,8 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
          connectivity, sort
     // Scatter & copy
     case scatter, copytopoints, attribtransfer, ray, pointjitter, voronoifracture
+    // Curve
+    case curve, resample, sweep, revolve, polywire, carve, ends, lsystem
     // Group
     case groupcreate, blast
     // Utility
@@ -278,6 +280,58 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
             return ProcNodeSpec("Voronoi Fracture", .scatter, "voronoifracture", symbol: "square.split.diagonal.2x2", inputs: ["Geometry", "Cell Points"], params: [
                 P.bool("cutinput", "Cut the Input", true), P.text("interiorgroup", "Interior Group", "inside"),
             ], "Breaks the geometry into a piece per point: each point's Voronoi cell (cut out of the mesh), named piece0, piece1 …")
+
+        // MARK: Curve
+        case .curve:
+            return ProcNodeSpec("Curve", .curve, "curve", symbol: "scribble", params: [
+                P("points", "Points", .points([[0, 0, 0], [1, 0, 0.5], [2, 0, 0], [3, 0, 0.5]]), .points),
+                P.menu("type", "Type", ["polygon", "smooth"]), P.int("segs", "Segments per Span", 8, 1...32, when: ProcNodeKind.onlyFor("type", "smooth")),
+                P.bool("closed", "Closed", false),
+            ], "A curve through points: straight between them, or smooth (Catmull-Rom).")
+        case .resample:
+            return ProcNodeSpec("Resample", .curve, "resample", symbol: "point.topleft.down.to.point.bottomright.curvepath", inputs: ["Curves"], params: [
+                P.group("group", "Group", .primitive), P.bool("dolength", "Maximum Segment Length", true),
+                P.float("length", "Length", 0.1, 0.001...2, when: ProcNodeKind.onlyFor("dolength", "1")),
+                P.int("segs", "Maximum Segments", 10, 1...200, when: ProcNodeKind.onlyFor("dolength", "0")),
+                P.menu("treatpolysas", "Treat Polygons As", ["straight", "subdivision"]), P.bool("docurveu", "Curve U Attribute", true),
+            ], "Points evenly spaced along each curve (or smoothed through it); attributes follow; curveu 0 to 1 along it.")
+        case .sweep:
+            return ProcNodeSpec("Sweep", .curve, "sweep", symbol: "point.3.filled.connected.trianglepath.dotted", inputs: ["Backbone", "Cross Section"], params: [
+                P.menu("surfaceshape", "Surface Shape", ["tube", "square", "ribbon", "input"]),
+                P.float("radius", "Radius", 0.1, 0...2, when: ProcNodeKind.onlyFor("surfaceshape", "tube")),
+                P.int("cols", "Columns", 8, 3...64, when: ProcNodeKind.onlyFor("surfaceshape", "tube")),
+                P.float("width", "Width", 0.2, 0...2, when: ProcNodeKind.onlyFor("surfaceshape", "square", "ribbon")),
+                P.float("scale", "Scale", 1, 0...5), P.bool("applyscale", "Apply Scale Along Curve", false),
+                P("scaleramp", "Scale Ramp", .ramp([[0, 1], [1, 1]]), .ramp),
+                P.float("twist", "Twist (degrees)", 0, -720...720), P.float("roll", "Roll", 0, -180...180),
+                P.vec3("up", "Up", [0, 1, 0]), P.bool("endcaps", "End Caps", true), P.bool("polygonsasbackbones", "Polygons as Backbones", false),
+                P.bool("computeuvs", "Compute UVs", true, folder: "UVs"), P.vec2("uvscale", "UV Scale", [1, 1], folder: "UVs"),
+            ], "A cross-section (a tube, a square, a ribbon or the second input's curve) swept along each curve, carried along it without twisting.")
+        case .revolve:
+            return ProcNodeSpec("Revolve", .curve, "revolve", symbol: "rotate.3d", inputs: ["Curves"], params: [
+                P.vec3("origin", "Origin", .zero), P.vec3("dir", "Axis", [0, 1, 0]), P.int("divs", "Divisions", 24, 3...128),
+                P.float("beginangle", "Start Angle", 0, 0...360), P.float("endangle", "End Angle", 360, 0...360),
+            ], "A surface turned round an axis from each curve (a lathe).")
+        case .polywire:
+            return ProcNodeSpec("PolyWire", .curve, "polywire", symbol: "line.3.horizontal.decrease", inputs: ["Curves"], params: [
+                P.float("radius", "Wire Radius", 0.05, 0...1), P.int("divs", "Divisions", 8, 3...32), P.bool("caps", "End Caps", true),
+            ], "A tube round every curve and polygon edge loop (a point's width scales it).")
+        case .carve:
+            return ProcNodeSpec("Carve", .curve, "carve", symbol: "scissors.badge.ellipsis", inputs: ["Curves"], params: [
+                P.float("firstu", "First U", 0, 0...1), P.float("secondu", "Second U", 1, 0...1),
+            ], "The part of each curve between two places along it (0 its start, 1 its end).")
+        case .ends:
+            return ProcNodeSpec("Ends", .curve, "ends", symbol: "circle.bottomhalf.filled", inputs: ["Geometry"], params: [
+                P.group("group", "Group", .primitive), P.menu("closeu", "Close U", ["close", "open", "unroll"]),
+            ], "Closes curves into polygons, opens polygons into curves, or unrolls them (the first point again at the end).")
+        case .lsystem:
+            return ProcNodeSpec("L-System", .curve, "lsystem", symbol: "leaf", params: [
+                P.int("generations", "Generations", 4, 0...8), P.text("premise", "Premise", "F"),
+                P("rules", "Rules", .string("F=F[+F]F[-F][&F]F"), .code, help: "one rule a line: F=…; X:0.5=… a chance"),
+                P.float("angle", "Angle", 25, 0...180), P.float("variance", "Angle Variance", 0, 0...45),
+                P.float("step", "Step Size", 0.2, 0...2), P.float("stepscale", "Step Scale (\")", 0.9, 0...2),
+                P.float("width", "Width", 1, 0...2), P.float("widthscale", "Width Scale (!)", 0.7, 0...2), P.int("seed", "Seed", 0, 0...100),
+            ], "Branching curves by Lindenmayer's rules, drawn by a turtle: F f + - & ^ \\ / | [ ] ! \". Each point has width and generation.")
 
         // MARK: Group
         case .groupcreate:
