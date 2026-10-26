@@ -27,7 +27,7 @@ The app takes requests through its script socket (README, "Scripts"). The `metal
    |---|---|
    | One object placed, replaced (same name), moved, turned, scaled or removed | `place_object`, `move_object`, `remove_objects` |
    | The camera somewhere, looking at something | `set_camera` (`lookAt`, or yaw and pitch in degrees) |
-   | Another scene | `switch_scene` |
+   | Another scene | `switch_scene` (a headless app loads it as the window does; to check switching itself, the `scene-switching` skill's `switches.py`) |
    | Settings by their names (`view solid=1`, `gi …`) | `set_settings` (`scene_state` lists the lists and keys) |
    | What is loaded, where things are | `scene_state` |
    | To see it | `capture` (a scale of 0.5 is plenty), or `run_swift` with `capture: true` |

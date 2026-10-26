@@ -65,11 +65,13 @@ extension Renderer {
         if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene.materials != scene.settings.materials, loading == nil { editMaterials() }
         if placedPending != nil { remakeForPendingPlaced() }
+        if loading != nil { settleLoads() }
         if settings.scene != scene.settings || virtualGeometryChanged || plantSeasonChanged || sceneRemake != nil {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
-            // frames then show what a tile crossing costs.
+            // frames then show what a tile crossing costs. A headless app driven by scripts (`serve`) loads as the
+            // window does, so that what a script switches is what the user's switch does.
             let streamed = settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)
-            if benchmark != nil && !streamed { rebuildScene(resetCamera: false) } else { startLoadingScene() }
+            if let benchmark, !benchmark.current.serves, !streamed { rebuildScene() } else { startLoadingScene() }
         }
         frameSemaphore.wait()
         let encodeStart = CACurrentMediaTime()
@@ -267,7 +269,7 @@ extension Renderer {
             }
         }
         frameDt = dt
-        if !scriptHooks.isEmpty { runScriptHooks(dt: dt) }
+        if !session.scriptHooks.isEmpty { runScriptHooks(dt: dt) }
         updateCamera(dt: dt)
         let angles = SIMD2(camera.yaw, camera.pitch)
         if angles != sentAngles {

@@ -124,7 +124,7 @@ extension Renderer {
 
     package func updateCamera(dt: Float) {
         turnByArrows(dt)
-        if flight != nil { fly(); return }
+        if session.flight != nil { fly(); return }
         if scene.behaviour?.update(self, dt: dt) == true { return }
         if walker != nil {
             walk(dt)

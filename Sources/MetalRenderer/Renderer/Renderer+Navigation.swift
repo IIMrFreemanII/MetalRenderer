@@ -153,7 +153,7 @@ extension Renderer {
         if walker != nil { toggleWalk() }
         let pitch = min(max(camera.pitch, -0.6), -0.1)
         let framed = Camera.framing(box, fovY: camera.fovY, aspect: viewAspect, yaw: camera.yaw, pitch: pitch)
-        flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime(), Renderer.flightSeconds, false)
+        session.flight = (camera, framed.camera, framed.target, framed.distance, CACurrentMediaTime(), Renderer.flightSeconds, false)
     }
 
     /// F: the camera at the selection (nothing selected: the workshop's at what it shows). Shift-F: and it follows the
@@ -190,12 +190,12 @@ extension Renderer {
         to.yaw = angles.yaw
         to.pitch = angles.pitch
         to.position = p.target - to.forward * p.distance
-        flight = (camera, to, p.target, p.distance, CACurrentMediaTime(), Renderer.turnSeconds, true)
+        session.flight = (camera, to, p.target, p.distance, CACurrentMediaTime(), Renderer.turnSeconds, true)
     }
 
     /// The flight's next step (the frame's camera), and where it ends: the pivot.
     package func fly() {
-        guard let f = flight else { return }
+        guard let f = session.flight else { return }
         let t = Float(min((CACurrentMediaTime() - f.start) / f.seconds, 1))
         let e = t * t * (3 - 2 * t)
         var c = f.to
@@ -207,7 +207,7 @@ extension Renderer {
         c.position = f.about ? f.target - c.forward * f.distance : f.from.position + (f.to.position - f.from.position) * e
         camera = c
         guard t >= 1 else { return }
-        flight = nil
+        session.flight = nil
         camera.yaw = f.from.yaw + dyaw   // (the yaw it was asked for, give or take whole turns)
         orbit = (f.target, f.distance)
     }

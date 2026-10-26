@@ -58,8 +58,10 @@ package struct ScriptCompiler {
         if let stamp = binaryStamp, let now = ScriptCompiler.modified(binary), now > stamp {
             return "the app was built again since it started: relaunch it to run scripts"
         }
-        // A build under way: its modules are newer than the binary that runs.
-        let modules = (try? FileManager.default.contentsOfDirectory(atPath: products.path))?.filter { $0.hasSuffix(".swiftmodule") } ?? []
+        // A build under way: its modules are newer than the binary that runs. (Not the tests', which the app doesn't
+        // link: a test build since the app's would refuse every script.)
+        let modules = (try? FileManager.default.contentsOfDirectory(atPath: products.path))?
+            .filter { $0.hasSuffix(".swiftmodule") && !$0.hasSuffix("Tests.swiftmodule") } ?? []
         for m in modules {
             let dir = products.appendingPathComponent(m)
             let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?.filter { $0.hasSuffix(".swiftmodule") } ?? []
