@@ -9,6 +9,7 @@ package enum DevChange: Hashable {
     case sceneFile(String)          // Assets/Scenes/<kind>.scene (its path)
     case plants                     // Assets/Plants
     case buildings                  // Assets/Buildings
+    case procedural                 // Assets/Procedural
 
     /// What saving `path` (under `root`, the package's folder) changes; nil: nothing that reloads.
     package static func of(_ path: String, root: String) -> DevChange? {
@@ -25,6 +26,7 @@ package enum DevChange: Hashable {
         case ("Assets", "Scenes") where ext == "scene" && parts.count == 3: return .sceneFile(path)
         case ("Assets", "Plants") where ext == "json": return .plants
         case ("Assets", "Buildings") where ext == "json": return .buildings
+        case ("Assets", "Procedural") where ext == "json": return .procedural
         default: return nil
         }
     }

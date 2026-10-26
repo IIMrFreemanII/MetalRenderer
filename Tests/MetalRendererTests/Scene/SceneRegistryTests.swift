@@ -17,7 +17,7 @@ final class SceneRegistryTests: XCTestCase {
     func testEveryOldSceneIsRegistered() {
         let kinds = SceneRegistry.kinds
         // (Scenes added since are saved by name only: after the enum's.)
-        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered + ["modelingStage", "cars"], "the panel lists them in the enum's order")
+        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered + ["modelingStage", "cars", "procedural"], "the panel lists them in the enum's order")
         XCTAssertEqual(Set(kinds.map(\.definition.envName)).count, kinds.count, "env names are unique")
         for kind in kinds { XCTAssertEqual(kind.definition.kind, kind) }
     }

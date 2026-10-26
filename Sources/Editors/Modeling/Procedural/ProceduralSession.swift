@@ -170,6 +170,54 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         }
     }
 
+    // MARK: Assets
+
+    /// The asset the active object's network was saved as (its slug), if it was.
+    @Published var assetSlug: String?
+
+    /// Saves the network as a procedural asset (`Assets/Procedural/<slug>.proc.json`), with the object's material
+    /// slots. False (and a message) if it couldn't.
+    @discardableResult
+    func saveAsset(named name: String, in folder: URL? = ProcStore.folder) -> Bool {
+        guard let model, let o = model.activeObject, hasNetwork else { return false }
+        let slug = ModelStore.slug(name)
+        do {
+            try ProcStore.write(ProcAsset(name: name, graph: graph, materials: o.materials), slug: slug, in: folder)
+            assetSlug = slug
+            model.report("Saved the procedural asset \(slug)")
+            return true
+        } catch {
+            model.report("Couldn't save \(slug): \(error)")
+            return false
+        }
+    }
+
+    /// The scene's reference to the saved asset with its promoted parameters' values now.
+    var assetReference: String? {
+        guard let slug = assetSlug else { return nil }
+        var values: [String: String] = [:]
+        for p in graph.interface { values[p.name] = ProcAssetReference.text(p.value) }
+        return ProcAssetReference(slug: slug, values: values).asset
+    }
+
+    /// Places the saved asset in the main scene, in front of its camera, with the parameters' values now.
+    func placeAsset() {
+        guard let model, let ref = assetReference else { model?.report("Save the network as a procedural asset first"); return }
+        model.host?.placeAsset(ref)
+        model.report("Placed \(ref)")
+    }
+
+    func setInterfaceValue(_ name: String, _ value: ProcParam) {
+        edit("Asset Parameter", coalesce: "iface:\(name)") { g in
+            guard let i = g.interface.firstIndex(where: { $0.name == name }) else { return }
+            g.interface[i].value = value
+            // The network shows the value too (what the asset makes with it).
+            for t in g.interface[i].targets {
+                if let n = g.named(t.node) ?? g.node(t.node) { g.setParam(n.id, t.param, value) }
+            }
+        }
+    }
+
     /// Takes the network off the active object, keeping the mesh it made.
     func bakeNetwork() {
         guard let model, let i = objectIndex else { return }

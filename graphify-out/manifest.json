@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793053007.1690607,
-    "seen": 1793055836.081548,
-    "ast_hash": "63dedfbece27a8a1bf8c52adb952af99",
+    "mtime": 1793058185.7270548,
+    "seen": 1793058234.957493,
+    "ast_hash": "35351465c611c49ca55c15b2af6b8807",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -2208,9 +2208,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/Scene.swift": {
-    "mtime": 1793039076.3348663,
-    "seen": 1793055836.081363,
-    "ast_hash": "0d597e875d62d92a7335dc463117e807",
+    "mtime": 1793057891.398135,
+    "seen": 1793058234.9499269,
+    "ast_hash": "ce58fbde97cb287427a9c457fdd56bbe",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/SceneBuffers.swift": {
@@ -2862,9 +2862,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/GameScenes.swift": {
-    "mtime": 1793039076.485974,
-    "seen": 1793055836.081273,
-    "ast_hash": "f52314982a1296bc64075a0941acd465",
+    "mtime": 1793057970.9647105,
+    "seen": 1793058234.946382,
+    "ast_hash": "913a25841e1e137dcf6db153da5b0cef",
     "semantic_hash": ""
   },
   "Sources/Game/Geometry/SDF/Scene+Shapes.swift": {
@@ -2988,9 +2988,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/IO/Scene+SceneFile.swift": {
-    "mtime": 1793039076.2872362,
-    "seen": 1793055836.081321,
-    "ast_hash": "638ff8572bf690d0cfe70a7c8e506347",
+    "mtime": 1793057819.0326898,
+    "seen": 1793058234.9483452,
+    "ast_hash": "bd6cff743bbda53c8500b64636611c74",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/IO/SceneFile.swift": {
@@ -3024,9 +3024,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Scene/SceneRegistryTests.swift": {
-    "mtime": 1793039076.4785218,
-    "seen": 1793055836.0814972,
-    "ast_hash": "427a64530478903fb86244e2854713ef",
+    "mtime": 1793058008.7026286,
+    "seen": 1793058234.955442,
+    "ast_hash": "cb8cb90338f9552e7ca1d309e4f45590",
     "semantic_hash": ""
   },
   "Tools/scene/scenedump.py": {
@@ -4680,15 +4680,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DevReload/DevReload.swift": {
-    "mtime": 1793039076.2812226,
-    "seen": 1793055836.081316,
-    "ast_hash": "bb07484e4c7782652a13c1293256fee0",
+    "mtime": 1793057819.0332327,
+    "seen": 1793058234.9481668,
+    "ast_hash": "e9275c0feacf9a9ae69846edc491fc85",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/DevReload/SourceWatcher.swift": {
-    "mtime": 1793039076.2817144,
-    "seen": 1793055836.081316,
-    "ast_hash": "2256cade89b45520451bca0f7bdd08b0",
+    "mtime": 1793057819.0329952,
+    "seen": 1793058234.948168,
+    "ast_hash": "98fb81338f5b236bffb97cd879fdb801",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/DevReload/DevReloadTests.swift": {
@@ -5028,9 +5028,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel.swift": {
-    "mtime": 1793057608.4769034,
-    "seen": 1793057683.229079,
-    "ast_hash": "67e34b11a64511a4d2f08f149605d1f1",
+    "mtime": 1793057848.5617101,
+    "seen": 1793058234.94391,
+    "ast_hash": "2a729ec17bc7b186eec811caf5fee3b4",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingPanel.swift": {
@@ -5430,9 +5430,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/RendererModelingHost.swift": {
-    "mtime": 1793039076.4098299,
-    "seen": 1793055836.081215,
-    "ast_hash": "a1566e09b6a9035b7a720e5c42c9f359",
+    "mtime": 1793057848.5634243,
+    "seen": 1793058234.9440708,
+    "ast_hash": "02ffe00bc4243cd8482a89bc8ac4bad1",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Scripting/ModelingPictures.swift": {
@@ -5586,15 +5586,15 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProcNetworkView.swift": {
-    "mtime": 1793056233.7533984,
-    "seen": 1793056578.731112,
-    "ast_hash": "6251f2e854d77039a2637b5f018ef27d",
+    "mtime": 1793057848.5638506,
+    "seen": 1793058234.944028,
+    "ast_hash": "3573d09b65d6434f5fdeba6743275543",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProcParameterPane.swift": {
-    "mtime": 1793056325.7148938,
-    "seen": 1793056578.731113,
-    "ast_hash": "e9de360eacdb3e78bc6f807ce7c7aa01",
+    "mtime": 1793057848.5640788,
+    "seen": 1793058234.9440289,
+    "ast_hash": "12a59baaf5fae510e1eb816cdd40e2bf",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProcTheme.swift": {
@@ -5610,9 +5610,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProceduralSession.swift": {
-    "mtime": 1793057528.6582487,
-    "seen": 1793057683.22927,
-    "ast_hash": "acb65513a098a1372de5ef58e5cca660",
+    "mtime": 1793057848.5637107,
+    "seen": 1793058234.9440708,
+    "ast_hash": "290a0468597e89b0468636e8ca006a5e",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralEditorTests.swift": {
@@ -5622,9 +5622,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ScatterNodes.swift": {
-    "mtime": 1793056794.9649775,
-    "seen": 1793056827.658526,
-    "ast_hash": "759c2e9f26656af46aa6b6f83d5cd087",
+    "mtime": 1793057848.56159,
+    "seen": 1793058234.9536781,
+    "ast_hash": "7168c506dbe0ea3681afbb7cb7dea5cf",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralScatterTests.swift": {
@@ -5685,6 +5685,54 @@
     "mtime": 1793057608.476753,
     "seen": 1793057683.2291682,
     "ast_hash": "67478721d445c0fe2972747a6f6b0d53",
+    "semantic_hash": ""
+  },
+  "Assets/Procedural/bush.proc.json": {
+    "mtime": 1793058092.7000937,
+    "seen": 1793058234.941212,
+    "ast_hash": "914223865734e78ff41e697c90e93714",
+    "semantic_hash": ""
+  },
+  "Assets/Procedural/fence.proc.json": {
+    "mtime": 1793058092.6994336,
+    "seen": 1793058234.941213,
+    "ast_hash": "3bb327e6c698dc9aa078f738b37fe44c",
+    "semantic_hash": ""
+  },
+  "Assets/Procedural/rock-field.proc.json": {
+    "mtime": 1793058092.699035,
+    "seen": 1793058234.941213,
+    "ast_hash": "857eca0069a4827564e78ebff4f8287d",
+    "semantic_hash": ""
+  },
+  "Assets/Procedural/rock.proc.json": {
+    "mtime": 1793058092.6981747,
+    "seen": 1793058234.9412138,
+    "ast_hash": "1bb00e0e43e4fd811ea5921c3bb0e489",
+    "semantic_hash": ""
+  },
+  "Sources/MetalRenderer/Procedural/Scene+ProcAsset.swift": {
+    "mtime": 1793057819.0174577,
+    "seen": 1793058234.948979,
+    "ast_hash": "2a029da42c7fd8a6b407823c825e0fee",
+    "semantic_hash": ""
+  },
+  "Sources/Procedural/Asset/ProcAsset.swift": {
+    "mtime": 1793057788.9948268,
+    "seen": 1793058234.9533288,
+    "ast_hash": "7eb46ab060ef7d37bbb673c52e67ae22",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/Procedural/ProceduralAssetTests.swift": {
+    "mtime": 1793058082.633103,
+    "seen": 1793058234.955067,
+    "ast_hash": "348a940a2a069612b46902dbb9a4da8f",
+    "semantic_hash": ""
+  },
+  ".claude/notes/procedural-handoff.md": {
+    "mtime": 1793058185.7336237,
+    "seen": 1793058234.956775,
+    "ast_hash": "11f933a711ed1475edd02a1ecefff1c9",
     "semantic_hash": ""
   }
 }

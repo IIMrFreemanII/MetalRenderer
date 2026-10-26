@@ -19,6 +19,8 @@ protocol ModelingHost: AnyObject {
     func modelAssetSaved(_ slug: String, source: ModelSource?)
     /// Put a model asset in the main scene, in front of the camera.
     func placeModelAsset(_ slug: String)
+    /// Put an asset (`proc:<slug>?…`, `mesh:<slug>`) in the main scene, in front of the camera.
+    func placeAsset(_ asset: String)
 }
 
 /// Where an edited model came from in the main scene: what saving replaces there.

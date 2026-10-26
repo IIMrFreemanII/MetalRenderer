@@ -91,10 +91,21 @@ struct ProcParameterPane: View {
     @ViewBuilder private var interface: some View {
         if !session.graph.interface.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Asset Parameters").font(.system(size: 11, weight: .semibold)).foregroundColor(ProcTheme.label)
+                HStack {
+                    Text("Asset Parameters").font(.system(size: 11, weight: .semibold)).foregroundColor(ProcTheme.label)
+                    Spacer()
+                    if session.assetSlug != nil {
+                        Button("Place Copy in Scene") { session.placeAsset() }.controlSize(.small)
+                    }
+                }
                 ForEach(session.graph.interface) { p in
                     HStack {
                         Text(p.title).font(ProcTheme.small).foregroundColor(ProcTheme.text)
+                        switch p.value {
+                        case .float(let v): ProcNumberField(value: Double(v)) { session.setInterfaceValue(p.name, .float(Float($0))) }.frame(width: 64)
+                        case .int(let v): ProcNumberField(value: Double(v), integer: true) { session.setInterfaceValue(p.name, .int(Int($0))) }.frame(width: 64)
+                        default: Text(ProcAssetReference.text(p.value)).font(ProcTheme.small).foregroundColor(ProcTheme.label)
+                        }
                         Text(p.targets.map { "\($0.node).\($0.param)" }.joined(separator: ", ")).font(ProcTheme.small).foregroundColor(ProcTheme.dim)
                         Spacer()
                         Button { session.edit("Remove Asset Parameter") { g in g.interface.removeAll { $0.name == p.name } } } label: {

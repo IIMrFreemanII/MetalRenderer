@@ -1,0 +1,138 @@
+{
+  "format" : 1,
+  "graph" : {
+    "interface" : [
+      {
+        "name" : "seed",
+        "span" : [
+          0,
+          100
+        ],
+        "targets" : [
+          {
+            "node" : "growth",
+            "param" : "seed"
+          }
+        ],
+        "title" : "seed",
+        "value" : {
+          "int" : 0
+        }
+      },
+      {
+        "name" : "generations",
+        "span" : [
+          1,
+          6
+        ],
+        "targets" : [
+          {
+            "node" : "growth",
+            "param" : "generations"
+          }
+        ],
+        "title" : "generations",
+        "value" : {
+          "int" : 3
+        }
+      }
+    ],
+    "links" : [
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n2"
+      },
+      {
+        "from" : "n2",
+        "input" : 0,
+        "to" : "n3"
+      }
+    ],
+    "nodes" : [
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n1",
+        "kind" : "lsystem",
+        "name" : "growth",
+        "params" : {
+          "angle" : {
+            "float" : 28
+          },
+          "generations" : {
+            "int" : 3
+          },
+          "step" : {
+            "float" : 0.11
+          },
+          "variance" : {
+            "float" : 12
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n2",
+        "kind" : "polywire",
+        "name" : "branches",
+        "params" : {
+          "divs" : {
+            "int" : 5
+          },
+          "radius" : {
+            "float" : 0.025
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "display" : true,
+        "id" : "n3",
+        "kind" : "attribcreate",
+        "name" : "attribcreate1",
+        "params" : {
+          "class" : {
+            "string" : "primitive"
+          },
+          "name" : {
+            "string" : "material"
+          },
+          "string" : {
+            "string" : "bark"
+          },
+          "type" : {
+            "string" : "string"
+          }
+        }
+      }
+    ]
+  },
+  "materials" : [
+    {
+      "baseColor" : [
+        0.32,
+        0.25,
+        0.16,
+        1
+      ],
+      "emission" : [
+        0,
+        0,
+        0
+      ],
+      "metallic" : 0,
+      "name" : "bark",
+      "roughness" : 0.8
+    }
+  ],
+  "name" : "Bush"
+}

@@ -2283,6 +2283,59 @@ when there's enough of it) ~100 ms at 2M.
 
 The brushes' per-vertex loops, the normals and the viewport's copy are in `Tools/perf/hot-functions.txt` (clean).
 
+### Procedural modelling
+
+Houdini's way of modelling, in the Modeller's **Procedural** workspace (the fifth tab): an object's mesh is what a
+network of nodes makes, and every node can be changed at any time. The tab is laid out as Houdini's Build desktop, in
+its look: the viewport (or the **Geometry Spreadsheet**) on the left; the **parameter pane** over the **network view**
+on the right.
+
+- **Networks.** *New Network* gives the active object one (a box), *Add Procedural Object* a new object (`geo1`) with
+  one. Nodes flow top to bottom: inputs on top, the output below, a click on the right end's blue strip sets the
+  **display** flag (what the object shows; Option-click: render), the pink strip **template** (drawn as grey wires
+  beside it), the left end's yellow strip **bypass**. **Tab** opens the node menu: the new node is wired below the
+  selected one and displayed. Drag from an output to an input to wire; Delete wires around what it removes; copy and
+  paste; **L** lays out, **R**/**B**/**T** set the current node's flags, **I** its info (counts, attributes, groups,
+  cook time). Errors and warnings show as badges; every edit is one undo step of the Modeller's.
+- **Geometry** is Houdini's: points, vertices, primitives (polygons and polylines) and the detail, each with attributes
+  of any name and type (`P`, `N`, `Cd`, `uv`, `pscale`, `orient`, your own) and groups. Group fields take Houdini's
+  patterns: `name`, `side*`, `0-9:2`, `@P.y>0.5`, `* ^top`.
+- **Nodes** (`Sources/Procedural/Nodes`, 55 kinds): Box, Grid, Sphere, Tube, Torus, Circle, Line, Add, File (a model
+  asset or another object); Transform, Merge, Copy and Transform, Mirror; PolyExtrude, Subdivide, Boolean, PolyBevel,
+  PolyReduce, Divide, Fuse, Clean, Facet, Normal, Reverse, Smooth, Thicken, UV Unwrap; Attribute Create / Delete /
+  Rename / Randomize / Noise / Promote / Transfer, Color, Measure, Connectivity, Sort; Group Create, Blast; Scatter,
+  Copy to Points, Ray, Point Jitter, Voronoi Fracture; Curve, Resample, Sweep, Revolve, PolyWire, Carve, Ends,
+  L-System; Null, Output, Switch, **Attribute Wrangle**, Block Begin / Block End (**For-Each** over pieces, points or a
+  count, merging or feeding back). Nodes that run the Modeller's own operations (subdivision, booleans, bevels) give
+  the result the input's other attributes from the nearest elements.
+- **Attribute Wrangle** runs Swift over every point (primitive, vertex, the detail) on every core, with VEX's
+  bindings: `@P.y += sin(@P.x * 4) * 0.1`, `f@mass = rand(@ptnum)`, `v@Cd = SIMD3(1, 0, 0)`, `i@near = nearpoint(1,
+  @P)`, `addpoint`, `removeprim` …; `rand`, `noise`, `curlnoise`, `fit`, `lerp` besides simd's. It compiles with the
+  build's modules (Xcode's tools needed) into a bundle kept in `~/Library/Caches/MetalRenderer/wrangles` by its
+  source: the first compile of a session warms Swift's module cache (about 8 s), a new snippet after that takes well
+  under a second, one seen before nothing.
+- **Cooking.** A node's output is kept under a hash of its kind, parameters and inputs (`ProcCooker`): an edit cooks
+  that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own.
+- **Inspecting.** Over the viewport: point dots, point and primitive numbers, normals, colour by `Cd`, and
+  **handles** (the current node's translate or origin as axes, a curve's points as crosses) dragged in the viewport.
+  The spreadsheet lists the current node's elements, a column per attribute component.
+- **Assets.** *Network ▸ Save as Procedural Asset…* writes `Assets/Procedural/<slug>.proc.json` (the network, its
+  promoted parameters — a parameter row's right-click *Promote to Asset Parameter* — and the object's material slots).
+  A scene file places it as `proc:<slug>`, or `proc:<slug>?seed=7&size=1.6` with its own values (*Place Copy in Scene*
+  places one with the pane's values). It cooks as the scene loads, into the generated cache by the asset and its
+  values (a load after that reads the mesh); copies with the same values share a mesh; a point with a string
+  attribute `instance` (`proc:rock`, `mesh:<slug>`, `prefab:<name>`) places that asset at its frame (P, orient or N
+  and up, pscale, scale). Saved assets reload in the dev build. The **Procedural (assets)** scene
+  (`METALRENDERER_SCENE=procedural`) shows the demo's: a rock field (scatter → random orient and pscale → `instance`
+  rocks), a fence swept along a curve, L-system bushes of three seeds, a big rock with its own size.
+- **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
+  `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"wire": …}`, `{"flag": …}` steps, by node
+  name, and the network in its state (`ProceduralScripting.swift`).
+
+Tests: `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
+`ProceduralCurveTests`, `ProceduralWrangleTests`, `ProceduralAssetTests`, `ProceduralEditorTests` (MODELING_PNG writes the
+tab's window; PROCEDURAL_DEMO=1 writes the demo's assets and scene file again).
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.

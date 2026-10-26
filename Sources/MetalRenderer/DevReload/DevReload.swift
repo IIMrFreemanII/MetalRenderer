@@ -28,7 +28,7 @@ package final class DevReload {
         let watcher = SourceWatcher(root: SourceTree.packageRoot) { [weak self] in self?.apply($0) }
         self.watcher = watcher
         if watcher.start() {
-            print("Hot reload: on (shaders, Sources/Game, the scene's file, Assets/Plants and Assets/Buildings reload when saved; METALRENDERER_HOTRELOAD=0 turns it off)")
+            print("Hot reload: on (shaders, Sources/Game, the scene's file, Assets/Plants, Assets/Buildings and Assets/Procedural reload when saved; METALRENDERER_HOTRELOAD=0 turns it off)")
         } else {
             print("Hot reload: FSEvents wouldn't watch \(SourceTree.packageRoot.path)")
         }
@@ -67,6 +67,13 @@ package final class DevReload {
                 BuildingCatalog.setLaunch(saved)
                 renderer.perform { r in
                     if r.scene.settings.buildingCatalog.isEmpty { r.remakeScene(because: "the saved buildings changed") }
+                }
+            case .procedural:
+                // A scene that places procedural assets is made again (each cooks again only if it changed).
+                renderer.perform { r in
+                    if r.scene.placed?.file.objects.contains(where: { $0.asset.hasPrefix("proc:") }) == true {
+                        r.remakeScene(because: "a procedural asset changed")
+                    }
                 }
             }
         }

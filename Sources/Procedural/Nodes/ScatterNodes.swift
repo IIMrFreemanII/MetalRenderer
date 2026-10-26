@@ -5,7 +5,7 @@ import Physics
 import simd
 
 /// Scatter, Copy to Points, Attribute Transfer, Ray, Point Jitter, Voronoi Fracture.
-enum ScatterNodes {
+package enum ScatterNodes {
     /// The polygons as triangles, each with the primitive it came from (`sourceprim`) and its vertices' rows.
     struct Triangles {
         var a: [SIMD3<Float>] = [], b: [SIMD3<Float>] = [], c: [SIMD3<Float>] = []
@@ -167,7 +167,7 @@ enum ScatterNodes {
     // MARK: Copy to Points
 
     /// A target point's frame: `orient`, else `N` along +Z with `up` along +Y; scaled by `pscale` and `scale`.
-    static func frames(_ pts: ProcGeo) -> [float4x4] {
+    package static func frames(_ pts: ProcGeo) -> [float4x4] {
         let N = pts.points.vectors3("N"), up = pts.points.vectors3("up"), orient = pts.points.vectors4("orient")
         let pscale = pts.points.floats("pscale"), scale = pts.points.vectors3("scale")
         return (0..<pts.pointCount).map { i in

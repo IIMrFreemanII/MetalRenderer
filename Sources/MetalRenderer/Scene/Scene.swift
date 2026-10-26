@@ -8,6 +8,7 @@ import Landscape
 import Materials
 import Physics
 import Plants
+import Procedural
 import simd
 
 /// A small Cornell-style room with static objects, animated objects and moving sphere lights, or one of the other
@@ -506,6 +507,10 @@ package final class Scene {
     package var behaviour: SceneBehaviour?
     /// What its scene file placed (Scene.place), for the editor to move; nil when it had none.
     package var placed: PlacedFile?
+    /// Procedural assets cooked for this scene, and their meshes (with their first material), by their cache name:
+    /// copies with the same values share them (Scene+ProcAsset).
+    var proceduralCooks: [String: ProcAsset.Cooked] = [:]
+    var proceduralMeshes: [String: (mesh: Int, material: Int)] = [:]
     /// The kit's meshes (Scene.kitMesh) and the materials a scene file's objects name (Scene.nameMaterial).
     package var kitMeshes: [Int: Int] = [:]
     package var namedMaterials: [String: Int] = [:]

@@ -216,6 +216,21 @@ enum ProcRenamePrompt {
     }
 }
 
+/// Save as Procedural Asset: its name.
+enum ProcAssetPrompt {
+    static func ask(_ session: ProceduralSession) {
+        let alert = NSAlert()
+        alert.messageText = "Save the network as a procedural asset"
+        alert.informativeText = "It goes to Assets/Procedural; a scene places it as proc:<name>, each copy with its own values of the promoted parameters."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = session.assetSlug ?? session.model?.activeObject?.name ?? "asset"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn { session.saveAsset(named: field.stringValue) }
+    }
+}
+
 /// Tab's menu: every node kind by name, its family beside it.
 struct ProcNodeSearch: View {
     @ObservedObject var session: ProceduralSession
@@ -240,6 +255,9 @@ struct ProcNetworkBar: View {
             Menu("Network") {
                 Button("Lay Out All  L") { session.selection = []; session.layout() }
                 Button("Frame All  F") { session.frameAll(in: session.canvasSize) }
+                Divider()
+                Button("Save as Procedural Asset…") { ProcAssetPrompt.ask(session) }
+                Button("Place Asset in Scene") { session.placeAsset() }.disabled(session.assetSlug == nil)
                 Divider()
                 Button("Bake Network (keep the mesh)") { session.bakeNetwork() }
                 Button("Add Procedural Object") { session.addObject() }
