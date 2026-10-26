@@ -21,7 +21,7 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
     // Group
     case groupcreate, blast
     // Utility
-    case null, output, switchnode = "switch"
+    case null, output, switchnode = "switch", attribwrangle, foreachbegin, foreachend
 
     package var id: String { rawValue }
 
@@ -360,6 +360,24 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
             return ProcNodeSpec("Output", .flow, "output", symbol: "arrow.down.to.line", inputs: ["Geometry"], params: [
                 P.int("outputidx", "Output Index", 0, 0...4),
             ], "What the network (an asset) outputs, whatever has the display flag.")
+        case .attribwrangle:
+            return ProcNodeSpec("Attribute Wrangle", .flow, "attribwrangle", symbol: "chevron.left.forwardslash.chevron.right",
+                                inputs: ["Geometry", "Input 2", "Input 3", "Input 4"], params: [
+                P.menu("class", "Run Over", ["points", "primitives", "vertices", "detail"]), P.group("group", "Group"),
+                P("snippet", "Swift Snippet", .string("@P.y += sin(@P.x * 4) * 0.1"), .code,
+                  help: "@P, f@mass, v@up, i@id, s@name …; @ptnum, @numpt; point(1, \"P\", n), nearpoint(1, @P), addpoint(p); rand, noise, fit, lerp"),
+            ], "Runs Swift over every point (primitive, vertex, or the detail) on every core: @name binds an attribute, as VEX does.")
+        case .foreachbegin:
+            return ProcNodeSpec("Block Begin", .flow, "foreach_begin", symbol: "arrow.triangle.2.circlepath", inputs: ["Geometry"], params: [],
+                                "Where a For-Each loop's body starts: in the loop, the piece (or the last pass's output) it works on.")
+        case .foreachend:
+            return ProcNodeSpec("Block End", .flow, "foreach_end", symbol: "arrow.triangle.2.circlepath.circle", inputs: ["Body"], params: [
+                P("blockpath", "Block Begin", .string(""), .text, help: "the Block Begin node's name (empty: the nearest one above)"),
+                P.menu("iterationmethod", "Iteration Method", ["pieces", "points", "count"]),
+                P.menu("gather", "Gather Method", ["merge", "feedback"]),
+                P.attribute("pieceattrib", "Piece Attribute", "name", .primitive, when: ProcNodeKind.onlyFor("iterationmethod", "pieces")),
+                P.int("iterations", "Iterations", 10, 1...100, when: ProcNodeKind.onlyFor("iterationmethod", "count")),
+            ], "Runs the body once per piece (by an attribute, else by connectivity), per point, or a count of times; merges the passes, or feeds each into the next.")
         case .switchnode:
             return ProcNodeSpec("Switch", .flow, "switch", symbol: "switch.2", inputs: ["Geometry"], multiInput: true, params: [
                 P.int("input", "Select Input", 0, 0...9),

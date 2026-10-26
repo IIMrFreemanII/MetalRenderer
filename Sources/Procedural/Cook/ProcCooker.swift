@@ -104,6 +104,8 @@ package final class ProcCooker {
         var geos: [String: ProcGeo] = [:]
         var visiting: Set<String> = []
         let cancelled: () -> Bool
+        /// A For-Each loop's pass: its Block Begin's output (the piece) and key.
+        var overrides: [String: (geo: ProcGeo, key: UInt64)] = [:]
     }
 
     /// Node `id`'s geometry (cooking what it needs), or why it can't be had. `cancelled` is asked between nodes: a
@@ -133,6 +135,7 @@ package final class ProcCooker {
 
     private func key(_ id: String, _ pass: inout Pass) throws -> UInt64 {
         if let k = pass.keys[id] { return k }
+        if let o = pass.overrides[id] { pass.keys[id] = o.key; return o.key }
         guard let node = pass.graph.node(id) else { throw ProcCookError("no node \(id)", node: id) }
         guard !pass.visiting.contains(id) else { throw ProcCookError("the network loops through \(node.name)", node: id) }
         pass.visiting.insert(id)
@@ -169,6 +172,11 @@ package final class ProcCooker {
 
     private func geometry(_ id: String, _ pass: inout Pass) throws -> ProcGeo {
         if let g = pass.geos[id] { return g }
+        if let o = pass.overrides[id] {
+            pass.geos[id] = o.geo
+            record(id, o.geo, ms: 0, cached: false, warnings: [])
+            return o.geo
+        }
         let k = try key(id, &pass)
         guard let node = pass.graph.node(id) else { throw ProcCookError("no node \(id)", node: id) }
         if var e = cache[k] {
@@ -202,7 +210,7 @@ package final class ProcCooker {
         let start = DispatchTime.now().uptimeNanoseconds
         let g: ProcGeo
         do {
-            g = try node.kind.cook(&c)
+            g = node.kind == .foreachend ? try forEach(id, node, &pass) : try node.kind.cook(&c)
         } catch let e as ProcCookError {
             info[id] = ProcNodeInfo(error: e.message)
             throw ProcCookError(e.message, node: id)
@@ -220,6 +228,68 @@ package final class ProcCooker {
         pass.geos[id] = g
         record(id, g, ms: ms, cached: false, warnings: c.warnings)
         return g
+    }
+
+    // MARK: For-Each
+
+    /// The Block Begin a Block End closes: named by its `blockpath`, else the nearest one above it.
+    private func blockBegin(_ end: ProcNode, _ graph: ProcGraph) -> String? {
+        let name = end.param("blockpath").string
+        if !name.isEmpty { return graph.named(name)?.id ?? graph.node(name)?.id }
+        var frontier = graph.inputs(of: end.id).compactMap { $0 }
+        var seen = Set<String>()
+        while !frontier.isEmpty {
+            var next: [String] = []
+            for id in frontier where !seen.contains(id) {
+                seen.insert(id)
+                if graph.node(id)?.kind == .foreachbegin { return id }
+                next += graph.inputs(of: id).compactMap { $0 }
+            }
+            frontier = next
+        }
+        return nil
+    }
+
+    /// A For-Each loop: the body (from the Block Begin to the End's input) cooked once per piece, point or count, the
+    /// Begin giving out the piece (or, feeding back, the last pass's output), the passes merged or the last kept. Each
+    /// pass's outputs are kept under keys of their own (the Begin's key and the pass's number), so an edit below the
+    /// loop doesn't run it again.
+    private func forEach(_ id: String, _ node: ProcNode, _ pass: inout Pass) throws -> ProcGeo {
+        guard let begin = blockBegin(node, pass.graph) else { throw ProcCookError("No Block Begin above this Block End") }
+        guard let source = pass.graph.inputs(of: begin).first ?? nil else { throw ProcCookError("The Block Begin has no input") }
+        guard let tail = pass.graph.inputs(of: id).first ?? nil else { throw ProcCookError("Nothing is wired into the Block End") }
+        let input = try geometry(source, &pass)
+        let baseKey = try key(source, &pass)
+        let method = node.param("iterationmethod").string
+        let feedback = node.param("gather").string == "feedback"
+        let pieces: [ProcGeo] = method == "count"
+            ? [ProcGeo](repeating: input, count: max(1, min(10_000, node.param("iterations").int)))
+            : FlowNodes.pieces(input, method: method, attribute: node.param("pieceattrib").string)
+        var merged = ProcGeo()
+        var last = input
+        var lastKey = baseKey
+        for (k, piece) in pieces.enumerated() {
+            if pass.cancelled() { throw ProcCookError.cancelled }
+            var g = feedback ? last : piece
+            g.detail.set("iteration", .int([Int32(k)]))
+            g.detail.set("numiterations", .int([Int32(pieces.count)]))
+            var h = Hasher64()
+            h.add("foreach")
+            h.add(feedback ? lastKey : baseKey)
+            h.add(k)
+            h.add(method)
+            var sub = Pass(graph: pass.graph, cancelled: pass.cancelled)
+            sub.overrides = pass.overrides
+            sub.overrides[begin] = (g, h.value)
+            let out = try geometry(tail, &sub)
+            if feedback {
+                last = out
+                lastKey = try key(tail, &sub)
+            } else {
+                merged.merge(out)
+            }
+        }
+        return feedback ? last : merged
     }
 
     private func record(_ id: String, _ g: ProcGeo, ms: Double, cached: Bool, warnings: [String]) {

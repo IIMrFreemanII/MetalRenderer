@@ -2,7 +2,7 @@ import EngineCore
 import simd
 
 /// Gradient (Perlin) noise in 3D and its fractal sum, seeded: Attribute Noise's, and the wrangles' `noise`.
-package enum ProcNoise {
+@usableFromInline package enum ProcNoise {
     @inlinable @inline(__always)
     static func hash(_ c: SIMD3<Int32>, _ seed: UInt32) -> UInt32 {
         pcgHash(UInt32(bitPattern: c.x) &* 73_856_093 ^ UInt32(bitPattern: c.y) &* 19_349_663

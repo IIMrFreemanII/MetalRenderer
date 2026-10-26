@@ -57,7 +57,9 @@ extension ProcNodeKind {
         case .lsystem: try CurveNodes.lsystem(c)
         case .groupcreate: try AttributeNodes.groupcreate(c)
         case .blast: try AttributeNodes.blast(c)
-        case .null, .output: try c.input()
+        case .null, .output, .foreachbegin: try c.input()
+        case .attribwrangle: try FlowNodes.wrangle(&c)
+        case .foreachend: throw ProcCookError("A Block End cooks in the cooker (its loop)")
         case .switchnode: ProcCook.switchIndex(c.node, c.inputs.count).flatMap { c.inputs[$0] } ?? ProcGeo()
         }
     }
