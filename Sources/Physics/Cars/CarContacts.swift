@@ -27,7 +27,9 @@ extension CarSolver {
     package static let carReach: Float = 0.08
 
     @inline(__always) package static func gridKey(_ x: SIMD3<Float>) -> SIMD3<Int32> {
-        SIMD3<Int32>((x / CarSystem.gridCell).rounded(.down))
+        // (Component by component: SIMD3<Int32>(SIMD3<Float>) goes through a generic rounding rule, in the loop.)
+        let f = floor(x / CarSystem.gridCell)
+        return SIMD3(Int32(f.x), Int32(f.y), Int32(f.z))
     }
 
     @inline(__always) package static func gridBucket(_ c: SIMD3<Int32>) -> Int {
