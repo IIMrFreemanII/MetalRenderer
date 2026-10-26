@@ -119,7 +119,7 @@ let package = Package(
         // its network editor the Modeller's.
         .target(
             name: "Procedural",
-            dependencies: ["EngineCore", "Modeling"],
+            dependencies: ["EngineCore", "Physics", "Modeling"],
             path: "Sources/Procedural",
             swiftSettings: engineSettings
         ),

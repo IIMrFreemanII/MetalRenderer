@@ -14,6 +14,8 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
     // Attribute
     case attribcreate, attribdelete, attribrename, attribrandomize, attribnoise, attribpromote, color, measure,
          connectivity, sort
+    // Scatter & copy
+    case scatter, copytopoints, attribtransfer, ray, pointjitter, voronoifracture
     // Group
     case groupcreate, blast
     // Utility
@@ -242,6 +244,40 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
                 P.attribute("attribute", "Attribute", "", nil, when: ProcNodeKind.onlyFor("key", "attribute")),
                 P.bool("reverse", "Reverse", false),
             ], "Renumbers points or primitives in an order.")
+
+        // MARK: Scatter & copy
+        case .scatter:
+            return ProcNodeSpec("Scatter", .scatter, "scatter", symbol: "circle.dotted", inputs: ["Surface"], params: [
+                P.bool("usedensity", "Use Density", false), P.int("npts", "Force Total Count", 1000, 0...20000, when: ProcNodeKind.onlyFor("usedensity", "0")),
+                P.float("density", "Density (per unit area)", 10, 0...1000, when: ProcNodeKind.onlyFor("usedensity", "1")),
+                P.int("seed", "Global Seed", 0, 0...100), P.int("relaxiterations", "Relax Iterations", 0, 0...20),
+                P.attribute("densityattr", "Density Attribute", "", nil), P.text("attribs", "Output Attributes", "*"),
+            ], "Points on the surface, as many where it is bigger (or denser); each with N and the primitive it is on.")
+        case .copytopoints:
+            return ProcNodeSpec("Copy to Points", .scatter, "copytopoints", symbol: "square.grid.3x3.square", inputs: ["Geometry", "Target Points"], params: [
+                P.group("targetgroup", "Target Points", .point), P.text("attribs", "Copy Attributes", "*"),
+                P.menu("attribclass", "Onto", ["point", "primitive"]), P.bool("copyattrib", "Copy Number Attribute", false),
+            ], "A copy of the first input on each point of the second: turned by orient (or N and up), sized by pscale and scale.")
+        case .attribtransfer:
+            return ProcNodeSpec("Attribute Transfer", .scatter, "attribtransfer", symbol: "arrow.right.circle", inputs: ["Geometry", "Source"], params: [
+                P.classes("class", "Class", .point, ProcNodeKind.classes2), P.text("attribs", "Attributes", "*"),
+                P.float("distance", "Max Distance (0: any)", 0, 0...10),
+            ], "Attributes from the second input's nearest points (or primitives) onto the first's.")
+        case .ray:
+            return ProcNodeSpec("Ray", .scatter, "ray", symbol: "arrow.down.to.line.compact", inputs: ["Points", "Surface"], params: [
+                P.group("group", "Group", .point), P.menu("method", "Method", ["project", "minimum"]),
+                P.vec3("dir", "Direction", [0, -1, 0]), P.bool("usenormal", "Along N", false), P.bool("bothways", "Both Ways", true),
+                P.float("offset", "Offset", 0, -1...1), P.bool("putnormal", "Point N from Surface", true),
+            ], "Moves points onto the surface: along a direction (or their N), or to its nearest place.")
+        case .pointjitter:
+            return ProcNodeSpec("Point Jitter", .scatter, "pointjitter", symbol: "aqi.medium", inputs: ["Geometry"], params: [
+                P.group("group", "Group", .point), P.float("amount", "Amount", 0.1, 0...2), P.vec3("scale", "Scale", [1, 1, 1]),
+                P.int("seed", "Seed", 0, 0...100),
+            ], "Moves points by random offsets.")
+        case .voronoifracture:
+            return ProcNodeSpec("Voronoi Fracture", .scatter, "voronoifracture", symbol: "square.split.diagonal.2x2", inputs: ["Geometry", "Cell Points"], params: [
+                P.bool("cutinput", "Cut the Input", true), P.text("interiorgroup", "Interior Group", "inside"),
+            ], "Breaks the geometry into a piece per point: each point's Voronoi cell (cut out of the mesh), named piece0, piece1 …")
 
         // MARK: Group
         case .groupcreate:

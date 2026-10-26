@@ -6,9 +6,9 @@
     "semantic_hash": ""
   },
   "Package.swift": {
-    "mtime": 1793054716.5331511,
-    "seen": 1793055836.081162,
-    "ast_hash": "6b90c34355883d1cd2b2937f725ef507",
+    "mtime": 1793056724.0536842,
+    "seen": 1793056827.6472828,
+    "ast_hash": "84404cab4d22231e8575e0a5ca2340f2",
     "semantic_hash": ""
   },
   "Tools/eval/columns.py": {
@@ -5532,15 +5532,15 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeKind+Cook.swift": {
-    "mtime": 1793055531.4471743,
-    "seen": 1793055836.081454,
-    "ast_hash": "32253425298ee1bbd91d1de58001a802",
+    "mtime": 1793056724.0539098,
+    "seen": 1793056827.658483,
+    "ast_hash": "a4f7ca877db86f126726033ebd2e8733",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeKind.swift": {
-    "mtime": 1793055094.384157,
-    "seen": 1793055836.081454,
-    "ast_hash": "0b6f9c8768fc4e4d6340f36d5394aae6",
+    "mtime": 1793056724.0538106,
+    "seen": 1793056827.658483,
+    "ast_hash": "2786f877dc6c0b4b10571824f1948e93",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ProcNodeSpec.swift": {
@@ -5619,6 +5619,18 @@
     "mtime": 1793056499.175611,
     "seen": 1793056578.7416801,
     "ast_hash": "3d9c9d87935a2417409b4c2238ab6f29",
+    "semantic_hash": ""
+  },
+  "Sources/Procedural/Nodes/ScatterNodes.swift": {
+    "mtime": 1793056794.9649775,
+    "seen": 1793056827.658526,
+    "ast_hash": "759c2e9f26656af46aa6b6f83d5cd087",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/Procedural/ProceduralScatterTests.swift": {
+    "mtime": 1793056759.708261,
+    "seen": 1793056827.659897,
+    "ast_hash": "b94c9e723e0db4a55375f9a1ea26baa5",
     "semantic_hash": ""
   }
 }
