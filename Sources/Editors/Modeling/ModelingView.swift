@@ -20,6 +20,7 @@ struct ModelingView: View {
             ModelingTopBar()
             HStack(spacing: 1) {
                 VStack(spacing: 0) {
+                    if model.workspace == .procedural { ProcLeftTabs(session: model.procedural) }
                     ModelingHeader()
                     ModelingToolSettings()
                     ZStack(alignment: .topLeading) {
@@ -28,6 +29,11 @@ struct ModelingView: View {
                             RenderedViewport(stage: stage).allowsHitTesting(false)
                         }
                         ViewportOverlay()
+                        if model.workspace == .procedural {
+                            ProcViewportOverlay(session: model.procedural, view: model.view, model: model)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                            if model.procedural.leftTab == .spreadsheet { ProcSpreadsheet(session: model.procedural) }
+                        }
                     }
                 }
                 .background(BlenderTheme.window)

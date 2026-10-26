@@ -358,10 +358,17 @@ final class ModelingModel: ObservableObject {
             f.objects = scene.objects(document, mode: mode, selectMode: selectMode, active: activeElement,
                                       wire: shading.mode == .wireframe || overlays.wireframe)
         }
+        var procedural: [OverlayLine] = []
         if workspace == .procedural, let s = proceduralSession, let scene, let o = activeObject, o.id == s.objectID {
+            // The network's object coloured by Cd, its templates, its normals and the current node's handles.
+            if let (mesh, palette) = s.colorDraw(scene), let k = f.objects.firstIndex(where: { $0.active && !$0.template }) {
+                f.objects[k].mesh = mesh
+                f.objects[k].materialColors = palette
+            }
             f.objects += s.templateDraws(scene, transform: o.transform.matrix)
+            procedural = s.normalLines(transform: o.transform.matrix) + s.handleLines(self, transform: o.transform.matrix)
         }
-        f.lines = previewLines + toolGizmoLines()
+        f.lines = previewLines + toolGizmoLines() + procedural
         if let s = sculpt, mode == .sculpt { f.lines += s.cursorLines(self) }
         return f
     }

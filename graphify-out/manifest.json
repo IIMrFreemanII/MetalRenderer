@@ -5010,9 +5010,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Input.swift": {
-    "mtime": 1793039076.4055471,
-    "seen": 1793055836.0812101,
-    "ast_hash": "aa8cf55d095645d3733e4dee5ea6608e",
+    "mtime": 1793057608.4770312,
+    "seen": 1793057683.229036,
+    "ast_hash": "5db8be3de80cb80c78190c0d10eb2f8e",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel+Panels.swift": {
@@ -5028,9 +5028,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel.swift": {
-    "mtime": 1793056359.9429574,
-    "seen": 1793056578.731034,
-    "ast_hash": "ceee54a66d7d22a6bfa4dcf57f0683b1",
+    "mtime": 1793057608.4769034,
+    "seen": 1793057683.229079,
+    "ast_hash": "67e34b11a64511a4d2f08f149605d1f1",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingPanel.swift": {
@@ -5046,9 +5046,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingView.swift": {
-    "mtime": 1793056359.943132,
-    "seen": 1793056578.7310731,
-    "ast_hash": "7f990cc497db6950eb6d2e15005a9df2",
+    "mtime": 1793057608.4771433,
+    "seen": 1793057683.229123,
+    "ast_hash": "125992abd8a7a89186d29254cb5bd30b",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingViewportView.swift": {
@@ -5610,15 +5610,15 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProceduralSession.swift": {
-    "mtime": 1793056132.4994147,
-    "seen": 1793056578.731114,
-    "ast_hash": "28f849d68b3514ca68417e69ded6babb",
+    "mtime": 1793057528.6582487,
+    "seen": 1793057683.22927,
+    "ast_hash": "acb65513a098a1372de5ef58e5cca660",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralEditorTests.swift": {
-    "mtime": 1793056499.175611,
-    "seen": 1793056578.7416801,
-    "ast_hash": "3d9c9d87935a2417409b4c2238ab6f29",
+    "mtime": 1793057638.0779305,
+    "seen": 1793057683.240603,
+    "ast_hash": "75108295cd9e4fc635656e4ed52232b6",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ScatterNodes.swift": {
@@ -5679,6 +5679,12 @@
     "mtime": 1793057382.3770568,
     "seen": 1793057457.539853,
     "ast_hash": "b646910aaa45a2a95ef8817f183ce70d",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProcInspect.swift": {
+    "mtime": 1793057608.476753,
+    "seen": 1793057683.2291682,
+    "ast_hash": "67478721d445c0fe2972747a6f6b0d53",
     "semantic_hash": ""
   }
 }

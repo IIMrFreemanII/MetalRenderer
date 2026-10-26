@@ -33,10 +33,28 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
     var hover = CGPoint(x: 200, y: 120)
     var focusCanvas: (() -> Void)?
     @Published var selection: Set<String> = []
-    @Published var focus: String?
+    /// The current node: the parameter pane's, the spreadsheet's and the handles'.
+    @Published var focus: String? { didSet { if focus != oldValue, focus != nil, focus != graph.displayNode { requestCook() } } }
     @Published private(set) var searchAt: SIMD2<Float>?
     /// The node whose info popup shows.
     @Published var infoNode: String?
+
+    // What the viewport and the left area show (ProcInspect).
+    enum LeftTab: String, CaseIterable { case sceneView = "Scene View", spreadsheet = "Geometry Spreadsheet" }
+    @Published var leftTab: LeftTab = .sceneView
+    @Published var spreadsheetClass: AttributeClass = .point
+    @Published var showPoints = false { didSet { model?.redraw() } }
+    @Published var pointNumbers = false
+    @Published var primNumbers = false
+    @Published var showNormals = false { didSet { model?.redraw() } }
+    @Published var showColors = true { didSet { model?.redraw() } }
+    @Published var showHandles = true { didSet { model?.redraw() } }
+    /// The current node's geometry when it isn't the display node's (the spreadsheet's), from the last cook.
+    private(set) var inspected: (id: String, geometry: ProcGeo)?
+    /// A handle being dragged.
+    var handleDrag: ProcHandleDrag?
+    /// The viewport's buffers of the display geometry coloured by Cd.
+    var colorMesh: (key: Int, mesh: ViewportMesh, palette: [SIMD4<Float>])?
 
     private let cookQueue = DispatchQueue(label: "modeller.procedural.cook", qos: .userInitiated)
     /// Touched on the cook queue only (or the caller's, when synchronous).
@@ -168,6 +186,7 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         let gen = generation
         latest.set(gen)
         let g = graph
+        let focus = self.focus
         let doc = model?.document
         let environment = fileEnvironment(doc, object: id)
         let work = { [cooker, latest] () -> CookResult in
@@ -182,6 +201,7 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
             for n in g.nodes where n.template && n.id != display {
                 if case .success(let geo) = cooker.cook(g, n.id) { r.templates.append((n.id, geo, cooker.key(g, n.id) ?? 0)) }
             }
+            if let f = focus, f != display, g.node(f) != nil, case .success(let geo) = cooker.cook(g, f) { r.inspected = (f, geo) }
             r.info = cooker.info
             return r
         }
@@ -203,6 +223,7 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         var display: ProcGeo?
         var error: ProcCookError?
         var templates: [(String, ProcGeo, UInt64)] = []
+        var inspected: (id: String, geometry: ProcGeo)?
         var info: [String: ProcNodeInfo] = [:]
     }
 
@@ -211,6 +232,8 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         cooking = false
         info = r.info
         templates = r.templates.map { ($0.0, $0.1) }
+        inspected = r.inspected
+        if let d = r.display { displayGeometry = d }
         if r.error?.message == "cancelled" { return }
         guard let model, let i = objectIndex else { return }
         let templateKeys = r.templates.map(\.2)
@@ -435,13 +458,26 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
 
     func beginDrag() { if dragBefore == nil { dragBefore = model?.document } }
 
-    func endDrag() {
+    func endDrag() { endDrag("Move Nodes") }
+
+    /// The drag's changes as one undo step named `name`.
+    func endDrag(_ name: String) {
         guard let before = dragBefore, let model else { return }
         dragBefore = nil
         if before.objects.first(where: { $0.id == objectID })?.network != model.activeObject?.network {
-            model.registerUndo("Move Nodes", before: before)
+            model.registerUndo(name, before: before)
             model.documentChanged(dirty: true)
         }
+    }
+
+    /// A parameter changed during a drag (a handle's): the network and a cook, no undo step (endDrag makes it).
+    func setParamLive(_ node: String, _ name: String, _ value: ProcParam) {
+        guard let model, let i = objectIndex, graph.node(node) != nil else { return }
+        graph.setParam(node, name, value)
+        var d = model.document
+        d.objects[i].network = encoded(graph)
+        model.setDocument(d)
+        requestCook()
     }
 
     /// Moves nodes during a drag: the network changes without an undo step (endDrag makes the one).

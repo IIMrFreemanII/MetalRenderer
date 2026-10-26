@@ -150,6 +150,58 @@ final class ProceduralEditorTests: XCTestCase {
         XCTAssertTrue(f.description.contains("kinds: box"))
     }
 
+    func testHandlesDragParameters() throws {
+        model.setWorkspace(.procedural)
+        session.makeNetwork()
+        let box = session.graph.nodes[0].id
+        session.selection = [box]
+        let xform = session.add(.transform)!
+        session.focus = xform
+        model.camera.frame(AABB(lo: [-2, -2, -2], hi: [2, 2, 2]), aspect: 800 / 600)
+        // The transform's handle at its translate (the origin): drag its X axis to the right on screen.
+        let c = try XCTUnwrap(model.camera.project([0, 0, 0], size: model.viewSize))
+        let e = try XCTUnwrap(model.camera.project([0.3, 0, 0], size: model.viewSize))
+        let dir = simd_normalize(SIMD2(e.x - c.x, e.y - c.y))
+        let start = SIMD2(c.x, c.y) + dir * 30
+        model.mouseDown(.left, at: start, flags: [])
+        XCTAssertEqual(session.handleDrag?.axis, 0)
+        model.mouseDragged(to: start + dir * 40, flags: [])
+        model.mouseDragged(to: start + dir * 80, flags: [])
+        model.mouseUp(.left, at: start + dir * 80, flags: [])
+        let t = session.graph.node(xform)!.param("t").vec3
+        XCTAssertGreaterThan(t.x, 0.1)
+        XCTAssertEqual(t.y, 0, accuracy: 1e-4)
+        XCTAssertEqual(mesh.bounds.centroid.x, t.x, accuracy: 1e-4)
+        XCTAssertEqual(model.undo.undoActionName, "Move Handle")
+        model.undo.undo()
+        XCTAssertEqual(session.graph.node(xform)!.param("t").vec3, .zero)
+        // A curve's points are handles too.
+        let curve = session.add(.curve, at: [200, 0])!
+        session.focus = curve
+        XCTAssertEqual(session.handles.count, 4)
+    }
+
+    func testInspection() {
+        model.setWorkspace(.procedural)
+        session.makeNetwork()
+        let box = session.graph.nodes[0].id
+        session.selection = [box]
+        let color = session.add(.color)!
+        session.setParam(color, "color", .vec3([1, 0, 0]))
+        session.setParam(color, "class", .string("primitive"))
+        // The current node other than the display node is cooked for the spreadsheet.
+        session.setDisplay(box)
+        session.focus = color
+        XCTAssertEqual(session.inspected?.id, color)
+        XCTAssertEqual(session.inspected?.geometry.prims.vectors3("Cd")?.first, [1, 0, 0])
+        session.setDisplay(color)
+        session.showNormals = true
+        XCTAssertEqual(session.normalLines(transform: matrix_identity_float4x4).count, 6)
+        let f = model.frame()
+        let drawn = f.objects.first { $0.active }
+        XCTAssertEqual(drawn?.materialColors.count, 216)
+    }
+
     func testWindowPicture() throws {
         guard let path = ProcessInfo.processInfo.environment["MODELING_PNG"] else { throw XCTSkip("MODELING_PNG not set") }
         model.viewSize = [900, 640]
@@ -167,8 +219,14 @@ final class ProceduralEditorTests: XCTestCase {
         session.setParam(n, "amp", .float(0.05))
         session.toggleTemplate(box)
         session.focus = ex
+        session.pointNumbers = true
         let rep = try XCTUnwrap(ModelingPictures.window(model))
         try XCTUnwrap(rep.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: path).appendingPathComponent("window-procedural.png"))
+        session.leftTab = .spreadsheet
+        session.focus = n
+        let sheet = try XCTUnwrap(ModelingPictures.window(model))
+        try XCTUnwrap(sheet.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: path).appendingPathComponent("window-procedural-spreadsheet.png"))
     }
 }
