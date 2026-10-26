@@ -232,6 +232,13 @@ package struct CarState {
     package var sinceShift: Float = 0
     /// Moving at all in its last step (the wheels are kept awake while it does).
     package var awake = true
+    /// Asleep: still for `CarSolver.sleepAfter` with its wheels asleep, it is not stepped (its forces, beams, contacts,
+    /// damage) until input, a moving body or another car comes near (carBroadPhase, pairCars). `still`: how long (s) it
+    /// has been still.
+    package var asleep = false
+    package var still: Float = 0
+
+    mutating func wake() { (asleep, awake, still) = (false, true, 0) }
     /// Its plastic beams bent for good (their rest length 1% or more off) and broken, as of its last step's end
     /// (breakBeams).
     package var bent: Int32 = 0

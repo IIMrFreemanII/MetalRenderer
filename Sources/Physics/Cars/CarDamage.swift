@@ -28,6 +28,8 @@ extension CarSolver {
     package static let scrapeLength: Float = 0.4, dirtLength: Float = 3
     /// How long (s) a part that came off stays still before it is frozen, and how slow its nodes are then (m/s).
     package static let freezeAfter: Float = 1, stillSpeed: Float = 0.15
+    /// How long (s) a car stays still (CarState.awake false) before it sleeps (CarState.asleep).
+    package static let sleepAfter: Float = 1
     /// How fast a broken radiator loses its coolant (a share a second, at its worst); how fast the engine heats up
     /// without it (at full throttle), and cools with it.
     package static let coolantLoss: Float = 0.05, heating: Float = 0.03, cooling: Float = 0.05

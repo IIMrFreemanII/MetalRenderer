@@ -337,6 +337,7 @@ extension PhysicsWorld {
             for st in statics.indices where PhysicsWorld.touchesStatic(statics[st], shapes, staticBounds[st], centre: centre, radius: radius) {
                 carSystem.candidates.append(UInt32(st) | PhysicsWorld.staticBit)
             }
+            if s.asleep && s.input != CarInput() { s.wake() }
             let active = s.awake || s.input != CarInput()
             let wheels = Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount)
             // (A fractured object's piece held where it is, unbroken, too: the nodes meet it, and knock it: `CarHit`.)
@@ -346,6 +347,7 @@ extension PhysicsWorld {
                 let d = simd_distance(PhysicsMath.xyz(bodies[j].position), centre), r = bodies[j].invInertia.w
                 guard d < r + radius else { continue }
                 carSystem.candidates.append(UInt32(j))
+                if s.asleep && PhysicsWorld.moves(bodies[j]) && d < r + radius - 0.1 { s.wake() }   // (something comes)
                 if active && d < r + radius - 0.1 {
                     bodies[j].info.y &= ~PhysicsWorld.asleep
                     bodies[j].prevPosition.w = 0
@@ -365,7 +367,7 @@ extension PhysicsWorld {
                 carSystem.parts[p].flags &= ~CarPart.frozen
                 carSystem.parts[p].still = 0
             }
-            if active {
+            if s.awake || s.input != CarInput() {   // (one woken above too)
                 for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) {
                     let i = Int(carSystem.wheels[w].body)
                     bodies[i].info.y &= ~PhysicsWorld.asleep
@@ -396,6 +398,17 @@ extension PhysicsWorld {
             if carSystem.parts[Int(s.firstPart)..<Int(s.firstPart + s.partCount)].contains(where: { $0.flags & CarPart.off != 0 }) { add(a, a) }
             for b in (a + 1)..<cars.count where all(s.lo .<= cars[b].hi) && all(cars[b].lo .<= s.hi) { add(a, b) }
         }
+        // A car asleep that another, awake, comes up to wakes (with its wheels).
+        for f in found where f.pair.x != f.pair.y && cars[Int(f.pair.x)].asleep != cars[Int(f.pair.y)].asleep {
+            let c = Int(cars[Int(f.pair.x)].asleep ? f.pair.x : f.pair.y)
+            carSystem.cars[c].wake()
+            let s = carSystem.cars[c]
+            for w in Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount) {
+                let i = Int(carSystem.wheels[w].body)
+                bodies[i].info.y &= ~PhysicsWorld.asleep
+                bodies[i].prevPosition.w = 0
+            }
+        }
         found.sort { ($0.colour, $0.pair.x, $0.pair.y) < ($1.colour, $1.pair.x, $1.pair.y) }
         carSystem.pairs.removeAll(keepingCapacity: true)
         carSystem.pairStarts.removeAll(keepingCapacity: true)
@@ -414,7 +427,7 @@ extension PhysicsWorld {
         copyCarWheels()
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { CarSolver.carForces(c, b, p, sub: sub) }
+                for c in range where !b.cars[c].asleep { CarSolver.carForces(c, b, p, sub: sub) }
             }
             CarSolver.applyTyreKicks(b)
         }
@@ -428,7 +441,7 @@ extension PhysicsWorld {
         copyCarWheels()
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { CarSolver.solveCar(c, b, p) }
+                for c in range where !b.cars[c].asleep { CarSolver.solveCar(c, b, p) }
             }
             if !b.pairs.isEmpty {
                 PhysicsPool.shared.parallel(b.paired.count, grain: 1) { range in
@@ -442,7 +455,7 @@ extension PhysicsWorld {
                 }
             }
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range { CarSolver.carVelocities(c, b, h) }
+                for c in range where !b.cars[c].asleep { CarSolver.carVelocities(c, b, h) }
             }
         }
     }
@@ -509,7 +522,7 @@ extension PhysicsWorld {
         let substeps = Float(self.substeps)
         withCarBuffers { b in
             PhysicsPool.shared.parallel(b.cars.count, grain: 1) { range in
-                for c in range {
+                for c in range where !b.cars[c].asleep {
                     CarSolver.breakBeams(c, b, substeps: substeps)
                     CarSolver.damage(c, b, substeps: substeps)
                 }
@@ -531,10 +544,23 @@ extension PhysicsWorld {
                 breakSteps.removeFirst(breakSteps.count - PhysicsWorld.breakLogLength)
             }
         }
-        for c in carSystem.cars.indices {
+        for c in carSystem.cars.indices where !carSystem.cars[c].asleep {
             let t = carTelemetry(c), s = carSystem.cars[c]
             carSystem.telemetry[c] = t
-            carSystem.cars[c].awake = abs(t.speed) > 0.05 || s.input != CarInput() || s.throttle > 0 || s.steer != 0
+            let awake = abs(t.speed) > 0.05 || s.input != CarInput() || s.throttle > 0 || s.steer != 0
+            carSystem.cars[c].awake = awake
+            carSystem.cars[c].still = awake ? 0 : s.still + PhysicsWorld.stepLength
+            // Still long enough, with its wheels asleep (the world's settle): it sleeps, its nodes at rest.
+            let wheelsAsleep = (Int(s.firstWheel)..<Int(s.firstWheel + s.wheelCount)).allSatisfy {
+                !PhysicsWorld.moves(bodies[Int(carSystem.wheels[$0].body)])
+            }
+            if carSystem.cars[c].still > CarSolver.sleepAfter && wheelsAsleep {
+                carSystem.cars[c].asleep = true
+                carSystem.cars[c].reactionCount = 0
+                for i in Int(s.firstNode)..<Int(s.firstNode + s.nodeCount) {
+                    particles[i].velocity = SIMD4(.zero, particles[i].velocity.w)
+                }
+            }
         }
     }
 
