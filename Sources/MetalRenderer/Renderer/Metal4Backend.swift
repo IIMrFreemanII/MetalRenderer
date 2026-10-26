@@ -409,7 +409,11 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
                 // the ray-tracing passes before it, or the next frame's: macOS 26.5 on an M4 Max, 16 of 30 runs of
                 // 1,080 showcase frames, 1 of 60 this way. The render thread waits here for the GPU to get through
                 // the frame so far (the queue has the frames before it too).
-                _ = event.wait(untilSignaledValue: value, timeoutMS: Metal4Frame.interludeTimeoutMs)
+                if !event.wait(untilSignaledValue: value, timeoutMS: Metal4Frame.interludeTimeoutMs) {
+                    // (It then waits on the GPU, and past the watchdog's 4 s fails with ErrorTimeout, as does every
+                    // interlude after it: the Metal 4 work before it is what took so long.)
+                    print("Metal 4: the frame's work before \(name) took over \(Metal4Frame.interludeTimeoutMs) ms; committing \(name) anyway")
+                }
                 cb.commit()
                 queue.waitForEvent(event, value: value + 1)    // what follows runs after it
             case .mappings(let heap, let textures):

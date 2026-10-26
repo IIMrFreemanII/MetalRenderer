@@ -352,6 +352,10 @@ the choice is kept.
   with the MB built), **Virtual geometry**, and **Install** (on the render thread, after the frames in flight). The old
   scene keeps drawing until then. Picking another scene meanwhile drops the load: the gallery stops loading models and
   the BLAS stop between batches. A line on the console sums it up: `Loaded Gallery (Assets) in 2.4 s: shaders 1.5 s, …`.
+  The scene switched to starts at its clock's zero, as at launch (its physics, particles, animations and day). Until
+  October 2026 the clock ran on, and a scene's physics replayed from zero to it in its first frame: the GPU's muscles
+  took 3-8 s a minute or two in, the frame's Metal 3 work behind them timed out (`ErrorTimeout`), and so did every
+  frame's after it.
 * **Compiling shaders**, at launch and after R.
 * **Streaming in:** what keeps coming once the scene is in. Texture levels and virtual geometry pages (and the cut's
   BLAS) while the new scene settles, for 20 s at most (later, as the camera moves, they stream without showing);

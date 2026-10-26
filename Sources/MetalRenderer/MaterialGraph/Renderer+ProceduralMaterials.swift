@@ -459,6 +459,11 @@ extension Renderer {
         if resetCamera {
             camera = scene.defaultCamera
             prevCamera = camera
+            // Another scene starts at its clock's zero, as at launch: its physics and particles step from there, so a
+            // scene switched to ten minutes in doesn't replay ten minutes first (the GPU's soft bodies in one command
+            // buffer: 3-8 s for the muscles a minute or two in, past the watchdog). (A benchmark's configs set their own
+            // time and load with resetCamera false.)
+            setTime(0)
         }
         // Walking: on in what it was on (the same workshop or city a little changed), off otherwise.
         walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
