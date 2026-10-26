@@ -84,7 +84,10 @@ inline bool particleBillboard(ParticleRender r, float3 o, float3 d, float widen,
     t = dot(c - o, n) / dn;
     float3 p = o + d * t - c;
     float2 wide = max(size, float2(widen * abs(t)));
-    cover = (size.x / wide.x) * (size.y / wide.y);
+    // (1 exactly unless widened: with fast math size / size can come out a hair under 1, and the camera's layer took
+    // every such puff for a thin one (particleCollect): left out of the layer, and traced again by the overlay at
+    // every output pixel it covered, through every box behind it: a broken wall's dust, 4.1 ms of overlay.)
+    cover = (wide.x > size.x ? size.x / wide.x : 1.0f) * (wide.y > size.y ? size.y / wide.y : 1.0f);
     uv = float2(dot(p, u), dot(p, v)) / wide;
     return true;
 }
