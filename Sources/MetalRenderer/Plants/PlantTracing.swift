@@ -358,7 +358,6 @@ final class PlantTracing {
                 d.instanceDescriptorBufferOffset = descriptorBase[v] * stride
                 d.instanceDescriptorStride = stride
                 d.instanceCount = count
-                guard #available(macOS 14.0, *) else { throw RendererError.unsupported("indirect instance descriptors (macOS 14)") }
                 d.instanceDescriptorType = .indirect
                 d.usage = setCount > 1 ? .refit : []
                 let sizes = device.accelerationStructureSizes(descriptor: d)
@@ -598,7 +597,6 @@ final class PlantTracing {
 
         /// Metal 4: every refit in `enc`, with no barrier between them (each has its own scratch range, so the GPU may
         /// run them side by side). `keep` makes what they touch resident.
-        @available(macOS 26.0, *)
         func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
             keep(scratch)
             for v in used {

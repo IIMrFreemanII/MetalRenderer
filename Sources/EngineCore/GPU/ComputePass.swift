@@ -1,8 +1,8 @@
 import Metal
 import QuartzCore
 
-/// What a compute stage encodes into: Metal 3's compute encoder (`Metal3Pass`), or Metal 4's with its argument table
-/// (`Metal4Frame`). The methods are `MTLComputeCommandEncoder`'s, so the stages read the same for both.
+/// What a compute stage encodes into: Metal 4's frame with its argument table (`Metal4Frame`). The methods are
+/// `MTLComputeCommandEncoder`'s, so a test can run a stage on a plain encoder (the tests' `Metal3Pass`).
 package protocol ComputePass {
     func setComputePipelineState(_ state: MTLComputePipelineState)
     func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int)
@@ -18,43 +18,9 @@ package protocol ComputePass {
     func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize)
     /// As many threadgroups as an `MTLDispatchThreadgroupsIndirectArguments` the GPU wrote says.
     func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize)
-    /// What `useResource`, `useResources` and `useHeap` hold for: Metal 3's encoder, Metal 4's frame. The renderer
+    /// What `useResource`, `useResources` and `useHeap` hold for: the frame (a test's encoder). The renderer
     /// declares the scene's resources once per scope (`Renderer.bindScene`).
     var declarationScope: AnyObject { get }
-}
-
-/// Metal 3: straight through to the encoder. One reference wide, so passing it as `ComputePass` allocates nothing.
-package struct Metal3Pass: ComputePass {
-    package let enc: MTLComputeCommandEncoder
-    package var declarationScope: AnyObject { enc }
-
-    package func setComputePipelineState(_ state: MTLComputePipelineState) { enc.setComputePipelineState(state) }
-    package func setBytes(_ bytes: UnsafeRawPointer, length: Int, index: Int) { enc.setBytes(bytes, length: length, index: index) }
-    package func setBuffer(_ buffer: MTLBuffer?, offset: Int, index: Int) { enc.setBuffer(buffer, offset: offset, index: index) }
-    package func setTexture(_ texture: MTLTexture?, index: Int) { enc.setTexture(texture, index: index) }
-    package func setTextures(_ textures: [MTLTexture?], range: Range<Int>) { enc.setTextures(textures, range: range) }
-    package func setAccelerationStructure(_ accelerationStructure: MTLAccelerationStructure?, bufferIndex: Int) {
-        enc.setAccelerationStructure(accelerationStructure, bufferIndex: bufferIndex)
-    }
-    package func useResource(_ resource: MTLResource, usage: MTLResourceUsage) { enc.useResource(resource, usage: usage) }
-    package func useResources(_ resources: [MTLResource], usage: MTLResourceUsage) { enc.useResources(resources, usage: usage) }
-    package func useHeap(_ heap: MTLHeap) { enc.useHeap(heap) }
-    package func memoryBarrier(scope: MTLBarrierScope) { enc.memoryBarrier(scope: scope) }
-    package func dispatchThreads(_ threadsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
-        enc.dispatchThreads(threadsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-    }
-    package func dispatchThreadgroups(_ threadgroupsPerGrid: MTLSize, threadsPerThreadgroup: MTLSize) {
-        enc.dispatchThreadgroups(threadgroupsPerGrid, threadsPerThreadgroup: threadsPerThreadgroup)
-    }
-    package func dispatchThreadgroups(indirectBuffer: MTLBuffer, indirectBufferOffset: Int, threadsPerThreadgroup: MTLSize) {
-        enc.dispatchThreadgroups(indirectBuffer: indirectBuffer, indirectBufferOffset: indirectBufferOffset,
-                                 threadsPerThreadgroup: threadsPerThreadgroup)
-    }
-
-    /// (As the memberwise initializer, for the modules above this one.)
-    package init(enc: MTLComputeCommandEncoder) {
-        self.enc = enc
-    }
 }
 
 /// One named compute dispatch (or a few) of a frame.
@@ -100,7 +66,7 @@ package struct TLASUpdate {
     /// once, off the frames, on a Metal 3 queue (SceneBuffers).
     package func descriptor(indirect: Bool) -> MTLInstanceAccelerationStructureDescriptor {
         let d = descriptor
-        if indirect, #available(macOS 14.0, *) {
+        if indirect {
             d.instancedAccelerationStructures = nil
             d.instanceDescriptorType = .indirect
         }
@@ -140,7 +106,6 @@ package protocol PrimitiveWork4: PrimitiveWork {
     /// Whether this one can (else it goes through the Metal 3 queue after all).
     var encodes4: Bool { get }
     /// Encodes all of it into `enc`; `keep` makes what it touches resident.
-    @available(macOS 26.0, *)
     func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void)
 }
 extension PrimitiveWork4 {
@@ -214,7 +179,7 @@ package struct PrimitiveRefit: PrimitiveWork {
 extension PrimitiveRefit: PrimitiveWork4 {
     /// Triangles and curves only, and nothing to refit.
     package var encodes4: Bool {
-        guard #available(macOS 26.0, *), structures.isEmpty else { return false }
+        guard structures.isEmpty else { return false }
         return (descriptors + rebuilt.map(\.descriptor)).allSatisfy { d in
             d.motionKeyframeCount <= 1 && (d.geometryDescriptors ?? []).allSatisfy {
                 ($0 is MTLAccelerationStructureTriangleGeometryDescriptor || $0 is MTLAccelerationStructureCurveGeometryDescriptor)
@@ -223,7 +188,6 @@ extension PrimitiveRefit: PrimitiveWork4 {
         }
     }
 
-    @available(macOS 26.0, *)
     package func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
         keep(scratch)
         func range(_ buffer: MTLBuffer, _ offset: Int) -> MTL4BufferRange {

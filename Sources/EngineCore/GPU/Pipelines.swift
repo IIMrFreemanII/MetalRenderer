@@ -103,7 +103,7 @@ package final class KernelVariants {
 
     private let device: MTLDevice
     private let library: MTLLibrary
-    private let compiler: AnyObject?   // Metal 4's (an `MTL4Compiler`): the variants are made the way the set was
+    private let compiler: MTL4Compiler?   // Metal 4's: the variants are made the way the set was
     private let lightTypes: UInt32
     private let lock = NSLock()
     private var states: [Key: MTLComputePipelineState] = [:]
@@ -113,7 +113,7 @@ package final class KernelVariants {
     // pipeline to run in the meantime.
     private static let queue = DispatchQueue(label: "MetalRenderer.variants", qos: .utility, attributes: .concurrent)
 
-    package init(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, lightTypes: UInt32) {
+    package init(device: MTLDevice, library: MTLLibrary, compiler: MTL4Compiler?, lightTypes: UInt32) {
         self.device = device
         self.library = library
         self.compiler = compiler
@@ -171,15 +171,13 @@ package final class KernelVariants {
 /// their set instead of specialising all the kernels again (1.5–3 s on an M1 Max). Any thread. (Generic for the tests.)
 package final class PipelineCache<Value> {
     package struct Key: Hashable {
-        package var api: RenderAPI
         package var stats: Bool
         package var lightTypes: UInt32
         package var generation: Int        // the shaders' (Renderer.shaderGeneration): a reload makes every older set stale
         package var procedural = ""        // the procedural materials' code spliced in (MatShaderCode.splice)
 
         /// (As the memberwise initializer, for the modules above this one.)
-        package init(api: RenderAPI, stats: Bool, lightTypes: UInt32, generation: Int, procedural: String = "") {
-            self.api = api
+        package init(stats: Bool, lightTypes: UInt32, generation: Int, procedural: String = "") {
             self.stats = stats
             self.lightTypes = lightTypes
             self.generation = generation
@@ -216,7 +214,6 @@ package final class PipelineCache<Value> {
 
 package struct Pipelines {
     package let stats: Bool                // compiled with the ray queries' counters (RT_STATS)
-    package let api: RenderAPI             // Metal 4: compiled and specialised by its compiler (MTL4Compiler)
     package let lightTypes: UInt32
     package let library: MTLLibrary        // kept: another set of light types specialises it again without recompiling
     package let procedural: String         // the procedural materials' code spliced into it (MatShaderCode.splice; "" none)
@@ -234,8 +231,9 @@ package struct Pipelines {
 
     /// Compiles `source` unless `library` already is that, then makes every pipeline, in parallel. Safe to call from
     /// any thread; `stats` (the ray queries' counters, RT_STATS) is read by the caller for that reason.
-    /// `compiler`: Metal 4's (an `MTL4Compiler`), for `api` `.metal4`. `load`: the load to report the pipelines to.
-    package init(device: MTLDevice, source: URL, api: RenderAPI = .metal3, compiler: AnyObject? = nil,
+    /// `compiler`: Metal 4's, which the frames' pipelines are made by (nil: the device's, for work outside the frames and
+    /// the tests). `load`: the load to report the pipelines to.
+    package init(device: MTLDevice, source: URL, compiler: MTL4Compiler? = nil,
          lightTypes: UInt32, stats: Bool, procedural: String = "", reusing library: MTLLibrary? = nil, load: LoadJob? = nil) throws {
         let start = CACurrentMediaTime()
         let kernels = Kernel.allCases
@@ -263,7 +261,6 @@ package struct Pipelines {
         if let failure { throw failure }
         step?.finish()
         self.stats = stats
-        self.api = api
         self.lightTypes = lightTypes
         self.library = library
         self.procedural = procedural
@@ -277,9 +274,9 @@ package struct Pipelines {
     }
 
     /// `kernel`'s pipeline with `constants`: from Metal 4's compiler when there is one, else from the device.
-    package static func makeState(device: MTLDevice, library: MTLLibrary, compiler: AnyObject?, kernel: Kernel,
+    package static func makeState(device: MTLDevice, library: MTLLibrary, compiler: MTL4Compiler?, kernel: Kernel,
                           constants: MTLFunctionConstantValues) throws -> MTLComputePipelineState {
-        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+        if let compiler {
             let function = MTL4LibraryFunctionDescriptor()
             function.library = library
             function.name = kernel.function
@@ -294,26 +291,26 @@ package struct Pipelines {
         return try device.makeComputePipelineState(function: function)
     }
 
-    package static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: AnyObject?, procedural: String = "") throws -> MTLLibrary {
+    package static func compile(device: MTLDevice, source url: URL, stats: Bool, compiler: MTL4Compiler?, procedural: String = "") throws -> MTLLibrary {
         var text = try ShaderSource.load(url)
         if !procedural.isEmpty { text = text.replacingOccurrences(of: ShaderSource.proceduralMarker, with: procedural) }
         return try compile(device: device, text: text, stats: stats, compiler: compiler)   // Shaders.metal with the pieces in Shaders/ spliced in
     }
 
     /// `source` compiled as Shaders.metal is (the VFX library's: VFXCompiler).
-    package static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: AnyObject?) throws -> MTLLibrary {
+    package static func compile(device: MTLDevice, text source: String, stats: Bool, compiler: MTL4Compiler?) throws -> MTLLibrary {
         let options = MTLCompileOptions()
-        if #available(macOS 15.0, *) { options.languageVersion = .version3_2 } else { options.languageVersion = .version3_0 }
+        options.languageVersion = .version3_2
         options.preprocessorMacros = ["RT_STATS": NSNumber(value: stats ? 1 : 0)]
         // Fast math is the default (relaxed cost ~0.2 ms a frame in the old stress hall and rendered the same image);
         // `METALRENDERER_MATH=relaxed` keeps infinities and NaNs exact, to rule fast math out when something looks off.
         // `safe` also keeps the order of every operation: a kernel's variants then compute bit for bit what its
         // general pipeline computes, which is how to check a variant's flags against the uniforms' (pngdiff.py).
-        if #available(macOS 15.0, *), let mode = ProcessInfo.processInfo.environment["METALRENDERER_MATH"] {
+        if let mode = ProcessInfo.processInfo.environment["METALRENDERER_MATH"] {
             if mode == "relaxed" { options.mathMode = .relaxed }
             if mode == "safe" { options.mathMode = .safe }
         }
-        if #available(macOS 26.0, *), let compiler = compiler as? MTL4Compiler {
+        if let compiler {
             let descriptor = MTL4LibraryDescriptor()
             descriptor.source = source
             descriptor.options = options

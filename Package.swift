@@ -22,7 +22,8 @@ let engineSettings: [SwiftSetting] = [
 
 let package = Package(
     name: "MetalRenderer",
-    platforms: [.macOS(.v13)],
+    // Metal 4 is the only API (macOS 26, an M3 or later for its ray tracing).
+    platforms: [.macOS("26.0")],
     products: [
         .executable(name: "MetalRenderer", targets: ["MetalRendererApp"])
     ],

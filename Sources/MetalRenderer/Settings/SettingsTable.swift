@@ -77,7 +77,6 @@ extension GIMode: EnvNamed {
 extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
 extension DirectLightMode: EnvNamed {}
-extension RenderAPI: EnvNamed {}
 extension FrameInterpolation: EnvNamed {}
 extension SceneKind: EnvNamed {
     /// The scenes this build has (SceneRegistry).
@@ -118,7 +117,7 @@ extension ReferenceMode: EnvNamed {
 /// The `METALRENDERER_*` variables that carry settings, in the order Copy as Env writes them.
 package enum EnvVariable: String, CaseIterable {
     // One value each.
-    case direct = "METALRENDERER_DIRECT", api = "METALRENDERER_API", specular = "METALRENDERER_SPECULAR"
+    case direct = "METALRENDERER_DIRECT", specular = "METALRENDERER_SPECULAR"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
@@ -470,8 +469,6 @@ package enum SettingsTable {
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),
-            S.popup("Graphics API", \.api, titled(\.title)).env(.api)
-                .available { RenderAPI.allCases[$0] != .metal4 || Capabilities.current.metal4 },
             S.check("Virtual geometry (LOD)", \.virtualGeometry.enabled).env(.vg),
             S.slider("Geometry error", \.virtualGeometry.pixelError, VirtualGeometrySettings.pixelErrorRange, step: 0.25, log: true,
                      fmt("%.2g px")).env(.vgTau).enabled(virtual),

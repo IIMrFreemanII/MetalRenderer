@@ -42,17 +42,15 @@ package final class VFXCompiler {
         package let entry: URL
         package let lightTypes: UInt32
         package let stats: Bool
-        package let metal4: Bool
         /// The renderer's shader reloads so far (R, or a save in the dev build): a library compiled before the last one
         /// read the old ShadersVFX.metal.
         package let generation: Int
 
         /// (As the memberwise initializer, for the modules above this one.)
-        package init(entry: URL, lightTypes: UInt32, stats: Bool, metal4: Bool, generation: Int = 0) {
+        package init(entry: URL, lightTypes: UInt32, stats: Bool, generation: Int = 0) {
             self.entry = entry
             self.lightTypes = lightTypes
             self.stats = stats
-            self.metal4 = metal4
             self.generation = generation
         }
     }
@@ -75,7 +73,7 @@ package final class VFXCompiler {
 
     /// The kernels for `generated` (VFXCodegen.source), or nil while they compile (`wait`: compile now) or if they
     /// don't (the failure: `failure(for:)`). Called every frame by a system with programs: a lookup under a lock.
-    package func kernels(for generated: String, setup: Setup, device: MTLDevice, compiler: AnyObject?, wait: Bool) -> ParticleKernels? {
+    package func kernels(for generated: String, setup: Setup, device: MTLDevice, compiler: MTL4Compiler?, wait: Bool) -> ParticleKernels? {
         let key = Key(setup: setup, source: generated)
         lock.lock()
         switch entries[key] {
@@ -134,7 +132,7 @@ package final class VFXCompiler {
         }
     }
 
-    private static func make(_ key: Key, device: MTLDevice, compiler: AnyObject?) throws -> ParticleKernels {
+    private static func make(_ key: Key, device: MTLDevice, compiler: MTL4Compiler?) throws -> ParticleKernels {
         let text = try ShaderSource.load(key.setup.entry) + "\n#line 1 \"generated\"\n" + key.source
         let library = try Pipelines.compile(device: device, text: text, stats: key.setup.stats, compiler: compiler)
         func state(_ k: Kernel) throws -> MTLComputePipelineState {

@@ -142,8 +142,8 @@ final class LoadActivityTests: XCTestCase {
 
 /// The pipeline sets kept per light mix (PipelineCache), with numbers for sets.
 final class PipelineCacheTests: XCTestCase {
-    private func key(_ lightTypes: UInt32, generation: Int = 0, api: RenderAPI = .metal3, stats: Bool = false) -> PipelineCache<Int>.Key {
-        .init(api: api, stats: stats, lightTypes: lightTypes, generation: generation)
+    private func key(_ lightTypes: UInt32, generation: Int = 0, stats: Bool = false) -> PipelineCache<Int>.Key {
+        .init(stats: stats, lightTypes: lightTypes, generation: generation)
     }
 
     func testASetIsFoundByEverythingItWasMadeFor() {
@@ -151,7 +151,6 @@ final class PipelineCacheTests: XCTestCase {
         cache.put(key(0b011), 1)
         XCTAssertEqual(cache.get(key(0b011)), 1)
         XCTAssertNil(cache.get(key(0b111)))
-        XCTAssertNil(cache.get(key(0b011, api: .metal4)))
         XCTAssertNil(cache.get(key(0b011, stats: true)))
         cache.put(key(0b011), 2)
         XCTAssertEqual(cache.get(key(0b011)), 2, "the newer set for the same key")

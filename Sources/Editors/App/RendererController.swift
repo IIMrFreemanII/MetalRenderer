@@ -25,7 +25,6 @@ final class RendererController: InputHandler {
     let defaultSettings: RenderSettings
     /// MetalFX factors this GPU supports, with 0 meaning off.
     let upscaleSteps: [CGFloat]
-    let passProfilingSupported: Bool
     /// The last stats tick's report; nil before the first.
     private(set) var status: RendererStatus?
     /// The ray queries' counters (RT_STATS) are on.
@@ -95,7 +94,6 @@ final class RendererController: InputHandler {
         settings = renderer.settings
         defaultSettings = renderer.defaultSettings
         upscaleSteps = renderer.upscaleSteps
-        passProfilingSupported = renderer.passProfilingSupported
         traversalCounters = renderer.traversalCounters
         loadActivity = renderer.loadActivity
         renderer.onSettings = { [weak self] settings, update, persist in

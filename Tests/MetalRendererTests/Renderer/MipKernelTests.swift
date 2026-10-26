@@ -12,8 +12,8 @@ import Metal
 @testable import Physics
 @testable import Plants
 
-/// The mip kernels Metal 4 frames use (Shaders/Mips.metal, Metal4Frame.generateMipmaps) against the blit encoder's
-/// generateMipmaps, which Metal 3 frames use: the same levels, bit for bit, so the two APIs draw the same frames.
+/// The mip kernels the frames use (Shaders/Mips.metal, Metal4Frame.generateMipmaps) against the blit encoder's
+/// generateMipmaps, which made the frames' mips before (and still the 3D ones): the same levels, bit for bit.
 final class MipKernelTests: XCTestCase {
     private static let shaders = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
     private static var compiled: (device: MTLDevice, queue: MTLCommandQueue, pipelines: Pipelines)?

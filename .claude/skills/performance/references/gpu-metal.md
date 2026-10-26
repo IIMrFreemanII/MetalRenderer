@@ -224,8 +224,8 @@ in fog. Making any of them alike changes images, so it is a change to measure, n
 
 * **Debug window** (I or ⌘I):
   * frame graph (blue = GPU ms, orange = CPU frame interval);
-  * GPU pass timings, averaged over half a second, with fenced encoders and "other" = MetalFX, its drawable copy and
-    texture streaming;
+  * GPU pass timings, averaged over half a second, a command buffer per pass (as a benchmark's split passes), and
+    "other" = what isn't timed (texture streaming's mapping updates);
   * memory, texture streaming, virtual geometry and ray-traversal counters.
 * **Xcode GPU frame capture:** run with `MTL_CAPTURE_ENABLED=1` from Xcode (open `Package.swift`, Release scheme),
   then capture a frame. It shows per-kernel occupancy, limiter counters (ALU, texture, buffer read/write), register

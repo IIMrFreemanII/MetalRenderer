@@ -1,6 +1,6 @@
 ---
 name: refactor
-description: Refactor and optimise MetalRenderer's code after a new feature - fold the new code into the project's structures (settings table, benchmark registry, frame plan, pipeline set, capabilities, the Metal 3 / Metal 4 encoders), remove what the feature duplicated or left behind, speed up what it put on a hot path, and prove the renderer still draws the same frames. Use once a feature works or is committed, and whenever asked to refactor, clean up, tidy, simplify, restructure, deduplicate, split a long function or file, or "optimise what I just added" in this repo, even if the word refactor isn't used. For speed work with no restructuring, use the performance skill.
+description: Refactor and optimise MetalRenderer's code after a new feature - fold the new code into the project's structures (settings table, benchmark registry, frame plan, pipeline set, capabilities, the Metal 4 frame encoder), remove what the feature duplicated or left behind, speed up what it put on a hot path, and prove the renderer still draws the same frames. Use once a feature works or is committed, and whenever asked to refactor, clean up, tidy, simplify, restructure, deduplicate, split a long function or file, or "optimise what I just added" in this repo, even if the word refactor isn't used. For speed work with no restructuring, use the performance skill.
 ---
 
 # The pass after a feature
@@ -99,7 +99,8 @@ project's structures with the sign that a feature went around each.
   everything else reads it.
 * **What the feature left behind:** code its change made dead, parameters nobody passes any more, comments and
   README lines that describe the old behaviour, a temporary env variable or `print` from its debugging.
-* **One API only.** A pass that encodes for Metal 3 and not through `ComputePass`, so Metal 4 lacks it.
+* **Around the frame encoder.** A pass that encodes into its own Metal 3 command buffer rather than through
+  `ComputePass` (or, when it has no Metal 4 form, an interlude): it runs outside the frame's order and residency.
 * **Cost on the frame path:** allocations, string formatting or a new command buffer per frame; a full-screen pass
   that could be part of an existing kernel; a value stored that the next pass could compute. The `performance`
   skill's checklists are the reference. A loop the feature runs every frame over many things follows the

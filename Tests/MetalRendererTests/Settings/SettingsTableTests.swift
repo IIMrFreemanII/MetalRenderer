@@ -251,14 +251,13 @@ final class SettingsTableTests: XCTestCase {
         saved["shadowMethod"] = 1   // (virtual shadow maps, since removed)
         saved["vsm"] = ["pool": 512]
         saved["primary"] = 1   // (the raster visibility buffer, since removed)
-        saved["api"] = RenderAPI.metal4.rawValue
+        saved["api"] = 0   // (Metal 3, when the API was a setting)
         saved["bounces"] = defaults.bounces + 1
         let store = UserDefaults.standard, key = "renderSettings"
         let before = store.data(forKey: key)
         defer { store.set(before, forKey: key) }
         store.set(try JSONSerialization.data(withJSONObject: saved), forKey: key)
         let s = try XCTUnwrap(SettingsStore.load(over: defaults))
-        XCTAssertEqual(s.api, .metal4)
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
@@ -271,7 +270,6 @@ final class SettingsTableTests: XCTestCase {
         var scene = try XCTUnwrap(saved["scene"] as? [String: Any])
         scene["kind"] = 9999
         saved["scene"] = scene
-        saved["api"] = RenderAPI.metal4.rawValue
         saved["bounces"] = defaults.bounces + 1
         let store = UserDefaults.standard, key = "renderSettings"
         let before = store.data(forKey: key)
@@ -282,7 +280,6 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.giMode, defaults.giMode)
         XCTAssertEqual(s.toneMap, defaults.toneMap)
         XCTAssertEqual(s.scene.kind, defaults.scene.kind)
-        XCTAssertEqual(s.api, .metal4)
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
@@ -293,7 +290,6 @@ final class SettingsTableTests: XCTestCase {
             "METALRENDERER_GI": "mode=restir, bounces = 3.7,scale=0.75",
             "METALRENDERER_FOG_SET": "on=0,wind=1:0:2",
             "METALRENDERER_VIEW": "tonemap=AgX,paused=1",
-            "METALRENDERER_API": "metal4",
         ])
         XCTAssertEqual(s.scene.kind, .market)
         XCTAssertEqual(s.scene.lights, GameScenes.marketLights)
@@ -305,7 +301,6 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.fog.wind, SIMD3<Float>(1, 0, 2))
         XCTAssertEqual(s.toneMap, .agx)
         XCTAssertTrue(s.paused)
-        XCTAssertEqual(s.api, .metal4)
         // Benchmarks choose the view and the pause themselves.
         var b = defaults
         SettingsEnv.apply(.view, to: &b, from: ["METALRENDERER_VIEW": "paused=1,view=3,fov=70"])

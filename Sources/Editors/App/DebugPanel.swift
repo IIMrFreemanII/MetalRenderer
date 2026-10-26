@@ -71,7 +71,6 @@ final class DebugPanel: NSObject {
         viewNote.font = .systemFont(ofSize: small)
         viewNote.textColor = .secondaryLabelColor
         viewNote.isHidden = true
-        profile.isHidden = !renderer.passProfilingSupported
         graph.translatesAutoresizingMaskIntoConstraints = false
         graph.heightAnchor.constraint(equalToConstant: 96).isActive = true
 

@@ -65,7 +65,6 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `restir` | 1 to 16384 lights for each direct-light method, plus the Night market |
 | `city` | the generated city: stills from three viewpoints and of each style, flat against textured, night; then 1 to 100 blocks by day and at night ("glass" is the panes' pass) |
 | `hwrt` | ray tracing's cost per scene and GI method ("cornell pt", "stress cascades" …), through the MetalFX denoiser |
-| `api` | Metal 3 against Metal 4 ("<scene>, metal3\|metal4"; stills first, for a `pngdiff` between two runs) |
 | `gallery` | glTF gallery: full meshes against virtual geometry at 0.5/1/2 px, plus a fly-through (warm the caches first) |
 | `gi` | each GI method (plus the path-traced references, unless `GI_REFS=0`) |
 | `lights`, `fog`, `sky` | the light demo, fog and sky scenes, paused at t = 5 s and moving |
@@ -100,9 +99,8 @@ pure speed change.
   reads them and reports unknown keys:
   * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,on=0,…"`;
   * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
-* Plain defaults: `METALRENDERER_API=metal3|metal4` (Metal 4 with Metal ray tracing needs Apple9, M3/M4: elsewhere
-  it falls back to Metal 3 with a line in the log), `_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`,
-  `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
+* Plain defaults: `METALRENDERER_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
+  (Every frame is Metal 4's: there is no API to pick. `METALRENDERER_MFX4=1` tries MetalFX's Metal 4 scaler.)
 * Performance knobs:
   * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes (a kernel by its `Kernel` case in
     Pipelines.swift, capitals and spaces aside);

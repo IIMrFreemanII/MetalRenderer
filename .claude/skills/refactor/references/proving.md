@@ -25,7 +25,7 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Reflections, specular light | `speccheck` |
 | The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |
 | Ray queries, acceleration structures, `TraceScene` | `quick`, `hwrt`; plants (variants, wind, leaf cards, voxels) `forestcheck`; virtual geometry `vgdebug`, `gallery`; SDF shapes `shapes` |
-| Metal 3 / Metal 4 encoding | `api`, and any mode with `-- METALRENDERER_API=metal4` |
+| The frame encoder (Metal4Backend), its interludes | `quick`, `shot`, and the scene switches (Cars ↔ Destruction ↔ Stage) |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
 | Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices with the CPU's) |
 | The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`) |
@@ -40,14 +40,13 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 | `vgdebug` | 18 | 4 | | `gi` | 36 | ≈17 |
 | `lightcheck` | 6 | 6 | | `hwrt` | 4 | ≈4 |
 | `quick` | 4 | ≈4 | | `skycheck` | 20 | 28 |
-| `api` | 6 | ≈4 | | | | |
 | `speccheck` | 18 | 10 | | `fogcheck` | 12 | 30 |
 | | | | | `stressq` | 39 | ≈37 |
 | | | | | `restirgicheck` | 8 | 60 |
 | | | | | `restircheck` | 36 | minutes |
 
-≈: scaled down from the measured time when the other upscalers were removed (and, for `hwrt` and `api`, when the
-custom tracer went and their settings halved), not measured again.
+≈: scaled down from the measured time when the other upscalers were removed (and, for `hwrt`, when the custom
+tracer went and its settings halved), not measured again.
 
 Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
 other fifteen together take about five minutes per binary, so ten for a comparison.

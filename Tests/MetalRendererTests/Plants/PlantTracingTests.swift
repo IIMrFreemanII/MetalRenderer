@@ -27,7 +27,7 @@ final class PlantTracingTests: XCTestCase {
 
     /// A scene's plants on the GPU, in a scene that moves (a set of variants per frame slot).
     private func plants(_ scene: Scene, device: MTLDevice, queue: MTLCommandQueue) throws -> (SceneBuffers, PlantTracing) {
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(slots: 3))
         return (buffers, try XCTUnwrap(buffers.plants))
     }
 
@@ -70,7 +70,7 @@ final class PlantTracingTests: XCTestCase {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         try XCTSkipUnless(device.supportsRaytracing, "no ray tracing on this GPU")
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 1))
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(slots: 1))
         let plants = try XCTUnwrap(buffers.plants)
         XCTAssertEqual(plants.variantCount, scene.assemblies.count)
         for a in scene.assemblies.indices.prefix(8) {

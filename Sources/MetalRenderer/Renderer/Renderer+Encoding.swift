@@ -14,14 +14,11 @@ import simd
 extension Renderer {
     // MARK: - Frame encoding
 
-    /// The frame's encoder (ComputePass.swift) for the API in use.
-    package func makeFrame(_ plan: FramePlan, profile: GPUProfiler.Frame?) -> FrameEncoder? {
-        if builtAPI == .metal4, #available(macOS 26.0, *) {
-            let frame = metal4?.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
-            frame?.mipKernels = (pipelines[.mipDown2D], pipelines[.mipDown2DArray])
-            return frame
-        }
-        return Metal3Frame(queue: queue, profile: profile, split: plan.splitPasses, overlap: plan.overlap)
+    /// The frame's encoder (Metal4Backend.swift).
+    package func makeFrame(_ plan: FramePlan) -> FrameEncoder {
+        let frame = metal4.begin(slot: plan.slot, split: plan.splitPasses, overlap: plan.overlap)
+        frame.mipKernels = (pipelines[.mipDown2D], pipelines[.mipDown2DArray])
+        return frame
     }
 
     /// The frame's compute stages by group, each group in the order it runs.
@@ -165,7 +162,7 @@ extension Renderer {
             // The editor's edit whose code was compiling: in once it is ready.
             if let pending = pendingEffects {
                 if let source = pending.system.programSource {
-                    if let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+                    if let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler,
                                                                 wait: benchmark != nil) {
                         adoptEffects(pending, kernels: kernels)
                     } else if VFXCompiler.shared.failure(for: source, setup: vfxSetup) != nil {
@@ -178,7 +175,7 @@ extension Renderer {
             // An effect's programs (VFXProgram): the VFX library's kernels once compiled (benchmarks wait for them), then
             // a replay from the start with them, so what is drawn doesn't depend on when the compile finished.
             if particlesGPU.hasPrograms, particlesGPU.programKernels == nil, let source = particlesGPU.system.programSource,
-               let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler(for: pipelines.api),
+               let kernels = VFXCompiler.shared.kernels(for: source, setup: vfxSetup, device: device, compiler: compiler,
                                                         wait: benchmark != nil) {
                 particlesGPU.programKernels = kernels
                 scene.replayParticles()
@@ -493,7 +490,8 @@ extension Renderer {
 
     /// Presents the drawable and commits the frame; its completion handler frees the frame slot and reports the timings.
     /// `encodeStart`: when the CPU started on this frame, not counting its waits.
-    package func commit(_ plan: FramePlan, passes: FrameEncoder, profile: GPUProfiler.Frame?, output: FrameOutput?,
+    /// `profiling`: the passes' times go to the Debug window (the frame has a command buffer per pass).
+    package func commit(_ plan: FramePlan, passes: FrameEncoder, profiling: Bool, output: FrameOutput?,
                         between: FrameOutput?, encodeStart: CFTimeInterval) {
         let slot = plan.slot
         var writeCapture: (() -> Void)?
@@ -569,7 +567,16 @@ extension Renderer {
                 bench.record(.init(config: benchConfig, passMs: passMs, spanMs: (end - start) * 1000, cpuMs: encodeNow))
             }
             writeCapture?()
-            let times = profile?.resolve()
+            // The passes' times, a pass that recurs summed, in the order they first ran.
+            var times: [(name: String, ms: Double)]?
+            if profiling {
+                var order: [String] = [], ms: [String: Double] = [:]
+                for p in frame.passes {
+                    if ms[p.name] == nil { order.append(p.name) }
+                    ms[p.name, default: 0] += (p.end - p.start) * 1000
+                }
+                times = order.map { ($0, ms[$0]!) }
+            }
             semaphore.signal()
             let ms = (frame.end - frame.start) * 1000
             self?.perform { r in

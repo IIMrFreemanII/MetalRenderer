@@ -228,7 +228,7 @@ final class SDFTests: XCTestCase {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let metal = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 2))
+        let metal = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(slots: 2))
         XCTAssertEqual(metal.sdf.shapeCount, 2)
         let shapes = UnsafeBufferPointer(start: metal.sdf.shapes.contents().bindMemory(to: GPUSDFShape.self, capacity: 2), count: 2)
         XCTAssertEqual(shapes.map(\.range.x), [0, 1])
@@ -243,23 +243,19 @@ final class SDFTests: XCTestCase {
         XCTAssertEqual(metal.sdf.boxes.count, 2)
         XCTAssertEqual(metal.primitives.count, scene.meshes.count + 2)
         XCTAssertTrue(metal.primitives[scene.meshes.count] === metal.sdf.boxes[0])
-        // Still: the descriptors are written. The shapes' instances name their boxes, and aren't opaque.
+        // Still: the descriptors are written, Metal 4's indirect ones. The shapes' instances name their boxes by
+        // resource ID (the boxes' after the meshes'), and aren't opaque.
+        XCTAssertTrue(metal.indirect)
         let p = metal.instanceDescriptors[0].contents()
-        func word(_ instance: Int, _ offset: Int) -> UInt32 { p.load(fromByteOffset: instance * 64 + offset, as: UInt32.self) }
-        XCTAssertEqual(word(0, 60), 0)
-        XCTAssertEqual(word(1, 60), UInt32(scene.meshes.count + 1))
-        XCTAssertEqual(word(2, 60), UInt32(scene.meshes.count))
+        func word(_ instance: Int, _ offset: Int) -> UInt32 {
+            p.load(fromByteOffset: instance * SceneBuffers.indirectStride + offset, as: UInt32.self)
+        }
+        func id(_ instance: Int) -> UInt64 {
+            p.load(fromByteOffset: instance * SceneBuffers.indirectStride + 64, as: MTLResourceID.self)._impl
+        }
+        XCTAssertEqual(id(1), metal.primitives[scene.meshes.count + 1].gpuResourceID._impl)
+        XCTAssertEqual(id(2), metal.primitives[scene.meshes.count].gpuResourceID._impl)
         XCTAssertEqual(word(1, 48) & MTLAccelerationStructureInstanceOptions.nonOpaque.rawValue, MTLAccelerationStructureInstanceOptions.nonOpaque.rawValue)
         XCTAssertEqual(word(0, 48) & MTLAccelerationStructureInstanceOptions.opaque.rawValue, MTLAccelerationStructureInstanceOptions.opaque.rawValue)
-
-        // Metal 4's descriptors are indirect: they name the boxes by resource ID, the boxes' after the meshes'.
-        let indirect = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal4, slots: 2))
-        XCTAssertTrue(indirect.indirect)
-        let q = indirect.instanceDescriptors[0].contents()
-        func id(_ instance: Int) -> UInt64 {
-            q.load(fromByteOffset: instance * SceneBuffers.indirectStride + 64, as: MTLResourceID.self)._impl
-        }
-        XCTAssertEqual(id(1), indirect.primitives[scene.meshes.count + 1].gpuResourceID._impl)
-        XCTAssertEqual(id(2), indirect.primitives[scene.meshes.count].gpuResourceID._impl)
     }
 }

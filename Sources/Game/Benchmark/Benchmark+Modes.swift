@@ -21,7 +21,7 @@ extension Benchmark {
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
         "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
-        "hwrt": hwrt, "hwrtq": hwrtq, "api": api, "interp": interp,
+        "hwrt": hwrt, "hwrtq": hwrtq, "interp": interp,
         "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,

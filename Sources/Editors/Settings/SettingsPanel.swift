@@ -442,8 +442,7 @@ final class SettingsPanel: NSObject {
         let defaults = renderer.defaultSettings
         renderer.update { s in
             var reset = defaults
-            reset.scene = s.scene   // render settings only; the loaded scene and API stay
-            reset.api = s.api
+            reset.scene = s.scene   // render settings only; the loaded scene stays
             reset.applySceneDefaults(from: defaults)
             s = reset
         }

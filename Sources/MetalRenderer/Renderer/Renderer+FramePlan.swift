@@ -65,10 +65,10 @@ extension Renderer {
         if settings.scene.effects != scene.settings.effects, loading == nil { editEffects() }
         if settings.scene.materials != scene.settings.materials, loading == nil { editMaterials() }
         if placedPending != nil { remakeForPendingPlaced() }
-        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged || sceneRemake != nil {
+        if settings.scene != scene.settings || virtualGeometryChanged || plantSeasonChanged || sceneRemake != nil {
             // A benchmark makes its scenes right here, but the world's next one as the app does, in the background: its
             // frames then show what a tile crossing costs.
-            let streamed = (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)) && settings.api == builtAPI
+            let streamed = settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameCity(as: scene.settings)
             if benchmark != nil && !streamed { rebuildScene(resetCamera: false) } else { startLoadingScene() }
         }
         frameSemaphore.wait()
@@ -85,15 +85,11 @@ extension Renderer {
         updateVoxelLOD(lod)
         virtualTracing?.update(frame: frameIndex, slot: slot, framesInFlight: Renderer.maxFramesInFlight, view: lod, scene: scene)
         writeFrameData(slot: slot, lod: lod)
-        // GPU pass timings (the settings panel): an encoder per pass, timestamped at its start and end.
-        // (Metal 3: the profiler times encoders, and a Metal 4 frame is a single one.)
-        let profile = profilePasses && benchmark == nil && builtAPI == .metal3 ? profiler?.beginFrame(slot: slot) : nil
-        let plan = planFrame(size: size, slot: slot, profiling: profile != nil)
+        // GPU pass timings (the Debug window): a command buffer per pass, as a benchmark's, each reporting its GPU time.
+        let profiling = profilePasses && benchmark == nil
+        let plan = planFrame(size: size, slot: slot, profiling: profiling)
         regirParams = plan.lightGrid?.params ?? GPURegirParams()   // bound with the scene (bindScene)
-        guard let passes = makeFrame(plan, profile: profile) else {
-            frameSemaphore.signal()
-            return false
-        }
+        let passes = makeFrame(plan)
         if let released = virtualTracing?.takeReleased(), !released.isEmpty { passes.release(released) }   // (before the frame binds)
         encodeSceneUpdate(slot: slot, lod: lod, passes: passes)
         if skyActive && !plan.solid { encodeSky(passes) }
@@ -123,7 +119,7 @@ extension Renderer {
 
         encode(stages, plan: plan, passes: passes)
         let output = encodeOutput(plan, composite: composite, targets: t, surface: surface, passes: passes)
-        commit(plan, passes: passes, profile: profile, output: output.output, between: output.between,
+        commit(plan, passes: passes, profiling: profiling, output: output.output, between: output.between,
                encodeStart: encodeStart + output.wait)
 
         finishFrame(plan)
@@ -206,10 +202,8 @@ extension Renderer {
         if !size.upscaling {
             upscaler = nil
         } else if upscaler == nil || upscaler!.inputWidth != width || upscaler!.inputHeight != height
-                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight || upscaler!.metal4 != (builtAPI == .metal4 && Upscaler.metal4Available) {
+                    || upscaler!.outputWidth != outWidth || upscaler!.outputHeight != outHeight {
             do {
-                var compiler: AnyObject?   // Metal 4's, for MetalFX's Metal 4 scaler
-                if #available(macOS 26.0, *), builtAPI == .metal4 { compiler = metal4?.compiler }
                 upscaler = try Upscaler(device: device, inputWidth: width, inputHeight: height, outputWidth: outWidth,
                                         outputHeight: outHeight, synchronous: benchmark != nil, compiler: compiler)
                 upscalerReset = true
@@ -499,7 +493,7 @@ extension Renderer {
             p.solid = true
             p.uniforms = makeUniforms(width: size.outWidth, height: size.outHeight, giMode: activeGIMode, directMode: activeDirectMode)
             p.uniforms.jitter = SIMD4<Float>()
-            p.splitPasses = benchmark != nil && Benchmark.splitPasses
+            p.splitPasses = profiling || benchmark != nil && Benchmark.splitPasses
             return p
         }
         p.accumulating = accumulating
@@ -564,7 +558,7 @@ extension Renderer {
             pt.params.bounds = scene.sceneSphere
             p.pathTrace = pt
             p.uniforms.viewMode = 0   // the light, tone mapped
-            p.splitPasses = benchmark != nil && Benchmark.splitPasses
+            p.splitPasses = profiling || benchmark != nil && Benchmark.splitPasses
             return p
         }
 
@@ -572,7 +566,7 @@ extension Renderer {
         // filters the cascades' output), so their dispatches can overlap on the GPU: the shared encoder is then
         // concurrent, with explicit barriers between dependent stages. Per-pass timing (benchmark or panel) keeps
         // everything serial, and METALRENDERER_OVERLAP=0 turns overlapping off for A/B timing.
-        p.splitPasses = benchmark != nil && Benchmark.splitPasses
+        p.splitPasses = profiling || benchmark != nil && Benchmark.splitPasses
         p.overlap = !p.splitPasses && !profiling && Renderer.overlapEnabled && settings.giEnabled
             && p.giMode == .radianceCascades && !settings.cascades.denoiseIndirect
 
