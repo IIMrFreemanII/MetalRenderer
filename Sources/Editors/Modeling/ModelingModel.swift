@@ -5,6 +5,7 @@ import Foundation
 import Metal
 import MetalRenderer
 import Modeling
+import Procedural
 import simd
 
 /// What the modelling window needs of the app (RendererController; nothing in the tests): the scene's selected object
@@ -205,8 +206,17 @@ final class ModelingModel: ObservableObject {
     /// The last coalesced edit (a field being dragged makes one undo step).
     var coalesceKey = ""
     var coalesceTime = Date.distantPast
-    /// The workspace tab (Layout, Modeling, Sculpting, UV Editing).
+    /// The workspace tab (Layout, Modeling, Sculpting, UV Editing, Procedural).
     @Published var workspace: Workspace = .layout
+    /// The Procedural workspace's network and cooks (made the first time it is asked for).
+    private(set) var proceduralSession: ProceduralSession?
+    var procedural: ProceduralSession {
+        if let s = proceduralSession { return s }
+        let s = ProceduralSession(model: self)
+        proceduralSession = s
+        s.documentChanged()
+        return s
+    }
 
     init(host: ModelingHost? = nil, document: ModelingDocument = .startup()) {
         self.host = host
@@ -287,6 +297,7 @@ final class ModelingModel: ObservableObject {
         refreshStatus()
         redraw()
         stageDocumentChanged()
+        proceduralSession?.documentChanged()
     }
 
     func markSaved() { dirty = false }
@@ -347,6 +358,9 @@ final class ModelingModel: ObservableObject {
             f.objects = scene.objects(document, mode: mode, selectMode: selectMode, active: activeElement,
                                       wire: shading.mode == .wireframe || overlays.wireframe)
         }
+        if workspace == .procedural, let s = proceduralSession, let scene, let o = activeObject, o.id == s.objectID {
+            f.objects += s.templateDraws(scene, transform: o.transform.matrix)
+        }
         f.lines = previewLines + toolGizmoLines()
         if let s = sculpt, mode == .sculpt { f.lines += s.cursorLines(self) }
         return f
@@ -404,9 +418,9 @@ final class ModelingModel: ObservableObject {
     }
 }
 
-/// Blender's workspaces: a mode and a layout each.
+/// Blender's workspaces: a mode and a layout each; and Procedural, Houdini's network editor.
 enum Workspace: String, CaseIterable, Identifiable {
-    case layout, modeling, sculpting, uv
+    case layout, modeling, sculpting, uv, procedural
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -414,6 +428,7 @@ enum Workspace: String, CaseIterable, Identifiable {
         case .modeling: "Modeling"
         case .sculpting: "Sculpting"
         case .uv: "UV Editing"
+        case .procedural: "Procedural"
         }
     }
 }
@@ -435,6 +450,10 @@ extension ModelingModel {
             setMode(.edit)
             selectMode = .face
             propertiesTab = .data
+        case .procedural:
+            setMode(.object)
+            if shading.mode == .matcap { shading.mode = .solid }
+            procedural.documentChanged()
         }
     }
 }

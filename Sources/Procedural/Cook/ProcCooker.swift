@@ -55,6 +55,15 @@ package struct ProcNodeInfo: Equatable {
     package var points = 0
     package var vertices = 0
     package var prims = 0
+    /// The output's attribute names (with their types) and group names, by class: what a field below offers.
+    package var attributes: [AttributeClass: [(name: String, type: AttributeType)]] = [:]
+    package var groups: [AttributeClass: [String]] = [:]
+
+    package static func == (a: ProcNodeInfo, b: ProcNodeInfo) -> Bool {
+        a.milliseconds == b.milliseconds && a.cached == b.cached && a.error == b.error && a.warnings == b.warnings
+            && a.points == b.points && a.vertices == b.vertices && a.prims == b.prims && a.groups == b.groups
+            && a.attributes.mapValues { $0.map(\.name) } == b.attributes.mapValues { $0.map(\.name) }
+    }
 }
 
 /// Cooks networks: pulls a node's geometry from its inputs', recursively, as Houdini does. Every node has a key, a
@@ -214,8 +223,14 @@ package final class ProcCooker {
     }
 
     private func record(_ id: String, _ g: ProcGeo, ms: Double, cached: Bool, warnings: [String]) {
-        info[id] = ProcNodeInfo(milliseconds: ms, cached: cached, error: nil, warnings: warnings,
-                                points: g.pointCount, vertices: g.vertexCount, prims: g.primCount)
+        var i = ProcNodeInfo(milliseconds: ms, cached: cached, error: nil, warnings: warnings,
+                             points: g.pointCount, vertices: g.vertexCount, prims: g.primCount)
+        for c in AttributeClass.allCases {
+            let t = g.table(c)
+            i.attributes[c] = (c == .point ? [("P", AttributeType.vector3)] : []) + t.attributes.map { ($0.name, $0.values.type) }
+            if !t.groups.isEmpty { i.groups[c] = t.groupNames }
+        }
+        info[id] = i
     }
 
     /// Drops the least recently used outputs (not this cook's) past the budget.

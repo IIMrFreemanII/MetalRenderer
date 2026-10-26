@@ -3054,9 +3054,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/App/GraphCanvas.swift": {
-    "mtime": 1793039076.3889987,
-    "seen": 1793055836.081194,
-    "ast_hash": "fb9d0357598fb9df479c74e89a74c4e7",
+    "mtime": 1793056156.3953955,
+    "seen": 1793056578.7304058,
+    "ast_hash": "50ab971303b995d13d3e2e87b56ccf47",
     "semantic_hash": ""
   },
   "Sources/Editors/App/LoadingOverlay.swift": {
@@ -5028,9 +5028,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingModel.swift": {
-    "mtime": 1793039076.4069595,
-    "seen": 1793055836.0812118,
-    "ast_hash": "0bed49edbe91702cdb7c1c5d25df0009",
+    "mtime": 1793056359.9429574,
+    "seen": 1793056578.731034,
+    "ast_hash": "ceee54a66d7d22a6bfa4dcf57f0683b1",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingPanel.swift": {
@@ -5046,9 +5046,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingView.swift": {
-    "mtime": 1793039076.4084609,
-    "seen": 1793055836.081213,
-    "ast_hash": "6848e2557d76bd6a812aa56d3a519f22",
+    "mtime": 1793056359.943132,
+    "seen": 1793056578.7310731,
+    "ast_hash": "7f990cc497db6950eb6d2e15005a9df2",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/ModelingViewportView.swift": {
@@ -5094,9 +5094,9 @@
     "semantic_hash": ""
   },
   "Sources/Modeling/IO/ModelAsset.swift": {
-    "mtime": 1793039076.3832493,
-    "seen": 1793055836.0814002,
-    "ast_hash": "fbcaf7aa8f6de7ab949f73d11dfb3a46",
+    "mtime": 1793055993.9036183,
+    "seen": 1793056578.738276,
+    "ast_hash": "724633d033a3b5aa540170174cff0c0d",
     "semantic_hash": ""
   },
   "Sources/Modeling/IO/OBJFile.swift": {
@@ -5136,9 +5136,9 @@
     "semantic_hash": ""
   },
   "Sources/Modeling/ModelingDocument.swift": {
-    "mtime": 1793039076.3869727,
-    "seen": 1793055836.081404,
-    "ast_hash": "f181faa3f02ff75e1edd4e8f42dffbb3",
+    "mtime": 1793055993.903465,
+    "seen": 1793056578.738388,
+    "ast_hash": "56570d93557bffd58023e90e9f7b6a9b",
     "semantic_hash": ""
   },
   "Sources/Modeling/Modifiers/BooleanOps.swift": {
@@ -5304,9 +5304,9 @@
     "semantic_hash": ""
   },
   "Sources/Modeling/Viewport/ViewportRenderer.swift": {
-    "mtime": 1793039076.4013112,
-    "seen": 1793055836.0814211,
-    "ast_hash": "6340e254b55884ee26baade81d153cd4",
+    "mtime": 1793055983.6941388,
+    "seen": 1793056578.738998,
+    "ast_hash": "f76fa6a2da8adcb2c6fe7c272a89e542",
     "semantic_hash": ""
   },
   "Sources/Modeling/Viewport/ViewportScene.swift": {
@@ -5442,15 +5442,15 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Scripting/ModellerStep.swift": {
-    "mtime": 1793039076.4108388,
-    "seen": 1793055836.081216,
-    "ast_hash": "b88ace1be39f8704b98a5b042981d1d6",
+    "mtime": 1793056437.3289804,
+    "seen": 1793056578.731155,
+    "ast_hash": "767e9825ef04ea5096898501bc32814d",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Scripting/ScriptModeller.swift": {
-    "mtime": 1793039076.4113898,
-    "seen": 1793055836.081216,
-    "ast_hash": "88ee743aff02ccbeac0a03550f0bdd84",
+    "mtime": 1793056437.3291545,
+    "seen": 1793056578.7311559,
+    "ast_hash": "33dd7eb058bf42afdbc0fd9277cab7b8",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scripting/ScriptRequests.swift": {
@@ -5466,9 +5466,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Cook/ProcCooker.swift": {
-    "mtime": 1793055592.254216,
-    "seen": 1793055836.081449,
-    "ast_hash": "6736a6c84217110b78471c50792588f4",
+    "mtime": 1793056256.9275093,
+    "seen": 1793056578.740082,
+    "ast_hash": "2c46aeef7a5f0d9cf3729db1eb15fd4b",
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/Attributes.swift": {
@@ -5583,6 +5583,42 @@
     "mtime": 1793039076.482885,
     "seen": 1793055836.0814998,
     "ast_hash": "844a871abb5468070cc8d6f8be6d7bb0",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProcNetworkView.swift": {
+    "mtime": 1793056233.7533984,
+    "seen": 1793056578.731112,
+    "ast_hash": "6251f2e854d77039a2637b5f018ef27d",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProcParameterPane.swift": {
+    "mtime": 1793056325.7148938,
+    "seen": 1793056578.731113,
+    "ast_hash": "e9de360eacdb3e78bc6f807ce7c7aa01",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProcTheme.swift": {
+    "mtime": 1793056222.4948714,
+    "seen": 1793056578.731113,
+    "ast_hash": "8656635ea22200e89537c07b8e3ef6c1",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProceduralScripting.swift": {
+    "mtime": 1793056534.7943428,
+    "seen": 1793056578.731114,
+    "ast_hash": "5fa0e2e885b5c4b6f695f85a11c98abb",
+    "semantic_hash": ""
+  },
+  "Sources/Editors/Modeling/Procedural/ProceduralSession.swift": {
+    "mtime": 1793056132.4994147,
+    "seen": 1793056578.731114,
+    "ast_hash": "28f849d68b3514ca68417e69ded6babb",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/Procedural/ProceduralEditorTests.swift": {
+    "mtime": 1793056499.175611,
+    "seen": 1793056578.7416801,
+    "ast_hash": "3d9c9d87935a2417409b4c2238ab6f29",
     "semantic_hash": ""
   }
 }

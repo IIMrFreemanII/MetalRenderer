@@ -11,6 +11,10 @@ import simd
 struct ModelingView: View {
     @EnvironmentObject var model: ModelingModel
 
+    /// The Procedural workspace's right column's width, and its parameter pane's height (their handles drag them).
+    @State private var proceduralWidth: CGFloat = 600
+    @State private var parameterHeight: CGFloat = 300
+
     var body: some View {
         VStack(spacing: 0) {
             ModelingTopBar()
@@ -27,14 +31,53 @@ struct ModelingView: View {
                     }
                 }
                 .background(BlenderTheme.window)
-                ModelingSidebar()
-                    .frame(width: 310)
+                if model.workspace == .procedural {
+                    // Houdini's Build desktop: the parameters over the network, beside the viewport.
+                    ResizeHandle(axis: .horizontal, size: $proceduralWidth, range: 360...1400, inverted: true)
+                    VStack(spacing: 0) {
+                        ProcParameterPane(session: model.procedural)
+                            .frame(height: parameterHeight)
+                        ResizeHandle(axis: .vertical, size: $parameterHeight, range: 120...900)
+                        ProcNetworkHost(session: model.procedural)
+                    }
+                    .frame(width: proceduralWidth)
+                } else {
+                    ModelingSidebar()
+                        .frame(width: 310)
+                }
             }
             .background(BlenderTheme.window)
             ModelingStatusBar()
         }
         .background(BlenderTheme.window)
         .preferredColorScheme(.dark)
+    }
+}
+
+/// A divider dragged to resize the pane beside it (`inverted`: the pane is after it, so a drag left grows it).
+struct ResizeHandle: View {
+    enum Axis { case horizontal, vertical }
+    let axis: Axis
+    @Binding var size: CGFloat
+    let range: ClosedRange<CGFloat>
+    var inverted = false
+    @State private var start: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.black.opacity(0.6))
+            .frame(width: axis == .horizontal ? 4 : nil, height: axis == .vertical ? 4 : nil)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { (axis == .horizontal ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() } else { NSCursor.pop() }
+            }
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { g in
+                    if start == nil { start = size }
+                    let d = axis == .horizontal ? g.translation.width : g.translation.height
+                    size = min(max((start ?? size) + (inverted ? -d : d), range.lowerBound), range.upperBound)
+                }
+                .onEnded { _ in start = nil })
     }
 }
 
