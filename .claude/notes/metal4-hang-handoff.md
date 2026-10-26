@@ -129,6 +129,10 @@ cascades and reflections' kernels without the particle queries compiled in (PART
   gone too (MetalFX's Metal 4 scaler in the frame, 2026-10-17): an upscaled Metal 4 frame has no Metal 3 work left
   (the frame interpolator's, when it runs, aside). Not yet run against the hang repro above (no hang in the
   1000-frame and showcase runs with `METALRENDERER_RESIDENCY_LIFE=16`).
+  **Taken back (2026-10-26): the Metal 4 scaler is opt-in now (`METALRENDERER_MFX4=1`).** It does some of its work in
+  Metal 3 command buffers of its own, ungated, and its command buffer timed out (4 s, `ErrorTimeout`, every frame
+  after it lost) in the first frames of the massive Destruction (`destruction.massive`) after a scene switch: 5 of 5
+  runs, the Metal 3 scaler in the interlude 0 of 4. Not seen with the smaller scenes.
 - **Metal 4's remaining gap** (whole frames 5-13% behind Metal 3 on macOS 27.0.1): in the world, the water's near
   patch refit through the Metal 3 queue (about 0.25 ms of GPU idle around it, Metal System Trace). Metal 4 refits of
   triangle structures failed here (README, "What Metal 4 still costs"); a per-frame Metal 4 build was slower. Next
