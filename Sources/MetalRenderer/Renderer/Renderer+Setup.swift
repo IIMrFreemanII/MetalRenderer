@@ -207,6 +207,13 @@ extension Renderer {
     /// hot reload: the builder's code or the scene's files changed). Render thread.
     package func remakeScene(because reason: String) { sceneRemake = reason }
 
+    /// The settings ask for the scene drawn again while another loads (a switch away and back): that load is dropped.
+    package func settleLoads() {
+        guard loads.settle(asked: settings.scene, drawn: scene.settings) else { return }
+        loadJob?.cancel()
+        loadJob = nil
+    }
+
     /// Starts preparing `settings.scene` in the background; `install` swaps it in when done.
     package func startLoadingScene() {
         let wanted = settings.scene
@@ -227,7 +234,7 @@ extension Renderer {
                 if same == loading { return }
             }
         }
-        loading = wanted
+        let number = loads.start(wanted)
         // Why the scene is made again (not a workshop's edit or the world's next tile: those are expected).
         if let remake {
             print("\(wanted.kind.title) made again: \(remake)")
@@ -244,24 +251,28 @@ extension Renderer {
             ? nil : loadActivity.begin(remake.map { "\(wanted.kind.title): \($0)" }
             ?? (wanted.isSameWorld(as: scene.settings) ? "\(wanted.kind.title): the next tile" : wanted.kind.title))
         loadJob = job
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        // One at a time: a superseded load stops at its next check (LoadJob.isCancelled) and the next one starts.
+        sceneLoads.async { [weak self] in
             guard let self else { return }
             let start = CACurrentMediaTime()
             let result = Result {
-                try self.prepareScene(wanted, reuse: reuse, instances: instances, options: options, load: job)
+                if job?.isCancelled == true { throw CancellationError() }
+                return try self.prepareScene(wanted, reuse: reuse, instances: instances, options: options, load: job)
             }
             let preparedMs = (CACurrentMediaTime() - start) * 1000
             self.renderThread.perform {
-                guard let loading = self.loading, loading == wanted else {
-                    return   // superseded by a newer request
+                guard self.loads.finished(number) else {
+                    // Superseded, or no longer wanted: thrown away off the render thread (a scene's buffers take a while).
+                    job?.cancel()
+                    DispatchQueue.global(qos: .utility).async { _ = result }
+                    return
                 }
-                self.loading = nil
                 if self.loadJob === job { self.loadJob = nil }
                 switch result {
                 case .success(let prepared):
                     if self.benchmark?.isMeasuring == true { self.streaming.preparedMs.append(preparedMs) }
                     job?.step("Install", detail: "waiting for the frames in flight")
-                    self.install(prepared, resetCamera: prepared.scene.settings.kind != self.scene.settings.kind)
+                    self.install(prepared, remade: remake != nil)
                     job?.finish()
                 case .failure(let error):
                     job?.fail()
@@ -326,6 +337,7 @@ extension Renderer {
             PhysicsPool.shared.enabled = scene.settings.physics.everyCore
             scene.physicsAsync = !onGPU && scene.settings.kind.simulates && scene.settings.physics.asynchronous
                 && (benchmark == nil || ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_ASYNC"] == "1")
+            scene.physicsStepLimit = stepsPerFrame
         }
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)

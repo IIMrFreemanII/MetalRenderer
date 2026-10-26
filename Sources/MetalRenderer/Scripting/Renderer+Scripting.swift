@@ -24,7 +24,7 @@ extension Renderer {
 
     /// The scripts' closures this frame (ScriptRun.onFrame).
     package func runScriptHooks(dt: Float) {
-        for hook in scriptHooks { hook.run(self, dt) }
+        for hook in session.scriptHooks { hook.run(self, dt) }
     }
 
     /// The scene the settings ask for is in: nothing loading, no remake or scene-file edit waiting (ScriptRun.waitForScene).

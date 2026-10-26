@@ -105,16 +105,17 @@ package final class ScriptRun {
     // MARK: - Every frame
 
     /// `hook` every frame, on the render thread, with the frame's time step (before the camera and the scene move),
-    /// until this script runs again or calls `stop()`.
+    /// until this script runs again, calls `stop()`, or another scene is put in (SceneSession: its closures name the
+    /// scene's objects; set them again after `waitForScene()`). The same scene made again keeps them.
     package func onFrame(_ hook: @escaping (Renderer, Float) -> Void) {
         let owner = path
-        renderer.perform { $0.scriptHooks.append(ScriptHook(owner: owner, run: hook)) }
+        renderer.perform { $0.session.scriptHooks.append(ScriptHook(owner: owner, run: hook)) }
     }
 
     /// The script's `onFrame` closures stop.
     package func stop() {
         let owner = path
-        renderer.perform { $0.scriptHooks.removeAll { $0.owner == owner } }
+        renderer.perform { $0.session.scriptHooks.removeAll { $0.owner == owner } }
     }
 
     // MARK: - Pictures

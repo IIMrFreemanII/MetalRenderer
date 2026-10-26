@@ -48,14 +48,20 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
     private static let residencyLife: UInt32 = ProcessInfo.processInfo.environment["METALRENDERER_RESIDENCY_LIFE"].flatMap { UInt32($0) } ?? 600
 
     // Work that stays on the Metal 3 queue in the middle of a frame (`interlude`): each queue waits for the other
-    // through this event's values.
-    private let metal3Queue: MTLCommandQueue
-    private let event: MTLSharedEvent
+    // through this event's values. The queue is the interludes' own (a scene's background uploads on another don't
+    // hold them up), and made again after one failed: macOS ignores every later submission to a queue whose command
+    // buffer timed out, and every frame's interludes failed from then on.
+    private var metal3Queue: MTLCommandQueue
+    private let metal3Failed = NSLock(), event: MTLSharedEvent
+    private var metal3FailedFlag = false
     /// MetalFX's Metal 4 scaler waits for the frame's work before it through this (Upscaler.encode).
     private lazy var upscaleFence: MTLFence = device.makeFence()!
     private var eventValue: UInt64 = 0
-    /// How long `commit` waits for the Metal 4 queue before an interlude (a hung GPU never signals).
-    private static let interludeTimeoutMs: UInt64 = 2000
+    /// How long `commit` waits at most for the Metal 4 work before an interlude. It waits for that work to be done or to
+    /// have failed (a failed command buffer signals the event itself: `commit`), so this is only a backstop, past the
+    /// GPU's watchdog: committed sooner, an interlude waited on the GPU behind a slow pass (a 3-8 s physics replay) and
+    /// timed out itself.
+    private static let interludeTimeoutMs: UInt64 = 10_000
 
     // The frame being encoded.
     private var slot = 0
@@ -75,8 +81,8 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
     private var serial = true                                // a barrier ahead of every dispatch, as Metal 3's serial encoder
     private var encoded: MTLStages = []                      // stages encoded since the encoder's last barrier
 
-    package init?(device: MTLDevice, streamQueue: MTLCommandQueue, framesInFlight: Int, layer: CAMetalLayer?) {
-        guard let queue = device.makeMTL4CommandQueue(),
+    package init?(device: MTLDevice, framesInFlight: Int, layer: CAMetalLayer?) {
+        guard let queue = device.makeMTL4CommandQueue(), let interludes = device.makeCommandQueue(),
               let compiler = try? device.makeCompiler(descriptor: MTL4CompilerDescriptor()),
               let event = device.makeSharedEvent() else { return nil }
         let td = MTL4ArgumentTableDescriptor()
@@ -99,7 +105,8 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
         if let layer { queue.addResidencySet(layer.residencySet) }   // the drawables
         (self.device, self.queue, self.compiler, self.table, self.residency) = (device, queue, compiler, table, residency)
         (self.allocators, self.pool, self.constants) = (allocators, pool, constants)
-        (self.metal3Queue, self.event) = (streamQueue, event)
+        interludes.label = "interludes"
+        (self.metal3Queue, self.event) = (interludes, event)
     }
 
     /// Starts a frame in `slot`, whose last frame is done (the renderer's frame semaphore). `split`: a command buffer per
@@ -389,19 +396,35 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
             done?.signal()
         }
         if let drawable { queue.waitForDrawable(drawable) }
-        for buffer in buffers {
+        renewFailedInterludeQueue()
+        // Each Metal 4 command buffer's next interlude: a failed one signals it, so that the interlude doesn't wait for
+        // a signal its queue may never send.
+        var nextInterlude = [UInt64?](repeating: nil, count: buffers.count)
+        var upcoming: UInt64?
+        for i in buffers.indices.reversed() {
+            if case .metal3(_, _, let value) = buffers[i] { upcoming = value }
+            nextInterlude[i] = upcoming
+        }
+        for (i, buffer) in buffers.enumerated() {
             switch buffer {
             case .metal4(let name, let cb):
                 let options = MTL4CommitOptions()
+                let event = event, unblocks = nextInterlude[i]
                 options.addFeedbackHandler { feedback in
-                    if let error = feedback.error { print("Metal 4 command buffer \(name) failed: \(error)") }
+                    if let error = feedback.error {
+                        print("Metal 4 command buffer \(name) failed: \(error)")
+                        if let unblocks, event.signaledValue < unblocks { event.signaledValue = unblocks }
+                    }
                     collector.add(name: split && name != "capture" ? name : nil, start: feedback.gpuStartTime, end: feedback.gpuEndTime)
                 }
                 queue.commit([cb], options: options)
             case .metal3(let name, let cb, let value):
                 queue.signalEvent(event, value: value)         // once what was committed so far is done
-                cb.addCompletedHandler { cb in
-                    if let error = cb.error { print("Metal 3 command buffer \(name) failed: \(error)") }
+                cb.addCompletedHandler { [weak self] cb in
+                    if let error = cb.error {
+                        print("Metal 3 command buffer \(name) failed: \(error)")
+                        self?.noteInterludeFailed()
+                    }
                     collector.add(name: split ? name : nil, start: cb.gpuStartTime, end: cb.gpuEndTime)
                 }
                 // Committed only once the Metal 4 work before it is done, and before anything after it is committed.
@@ -410,8 +433,8 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
                 // 1,080 showcase frames, 1 of 60 this way. The render thread waits here for the GPU to get through
                 // the frame so far (the queue has the frames before it too).
                 if !event.wait(untilSignaledValue: value, timeoutMS: Metal4Frame.interludeTimeoutMs) {
-                    // (It then waits on the GPU, and past the watchdog's 4 s fails with ErrorTimeout, as does every
-                    // interlude after it: the Metal 4 work before it is what took so long.)
+                    // (It then waits on the GPU, and past the watchdog's 4 s fails with ErrorTimeout: the Metal 4 work
+                    // before it is what took so long.)
                     print("Metal 4: the frame's work before \(name) took over \(Metal4Frame.interludeTimeoutMs) ms; committing \(name) anyway")
                 }
                 cb.commit()
@@ -426,6 +449,26 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
             drawable.present()
         }
         done?.wait()
+    }
+
+    /// An interlude failed (Metal's completion thread): its queue is made again before the next frame's.
+    private func noteInterludeFailed() {
+        metal3Failed.lock()
+        metal3FailedFlag = true
+        metal3Failed.unlock()
+    }
+
+    /// A new queue for the interludes when one failed: macOS ignores every later submission to it
+    /// (`kIOGPUCommandBufferCallbackErrorSubmissionsIgnored`), and every frame's interludes failed from then on.
+    private func renewFailedInterludeQueue() {
+        metal3Failed.lock()
+        let failed = metal3FailedFlag
+        metal3FailedFlag = false
+        metal3Failed.unlock()
+        guard failed, let fresh = device.makeCommandQueue() else { return }
+        fresh.label = "interludes"
+        metal3Queue = fresh
+        print("Metal 4: an interlude failed; its queue is made again")
     }
 
     /// Gathers the feedback of a frame's command buffers (they come on Metal's queue, one at a time or not).
