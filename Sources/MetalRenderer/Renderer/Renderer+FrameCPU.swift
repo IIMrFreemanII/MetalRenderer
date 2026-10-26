@@ -33,7 +33,7 @@ extension Renderer {
                 physicsGPU.upload(slot: slot, drawn)
             }
         }
-        if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: first) }
+        if !still { sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, all: first) }
         // Deforming meshes (the crowd's, cloths, soft bodies, hair) change their structures' bounds: the top level's too.
         // (What moves only now and then, doors and lifts: only once each slot has caught up with its last move.)
         if scene.motionThisFrame { lastMotionFrame = Int(frameIndex) }

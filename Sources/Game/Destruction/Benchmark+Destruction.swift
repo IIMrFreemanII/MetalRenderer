@@ -11,7 +11,7 @@ import simd
 import MetalRenderer
 
 /// The destruction scene's benchmark modes (Scene+Destruction.swift, Physics+Fracture.swift): its demo paused at
-/// moments along the way, on each API and on the CPU; what it costs moving; its video; and the massive setting.
+/// moments along the way, with the GPU's steps and the CPU's; what it costs moving; its video; and the massive setting.
 extension Benchmark {
     static let destructionModes: [String: () -> [Config]] = [
         "destruction": destruction, "destructiontimes": destructionTimes, "destructionpreview": destructionPreview,
@@ -26,13 +26,11 @@ extension Benchmark {
         Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .destruction))
     }
 
-    /// Paused at 9 s with the GPU's steps on each API and with the CPU's (Automatic's: PhysicsSettings.runsOnGPU), the
-    /// same breaks on all (Tools/eval/pngdiff.py), then the first 10 s moving for timing at a few piece counts.
+    /// Paused at 9 s with the GPU's steps and with the CPU's (Automatic's: PhysicsSettings.runsOnGPU), the same breaks
+    /// on both (Tools/eval/pngdiff.py), then the first 10 s moving for timing at a few piece counts.
     private static func destruction() -> [Config] {
         var out: [Config] = []
-        for api in RenderAPI.allCases {
-            out.append(destructionBase(api.envName).with { $0.api = api; $0.scene.physics.backend = .gpu }.still(at: 9))
-        }
+        out.append(destructionBase("gpu").with { $0.scene.physics.backend = .gpu }.still(at: 9))
         out.append(destructionBase("cpu").with { $0.scene.physics.backend = .cpu }.still(at: 9))
         for pieces: Float in [1, 2] {
             out.append(destructionBase("gpu \(pieces)x moving").with { $0.scene.destruction.pieces = pieces; $0.scene.physics.backend = .gpu })

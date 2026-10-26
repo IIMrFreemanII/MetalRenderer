@@ -137,24 +137,6 @@ extension Benchmark {
         return out
     }
 
-    /// Metal 3 against Metal 4 (RenderAPI). Paused frames at t = 5 s with METALRENDERER_API's API (run once per API and
-    /// compare the PNGs with Tools/eval/pngdiff.py; frame indices must match, so not in one run), then the same frames
-    /// through each command model, moving at 3x from 640x400 and alternating. Whole-frame times (METALRENDERER_BENCH_SPLIT=0) and the `cpu` column are what
-    /// the command model can change.
-    static func api() -> [Config] {
-        let scenes = [("cornell cascades", SceneSettings(), GIMode.radianceCascades), ("stress pt", stressHall(), .pathTraced)]
-        var out: [Config] = []
-        for (sceneTag, scene, gi) in scenes {
-            out.append(Config("\(sceneTag) static", scale: 0.5, upscale: 3, gi: gi, scene: scene).still().frames(30))
-        }
-        for (sceneTag, scene, gi) in scenes {
-            out += RenderAPI.allCases.map { api in
-                Config("\(sceneTag), \(api.envName)", scale: 0.5, upscale: 3, gi: gi, scene: scene) { $0.api = api }
-            }
-        }
-        return out
-    }
-
     /// Frame interpolation (FrameInterpolator): what it costs, and how close its in-between picture comes to a frame
     /// really rendered at that moment (Tools/eval/interp.py). Per scene, the app's look, the animation running and the
     /// camera on a 4 s track (eased at its keys, so at full speed at 2 s):

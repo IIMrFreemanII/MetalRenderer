@@ -81,24 +81,24 @@ Two kinds of `ProcessInfo.processInfo.environment[…]` reads are the accepted p
   what the compiler demands at a call to a newer API; a feature that fails at use instead of falling back at launch.
 * **Guard.** `CapabilitiesTests`: each missing capability falls back; the benchmark skips what can't run.
 
-## Encoding for both APIs: `ComputePass.swift`, `Metal4Backend.swift`
+## Encoding: `ComputePass.swift`, `Metal4Backend.swift`
 
-* **What it is.** Stages encode through the `ComputePass` protocol and a frame through `FrameEncoder`, implemented
-  by `Metal3Frame` and `Metal4Frame`.
-* **Plugging in.** A new pass binds and dispatches through `ComputePass` only, so both back ends get it. Something
-  one API can't do yet is said in one place, with the reason and the OS version (as for mipmaps and the denoising
-  scaler under Metal 4). There are no draws: every pass is a compute dispatch (or a blit, or a structure's build).
+* **What it is.** Stages encode through the `ComputePass` protocol and a frame through `FrameEncoder`, both
+  implemented by `Metal4Frame` (Metal 4 is the only API). The tests run stages on a plain encoder through their own
+  `Metal3Pass` (Tests/MetalRendererTests/Support).
+* **Plugging in.** A new pass binds and dispatches through `ComputePass` only. Something Metal 4 can't do yet goes
+  through an interlude on the Metal 3 queue, said in one place with the reason and the OS version (README, "What
+  stays on the Metal 3 queue"). There are no draws: every pass is a compute dispatch (or a blit, or a structure's
+  build).
 * **Metal 4 and textures.** A dispatch that writes a texture through a view and the next one that reads the texture
   through another view (or the texture itself) raced on Metal 4 despite the barrier between them (the depth pyramid's
   levels, macOS 27.0): read and write mip levels of one texture instead (`read(coord, lod)`, `write(value, coord, lod)`).
 * **Where the frame ends up** is a `RenderSurface` (RenderSurface.swift): the window's `LayerSurface` (its view's
   CAMetalLayer), or the `OffscreenSurface` every benchmark run draws into. The renderer asks it for the output texture
   and never for a view.
-* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; a view, a window or `nextDrawable` in Renderer; `api == .metal4` checks scattered over
-  the stages; a feature that renders under one API and silently does nothing under the other.
-* **Guard.** None that runs by itself. For a refactor, `same.sh <mode> -- METALRENDERER_API=metal4` shows Metal 4
-  still draws what it drew. Metal 3 against Metal 4 is the `api` mode run once per API and `pngdiff.py` between the
-  two folders (the mode's comment in Benchmark+Modes.swift).
+* **Signs it was bypassed.** `MTLComputeCommandEncoder` in a stage builder; a view, a window or `nextDrawable` in
+  Renderer; a Metal 3 command buffer of a frame's work outside `Metal4Frame.interlude`.
+* **Guard.** None that runs by itself. For a refactor, `same.sh <mode>` shows the frames are still what they were.
 
 ## Layouts shared with the shaders: `GPUTypes.swift` ↔ `Shaders/*.metal`
 

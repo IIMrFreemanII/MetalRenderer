@@ -50,7 +50,6 @@ package final class FrameInterpolator {
         inputHeight = upscaler.inputHeight
         outputWidth = upscaler.outputWidth
         outputHeight = upscaler.outputHeight
-        guard #available(macOS 26.0, *) else { throw RendererError.resourceCreation("MetalFX frame interpolator (needs macOS 26)") }
         let d = MTLFXFrameInterpolatorDescriptor()
         d.colorTextureFormat = Renderer.drawableFormat
         d.outputTextureFormat = Renderer.drawableFormat
@@ -102,7 +101,7 @@ package final class FrameInterpolator {
     /// `between[slot]`. Returns whether it made one.
     @discardableResult
     func encode(into cmd: MTLCommandBuffer, _ inputs: InterpolateInputs, slot: Int) -> Bool {
-        guard #available(macOS 26.0, *), let fi = interpolator as? MTLFXFrameInterpolator else { return false }
+        guard let fi = interpolator as? MTLFXFrameInterpolator else { return false }
         if hasHistory {
             fi.colorTexture = color
             fi.prevColorTexture = colors[1 - current]

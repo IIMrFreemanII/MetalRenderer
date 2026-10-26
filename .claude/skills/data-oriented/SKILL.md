@@ -85,7 +85,7 @@ The patterns, as code from this repo: [references/patterns.md](references/patter
    `--callers <symbol>` on its `profile.py` shows who calls one.
 2. **A/B the `cpu` column** against a baseline build, 3 alternating rounds (performance skill:
    `.claude/skills/performance/scripts/ab.sh -n 3 -c "cpu,GPU total" --bin-a <baseline> -- … -- …`), then the whole
-   frame with `METALRENDERER_BENCH_SPLIT=0`. Run it on both APIs (`METALRENDERER_API=metal3` / `metal4`).
+   frame with `METALRENDERER_BENCH_SPLIT=0`.
 3. **Lock the loop in.** Once a hot loop is clean, add its demangled name to `Tools/perf/hot-functions.txt` and run
    ```bash
    Tools/release.sh && python3 Tools/perf/hotcalls.py

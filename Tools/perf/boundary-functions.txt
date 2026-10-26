@@ -9,7 +9,7 @@ Scene.placeBodies(
 Scene.writeLights(into:all:)
 Scene.gpuLight(_:)
 Scene.moveInstances(_:record:)
-SceneBuffers.writeInstanceDescriptors(slot:scene:api:all:range:)
+SceneBuffers.writeInstanceDescriptors(slot:scene:all:range:)
 Renderer.writeFrameData(slot:lod:)
 
 # The systems' writers the frame calls per instance or slot.

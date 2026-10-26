@@ -7,12 +7,12 @@
 #   -b  binary (default <repo>/.build/release/MetalRenderer: profile release, `Tools/release.sh` first)
 #   -o  folder for the .trace and its export (default: a new folder under $TMPDIR)
 #   -t  time limit for the recording (default: until the benchmark quits)
-#   KEY=VALUE  more METALRENDERER_* settings, e.g. METALRENDERER_API=metal4
+#   KEY=VALUE  more METALRENDERER_* settings, e.g. METALRENDERER_VG=0
 #   after --    passed to profile.py, e.g. --callers swift_beginAccess --top 40
 #
 # Example:
 #   profile.sh crowd "131072 characters"
-#   profile.sh forest "forest moving 3x" METALRENDERER_API=metal4 -- --callers conformsToProtocol
+#   profile.sh forest "forest moving 3x" -- --callers conformsToProtocol
 # Runs are offscreen like every benchmark (no window, no focus change). A binary outside this repo (a baseline copy)
 # needs METALRENDERER_ASSETS=<repo>/Assets.
 set -euo pipefail

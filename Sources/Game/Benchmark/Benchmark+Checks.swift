@@ -55,41 +55,29 @@ extension Benchmark {
         }
     }
 
-    /// The SDF shapes scene (Scene+Shapes.swift) on each API: paused frames to compare between them
-    /// (Tools/eval/pngdiff.py), path traced, each direct-light method on the glowing shapes (mesh lights), the
+    /// The SDF shapes scene (Scene+Shapes.swift): paused frames (Tools/eval/pngdiff.py against another build's), path
+    /// traced, each direct-light method on the glowing shapes (mesh lights), the
     /// normals, materials and traversal cost views, then moving frames and a camera move for timing.
     static func shapes() -> [Config] {
         let scene = SceneSettings(kind: .shapes)
-        var out: [Config] = []
-        for api in RenderAPI.allCases {
-            let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene) { $0.api = api }
-            let tag = api.envName
-            out.append(base.named("\(tag) cascades").still())
-            guard api == .metal3 else { continue }
-            out.append(base.named("\(tag) pt").with { $0.giMode = .pathTraced }.still())
-            out.append(base.named("\(tag) restir").direct(.restir).still())
-            for view in ["Normals", "Triangles", "Traversal cost"] {
-                out.append(base.named("\(tag) \(view.lowercased())").view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
-            }
-            out += [base.named("\(tag) moving"), base.named("\(tag) camera").cameraMove()]
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
+        var out = [base.named("cascades").still(), base.named("pt").with { $0.giMode = .pathTraced }.still(),
+                   base.named("restir").direct(.restir).still()]
+        for view in ["Normals", "Triangles", "Traversal cost"] {
+            out.append(base.named(view.lowercased()).view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
         }
+        out += [base.named("moving"), base.named("camera").cameraMove()]
         return out
     }
 
-    /// The physics scene (Scene+Physics.swift) at its look (RenderSettings.usePhysicsLook): paused at 5 s on each
-    /// API (the GPU's steps put the bodies in the same places on both; Tools/eval/pngdiff.py), the
-    /// CPU's steps there too (their own pile: 300 steps
+    /// The physics scene (Scene+Physics.swift) at its look (RenderSettings.usePhysicsLook): paused at 5 s with the
+    /// GPU's steps, the CPU's steps there too (their own pile: 300 steps
     /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
     /// counts on the GPU, and the CPU's steps (the frame's "cpu" column) at the same counts (Settings' PhysicsSettings.runsOnGPU).
     static func physics() -> [Config] {
         let scene = SceneSettings(kind: .physics)
         var out: [Config] = []
-        for api in RenderAPI.allCases {
-            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
-                $0.usePhysicsLook()
-                $0.api = api
-            }.still())
-        }
+        out.append(Config("gpu", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }.still())
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
         out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
         for bodies in [96, 512, 2048] {
@@ -128,18 +116,13 @@ extension Benchmark {
         return [demo]
     }
 
-    /// The ragdoll scene (Scene+Ragdolls.swift) at the physics look: paused at 5 s on each API, the CPU's
+    /// The ragdoll scene (Scene+Ragdolls.swift) at the physics look: paused at 5 s with the GPU's steps, the CPU's
     /// steps there too, then the first 5 s moving for timing at a few ragdoll counts on the GPU (11 bodies each) and on
     /// the CPU where it keeps up.
     static func ragdolls() -> [Config] {
         let scene = SceneSettings(kind: .ragdolls)
         var out: [Config] = []
-        for api in RenderAPI.allCases {
-            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
-                $0.usePhysicsLook()
-                $0.api = api
-            }.still())
-        }
+        out.append(Config("gpu", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }.still())
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
         out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
         for ragdolls in [8, 24, 96] {
@@ -151,17 +134,12 @@ extension Benchmark {
         return out
     }
 
-    /// The hair scene (Scene+Hair.swift) at the physics look: paused at 5 s on each API and with the CPU's steps; then the first 5 s moving for timing at a few
+    /// The hair scene (Scene+Hair.swift) at the physics look: paused at 5 s with the GPU's steps and with the CPU's; then the first 5 s moving for timing at a few
     /// densities of drawn strands on the GPU, and on the CPU at the fewest.
     static func hair() -> [Config] {
         let scene = SceneSettings(kind: .hair)
         var out: [Config] = []
-        for api in RenderAPI.allCases {
-            out.append(Config(api.envName, scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) {
-                $0.usePhysicsLook()
-                $0.api = api
-            }.still())
-        }
+        out.append(Config("gpu", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }.still())
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
         out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
         for hair in [4, 12, 24] {
@@ -209,14 +187,14 @@ extension Benchmark {
     }
 
     /// The soft body scene (Scene+Soft.swift) at the physics look: paused at 1.5, 3 and 5 s, at 5 s
-    /// on each API, the CPU's steps there too, its normals and direct light, then the first 5 s moving for
+    /// with the GPU's steps, the CPU's steps there too, its normals and direct light, then the first 5 s moving for
     /// timing at a few soft body counts on the GPU, a finer lattice, and on the CPU where it keeps up.
     static func soft() -> [Config] {
         let scene = SceneSettings(kind: .softBodies)
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
         var out: [Config] = []
         for time: Float in [1.5, 3] { out.append(base.named(String(format: "%.1fs", time)).still(at: time)) }
-        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still()) }
+        out.append(base.named("gpu").still())
         out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
         out.append(base.named("normals").view(3).still())
         out.append(base.named("direct").view(1).still())
@@ -231,14 +209,13 @@ extension Benchmark {
     }
 
     /// The fluids scene (Scene+Fluids.swift) at the physics look: paused at 2, 4 and 6 s (the boxes dropped at 4 and
-    /// 5 s), at 6 s on each API, each liquid alone, all by one solver, in its normals and albedo, and path traced (the
+    /// 5 s), each liquid alone, all by one solver, in its normals and albedo, and path traced (the
     /// reference: refraction and absorption as they are); then 5 s moving for timing: the first on the GPU, from 12 s
     /// (the pours longer) at a few particle counts a liquid, and the first small on the CPU.
     static func fluids() -> [Config] {
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .fluids)) { $0.usePhysicsLook() }
         var out: [Config] = []
         for time: Float in [2, 4, 6] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
-        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 6)) }
         for liquids in [PhysicsSettings.Liquids.water, .blood, .honey] {
             out.append(base.named(liquids.envName).with { $0.scene.physics.liquids = liquids }.still(at: 6))
         }
@@ -258,7 +235,7 @@ extension Benchmark {
     }
 
     /// The particles scene (Scene+Particles.swift) as the app shows it (cascades, MetalFX 3x from 0.5x): paused at 2, 5
-    /// and 8 s, at 5 s on each API, natively at 0.75x without MetalFX (the composite puts the particles' layer over the
+    /// and 8 s, natively at 0.75x without MetalFX (the composite puts the particles' layer over the
     /// scene, SVGF denoises), and path traced at 0.75x (the reference: its particles stop paths by their opacity, scatter
     /// or glow); without particle shadows, without particles in reflections; then 5 s moving for timing at a quarter,
     /// once and four times the particles (ParticleSettings.budget).
@@ -266,7 +243,6 @@ extension Benchmark {
         let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
         var out: [Config] = []
         for time: Float in [2, 5, 8] { out.append(base.named(String(format: "%.0fs", time)).still(at: time)) }
-        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still(at: 5)) }
         let native = Config("", scale: 0.75, upscale: 0, gi: .radianceCascades, scene: SceneSettings(kind: .particles))
         out.append(native.named("native").still(at: 5))
         out.append(native.named("path traced").with { $0.reference.mode = .pathTraced }.still(at: 5).frames(256))
@@ -587,7 +563,7 @@ extension Benchmark {
         return Scene.camera(from, yaw: atan2(d.x, -d.z), pitch: atan2(d.y, (d.x * d.x + d.z * d.z).squareRoot()))
     }
 
-    /// The muscles scene (Scene+Muscles.swift) at the physics look: wide at 2 and 5 s, at 5 s on each API, with the
+    /// The muscles scene (Scene+Muscles.swift) at the physics look: wide at 2 and 5 s, at 5 s with the GPU's steps, with the
     /// CPU's steps, in its normals and direct light; close to the character as it idles (1 s) and as it dances
     /// (15 s), and to the ragdolls on the steps; each skin; then the first 5 s moving for timing at a few lattice
     /// spacings and ragdoll counts, and the sliding skin.
@@ -595,7 +571,7 @@ extension Benchmark {
         let scene = SceneSettings(kind: .muscles)
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: scene) { $0.usePhysicsLook() }
         var out: [Config] = [base.named("2s").still(at: 2)]
-        for api in RenderAPI.allCases { out.append(base.named(api.envName).with { $0.api = api }.still()) }
+        out.append(base.named("gpu").still())
         out.append(base.named("cpu").with { $0.scene.physics.backend = .cpu }.still())
         out.append(base.named("normals").view(3).still())
         out.append(base.named("direct").view(1).still())

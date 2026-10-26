@@ -94,9 +94,10 @@ package struct ScriptCompiler {
         #else
         let arch = "x86_64"
         #endif
+        // (Its target is the package's deployment target: the modules it imports are built for it.)
         var swiftc = ["swiftc", "-parse-as-library", "-c", source.path, "-o", object.path,
                       "-module-name", "Script\(n)", "-package-name", packageName, "-swift-version", "5",
-                      "-target", "\(arch)-apple-macos13.0", "-I", products.path, "-Onone", "-diagnostic-style", "llvm",
+                      "-target", "\(arch)-apple-macos26.0", "-I", products.path, "-Onone", "-diagnostic-style", "llvm",
                       "-module-cache-path", dir.appendingPathComponent("ModuleCache").path]
         // Physics imports the C atomics, whose module map SwiftPM generates.
         let maps = scratch.appendingPathComponent("out/Intermediates.noindex/GeneratedModuleMaps")

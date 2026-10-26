@@ -10,21 +10,19 @@ import Physics
 import Plants
 import QuartzCore
 
-/// Frames through Metal 4's command model (`RenderAPI.metal4`, macOS 26): an `MTL4CommandQueue`, command buffers that
+/// Frames through Metal 4's command model, the only one (macOS 26, an M3 or later): an `MTL4CommandQueue`, command buffers that
 /// are reused with a command allocator per frame slot, one unified compute encoder for dispatches, blits and
 /// acceleration-structure updates, bindings through an argument table, residency sets in place of `useResource`, and
 /// explicit barriers where Metal 3 tracked hazards itself. One instance lives as long as the renderer; `begin` starts
 /// each frame, and nothing but the commit's options is allocated per frame.
 ///
-/// It is both the frame (`FrameEncoder`) and the pass the stages encode into (`ComputePass`): the kernels and their
-/// stages are the same ones Metal 3 runs.
+/// It is both the frame (`FrameEncoder`) and the pass the stages encode into (`ComputePass`).
 ///
-/// Left on the Metal 3 queue, where they run once or have no Metal 4 form: texture uploads and mip chains
-/// (MaterialTextures), the per-mesh acceleration structures (built once per scene), and inside a frame (`interlude`)
-/// mipmap generation and MetalFX's denoising scaler (see `generateMipmaps` and Upscaler for what Metal 4's do on macOS
-/// 26.5). Streamed textures (TextureStreamer) are placement-sparse here: residency sets take no sparse heap, and the
+/// Left on the Metal 3 queue, where they run once or have no working Metal 4 form (README, "What stays on the Metal 3
+/// queue"): texture uploads and mip chains (MaterialTextures), the per-mesh acceleration structures (built once per
+/// scene), and inside a frame (`interlude`) the 3D mipmaps, refits, MetalFX's denoising scaler and frame interpolator
+/// (see `generateMipmaps`, `updatePrimitives` and Upscaler). Streamed textures (TextureStreamer) are placement-sparse here: residency sets take no sparse heap, and the
 /// queue maps their tiles between the frame's command buffers (`streamTextures`).
-@available(macOS 26.0, *)
 package final class Metal4Frame: FrameEncoder, ComputePass {
     let queue: MTL4CommandQueue
     /// Compiles the pipelines (Pipelines).
@@ -525,7 +523,6 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
     }
 }
 
-@available(macOS 26.0, *)
 extension TLASUpdate {
     /// Metal 4's descriptor for it. Its instance descriptors are the indirect ones (`indirect`).
     var descriptor4: MTL4InstanceAccelerationStructureDescriptor {

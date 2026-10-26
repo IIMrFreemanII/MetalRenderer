@@ -115,7 +115,7 @@ final class PlantWorkshopTests: XCTestCase {
                 let start = CACurrentMediaTime()
                 let scene = workshop({ change(&$0); $0.seed = seed }, assemblies: true)
                 let made = CACurrentMediaTime()
-                _ = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
+                _ = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(slots: 3))
                 let total = (CACurrentMediaTime() - start) * 1000
                 if total < best { best = total; sceneMs = (made - start) * 1000 }
             }

@@ -31,12 +31,11 @@ extension Renderer {
     /// interactive switches run it in the background while the old scene keeps rendering.
     package struct PreparedScene {
         let scene: Scene
-        let api: RenderAPI
         let textures: [MTLTexture]
         let streamer: TextureStreamer?
         let virtualTracing: VirtualTracing?
         let buffers: SceneBuffers?  // of a scene made for this load (one being drawn gets them when it is installed)
-        let pipelines: Pipelines?   // for its API and light types, when the ones in use don't fit...
+        let pipelines: Pipelines?   // for its light types, when the ones in use don't fit...
         let shaderGeneration: Int   // ...built from this generation of the shaders
     }
     /// A scene that has been replaced and what it was drawn with, on their way out (`install`).
@@ -88,8 +87,7 @@ extension Renderer {
         var pipelines: Pipelines
         var shaderGeneration: Int
         var traversalStats: Bool
-        var api: RenderAPI
-        var compiler: AnyObject?    // Metal 4's, for `api`
+        var compiler: MTL4Compiler
         var primitives: [String: MTLAccelerationStructure]   // the scene's named meshes' structures
         var blocks: [String: MeshBlock]                      // its borrowed meshes' buffers
         var instanceBlocks: [String: InstanceBlock]          // its instance groups' blocks
@@ -102,40 +100,39 @@ extension Renderer {
     package var loadOptions: LoadOptions {
         LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
-                    traversalStats: TraceSceneArgs.statsEnabled, api: settings.api, compiler: compiler(for: settings.api),
-                    primitives: builtAPI == settings.api ? namedPrimitives : [:], blocks: namedBlocks,
+                    traversalStats: TraceSceneArgs.statsEnabled, compiler: compiler,
+                    primitives: namedPrimitives, blocks: namedBlocks,
                     instanceBlocks: namedInstanceBlocks,
-                    voxelGrids: builtAPI == settings.api ? sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels : nil,
+                    voxelGrids: sceneBuffers?.voxelLOD?.grids ?? sceneBuffers?.plants?.voxels,
                     leafFall: Scene.leafFall(season: settings.foliage.season),
                     worldTextures: (settings.scene.isSameWorld(as: scene.settings) || settings.scene.isSameWorkshop(as: scene.settings)
                                     || settings.scene.isSameCity(as: scene.settings))
-                        && builtAPI == settings.api
                         ? (scene.textures.map(\.identity), materialTextures, textureStreamer) : nil)
     }
 
-    private func bufferOptions(api: RenderAPI, known: [String: MTLAccelerationStructure], blocks: [String: MeshBlock],
+    private func bufferOptions(known: [String: MTLAccelerationStructure], blocks: [String: MeshBlock],
                                instanceBlocks: [String: InstanceBlock], voxelGrids: VoxelGrids? = nil,
                                extraInstances: Int = 0, leafFall: Float) -> SceneBuffers.Options {
-        SceneBuffers.Options(api: api, slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
+        SceneBuffers.Options(slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
                              compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks,
                              instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances, leafFall: leafFall)
     }
 
-    /// The pipelines for `api`, `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
+    /// The pipelines for `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
     /// a set made for them before (`pipelineCache`), or compiled here (any thread). Its library is reused when only the
     /// light types differ.
-    package func makePipelines(api: RenderAPI, compiler: AnyObject?, lightTypes: UInt32, stats: Bool, generation: Int,
+    package func makePipelines(compiler: MTL4Compiler, lightTypes: UInt32, stats: Bool, generation: Int,
                                procedural: String, current: Pipelines, load: LoadJob? = nil) throws -> Pipelines? {
         let sameCode = current.procedural == procedural
-        if current.stats == stats && current.api == api && current.lightTypes == lightTypes && sameCode { return nil }
-        let key = PipelineCache<Pipelines>.Key(api: api, stats: stats, lightTypes: lightTypes, generation: generation, procedural: procedural)
+        if current.stats == stats && current.lightTypes == lightTypes && sameCode { return nil }
+        let key = PipelineCache<Pipelines>.Key(stats: stats, lightTypes: lightTypes, generation: generation, procedural: procedural)
         if let kept = pipelineCache.get(key) {
             load?.step("Shaders", detail: "kept from before").finish()
             return kept
         }
-        let made = try Pipelines(device: device, source: shaderURL, api: api, compiler: compiler, lightTypes: lightTypes,
+        let made = try Pipelines(device: device, source: shaderURL, compiler: compiler, lightTypes: lightTypes,
                                  stats: stats, procedural: procedural,
-                                 reusing: current.stats == stats && current.api == api && sameCode ? current.library : nil,
+                                 reusing: current.stats == stats && sameCode ? current.library : nil,
                                  load: load)
         pipelineCache.put(key, made)
         return made
@@ -143,7 +140,7 @@ extension Renderer {
 
     /// Keeps `made`, of shader generation `generation`, for a later scene with its light types.
     package func keepPipelines(_ made: Pipelines, generation: Int) {
-        pipelineCache.put(PipelineCache<Pipelines>.Key(api: made.api, stats: made.stats, lightTypes: made.lightTypes, generation: generation,
+        pipelineCache.put(PipelineCache<Pipelines>.Key(stats: made.stats, lightTypes: made.lightTypes, generation: generation,
                                                        procedural: made.procedural), made)
     }
 
@@ -153,7 +150,7 @@ extension Renderer {
             : try VirtualTracing(device: device, queue: buildQueue, scene: scene, poolMB: poolMB, slots: Renderer.maxFramesInFlight)
     }
 
-    /// `current`: the scene being drawn, reused when only the API changes; `instances` is then the render thread's copy
+    /// `current`: the scene being drawn, reused when only what it is drawn with changes; `instances` is then the render thread's copy
     /// of its instances (the frame loop keeps animating the scene while this runs).
     /// `load`: the load to report the steps to (the loading overlay).
     package func prepareScene(_ sceneSettings: SceneSettings, reuse current: Scene?, instances: [Scene.Instance]? = nil,
@@ -170,14 +167,14 @@ extension Renderer {
         if load?.isCancelled == true { throw CancellationError() }   // another scene was asked for meanwhile
         let kept = options.worldTextures.flatMap { $0.identities == newScene.textures.map(\.identity) ? $0 : nil }
         let streamer = kept != nil ? kept?.streamer
-            : newScene.textures.isEmpty || !TextureStreamer.isSupported(device, api: options.api) ? nil
+            : newScene.textures.isEmpty || !TextureStreamer.isSupported(device) ? nil
             : try TextureStreamer(sources: newScene.textures, device: device, queue: queue, budgetMB: options.textureBudgetMB,
-                                  slots: Renderer.maxFramesInFlight, placement: options.api == .metal4, load: load)
+                                  slots: Renderer.maxFramesInFlight, load: load)
         let textures = try kept?.textures ?? streamer?.textures
             ?? MaterialTextures.load(newScene.textures, device: device, queue: queue, load: load)
         // The scene's buffers and structures, unless the frames are still animating it.
         let buffers = reused != nil ? nil : try autoreleasepool {
-            var made = bufferOptions(api: options.api, known: options.primitives, blocks: options.blocks,
+            var made = bufferOptions(known: options.primitives, blocks: options.blocks,
                                      instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
                                      extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall)
             made.load = load
@@ -187,8 +184,8 @@ extension Renderer {
             load?.step("Virtual geometry", detail: "\(newScene.virtualMeshes.count) meshes")
         }
         let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene, poolMB: options.poolMB)
-        // The shaders too, when the API changes (a recompile) or the new scene has other light types.
-        let pipelines = try makePipelines(api: options.api, compiler: options.compiler, lightTypes: newScene.lightTypeMask,
+        // The shaders too, when the new scene has other light types.
+        let pipelines = try makePipelines(compiler: options.compiler, lightTypes: newScene.lightTypeMask,
                                           stats: options.traversalStats, generation: options.shaderGeneration,
                                           procedural: newScene.proceduralCode, current: options.pipelines, load: load)
         if let buffers { SceneBuffers.touch(buffers.buffers, device: device, queue: buildQueue) }
@@ -197,7 +194,7 @@ extension Renderer {
         if buffers != nil, newScene.worldPlace != nil {
             newScene.releaseGeometry()
         }
-        return PreparedScene(scene: newScene, api: options.api, textures: textures, streamer: streamer, virtualTracing: virtualTracing,
+        return PreparedScene(scene: newScene, textures: textures, streamer: streamer, virtualTracing: virtualTracing,
                              buffers: buffers, pipelines: pipelines, shaderGeneration: options.shaderGeneration)
     }
 
@@ -210,49 +207,48 @@ extension Renderer {
     /// hot reload: the builder's code or the scene's files changed). Render thread.
     package func remakeScene(because reason: String) { sceneRemake = reason }
 
-    /// Starts preparing `settings.scene` / `settings.api` in the background; `install` swaps it in when done.
+    /// Starts preparing `settings.scene` in the background; `install` swaps it in when done.
     package func startLoadingScene() {
-        let wanted = (scene: settings.scene, api: settings.api)
+        let wanted = settings.scene
         // Asked to run the builder again (remakeScene): whatever is loading, a scene from the new code.
         let remake = sceneRemake
         sceneRemake = nil
         if remake == nil, let loading {
             if loading == wanted { return }
             // The workshop, edited: one load at a time, the latest settings when it is in (the editor sends many).
-            if loading.api == wanted.api, loading.scene.isSameWorkshop(as: wanted.scene), wanted.scene.isSameWorkshop(as: scene.settings) {
+            if loading.isSameWorkshop(as: wanted), wanted.isSameWorkshop(as: scene.settings) {
                 return
             }
             // Only the effects' catalog changed (the VFX editor's draft, restored at launch): the load goes on, and the
             // scene it makes takes the catalog when it is in (editEffects), in place if it can.
-            if loading.api == wanted.api, wanted.scene.effects != loading.scene.effects {
-                var same = wanted.scene
-                same.effects = loading.scene.effects
-                if same == loading.scene { return }
+            if wanted.effects != loading.effects {
+                var same = wanted
+                same.effects = loading.effects
+                if same == loading { return }
             }
         }
         loading = wanted
         // Why the scene is made again (not a workshop's edit or the world's next tile: those are expected).
         if let remake {
-            print("\(wanted.scene.kind.title) made again: \(remake)")
-        } else if wanted.scene.kind == scene.settings.kind, benchmark == nil, !wanted.scene.isSameWorkshop(as: scene.settings),
-           !wanted.scene.isSameWorld(as: scene.settings), !wanted.scene.isSameCity(as: scene.settings) {
-            let changes = wanted.scene.changes(from: scene.settings) + (wanted.api != builtAPI ? ["api"] : [])
-            print("\(wanted.scene.kind.title) made again: \(changes.isEmpty ? "virtual geometry or the season" : changes.joined(separator: ", ")) changed")
+            print("\(wanted.kind.title) made again: \(remake)")
+        } else if wanted.kind == scene.settings.kind, benchmark == nil, !wanted.isSameWorkshop(as: scene.settings),
+           !wanted.isSameWorld(as: scene.settings), !wanted.isSameCity(as: scene.settings) {
+            let changes = wanted.changes(from: scene.settings)
+            print("\(wanted.kind.title) made again: \(changes.isEmpty ? "virtual geometry or the season" : changes.joined(separator: ", ")) changed")
         }
-        let reuse = remake == nil && wanted.scene == scene.settings ? scene : nil   // only the API changes
+        let reuse = remake == nil && wanted == scene.settings ? scene : nil   // only virtual geometry or the season changes
         let instances = reuse?.instances, options = loadOptions    // read here: the background must not touch them
         // The loading overlay's job (the one it replaces stops where it can: its scene would be thrown away).
         loadJob?.cancel()
-        let job = benchmark != nil || remake == nil && (wanted.scene.isSameWorkshop(as: scene.settings) || wanted.scene.isSameCity(as: scene.settings))
-            ? nil : loadActivity.begin(remake.map { "\(wanted.scene.kind.title): \($0)" }
-            ?? (reuse != nil ? "\(wanted.scene.kind.title) for \(wanted.api.title)"
-            : wanted.scene.isSameWorld(as: scene.settings) ? "\(wanted.scene.kind.title): the next tile" : wanted.scene.kind.title))
+        let job = benchmark != nil || remake == nil && (wanted.isSameWorkshop(as: scene.settings) || wanted.isSameCity(as: scene.settings))
+            ? nil : loadActivity.begin(remake.map { "\(wanted.kind.title): \($0)" }
+            ?? (wanted.isSameWorld(as: scene.settings) ? "\(wanted.kind.title): the next tile" : wanted.kind.title))
         loadJob = job
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
             let start = CACurrentMediaTime()
             let result = Result {
-                try self.prepareScene(wanted.scene, reuse: reuse, instances: instances, options: options, load: job)
+                try self.prepareScene(wanted, reuse: reuse, instances: instances, options: options, load: job)
             }
             let preparedMs = (CACurrentMediaTime() - start) * 1000
             self.renderThread.perform {
@@ -271,7 +267,6 @@ extension Renderer {
                     job?.fail()
                     print("Scene load failed, keeping the previous scene: \(error)")
                     self.settings.scene = self.scene.settings
-                    self.settings.api = self.builtAPI
                 }
             }
         }
@@ -279,7 +274,6 @@ extension Renderer {
 
     /// Everything sized by the scene: geometry, acceleration structures, per-frame instance / light buffers, light maps.
     package func createSceneResources(_ prepared: PreparedScene? = nil) throws {
-        builtAPI = prepared?.api ?? settings.api
         virtualTracing = nil
         plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
@@ -298,7 +292,7 @@ extension Renderer {
         instanceASBuilt = []
         textureStreamer = prepared?.streamer
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,
-                                                            options: bufferOptions(api: builtAPI, known: namedPrimitives, blocks: namedBlocks,
+                                                            options: bufferOptions(known: namedPrimitives, blocks: namedBlocks,
                                                                                    instanceBlocks: namedInstanceBlocks,
                                                                                    extraInstances: scene.tracesClusters ? 1 : 0,
                                                                                    leafFall: Scene.leafFall(season: settings.foliage.season)))

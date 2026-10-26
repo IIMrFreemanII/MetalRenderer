@@ -6,10 +6,8 @@ import Metal
 ///
 /// * On first load, every image of a model is decoded at full size, mipmapped on the GPU and written with its whole mip
 ///   chain to a cache file next to the model (`.metalrenderer-cache/<model>-<size>-<mtime>-t1.mgt`), read back memory-mapped.
-/// * Textures are sparse, backed by a heap the size of the budget (or of all their levels, if that is less): on Metal 3
-///   a sparse heap, which places the tiles
-///   itself; on Metal 4 (whose residency sets take no sparse heap) placement-sparse textures on a placement heap, whose
-///   tiles the streamer hands out (`TileAllocator`). At first only their small mips (up to `residentBaseSize` pixels,
+/// * Textures are placement-sparse, backed by a placement heap the size of the budget (or of all their levels, if that
+///   is less), whose tiles the streamer hands out (`TileAllocator`): Metal 4's residency sets take no sparse heap. At first only their small mips (up to `residentBaseSize` pixels,
 ///   and the packed mip tail) are mapped and uploaded, by the first `update`.
 /// * Every frame the shaders record, per texture, the finest mip level primary and sharp reflection hits sampled
 ///   (`feedback`, an atomic min); the CPU maps and uploads finer levels ahead of this frame's work (`TextureStreamWork`),
@@ -31,15 +29,15 @@ package final class TextureStreamer {
         package var wanted: Int                   // finest level requested lately
         package var lastUsed: UInt32 = 0
         package var bytesPerLevel: [Int]          // heap bytes each mapped level costs (tile-rounded; the tail level: the tail)
-        package var tiles: [[Int]]                // placement: the heap tiles each mapped level holds
+        package var tiles: [[Int]]                // the heap tiles each mapped level holds
     }
 
     private let device: MTLDevice
-    /// Metal 3: a sparse heap. Metal 4: a placement heap (`placement`).
+    /// A placement heap.
     package let heap: MTLHeap
     package let budgetBytes: Int
     private let tileBytes: Int
-    private var tileAllocator: TileAllocator?       // placement only
+    private var tileAllocator: TileAllocator
     private var entries: [Entry] = []
     private var mappedBytes = 0
     private var minLodBuffers: [MTLBuffer] = []     // per slot: float per texture
@@ -57,7 +55,6 @@ package final class TextureStreamer {
     package var uploadBytesPerFrame = 48 << 20
     package private(set) var stats = (residentMB: 0.0, uploadedMB: 0.0, levelsMapped: 0)
 
-    package var placement: Bool { tileAllocator != nil }
     package var textures: [MTLTexture] { entries.map(\.texture) }
     /// Per texture: its finest level the shaders may sample.
     package var residentLevels: [Int] { entries.map(\.resident) }
@@ -84,23 +81,21 @@ package final class TextureStreamer {
     package func minLodBuffer(slot: Int) -> MTLBuffer { minLodBuffers[slot] }
     package func feedbackBuffer(slot: Int) -> MTLBuffer { feedbackBuffers[slot] }
 
-    /// Metal 3 streams through a sparse heap, Metal 4 through placement-sparse textures (macOS 26.4).
-    package static func isSupported(_ device: MTLDevice, api: RenderAPI) -> Bool {
+    /// Placement-sparse textures (macOS 26.4).
+    package static func isSupported(_ device: MTLDevice) -> Bool {
         guard enabled && device.supportsFamily(.apple6) else { return false }
-        if api == .metal3 { return true }
         if #available(macOS 26.4, *) { return device.supportsPlacementSparse }
         return false
     }
 
-    /// `placement`: placement-sparse textures on a placement heap, for Metal 4's queue (see `isSupported`).
     /// `load`: the load to report the cache files and textures to.
     package init(sources: [TextureSource], device: MTLDevice, queue: MTLCommandQueue, budgetMB: Int, slots: Int,
-         placement: Bool, load: LoadJob? = nil) throws {
+         load: LoadJob? = nil) throws {
         self.device = device
         let start = CFAbsoluteTimeGetCurrent()
         let step = load?.step("Textures", total: sources.count)
         let pageSize = MTLSparsePageSize.size64
-        let tileBytes = placement ? device.sparseTileSizeInBytes(sparsePageSize: pageSize) : device.sparseTileSizeInBytes
+        let tileBytes = device.sparseTileSizeInBytes(sparsePageSize: pageSize)
         self.tileBytes = tileBytes
         // Cache files: one per model file, holding all of its images' mip chains.
         let cached = try TextureStreamer.loadCaches(sources, device: device, queue: queue, step: step)
@@ -111,8 +106,7 @@ package final class TextureStreamer {
         var whole = 0
         for (i, source) in sources.enumerated() {
             let format: MTLPixelFormat = source.srgb ? .rgba8Unorm_srgb : .rgba8Unorm
-            let tile = placement ? device.sparseTileSize(textureType: .type2D, pixelFormat: format, sampleCount: 1, sparsePageSize: pageSize)
-                : device.sparseTileSize(with: .type2D, pixelFormat: format, sampleCount: 1)
+            let tile = device.sparseTileSize(textureType: .type2D, pixelFormat: format, sampleCount: 1, sparsePageSize: pageSize)
             for level in cached[i].1 {
                 whole += max(((level.width + tile.width - 1) / tile.width) * ((level.height + tile.height - 1) / tile.height), 1) * tileBytes
             }
@@ -121,12 +115,9 @@ package final class TextureStreamer {
         let hd = MTLHeapDescriptor()
         hd.storageMode = .private
         hd.size = budgetBytes
-        hd.type = .sparse
-        if placement, #available(macOS 26.0, *) {
-            hd.type = .placement
-            hd.maxCompatiblePlacementSparsePageSize = pageSize
-            tileAllocator = TileAllocator(count: budgetBytes / tileBytes)
-        }
+        hd.type = .placement
+        hd.maxCompatiblePlacementSparsePageSize = pageSize
+        tileAllocator = TileAllocator(count: budgetBytes / tileBytes)
         guard let heap = device.makeHeap(descriptor: hd) else { throw RendererError.resourceCreation("sparse texture heap") }
         heap.label = "textureHeap"
         self.heap = heap
@@ -140,21 +131,15 @@ package final class TextureStreamer {
             desc.mipmapLevelCount = levels.count
             desc.usage = .shaderRead
             desc.storageMode = .private
-            var made: MTLTexture?
-            if placement, #available(macOS 26.0, *) {
-                desc.placementSparsePageSize = pageSize
-                made = device.makeTexture(descriptor: desc)
-            } else {
-                made = heap.makeTexture(descriptor: desc)
-            }
-            guard let texture = made else { throw RendererError.resourceCreation("sparse texture \(source.name)") }
+            desc.placementSparsePageSize = pageSize
+            guard let texture = device.makeTexture(descriptor: desc) else { throw RendererError.resourceCreation("sparse texture \(source.name)") }
             texture.label = source.name
             let tile = tileSize(texture.pixelFormat)
             let tail = texture.firstMipmapInTail ?? levels.count
             var cost: [Int] = []
             for (l, lv) in levels.enumerated() {
                 if l > tail { cost.append(0); continue }
-                if l == tail { cost.append(placement ? tailTiles(texture) * tileBytes : texture.tailSizeInBytes ?? 0); continue }
+                if l == tail { cost.append(tailTiles(texture) * tileBytes); continue }
                 let tx = (lv.width + tile.width - 1) / tile.width, ty = (lv.height + tile.height - 1) / tile.height
                 cost.append(tx * ty * tileBytes)
             }
@@ -178,8 +163,8 @@ package final class TextureStreamer {
         collected = [UInt32](repeating: 0, count: entries.count * TextureStreamer.levelBins)
         feedback = [UInt32](repeating: 0, count: collected.count)   // (its own buffer: the swap copies nothing)
         for slot in 0..<slots { writeMinLod(slot: slot) }   // nothing yet: the first `update` maps the base levels
-        print(String(format: "Textures: %d streamed (%@, budget %d MB, %.1f MB base levels), ready in %.1f s", entries.count,
-                     placement ? "placement sparse" : "sparse", budgetBytes >> 20, Double(baseBytes) / 1_048_576,
+        print(String(format: "Textures: %d streamed (placement sparse, budget %d MB, %.1f MB base levels), ready in %.1f s", entries.count,
+                     budgetBytes >> 20, Double(baseBytes) / 1_048_576,
                      CFAbsoluteTimeGetCurrent() - start))
     }
 
@@ -214,7 +199,7 @@ package final class TextureStreamer {
         pendingUnmaps.removeAll { u in
             guard u.frame &+ UInt32(framesInFlight) < frame else { return false }
             work.add(entries[u.entry].texture, SparseMapping(mode: .unmap, level: u.level, region: tileRegion(u.entry, u.level)))
-            tileAllocator?.free(entries[u.entry].tiles[u.level])
+            tileAllocator.free(entries[u.entry].tiles[u.level])
             entries[u.entry].tiles[u.level] = []
             return true
         }
@@ -257,8 +242,7 @@ package final class TextureStreamer {
     // MARK: Mapping
 
     private func tileSize(_ format: MTLPixelFormat) -> MTLSize {
-        placement ? device.sparseTileSize(textureType: .type2D, pixelFormat: format, sampleCount: 1, sparsePageSize: .size64)
-            : device.sparseTileSize(with: .type2D, pixelFormat: format, sampleCount: 1)
+        device.sparseTileSize(textureType: .type2D, pixelFormat: format, sampleCount: 1, sparsePageSize: .size64)
     }
 
     /// Tiles the packed mip tail of a placement-sparse texture takes.
@@ -266,7 +250,7 @@ package final class TextureStreamer {
 
     private func tileRegion(_ i: Int, _ level: Int) -> MTLRegion {
         let t = entries[i].texture
-        if level >= (t.firstMipmapInTail ?? Int.max) { return MTLRegionMake3D(0, 0, 0, placement ? tailTiles(t) : 1, 1, 1) }
+        if level >= (t.firstMipmapInTail ?? Int.max) { return MTLRegionMake3D(0, 0, 0, tailTiles(t), 1, 1) }
         let tile = tileSize(t.pixelFormat)
         let lv = entries[i].levels[level]
         return MTLRegionMake3D(0, 0, 0, (lv.width + tile.width - 1) / tile.width, (lv.height + tile.height - 1) / tile.height, 1)
@@ -279,10 +263,10 @@ package final class TextureStreamer {
         let tx = region.size.width, ty = region.size.height
         let tiles: [Int]
         if level >= (entries[i].texture.firstMipmapInTail ?? Int.max) {
-            guard let first = tileAllocator?.allocateRun(tx) else { return nil }
+            guard let first = tileAllocator.allocateRun(tx) else { return nil }
             tiles = Array(first..<(first + tx))
         } else {
-            guard let some = tileAllocator?.allocate(tx * ty) else { return nil }
+            guard let some = tileAllocator.allocate(tx * ty) else { return nil }
             tiles = some
         }
         entries[i].tiles[level] = tiles
@@ -332,8 +316,8 @@ package final class TextureStreamer {
         if tail < count && e.resident > tail { levels.append(tail) }
         var l = min(e.resident, tail) - 1
         while l >= target { levels.append(l); l -= 1 }
-        // Stop at the budget, but always take the levels down to the always-resident floor; placement: stop where the
-        // heap has no tiles left (unmaps still pending).
+        // Stop at the budget, but always take the levels down to the always-resident floor, and where the heap has no
+        // tiles left (unmaps still pending).
         var bytes = 0
         var mapped: [Int] = []
         var ops: [SparseMapping] = []
@@ -348,12 +332,8 @@ package final class TextureStreamer {
             }
             let size = level == tail ? e.levels[level...].reduce(0) { $0 + $1.size } : e.levels[level].size
             if !mapped.isEmpty && bytes + size > budget && level < e.floor { break }
-            if placement {
-                guard let placed = placeLevel(i, level) else { break }
-                ops += placed
-            } else {
-                ops.append(SparseMapping(mode: .map, level: level, region: tileRegion(i, level)))
-            }
+            guard let placed = placeLevel(i, level) else { break }
+            ops += placed
             mapped.append(level)
             bytes += size
             mappedBytes += e.bytesPerLevel[level]
@@ -553,8 +533,7 @@ package final class TextureStreamer {
     }
 }
 
-/// One mapping update of a sparse texture: `region` and `heapOffset` in tiles (the offset only for placement-sparse
-/// textures: a sparse heap places the tiles itself).
+/// One mapping update of a placement-sparse texture: `region` and `heapOffset` in tiles.
 package struct SparseMapping {
     package var mode: MTLSparseTextureMappingMode
     package var level: Int
@@ -579,24 +558,6 @@ package struct TextureStreamWork {
     mutating func add(_ texture: MTLTexture, _ ops: SparseMapping...) { add(texture, ops) }
     mutating func add(_ texture: MTLTexture, _ ops: [SparseMapping]) {
         if let last = mappings.last, last.texture === texture { mappings[mappings.count - 1].ops += ops } else { mappings.append((texture, ops)) }
-    }
-
-    /// Metal 3 (a sparse heap): a resource-state encoder, then a blit encoder.
-    package func encode(into cmd: MTLCommandBuffer) {
-        if !mappings.isEmpty, let enc = cmd.makeResourceStateCommandEncoder() {
-            for (texture, ops) in mappings {
-                for op in ops { enc.updateTextureMapping?(texture, mode: op.mode, region: op.region, mipLevel: op.level, slice: 0) }
-            }
-            enc.endEncoding()
-        }
-        if !uploads.isEmpty, let blit = cmd.makeBlitCommandEncoder() {
-            for u in uploads {
-                blit.copy(from: u.source, sourceOffset: u.offset, sourceBytesPerRow: u.bytesPerRow, sourceBytesPerImage: u.bytesPerImage,
-                          sourceSize: u.size, to: u.texture, destinationSlice: 0, destinationLevel: u.level,
-                          destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0))
-            }
-            blit.endEncoding()
-        }
     }
 }
 

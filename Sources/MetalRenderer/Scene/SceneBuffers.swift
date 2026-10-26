@@ -185,9 +185,8 @@ package final class InstanceBlock {
 /// the meshes that are new are built. A borrowed mesh's vertices outlive the scene the same way (`MeshBlock`).
 package struct SceneBuffers {
     package struct Options {
-        var api: RenderAPI
         var slots: Int
-        /// Metal's per-mesh structures: built for fast intersection (macOS 26), compacted.
+        /// Metal's per-mesh structures: built for fast intersection, compacted.
         var fastIntersection = true
         var compact = true
         /// How the top-level structure is built when the frames refit it (a still scene's is built once, for tracing).
@@ -261,10 +260,10 @@ package struct SceneBuffers {
     private(set) var voxelLOD: VoxelLOD?
 
     static let indirectStride = 72
-    var descriptorStride: Int { indirect ? SceneBuffers.indirectStride : 64 }
-    /// The descriptors are indirect ones: Metal 4's, and those of a scene with instance blocks or virtual geometry
-    /// under either API (they carry the ids a hit names an instance by, or the structures of the cuts).
-    let indirect: Bool
+    var descriptorStride: Int { SceneBuffers.indirectStride }
+    /// The descriptors are indirect ones, Metal 4's: they name their structures by resource ID and carry the ids a hit
+    /// names an instance by. (Still a flag for the builds that take either kind: TLASUpdate, VoxelLOD.)
+    let indirect = true
     private static let buildBatchBytes = 256 << 20
 
     /// The borrowed meshes' buffers: a hit reads them through the addresses in the mesh table.
@@ -393,7 +392,6 @@ package struct SceneBuffers {
         }
         instanceCount = total
         structureInstances = total + options.extraInstances
-        indirect = options.api == .metal4 || scene.hasGroups || scene.usesVirtualGeometry || !scene.assemblies.isEmpty
         leafFall = options.leafFall
         let recordStride = MemoryLayout<GPUInstanceData>.stride
         var data = try (0..<sets).map { try empty(count * recordStride, "instanceData\($0)") }
@@ -429,9 +427,8 @@ package struct SceneBuffers {
             instanceResources = []
         }
 
-        precondition(MemoryLayout<MTLAccelerationStructureInstanceDescriptor>.stride == 64)
-        if #available(macOS 14.0, *) { precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == SceneBuffers.indirectStride) }
-        let stride = indirect ? SceneBuffers.indirectStride : 64, descriptorCount = structureInstances
+        precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == SceneBuffers.indirectStride)
+        let stride = SceneBuffers.indirectStride, descriptorCount = structureInstances
         var descriptors = try (0..<sets).map { try empty(descriptorCount * stride, "instanceDescriptors\($0)") }
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
@@ -469,10 +466,8 @@ package struct SceneBuffers {
         let sizes: MTLAccelerationStructureSizes
         if still {
             sizes = device.accelerationStructureSizes(descriptor: layout.descriptor(indirect: indirect))
-        } else if options.api == .metal4, #available(macOS 26.0, *) {
-            sizes = device.accelerationStructureSizes(descriptor: layout.descriptor4)
         } else {
-            sizes = device.accelerationStructureSizes(descriptor: layout.descriptor)
+            sizes = device.accelerationStructureSizes(descriptor: layout.descriptor4)
         }
         for _ in 0..<sets {
             guard let accel = device.makeAccelerationStructure(size: sizes.accelerationStructureSize),
@@ -487,7 +482,7 @@ package struct SceneBuffers {
         // A still scene's: built here, on a Metal 3 queue whatever the frames are encoded with (Metal 4's instance
         // descriptors name their meshes' structures by resource ID, which Metal 3 builds from too).
         let whole = self   // (a copy for the closure: `self` is being initialised)
-        SceneBuffers.inParts(count) { whole.writeInstanceDescriptors(slot: 0, scene: scene, api: options.api, all: true, range: $0) }
+        SceneBuffers.inParts(count) { whole.writeInstanceDescriptors(slot: 0, scene: scene, all: true, range: $0) }
         // The blocks' after the scene's own: each block's as it has them, the new blocks' made here.
         let groups = instanceBlocks, structures = primitives, into = descriptors[0].contents(), plants = plants, fall = leafFall
         DispatchQueue.concurrentPerform(iterations: groups.count) { b in
@@ -590,14 +585,14 @@ package struct SceneBuffers {
 
     /// Instance descriptors for Metal's top-level structure, into `slot`'s buffer: every instance's (`all`; of
     /// `range`, for a caller that writes them in parts), or the moving ones'.
-    func writeInstanceDescriptors(slot: Int, scene: Scene, api: RenderAPI, all: Bool, range: Range<Int>? = nil) {
+    func writeInstanceDescriptors(slot: Int, scene: Scene, all: Bool, range: Range<Int>? = nil) {
         let base = instanceDescriptors[slot].contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
         // An SDF shape's box: the ray queries' loop is handed it (it isn't opaque) and marches the shape.
         let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
-        let stride = indirect ? SceneBuffers.indirectStride : 64
+        let stride = SceneBuffers.indirectStride
         let meshCount = scene.meshes.count
-        let plants = plants, set = plants?.set(slot: slot) ?? 0, primitiveIDs = primitiveIDs, indirect = indirect, leafFall = leafFall
+        let plants = plants, set = plants?.set(slot: slot) ?? 0, primitiveIDs = primitiveIDs, leafFall = leafFall
         let holes = scene.hasOpacity   // an alpha-tested instance (a procedural material's opacity) isn't opaque either
         // Through the instances' buffer: `scene.instances[i]` copied a whole instance (~290 bytes) each time.
         scene.instances.withUnsafeBufferPointer { instances in
@@ -615,7 +610,7 @@ package struct SceneBuffers {
                 // An indirect one's user ID: the instance's id, which a scene with instance blocks takes a hit's from.
                 SceneBuffers.writeDescriptor(base.advanced(by: i * stride), transform: instances[i].transform,
                                              options: sdf >= 0 || (holes && scene.cutsHoles(i)) ? boxOptions : options, mask: instances[i].mask,
-                                             userID: UInt32(i), resource: indirect ? primitiveIDs[index] : nil, index: index)
+                                             userID: UInt32(i), resource: primitiveIDs[index], index: index)
             }
             if let range {
                 for i in range { write(i) }
@@ -689,7 +684,7 @@ package struct SceneBuffers {
         }
         for i in new {
             let mesh = scene.meshes[i]
-            if let curves = scene.curveMeshes[i], let curveRadii, #available(macOS 14.0, *) {
+            if let curves = scene.curveMeshes[i], let curveRadii {
                 // Strands: round Catmull-Rom curves through the mesh's control points (its vertices), refitted every
                 // frame as the GPU moves them.
                 let geometry = MTLAccelerationStructureCurveGeometryDescriptor()
@@ -755,7 +750,7 @@ package struct SceneBuffers {
                 continue
             }
             if displacedMeshes.contains(i) {
-                if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
+                if options.fastIntersection { descriptor.usage = .preferFastIntersection }
                 let sizes = device.accelerationStructureSizes(descriptor: descriptor)
                 displaced.append((i, descriptor, max(sizes.buildScratchBufferSize, 16)))
                 jobs.append((i, descriptor, sizes, true))
@@ -763,7 +758,7 @@ package struct SceneBuffers {
             }
             if deforms { descriptor.usage = .refit }
             else if scene.remadeOften { descriptor.usage = .preferFastBuild }
-            else if options.fastIntersection, #available(macOS 26.0, *) { descriptor.usage = .preferFastIntersection }
+            else if options.fastIntersection { descriptor.usage = .preferFastIntersection }
             let sizes = device.accelerationStructureSizes(descriptor: descriptor)
             if deforms { refitted.append((i, descriptor, max(sizes.refitScratchBufferSize, 16))) }
             if deforms && scene.rebuiltOnDemand.contains(i) { rebuildScratch = max(rebuildScratch, sizes.buildScratchBufferSize) }

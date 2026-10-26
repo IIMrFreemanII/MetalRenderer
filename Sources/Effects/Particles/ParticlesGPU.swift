@@ -203,7 +203,7 @@ package final class ParticlesGPU {
         for trail in 0..<t { for k in 0..<system.trailSegments { first[trail * system.trailSegments + k] = UInt32(trail * m + k) } }
         var trails: [Trails?] = []
         for slot in 0..<slots {
-            guard segments > 0, #available(macOS 14.0, *) else { trails.append(nil); continue }
+            guard segments > 0 else { trails.append(nil); continue }
             let g = MTLAccelerationStructureCurveGeometryDescriptor()
             g.controlPointBuffer = trailPoints[slot]
             g.controlPointCount = t * m
@@ -451,7 +451,6 @@ package final class ParticlesGPU {
             }
         }
 
-        @available(macOS 26.0, *)
         package func encode4(into enc: MTL4ComputeCommandEncoder, keep: (MTLAllocation) -> Void) {
             keep(boxes)
             keep(scratch)

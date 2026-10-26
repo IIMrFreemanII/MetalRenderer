@@ -150,8 +150,9 @@ final class PainterTests: XCTestCase {
         try session.prepare(queue: queue, args: session.objectArgs(transform: transform, scene: scene), indices: indices, positions: positions,
                             normals: normals, offsets: [UInt8](repeating: 0, count: Int(scene.meshes[o.mesh].indexCount) / 3))
         session.sync(d, version: 1)
+        let metal4 = try XCTUnwrap(Metal4Frame(device: device, streamQueue: queue, framesInFlight: 1, layer: nil))
         func frame(_ view: PaintDabArgs? = nil, surfacePos: MTLTexture? = nil) {
-            let f = Metal3Frame(queue: queue, profile: nil, split: false, overlap: false)!
+            let f = metal4.begin(slot: 0, split: false, overlap: false)
             session.encode(f, scene: scene, transform: transform, sceneTextures: [], indices: indices, positions: positions, normals: normals,
                            uvs: uvs, view: view, surfacePos: surfacePos, stamps: PaintStamps().array(device), stencil: nil,
                            catalog: MaterialCatalog(), now: true)
@@ -289,8 +290,9 @@ final class PainterTests: XCTestCase {
         view.screen = [256, 256]
         view.tolerance = 0.05
         let surface = try XCTUnwrap(surfacePosOfPlane(device, queue: queue, view: view, height: transform.columns.3.y + 0.01, instance: o.instance))
+        let metal4 = try XCTUnwrap(Metal4Frame(device: device, streamQueue: queue, framesInFlight: 1, layer: nil))
         func frame(_ v: PaintDabArgs? = nil) -> Double {
-            let f = Metal3Frame(queue: queue, profile: nil, split: false, overlap: false)!
+            let f = metal4.begin(slot: 0, split: false, overlap: false)
             session.encode(f, scene: scene, transform: transform, sceneTextures: [], indices: indices, positions: positions, normals: normals,
                            uvs: uvs, view: v, surfacePos: v == nil ? nil : surface, stamps: PaintStamps().array(device), stencil: nil,
                            catalog: MaterialCatalog(), now: true)

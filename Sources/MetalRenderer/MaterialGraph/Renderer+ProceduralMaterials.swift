@@ -153,7 +153,7 @@ extension Renderer {
         let records = instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count)
         for i in list where i < scene.instances.count {
             scene.writeInstanceData(into: records, all: true, range: i..<(i + 1))
-            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, api: builtAPI, all: true, range: i..<(i + 1))
+            sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, all: true, range: i..<(i + 1))
         }
         if still { stillRefitPending = true } else { instanceASStale[slot] = true }
     }
@@ -393,7 +393,6 @@ extension Renderer {
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             settings.scene = scene.settings
-            settings.api = builtAPI
         }
     }
 
@@ -401,10 +400,10 @@ extension Renderer {
     package func install(_ prepared: PreparedScene, resetCamera: Bool) {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
-        let oldAPI = builtAPI, oldPipelines = pipelines
+        let oldPipelines = pipelines
         // What the scene being replaced is drawn with: to go back to if this fails, and to let go of if it doesn't. In
         // a box, which is emptied off this thread: letting go of an open world's scene takes 13 ms.
-        let old = Replaced(PreparedScene(scene: scene, api: oldAPI, textures: materialTextures, streamer: textureStreamer,
+        let old = Replaced(PreparedScene(scene: scene, textures: materialTextures, streamer: textureStreamer,
                                          virtualTracing: virtualTracing, buffers: sceneBuffers, pipelines: nil,
                                          shaderGeneration: shaderGeneration))
         let oldSettings = scene.settings, oldPlace = scene.worldPlace
@@ -413,7 +412,7 @@ extension Renderer {
         do {
             if let ready = prepared.pipelines, prepared.shaderGeneration == shaderGeneration {
                 pipelines = ready
-            } else if let made = try makePipelines(api: prepared.api, compiler: compiler(for: prepared.api),
+            } else if let made = try makePipelines(compiler: compiler,
                                                    lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
                                                    generation: shaderGeneration, procedural: scene.proceduralCode, current: pipelines) {
                 pipelines = made   // here only if the shaders were reloaded while the scene was loading
@@ -424,7 +423,6 @@ extension Renderer {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             scene = old.parts!.scene
             settings.scene = oldSettings
-            settings.api = oldAPI
             pipelines = oldPipelines
             try? createSceneResources(old.parts)
         }
@@ -485,7 +483,7 @@ extension Renderer {
         }
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
         if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, scene.serial) }
-        if #available(macOS 26.0, *) { (metal4Storage as? Metal4Frame)?.noteSceneChange() }
+        metal4.noteSceneChange()
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
         if sameWorld, benchmark?.isMeasuring == true { streaming.installedMs.append(installedMs) }
@@ -494,8 +492,8 @@ extension Renderer {
             let now = CACurrentMediaTime()
             settlingStreams = (now, now + Renderer.settlingStreamsSeconds)
         }
-        print(String(format: "Scene: %@, %d instances, %d lights, %@ (installed in %.0f ms)", scene.settings.kind.title,
-                     sceneBuffers.instanceCount, scene.lights.count, builtAPI.title, installedMs))
+        print(String(format: "Scene: %@, %d instances, %d lights (installed in %.0f ms)", scene.settings.kind.title,
+                     sceneBuffers.instanceCount, scene.lights.count, installedMs))
         if let target = pendingFrame, target.scope == MaterialAssignments.scope(scene.settings) || target.kind == scene.settings.kind {
             frame(target)
         }
@@ -569,7 +567,7 @@ extension Renderer {
         let shared: [MTLResource] = [uvBuffer, staticMinLod, feedbackDummy, emissiveBuffer, triangleMaterialBuffer]
         resources += shared
         if let damage = sceneBuffers.damage { resources.append(damage) }
-        if textureStreamer?.placement != false { resources += materialTextures }
+        resources += materialTextures   // (placement-sparse ones too: each is its own allocation)
         resources += sceneBuffers.blockBuffers
         resources += sceneBuffers.instanceResources
         let voxels: [MTLBuffer] = sceneBuffers.voxelLOD?.grids.buffers ?? sceneBuffers.plants?.voxels?.buffers ?? []

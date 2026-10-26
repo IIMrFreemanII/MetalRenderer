@@ -1,5 +1,8 @@
 # Metal 4 GPU hangs: handoff (2026-10-16)
 
+(2026-10-26: Metal 3 frames are gone; every frame is Metal 4's, so "Metal 3 never hung" below can no longer be
+re-checked as a control. The interludes and their gate stay: README, "What stays on the Metal 3 queue".)
+
 Branch `claude/metal4-showcase-hang`, from main at `8c01bcd`. Measured on the M4 Max (macOS 26.5). Metal 3 never hung in
 any of these runs.
 

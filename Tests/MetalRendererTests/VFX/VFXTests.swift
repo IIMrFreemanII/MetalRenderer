@@ -86,7 +86,7 @@ final class VFXTests: XCTestCase {
         let gpu = try ParticlesGPU(device: m.device, system: system, slots: 1)
         if let source = system.programSource {
             let setup = VFXCompiler.Setup(entry: VFXTests.shaders.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
-                                          lightTypes: 0x3F, stats: false, metal4: false)
+                                          lightTypes: 0x3F, stats: false)
             gpu.programKernels = VFXCompiler.shared.kernels(for: source, setup: setup, device: m.device, compiler: nil, wait: true)
             XCTAssertNotNil(gpu.programKernels, VFXCompiler.shared.failure(for: source, setup: setup) ?? "")
         }

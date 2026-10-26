@@ -15,9 +15,8 @@ import simd
 /// talks to it through `RendererController`, which posts work with `perform` and gets values back.
 package final class Renderer: NSObject {
     package static let maxFramesInFlight = GPUFrames.maxInFlight
-    /// Layout of MTLAccelerationStructureInstanceDescriptor: packed 4x3 float matrix + 4 x uint32.
-    /// Metal's TLAS instance descriptors: the default ones (64 bytes, the mesh's structure by index), or for Metal 4,
-    /// which takes only indirect ones, those (72 bytes: a user ID and the structure's resource ID follow).
+    /// Metal 4's TLAS instance descriptors, the indirect ones: a packed 4x3 float matrix and 4 x uint32 (64 bytes), then
+    /// a user ID and the mesh's structure's resource ID (72 bytes).
     package var instanceDescriptorStride: Int { sceneBuffers.descriptorStride }
 
     package let device: MTLDevice
@@ -130,7 +129,7 @@ package final class Renderer: NSObject {
     /// The VFX library's (VFXCompiler): its entry next to Shaders.metal, compiled as the pipelines in use are.
     package var vfxSetup: VFXCompiler.Setup {
         VFXCompiler.Setup(entry: shaderURL.deletingLastPathComponent().appendingPathComponent("ShadersVFX.metal"),
-                          lightTypes: pipelines.lightTypes, stats: pipelines.stats, metal4: pipelines.api == .metal4,
+                          lightTypes: pipelines.lightTypes, stats: pipelines.stats,
                           generation: shaderGeneration)
     }
     package var particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
@@ -164,22 +163,10 @@ package final class Renderer: NSObject {
     package var plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
     /// What the ray-tracing kernels get at buffer 1 (MSL TraceScene), per slot.
     package var traceScene: TraceSceneArgs!
-    /// The API the frames go through, the pipelines were compiled for and the TLAS's instance descriptors are written for.
-    package var builtAPI = RenderAPI.metal3
-    package var metal4Storage: AnyObject?       // Metal4Frame, made the first time Metal 4 is asked for
-    @available(macOS 26.0, *)
-    package var metal4: Metal4Frame? {
-        if metal4Storage == nil {
-            metal4Storage = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
-                                        layer: (surface as? LayerSurface)?.layer)
-        }
-        return metal4Storage as? Metal4Frame
-    }
-    /// Metal 4's compiler for `api` `.metal4` (pipelines, MetalFX's scalers), nil for Metal 3. Render thread.
-    package func compiler(for api: RenderAPI) -> AnyObject? {
-        guard api == .metal4, #available(macOS 26.0, *) else { return nil }
-        return metal4?.compiler
-    }
+    /// What the frames go through: Metal 4's command queue, argument table and residency set (Metal4Backend.swift).
+    package let metal4: Metal4Frame
+    /// Metal 4's compiler: the pipelines', MetalFX's scalers'.
+    package var compiler: MTL4Compiler { metal4.compiler }
     package var blueNoiseTexture: MTLTexture!   // the blue-noise tile (zeros until `blueNoiseReady`)
     /// Light-map side: 128 for up to 16 lights, then smaller so all maps together cost about 16 128^2 maps to trace.
     package static func lightMapSize(lightCount: Int) -> Int {
@@ -293,9 +280,9 @@ package final class Renderer: NSObject {
     package var persistSettings = false         // the app (not benchmarks), once the saved settings are loaded
     /// The last of the controller's settings edits applied (`applySettings`), sent back with the settings.
     package var settingsUpdate = 0
-    /// GPU pass timings for the settings panel (GPUProfiler): per frame, then averaged over the stats interval.
+    /// GPU pass timings for the Debug window (a command buffer per pass): per frame, then averaged over the stats
+    /// interval.
     package var profilePasses = false
-    package var passProfilingSupported: Bool { GPUProfiler.isSupported(on: device) }
     /// The Debug window is open: the stats tick brings its `DebugInfo`, and every frame its times (`onFrameTime`).
     package var debugActive = false
     // What the renderer tells the main thread (RendererController), all called on the render thread. Set before the
@@ -451,7 +438,6 @@ package final class Renderer: NSObject {
     // Stats
     package var gpuMs: Double = 0
     package var firstFrameDrawn = false
-    package lazy var profiler = GPUProfiler(device: device, framesInFlight: Renderer.maxFramesInFlight)
     package var passTimeOrder: [String] = [], passTimeSums: [String: Double] = [:]
     package var passTimeFrameMs = 0.0, passTimeFrames = 0
     package var fpsFrames = 0
@@ -474,16 +460,23 @@ package final class Renderer: NSObject {
     package init(device: MTLDevice, surface: RenderSurface, benchmarked: Bool = true) throws {
         benchmark = benchmarked && Benchmark.isEnabled ? Benchmark() : nil
         validateGPULayouts()
-        // Every ray is traced through Metal's acceleration structures: there is nothing to fall back to.
+        // Every ray is traced through Metal's acceleration structures, and every frame goes through Metal 4: there is
+        // nothing to fall back to.
         guard Capabilities.current.metalRayTracing else { throw RendererError.unsupported("Metal ray tracing") }
+        guard Capabilities.current.metal4RayTracing else { throw RendererError.unsupported("Metal 4 ray tracing (an M3 or later)") }
         guard let queue = device.makeCommandQueue() else {
             throw RendererError.resourceCreation("command queue")
         }
+        guard let metal4 = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
+                                       layer: (surface as? LayerSurface)?.layer) else {
+            throw RendererError.resourceCreation("Metal 4 command queue")
+        }
         self.device = device
         self.queue = queue
+        self.metal4 = metal4
         self.surface = surface
         super.init()
-        // The starting tracer, upscaler and API come from the environment: fall back where this GPU lacks them.
+        // The starting tracer and upscaler come from the environment: fall back where this GPU lacks them.
         let (supported, notes) = settings.clamped(to: Capabilities.current)
         notes.forEach { print($0) }
         settings = supported
@@ -495,7 +488,7 @@ package final class Renderer: NSObject {
         try createBlueNoiseTexture()
         if benchmark != nil {
             // Benchmarks start with everything in place: the same frames every run.
-            pipelines = try Pipelines(device: device, source: shaderURL, api: builtAPI, compiler: compiler(for: builtAPI),
+            pipelines = try Pipelines(device: device, source: shaderURL, compiler: compiler,
                                       lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled, procedural: scene.proceduralCode)
             keepPipelines(pipelines, generation: shaderGeneration)
         } else {
@@ -572,7 +565,7 @@ package final class Renderer: NSObject {
 
     // MARK: - Setup: state
 
-    package var loading: (scene: SceneSettings, api: RenderAPI)?   // being prepared in the background
+    package var loading: SceneSettings?            // being prepared in the background
     package var sceneRemake: String?                // the scene's builder runs again, with the same settings: why
     package var devReload: DevReload?               // the dev build's hot reload (startDevReload)
     package var streaming = Streaming()

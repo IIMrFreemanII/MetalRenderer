@@ -29,7 +29,7 @@ extension Renderer {
 
     /// The scene the settings ask for is in: nothing loading, no remake or scene-file edit waiting (ScriptRun.waitForScene).
     package var sceneSettled: Bool {
-        loading == nil && sceneRemake == nil && placedPending == nil && settings.scene == scene.settings && settings.api == builtAPI
+        loading == nil && sceneRemake == nil && placedPending == nil && settings.scene == scene.settings
     }
 
     // MARK: - Pictures

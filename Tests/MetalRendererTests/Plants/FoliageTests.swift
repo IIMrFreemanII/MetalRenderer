@@ -392,24 +392,25 @@ final class FoliageRuntimeTests: XCTestCase {
         let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
         guard device.supportsRaytracing else { throw XCTSkip("no Metal ray tracing") }
         let queue = try XCTUnwrap(device.makeCommandQueue())
-        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(api: .metal3, slots: 3))
+        let buffers = try SceneBuffers(device: device, queue: queue, scene: scene, options: SceneBuffers.Options(slots: 3))
         let voxels = try XCTUnwrap(buffers.voxelLOD)
         XCTAssertEqual(buffers.primitives.count, scene.meshes.count + VoxelGrids.levels * scene.voxelPlants.count)
         let base = buffers.instanceDescriptors[0].contents()
-        func bytes(_ i: Int) -> [UInt8] { Array(UnsafeRawBufferPointer(start: base + i * 64 + 48, count: 16)) }
+        let stride = SceneBuffers.indirectStride
+        func bytes(_ i: Int) -> [UInt8] { Array(UnsafeRawBufferPointer(start: base + i * stride + 48, count: stride - 48)) }
         let plants = scene.instances.indices.filter { scene.meshVoxels[scene.instances[$0].mesh] != nil }
         XCTAssertFalse(plants.isEmpty)
         let before = plants.map(bytes)
         // From 100 km every plant is its coarsest level.
         XCTAssertTrue(voxels.rebuild(for: SIMD4(100_000, 0, 0, 1), queue: queue))
         for i in plants {
-            let v = scene.meshVoxels[scene.instances[i].mesh]!, mask = (base + i * 64).load(fromByteOffset: 52, as: UInt32.self)
+            let v = scene.meshVoxels[scene.instances[i].mesh]!, mask = (base + i * stride).load(fromByteOffset: 52, as: UInt32.self)
             if v & Scene.meshVoxelsLeaves != 0 {
                 XCTAssertEqual(mask, 0)
             } else {
                 XCTAssertEqual(mask, Scene.maskVoxels)
-                XCTAssertEqual((base + i * 64).load(fromByteOffset: 60, as: UInt32.self),
-                               UInt32(scene.meshes.count + VoxelGrids.levels * Int(v) + VoxelGrids.levels - 1))
+                let box = buffers.primitives[scene.meshes.count + VoxelGrids.levels * Int(v) + VoxelGrids.levels - 1]
+                XCTAssertEqual((base + i * stride).load(fromByteOffset: 64, as: MTLResourceID.self)._impl, box.gpuResourceID._impl)
             }
         }
         // No bias: all of them their triangles again, byte for byte.

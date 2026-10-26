@@ -14,7 +14,7 @@ import Metal
 
 /// The texture streamer's bookkeeping (TextureStreamer.swift), on the GPU's device but without running a frame: the
 /// feedback a frame's shaders would record is written by hand, and the mapping updates and uploads the streamer
-/// answers with are read back. Both kinds of sparse texture: on a sparse heap (Metal 3) and placement sparse (Metal 4).
+/// answers with are read back. Placement-sparse textures, Metal 4's.
 final class TextureStreamerTests: XCTestCase {
     private var folder: URL!
     private static let framesInFlight = 3
@@ -27,17 +27,17 @@ final class TextureStreamerTests: XCTestCase {
     override func tearDown() { try? FileManager.default.removeItem(at: folder) }
 
     /// A streamer of one generated 1024 px texture: levels 0...2 are streamed, level 3 (128 px) and coarser stay.
-    private func streamer(placement: Bool) throws -> TextureStreamer {
+    private func streamer() throws -> TextureStreamer {
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue(),
-              TextureStreamer.isSupported(device, api: placement ? .metal4 : .metal3) else {
-            throw XCTSkip("no \(placement ? "placement-" : "")sparse textures on this device")
+              TextureStreamer.isSupported(device) else {
+            throw XCTSkip("no placement-sparse textures on this device")
         }
         let model = folder.appendingPathComponent("model.gltf")
         try Data("{}".utf8).write(to: model)
         let source = Scene.TextureSource(data: Data(count: 1024 * 1024 * 4), srgb: false, name: "test", modelPath: model.path,
                                          cacheKey: "0", raw: (1024, 1024))
         return try TextureStreamer(sources: [source], device: device, queue: queue, budgetMB: 64,
-                                   slots: TextureStreamerTests.framesInFlight, placement: placement)
+                                   slots: TextureStreamerTests.framesInFlight)
     }
 
     /// One frame: `level` is what its samples wanted (nil: the texture is out of view).
@@ -55,9 +55,8 @@ final class TextureStreamerTests: XCTestCase {
     }
 
     func testLevelsFollowTheFeedback() throws {
-        for placement in [false, true] {
-            guard let s = try? streamer(placement: placement) else { continue }
-            XCTAssertEqual(s.placement, placement)
+        do {
+            let s = try streamer()
             var work = step(s, 0, wants: nil)
             XCTAssertEqual(s.residentLevels, [3], "the first frame maps the levels that stay")
             XCTAssertFalse(work.uploads.isEmpty)
@@ -94,8 +93,8 @@ final class TextureStreamerTests: XCTestCase {
     /// A level that is wanted again before its unmap ran (its frames were still in flight) is still mapped and still
     /// holds its pixels: it comes back as it is, and the unmap is dropped.
     func testALevelWantedAgainBeforeItsUnmapStays() throws {
-        for placement in [false, true] {
-            guard let s = try? streamer(placement: placement) else { continue }
+        do {
+            let s = try streamer()
             var frame = 0
             _ = step(s, frame, wants: nil)
             for _ in 1...4 { frame += 1; _ = step(s, frame, wants: 0) }
@@ -111,12 +110,12 @@ final class TextureStreamerTests: XCTestCase {
             frame += 1
             var work = step(s, frame, wants: 0)
             XCTAssertEqual(s.residentLevels, [0])
-            XCTAssertTrue(work.uploads.isEmpty, "placement \(placement): a level that was never unmapped was uploaded again")
-            XCTAssertTrue(work.mappings.isEmpty, "placement \(placement): a level that was never unmapped was mapped again")
+            XCTAssertTrue(work.uploads.isEmpty, "a level that was never unmapped was uploaded again")
+            XCTAssertTrue(work.mappings.isEmpty, "a level that was never unmapped was mapped again")
             for _ in 0..<8 {
                 frame += 1
                 work = step(s, frame, wants: 0)
-                XCTAssertTrue(unmapped(work).isEmpty, "placement \(placement): a level in use was unmapped")
+                XCTAssertTrue(unmapped(work).isEmpty, "a level in use was unmapped")
                 XCTAssertEqual(s.residentLevels, [0])
             }
         }

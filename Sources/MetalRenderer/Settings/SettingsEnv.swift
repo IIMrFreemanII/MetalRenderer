@@ -23,7 +23,6 @@ package enum SettingsEnv {
         // What a fresh launch would have: the code's defaults (not this process's env-derived ones) and the scene's presets.
         var d = defaults
         d.directLight = .auto
-        d.api = .metal3
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true

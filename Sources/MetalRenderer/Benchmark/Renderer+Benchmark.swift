@@ -76,7 +76,7 @@ extension Renderer {
         setWorldLights()   // the scene it starts with is the one its time of day asks for
         if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
         if settings.scene.materials != scene.settings.materials { editMaterials() }   // the Material Designer's
-        if settings.scene != scene.settings || settings.api != builtAPI || virtualGeometryChanged || plantSeasonChanged {
+        if settings.scene != scene.settings || virtualGeometryChanged || plantSeasonChanged {
             rebuildScene(resetCamera: false)
         }
         camera = c.track?.camera(at: 0)
@@ -376,16 +376,15 @@ extension Renderer {
     /// Frames between full TLAS rebuilds (refits in between). `METALRENDERER_TLAS=1` rebuilds every frame.
     package static let tlasRebuildInterval = max(1, Int(ProcessInfo.processInfo.environment["METALRENDERER_TLAS"] ?? "") ?? 16)
     /// The Metal TLAS is refit most frames (see encodeSceneUpdate), so it is built for a fast build. A quality build
-    /// (`METALRENDERER_TLAS_BUILD=default`) traces no faster on an M4 Max, and one for fast intersection (`fast`,
-    /// macOS 26) 5% slower with 2000 moving objects.
+    /// (`METALRENDERER_TLAS_BUILD=default`) traces no faster on an M4 Max, and one for fast intersection (`fast`) 5% slower with 2000 moving objects.
     package static let tlasUsage: MTLAccelerationStructureUsage = {
         switch ProcessInfo.processInfo.environment["METALRENDERER_TLAS_BUILD"] {
         case "default": return [.refit]
-        case "fast": if #available(macOS 26.0, *) { return [.preferFastIntersection, .refit] } else { return [.refit] }
+        case "fast": return [.preferFastIntersection, .refit]
         default: return [.preferFastBuild, .refit]
         }
     }()
-    /// Metal's per-mesh structures: built for fast intersection (macOS 26) and compacted. `METALRENDERER_BLAS=default`
+    /// Metal's per-mesh structures: built for fast intersection and compacted. `METALRENDERER_BLAS=default`
     /// builds them as before, `fast` or `compact` turns on one of the two, for A/B timing.
     private static let blasMode = ProcessInfo.processInfo.environment["METALRENDERER_BLAS"] ?? "fast+compact"
     package static let fastIntersectionBLAS = blasMode.contains("fast")
@@ -458,7 +457,7 @@ extension Renderer {
         }
         var sceneName = s.scene.kind.definition.detail.map { " — \($0(s.scene))" } ?? ""
         if scene.lights.count > 4 { sceneName += " — direct: \(activeDirectMode.title)" }
-        if let loading { sceneName += " — loading \(loading.scene.kind.title)…" }
+        if let loading { sceneName += " — loading \(loading.kind.title)…" }
         if let vg = virtualTracing?.clusters {
             sceneName += String(format: " — %d clusters, %.0f MB", vg.stats.selected, vg.residentMB)
         }
@@ -527,12 +526,12 @@ extension Renderer {
         let device = device, url = shaderURL
         let lightTypes = pipelines?.lightTypes ?? scene.lightTypeMask
         let procedural = pipelines?.procedural ?? scene.proceduralCode
-        let api = pipelines?.api ?? builtAPI, compiler = compiler(for: api)
+        let compiler = compiler
         let stats = TraceSceneArgs.statsEnabled
         let job = benchmark != nil ? nil : loadActivity.begin("shaders", verbs: ("Compiling", "Compiled"))
         shaderQueue.async { [weak self] in
             let result = Result {
-                try Pipelines(device: device, source: url, api: api, compiler: compiler, lightTypes: lightTypes, stats: stats, procedural: procedural,
+                try Pipelines(device: device, source: url, compiler: compiler, lightTypes: lightTypes, stats: stats, procedural: procedural,
                               load: job)
             }
             if case .failure = result { job?.fail() } else { job?.finish() }
@@ -540,8 +539,8 @@ extension Renderer {
                 guard let self else { return }
                 switch result {
                 case .success(let made):
-                    // A scene with another API or other light types came in meanwhile: compile again, for that one.
-                    if let current = self.pipelines, made.api != current.api || made.lightTypes != current.lightTypes
+                    // A scene with other light types came in meanwhile: compile again, for that one.
+                    if let current = self.pipelines, made.lightTypes != current.lightTypes
                         || made.procedural != current.procedural {
                         return self.reloadShaders(then: done)
                     }
