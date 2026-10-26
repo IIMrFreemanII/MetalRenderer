@@ -113,11 +113,21 @@ let package = Package(
             exclude: ["Shaders"],
             swiftSettings: engineSettings
         ),
+        // Procedural modelling: Houdini's geometry (points, vertices, primitives and the detail, with attributes of any
+        // name and groups), the node networks that make it, their nodes and cooker, and procedural assets. On the
+        // modeller: its meshes and operations are what some nodes run. Putting an asset in a scene is the engine's,
+        // its network editor the Modeller's.
+        .target(
+            name: "Procedural",
+            dependencies: ["EngineCore", "Modeling"],
+            path: "Sources/Procedural",
+            swiftSettings: engineSettings
+        ),
         // The engine: the scene, the renderer and its systems, the editors' workshop scenes, the benchmarks; all but
         // the core, the editors, the game and the entry point.
         .target(
             name: "MetalRenderer",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural"],
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.
@@ -128,7 +138,7 @@ let package = Package(
         // engine never calls them: they read its reports (RendererController) and send it work.
         .target(
             name: "Editors",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer"],
             path: "Sources/Editors",
             swiftSettings: engineSettings
         ),
@@ -136,7 +146,7 @@ let package = Package(
         // on the engine's `package` API. A change here recompiles this target alone (README, "Source layout").
         .target(
             name: "Game",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer"],
             path: "Sources/Game",
             swiftSettings: engineSettings
         ),
@@ -147,7 +157,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MetalRendererTests",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "MetalRenderer", "Editors", "Game"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer", "Editors", "Game"],
             path: "Tests/MetalRendererTests"
         )
     ]

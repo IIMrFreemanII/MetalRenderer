@@ -1,0 +1,50 @@
+import Foundation
+
+extension ProcNodeKind {
+    /// The node's geometry from its inputs' (in `c`): each kind's cook in its family's file.
+    func cook(_ c: inout ProcCook) throws -> ProcGeo {
+        switch self {
+        case .box: Generators.box(c)
+        case .grid: Generators.grid(c)
+        case .sphere: Generators.sphere(c)
+        case .tube: Generators.tube(c)
+        case .torus: Generators.torus(c)
+        case .circle: Generators.circle(c)
+        case .line: Generators.line(c)
+        case .add: Generators.add(c)
+        case .file: try Generators.file(c)
+        case .transform: try TransformNodes.transform(c)
+        case .merge: TransformNodes.merge(c)
+        case .copyxform: try TransformNodes.copyTransform(c)
+        case .mirror: try TransformNodes.mirror(c)
+        case .polyextrude: try PolygonNodes.polyextrude(c)
+        case .subdivide: try PolygonNodes.subdivide(c)
+        case .boolean: try PolygonNodes.boolean(c)
+        case .polybevel: try PolygonNodes.polybevel(c)
+        case .polyreduce: try PolygonNodes.polyreduce(c)
+        case .divide: try PolygonNodes.divide(c)
+        case .fuse: try PolygonNodes.fuse(c)
+        case .clean: try PolygonNodes.clean(c)
+        case .facet: try PolygonNodes.facet(c)
+        case .normal: try PolygonNodes.normal(c)
+        case .reverse: try PolygonNodes.reverse(c)
+        case .smooth: try PolygonNodes.smooth(c)
+        case .thicken: try PolygonNodes.thicken(c)
+        case .uvunwrap: try PolygonNodes.uvunwrap(c)
+        case .attribcreate: try AttributeNodes.attribcreate(c)
+        case .attribdelete: try AttributeNodes.attribdelete(c)
+        case .attribrename: try AttributeNodes.attribrename(c)
+        case .attribrandomize: try AttributeNodes.attribrandomize(c)
+        case .attribnoise: try AttributeNodes.attribnoise(c)
+        case .attribpromote: try AttributeNodes.attribpromote(c)
+        case .color: try AttributeNodes.color(c)
+        case .measure: try AttributeNodes.measure(c)
+        case .connectivity: try AttributeNodes.connectivity(c)
+        case .sort: try AttributeNodes.sort(c)
+        case .groupcreate: try AttributeNodes.groupcreate(c)
+        case .blast: try AttributeNodes.blast(c)
+        case .null, .output: try c.input()
+        case .switchnode: ProcCook.switchIndex(c.node, c.inputs.count).flatMap { c.inputs[$0] } ?? ProcGeo()
+        }
+    }
+}
