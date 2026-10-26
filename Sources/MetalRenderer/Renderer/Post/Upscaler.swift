@@ -24,11 +24,14 @@ package final class Upscaler {
     let scaler: AnyObject                   // MTLFXTemporalDenoisedScaler, or with `metal4` MTL4FXTemporalDenoisedScaler
     /// Metal 4's scaler, encoded into the frame's own command buffer (Metal4Frame.upscale); otherwise Metal 3's.
     let metal4: Bool
-    /// Whether a Metal 4 frame gets Metal 4's scaler: from macOS 27, unless `METALRENDERER_MFX4=0` (Metal 3's in an
-    /// interlude, as on macOS 26).
+    /// Whether a Metal 4 frame gets Metal 4's scaler: only with `METALRENDERER_MFX4=1`, from macOS 27. Otherwise Metal 3's
+    /// in an interlude. Metal 4's does part of its work in Metal 3 command buffers of its own, committed beside the
+    /// frame's without the interlude's gate (Metal4Frame.commit), and on macOS 27.0 (M4 Max) the frame's command buffer
+    /// then timed out (4 s, the GPU's work lost from there on) in the first frames of a big scene put in: the massive
+    /// Destruction, after any switch, 5 of 5 runs; Metal 3's in the interlude, 0 of 4.
     static let metal4Available: Bool = {
         guard #available(macOS 27.0, *) else { return false }
-        return ProcessInfo.processInfo.environment["METALRENDERER_MFX4"] != "0"
+        return ProcessInfo.processInfo.environment["METALRENDERER_MFX4"] == "1"
     }()
     static let hdrFormat = MTLPixelFormat.rgba16Float
 
