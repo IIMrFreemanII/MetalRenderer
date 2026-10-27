@@ -2368,11 +2368,20 @@ differ.
 | Attribute Transfer of Cd from 1000 points, most out of reach | 1M points | 36 ms | 45 ms |
 | Copy and Transform a 10×10 grid 5000 times | 500k points, 405k prims | 14 ms | |
 | Wrangle reading an int attribute as a float (converted) | 1M points | 1.0 ms (was 3.1 ms) | 12 ms |
+| Ray: a 300×300 grid onto a sphere of 9k triangles, along a direction | 90k points | 3.2 ms (was 151 ms) | 5.5 ms |
+| … to the nearest place (minimum) | 90k points | 18 ms (was 309 ms) | 20 ms |
+| Voronoi Fracture of a 24×48 sphere into 100 cells, cut (exact booleans) | 4.9k points, 3k prims | 91 ms (was 4.4 s) | |
+| … into 2000 cells, not cut | 113k points, 23k prims | 141 ms (was 5.0 s) | |
 
 The wrangle's time leaves out its compile (above). What the profile showed and was fixed: `PointGrid` (fuse,
 attribute transfer, relax, `nearpoint`) looked cells up in a Dictionary, and now uses a flat table; relax ran on one
-core; Grid, Sweep and the polygons' winding made a small array per quad. Each change keeps the output bit for bit (the
-test prints a fingerprint of each).
+core; Grid, Sweep and the polygons' winding made a small array per quad. Ray tested every triangle for every point, and now
+walks a tree over them (`TriangleBVH`, EngineCore's SAH builder), which finds the same triangle (the lowest on a tie).
+Voronoi Fracture built the input's BSP tree again for each cell's boolean (now once, each boolean working on a copy:
+`BooleanOps.Operand`), asked its seed grid for every cell within twice the input's size (now the grid's points in
+order when a query reaches all of them), measured the cell's corners after every neighbour (now after a cut that changed
+it), and made its cells on one core (now all, merged in the seeds' order). Each change keeps the output bit for bit (the
+test prints a fingerprint of each: of a SIMD3 its three lanes, the fourth being padding that differs run to run).
 
 Unoptimised (Xcode's Debug build of the package; `PROC_PERF_SIDE=100` for a 100×100 grid) two of them were quadratic or
 close to it. An attribute written row by row (`AttributeValues.set`), or appended in a merge loop, copied its whole column

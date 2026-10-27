@@ -5,9 +5,10 @@ import simd
 
 /// Cooks at scale, timed (release: `Tools/release.sh test --filter ProceduralPerfTests` with PROC_PERF=1): a 1M-point
 /// scatter (and relaxed), 10k copies to points, a wrangle over 1M points, a sweep along a 100k-point curve, the attribute
-/// nodes that write row by row or convert (PROC_PERF_SIDE: their grid's side, smaller unoptimised). Prints each
-/// node's own cook time (the best of three cooks, each by a new cooker: nothing cached) with the whole network's, and a
-/// fingerprint of the output (its positions, topology and attributes) that an optimisation must leave as it is.
+/// nodes that write row by row or convert, Ray onto a sphere, Voronoi Fracture (PROC_PERF_SIDE: the grids' side, smaller
+/// unoptimised). Prints each node's own cook time (the best of three cooks, each by a new cooker: nothing cached) with
+/// the whole network's, and a fingerprint of the output (its positions, topology and attributes) that an optimisation
+/// must leave as it is.
 final class ProceduralPerfTests: XCTestCase {
     private let environment = ProcEnvironment(file: { _ in nil }, stamp: { _ in 0 })
 
@@ -32,6 +33,13 @@ final class ProceduralPerfTests: XCTestCase {
     private func fingerprint(_ g: ProcGeo) -> UInt64 {
         var h = Hasher64()
         func add<T>(_ a: [T]) { a.withUnsafeBytes { h.add($0) } }
+        // (A SIMD3's fourth lane is padding, holding whatever was there: its three lanes only.)
+        func add(_ a: [SIMD3<Float>]) {
+            var f: [Float] = []
+            f.reserveCapacity(a.count * 3)
+            for v in a { f.append(v.x); f.append(v.y); f.append(v.z) }
+            add(f)
+        }
         add(g.P); add(g.vertexPoint); add(g.primStart); add(g.primClosed)
         for c in AttributeClass.allCases {
             let t = g.table(c)
@@ -165,6 +173,36 @@ final class ProceduralPerfTests: XCTestCase {
             g.link(grid(&g), to: id); g.link(id, to: w)
             _ = try ProcCooker(environment: environment).cook(g, w).get()
             try time("wrangle reads an int as a float", g, w)
+        }
+    }
+
+    /// Ray (along a direction and to the nearest place) of a grid's points onto a sphere of ~9k triangles.
+    func testRay() throws {
+        try perf()
+        print("Ray:")
+        let side = Int(ProcessInfo.processInfo.environment["PROC_PERF_SIDE"] ?? "") ?? 300
+        for method in ["project", "minimum"] {
+            var g = ProcGraph()
+            let grid = g.add(.grid, params: ["size": .vec2([3, 3]), "rows": .int(side), "cols": .int(side)])
+            let up = g.add(.transform, params: ["t": .vec3([0, 3, 0])])
+            let sphere = g.add(.sphere, params: ["rows": .int(48), "cols": .int(96)])
+            let ray = g.add(.ray, params: ["method": .string(method)])
+            g.link(grid, to: up); g.link(up, to: ray, 0); g.link(sphere, to: ray, 1)
+            try time("ray \(side * side) points onto a sphere, \(method)", g, ray)
+        }
+    }
+
+    /// Voronoi Fracture of a sphere: cut by exact booleans, and the cells alone.
+    func testVoronoi() throws {
+        try perf()
+        print("Voronoi Fracture:")
+        for (cells, cut) in [(100, true), (2000, false)] {
+            var g = ProcGraph()
+            let sphere = g.add(.sphere, params: ["rows": .int(24), "cols": .int(48)])
+            let pts = g.add(.scatter, params: ["npts": .int(cells), "seed": .int(4)])
+            let v = g.add(.voronoifracture, params: ["cutinput": .bool(cut)])
+            g.link(sphere, to: pts); g.link(sphere, to: v, 0); g.link(pts, to: v, 1)
+            try time("fracture a sphere into \(cells) cells\(cut ? ", cut" : "")", g, v)
         }
     }
 

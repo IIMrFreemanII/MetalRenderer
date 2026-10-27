@@ -303,26 +303,23 @@ package enum ScatterNodes {
 
     // MARK: Ray
 
-    /// The nearest hit of a ray from `o` along `d` (both ways if `both`) on the triangles: its distance and triangle.
-    static func cast(_ o: SIMD3<Float>, _ d: SIMD3<Float>, _ t: Triangles, both: Bool) -> (Float, Int)? {
-        var best: (Float, Int)?
-        for k in 0..<t.count {
-            let e1 = t.b[k] - t.a[k], e2 = t.c[k] - t.a[k]
-            let p = simd_cross(d, e2)
-            let det = simd_dot(e1, p)
-            if abs(det) < 1e-12 { continue }
-            let inv = 1 / det
-            let s = o - t.a[k]
-            let u = simd_dot(s, p) * inv
-            if u < 0 || u > 1 { continue }
-            let q = simd_cross(s, e1)
-            let v = simd_dot(d, q) * inv
-            if v < 0 || u + v > 1 { continue }
-            let dist = simd_dot(e2, q) * inv
-            if dist < 0 && !both { continue }
-            if abs(dist) < abs(best?.0 ?? .infinity) { best = (dist, k) }
-        }
-        return best
+    /// Where the line from `o` along the unit `d` meets triangle `k` (Möller–Trumbore): its distance along `d`, or nil
+    /// if it misses or meets it behind `o` (unless `both`). Ray tests the triangles through a `TriangleBVH`.
+    @inline(__always) static func hit(_ o: SIMD3<Float>, _ d: SIMD3<Float>, _ t: Triangles, _ k: Int, both: Bool) -> Float? {
+        let e1 = t.b[k] - t.a[k], e2 = t.c[k] - t.a[k]
+        let p = simd_cross(d, e2)
+        let det = simd_dot(e1, p)
+        if abs(det) < 1e-12 { return nil }
+        let inv = 1 / det
+        let s = o - t.a[k]
+        let u = simd_dot(s, p) * inv
+        if u < 0 || u > 1 { return nil }
+        let q = simd_cross(s, e1)
+        let v = simd_dot(d, q) * inv
+        if v < 0 || u + v > 1 { return nil }
+        let dist = simd_dot(e2, q) * inv
+        if dist < 0 && !both { return nil }
+        return dist
     }
 
     /// The nearest point of triangle (a, b, c) to `p` (Ericson's).
@@ -361,23 +358,20 @@ package enum ScatterNodes {
         var hitN = g.points.vectors3("N") ?? [SIMD3<Float>](repeating: [0, 1, 0], count: g.pointCount)
         var hit = [Int32](repeating: 0, count: g.pointCount)
         let n = g.pointCount
+        let tree = TriangleBVH(t)
         P.withUnsafeMutableBufferPointer { P in
             hitN.withUnsafeMutableBufferPointer { HN in
                 hit.withUnsafeMutableBufferPointer { H in
                     parallelChunks(n, grain: 256) { range in
+                        var stack: [Int32] = []
                         for i in range where picked[i] {
                             var k = -1
                             var at = P[i]
                             if nearest {
-                                var best = Float.infinity
-                                for j in 0..<t.count {
-                                    let q = closest(P[i], t.a[j], t.b[j], t.c[j])
-                                    let d = simd_distance_squared(q, P[i])
-                                    if d < best { best = d; k = j; at = q }
-                                }
+                                if let (j, q) = tree.nearest(P[i], t, stack: &stack) { k = j; at = q }
                             } else {
                                 let d = N.map { simd_length($0[i]) > 0 ? simd_normalize($0[i]) : dir } ?? dir
-                                if let (dist, j) = cast(P[i], d, t, both: both) { k = j; at = P[i] + d * dist }
+                                if let (dist, j) = tree.cast(P[i], d, t, both: both, stack: &stack) { k = j; at = P[i] + d * dist }
                             }
                             guard k >= 0 else { continue }
                             var fn = simd_cross(t.b[k] - t.a[k], t.c[k] - t.a[k])
@@ -422,14 +416,21 @@ package enum ScatterNodes {
         let grid = PointGrid(seeds)
         let cut = c.bool("cutinput")
         let insideName = c.string("interiorgroup")
-        var out = ProcGeo()
-        var near: [Int32] = []
-        let mesh = cut ? g.editMesh().mesh : EditMesh()
-        for (i, s) in seeds.enumerated() {
+        // The input's BSP tree built once for all the cells' booleans.
+        let operand = cut ? BooleanOps.Operand(g.editMesh().mesh) : nil
+        let reach = simd_length(b.hi - b.lo) * 2
+
+        /// Cell `i`'s piece, or nil if nothing is left of it.
+        func piece(_ i: Int, _ near: inout [Int32]) -> ProcGeo? {
+            let s = seeds[i]
             // The cell: the box, cut by the bisector with each neighbour that could reach it (ConvexCell's planes:
             // n . p > w is outside).
             var cell = ConvexCell(box: b.lo - pad, b.hi + pad)
-            let reach = simd_length(b.hi - b.lo) * 2
+            /// The cell's farthest corner from the seed (measured again only when a cut changed the cell).
+            func farthest(_ cell: ConvexCell) -> Float {
+                cell.vertices.map { simd_distance($0, s) }.max() ?? .infinity
+            }
+            var radius = farthest(cell)
             grid.within(s, radius: reach, into: &near)
             near.sort { simd_distance_squared(seeds[Int($0)], s) < simd_distance_squared(seeds[Int($1)], s) }
             for j in near where Int(j) != i {
@@ -437,16 +438,19 @@ package enum ScatterNodes {
                 let d = o - s
                 guard simd_length(d) > 1e-7 else { continue }
                 // Farther than twice the cell's reach: no plane of it can cut the cell.
-                if simd_length(d) / 2 > cell.vertices.map({ simd_distance($0, s) }).max() ?? .infinity { break }
+                if simd_length(d) / 2 > radius { break }
                 let n = simd_normalize(d)
                 let mid = (s + o) / 2
-                guard let next = cell.clipped(by: SIMD4(n, simd_dot(n, mid)), tag: Int32(j)) else { cell = ConvexCell(faces: []); break }
+                var changed = true
+                guard let next = cell.clipped(by: SIMD4(n, simd_dot(n, mid)), tag: Int32(j), changed: &changed) else { cell = ConvexCell(faces: []); break }
                 cell = next
+                if changed { radius = farthest(cell) }
             }
-            guard !cell.isEmpty else { continue }
+            guard !cell.isEmpty else { return nil }
             var piece = ProcGeo()
             var interior: [Bool] = []
-            for f in cell.faces where f.polygon.count >= 3 {
+            let faces = cell.faces.filter { $0.polygon.count >= 3 }
+            for f in faces {
                 let base = Int32(piece.P.count)
                 piece.P += f.polygon
                 piece.vertexPoint += (0..<Int32(f.polygon.count)).map { base + $0 }
@@ -457,13 +461,13 @@ package enum ScatterNodes {
             piece.syncCounts()
             // Each face's corners round its plane's normal (outward): turn those that run the other way.
             for p in 0..<piece.primCount {
-                let f = cell.faces.filter { $0.polygon.count >= 3 }[p]
+                let f = faces[p]
                 if simd_dot(piece.primNormal(p), SIMD3(f.plane.x, f.plane.y, f.plane.z)) < 0 { piece.vertexPoint[piece.vertexRange(p)].reverse() }
             }
-            if cut {
+            if let operand {
                 let cellMesh = piece.editMesh().mesh
                 let planes = cell.faces.filter { $0.tag >= 0 }.map(\.plane)
-                piece = ProcGeo(BooleanOps.apply(mesh, cellMesh, operation: .intersect, solver: .exact, voxel: 0.02))
+                piece = ProcGeo(operand.apply(cellMesh, operation: .intersect, solver: .exact, voxel: 0.02))
                 piece.prims.remove("material")
                 interior = (0..<piece.primCount).map { p in
                     let q = piece.primCenter(p)
@@ -476,8 +480,19 @@ package enum ScatterNodes {
             if cut && !insideName.isEmpty { piece.prims.setGroup(insideName, interior) }
             piece.prims.set("name", .string([Int32](repeating: 1, count: piece.primCount), table: ["", "piece\(i)"]))
             piece.points.set("piece", .int([Int32](repeating: Int32(i), count: piece.pointCount)))
-            out.merge(piece)
+            return piece
         }
+
+        // The cells on every core, merged in the seeds' order.
+        var pieces = [ProcGeo?](repeating: nil, count: seeds.count)
+        pieces.withUnsafeMutableBufferPointer { pieces in
+            parallelChunks(seeds.count, grain: 1) { range in
+                var near: [Int32] = []
+                for i in range { pieces[i] = piece(i, &near) }
+            }
+        }
+        var out = ProcGeo()
+        for p in pieces { if let p { out.merge(p) } }
         return out
     }
 }

@@ -141,6 +141,8 @@ package struct PointGrid {
     private var slotStart: [Int32] = []
     private var slotEnd: [Int32] = []
     private var shift: UInt64 = 61
+    /// The highest cell of a point (the lowest is 0).
+    private var top = SIMD3<Int32>.zero
     private let points: [SIMD3<Float>]
     private static let empty = UInt64.max   // (a key has 63 bits)
 
@@ -162,6 +164,7 @@ package struct PointGrid {
                             : cbrt(e.x * e.y * e.z * 2 / Float(max(1, points.count)))
             self.cell = max(size, 1e-5)
         }
+        top = coords(b.hi)
         // The points by cell, those of a cell in their own order.
         var keyed = [(key: UInt64, index: Int32)](unsafeUninitializedCapacity: points.count) { out, n in
             for i in 0..<points.count { (out.baseAddress! + i).initialize(to: (key(coords(points[i])), Int32(i))) }
@@ -294,6 +297,13 @@ package struct PointGrid {
         let lo = coords(p - radius), hi = coords(p + radius)
         let r2 = radius * radius
         withTables { t in
+            // Every cell in reach (Voronoi Fracture's cells): the points in `order`, which is the cells' order here (the
+            // keys sort by x, y, z while each is within ±2^20), without the walk over the empty cells.
+            let limit = SIMD3<Int32>(repeating: 1 << 20)
+            if all(lo .<= 0) && all(hi .>= top) && all(lo .>= 0 &- limit) && all(hi .< limit) {
+                for k in 0..<t.order.count where simd_distance_squared(t.points[Int(t.order[k])], p) <= r2 { body(t.order[k]) }
+                return
+            }
             var x = lo.x
             while x <= hi.x {
                 var y = lo.y

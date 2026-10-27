@@ -47,7 +47,9 @@ modelling" says what it is; this note says where things are, what was checked an
 - Performance: cooks are off the frame. `ProceduralPerfTests` (PROC_PERF=1, release) times a 1M scatter (and relaxed),
   10k copies, a 1M wrangle, a 100k-point sweep; README has the M4 Max numbers. `testAttributeWrites` times the row-by-row
   attribute nodes, conversions and merge loops (`PROC_PERF_SIDE=100` for an unoptimised build, where they were
-  quadratic: fixed). Not profiled yet: Ray's brute force over triangles, Voronoi's exact booleans per cell.
+  quadratic: fixed). `testRay` and `testVoronoi`: Ray through a triangle tree (17–47× faster), Voronoi's cells on every
+  core with the input's BSP tree built once (35–49×), same fingerprints. What Voronoi has left is spread out: the cells'
+  clipping (`ConvexCell.size` per cut), the booleans' own clipping, the neighbours' sort.
 - Not there: Houdini's expressions in parameters (`$PT`, `ch()`), packed primitives in the viewport, VDB / volumes,
   curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes,
   subnetworks.
