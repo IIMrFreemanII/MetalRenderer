@@ -37,6 +37,21 @@ package struct RendererStatus {
     package var destruction: DestructionStatus?
     /// What the scene's behaviour shows over the frame (SceneHUDView): the destruction's tool, the demolition's player.
     package var hud: SceneHUD?
+    /// The selected object of the scene's file (the Object inspector).
+    package var placed: PlacedStatus?
+}
+
+/// A placed object: its scene, its place in the scene's file, and what the file says of it.
+package struct PlacedStatus: Equatable {
+    package var kind: SceneKind
+    package var index: Int
+    package var object: SceneFile.Object
+
+    package init(kind: SceneKind, index: Int, object: SceneFile.Object) {
+        self.kind = kind
+        self.index = index
+        self.object = object
+    }
 }
 
 /// Where the walker is: in the world, and in the building it is in (which, its storey, its lot's frame).

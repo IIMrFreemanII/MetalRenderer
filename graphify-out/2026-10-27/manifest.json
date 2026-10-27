@@ -312,9 +312,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
-    "mtime": 1793039076.367432,
-    "seen": 1793055836.081385,
-    "ast_hash": "118f3649a4da7bdd47fa6d879d4d8a88",
+    "mtime": 1793084454.5605605,
+    "seen": 1793084743.722029,
+    "ast_hash": "3d9dcfcd110ac2e1acbc008a004241f3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Reflections.metal": {
@@ -2772,15 +2772,15 @@
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Checks.swift": {
-    "mtime": 1793039076.4646266,
-    "seen": 1793055836.0812612,
-    "ast_hash": "bb73e1cdbf67f98c4083aca514cbbb30",
+    "mtime": 1793083959.3979542,
+    "seen": 1793084743.7168388,
+    "ast_hash": "8b23f3ab45cb1a0fa847ddd05857ff69",
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Modes.swift": {
-    "mtime": 1793039076.466409,
-    "seen": 1793055836.081262,
-    "ast_hash": "f6e11dbbbf0443fec6f1302a0e33e925",
+    "mtime": 1793083959.3978236,
+    "seen": 1793084743.71684,
+    "ast_hash": "4a7832309b6badc683fdbe8480dfa663",
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Quality.swift": {
@@ -5730,9 +5730,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/procedural-handoff.md": {
-    "mtime": 1793058185.7336237,
-    "seen": 1793058234.956775,
-    "ast_hash": "11f933a711ed1475edd02a1ecefff1c9",
+    "mtime": 1793084721.327155,
+    "seen": 1793084743.7283468,
+    "ast_hash": "157f6263faa0ebd36a4f62024eea20db",
     "semantic_hash": ""
   }
 }

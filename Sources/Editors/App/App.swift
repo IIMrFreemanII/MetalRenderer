@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var buildingEditor: BuildingEditorPanel?
     private var characterEditor: CharacterEditorPanel?
     private var projectGraph: ProjectGraphPanel?
+    private var objectInspector: ObjectInspectorPanel?
     private var loadingOverlay: LoadingOverlay?
     private var sceneGizmo: SceneGizmo?
     private var dayBar: DayBar?
@@ -251,6 +252,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         projectGraph = graph
         if ProjectGraphPanel.wasVisible { graph.show(nextTo: window) }
         controller.onToggleProjectGraph = { [weak self] in self?.toggleProjectGraph(nil) }
+        let inspector = ObjectInspectorPanel(host: controller) { [weak self] slug in self?.editProceduralAsset(slug) }
+        objectInspector = inspector
+        inspector.attach(to: window)
+        if ObjectInspectorPanel.wasVisible == true { inspector.show(nextTo: window) }
         // The workshop is the editor's: entering it shows the editor.
         var kind = controller.settings.scene.kind
         solidItem?.state = controller.settings.solid ? .on : .off
@@ -297,6 +302,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let m = modeller else { return }
         m.show(nextTo: window)
         m.model.editSceneSelection()
+    }
+
+    @objc private func toggleObjectInspector(_ sender: Any?) {
+        objectInspector?.toggle(nextTo: window)
+    }
+
+    /// The Object inspector's Edit Asset in Modeller: the asset's network in the Modeller's Procedural workspace.
+    private func editProceduralAsset(_ slug: String) {
+        guard let m = modeller else { return }
+        m.show(nextTo: window)
+        m.model.procedural.openAsset(slug)
     }
 
     @objc private func toggleProjectGraph(_ sender: Any?) {
@@ -452,6 +468,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         modellerItem.keyEquivalentModifierMask = [.command, .shift]
         modellerItem.target = self
         appMenu.addItem(withTitle: "Edit Mesh in Modeller", action: #selector(editSelectionInModeller(_:)), keyEquivalent: "").target = self
+        let inspectorItem = appMenu.addItem(withTitle: "Object Inspector", action: #selector(toggleObjectInspector(_:)), keyEquivalent: "i")
+        inspectorItem.keyEquivalentModifierMask = [.command, .option]
+        inspectorItem.target = self
         let graphItem = appMenu.addItem(withTitle: "Project Graph…", action: #selector(toggleProjectGraph(_:)), keyEquivalent: "g")
         graphItem.keyEquivalentModifierMask = [.command, .shift]
         graphItem.target = self

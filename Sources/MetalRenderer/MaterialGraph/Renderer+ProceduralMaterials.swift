@@ -475,6 +475,7 @@ extension Renderer {
             && (oldSettings.kind != .vfxStage || oldSettings.stage.effects != scene.settings.stage.effects)
         // (Another scene's selection names other instances.)
         if let s = selection, !inScene(s.target) { select(nil) }
+        reselectPlaced()
         if walker != nil {
             orbit = nil
         } else if !scene.settings.kind.orbits {

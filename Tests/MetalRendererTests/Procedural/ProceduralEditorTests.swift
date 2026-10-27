@@ -129,6 +129,31 @@ final class ProceduralEditorTests: XCTestCase {
         XCTAssertEqual(session.graph.nodes.map(\.name), ["box1"])
     }
 
+    /// The Object inspector's Edit Asset in Modeller: the asset's network on a new object, in the Procedural tab.
+    func testOpenAsset() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("proc-open-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var g = ProcGraph()
+        let box = g.add(.box)
+        let sub = g.add(.subdivide)
+        g.link(box, to: sub)
+        g.setDisplay(sub)
+        try ProcStore.write(ProcAsset(name: "Pebble", graph: g, materials: [MaterialSlot(name: "Material", baseColor: [0.3, 0.3, 0.35, 1])]), slug: "pebble", in: folder)
+        let objects = model.document.objects.count
+        XCTAssertFalse(session.openAsset("nothing", in: folder))
+        XCTAssertEqual(model.document.objects.count, objects)
+        XCTAssertTrue(session.openAsset("pebble", in: folder))
+        XCTAssertEqual(model.workspace, .procedural)
+        XCTAssertEqual(model.document.objects.count, objects + 1)
+        XCTAssertEqual(model.activeObject?.name, "Pebble")
+        XCTAssertEqual(model.activeObject?.materials.map(\.baseColor), [[0.3, 0.3, 0.35, 1]])   // (the slot the cook names)
+        XCTAssertEqual(session.assetSlug, "pebble")
+        XCTAssertEqual(session.graph.nodes.map(\.name), ["box1", "subdivide1"])
+        XCTAssertEqual(mesh.faceCount, 24)
+        model.undo.undo()
+        XCTAssertEqual(model.document.objects.count, objects)
+    }
+
     func testScriptedSteps() throws {
         let modeller = ScriptModeller(device: try XCTUnwrap(MTLCreateSystemDefaultDevice()))
         let json = #"[{"workspace": "procedural"}, {"network": "new"}, {"node": {"add": "polyextrude", "after": "box1"}},"#

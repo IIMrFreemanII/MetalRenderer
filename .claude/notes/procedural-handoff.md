@@ -18,6 +18,8 @@ modelling" says what it is; this note says where things are, what was checked an
   assets), `ProcNetworkView` (GraphCanvas, nodes, Tab menu, info, host), `ProcParameterPane`, `ProcInspect`
   (handles, normals, Cd colours, numbers, spreadsheet), `ProcTheme`, `ProceduralScripting` (scripted steps).
 - `ModelObject.network` (JSON) in `Sources/Modeling`, saved in `.mrmesh`; the viewport's `template` draws.
+- `Sources/Editors/Placement`: the main window's Object inspector (a placed `proc:` copy's values, written through
+  `Renderer.setPlacedAsset` / `editPlaced`; `RendererStatus.placed`; `placedReselect` keeps the copy selected).
 - `Sources/MetalRenderer/Procedural/Scene+ProcAsset.swift` (`proc:` in `Scene.place`), hot reload of
   `Assets/Procedural` (DevReload). Demo: `Assets/Procedural/*.proc.json`, `Assets/Scenes/procedural.scene`, the
   `procedural` scene kind in `GameScenes` (the stage's builder). `ProceduralDemo` in `ProceduralAssetTests` makes them.
@@ -34,13 +36,13 @@ modelling" says what it is; this note says where things are, what was checked an
 
 ## Not done / next
 - Never shown in the window by hand (no window unasked): the network's scroll / pinch / keys inside the Modeller's
-  window, the handle drags with a real mouse, the code editor's focus are checked through the model only.
+  window, the handle drags with a real mouse, the code editor's focus are checked through the model only;
+  so is the Object inspector panel (its model by tests, its edits in a headless app, its look in offscreen pictures).
 - `.claude/skills/tests/scripts/related.sh` has no rows for `Sources/Procedural`, `Editors/Modeling/Procedural`
-  (the skills folder is write-protected here): add `Sources/Procedural/*` → the eight Procedural suites.
+  (the skills folder is write-protected here): add `Sources/Procedural/*` → the nine Procedural suites, and
+  `Sources/Editors/Placement/*` → ObjectInspectorTests.
 - The scene-switching check (`switches.py`) isn't on this branch (`Scripts/scene-switches.swift` is missing): run it
   after merging main. The procedural scene is the stage's builder plus placed objects (no systems of its own).
-- No inspector for placed objects in the main window: a copy's values are set when placing (`proc:slug?…`) or in
-  the scene file / scripts (`editPlaced`).
 - Performance: cooks are off the frame; not profiled. Big scatters (1M points), relax (O(n·k) per iteration, CPU),
   Ray's brute force over triangles, Voronoi's exact booleans per cell are the slow ones. M4 Max / Metal 4 untested.
 - Not there: Houdini's expressions in parameters (`$PT`, `ch()`), packed primitives in the viewport, VDB / volumes,

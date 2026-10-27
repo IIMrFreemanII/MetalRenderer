@@ -491,6 +491,9 @@ extension Renderer {
         status.hud = scene.behaviour?.hud
         status.destruction = scene.destructionRig.map { DestructionStatus(objects: $0.info) }
         status.cameraPosition = camera.position
+        if let k = placedSelection, let placed = scene.placed {
+            status.placed = PlacedStatus(kind: scene.settings.kind, index: k, object: placed.file.objects[k])
+        }
         if passTimeFrames > 0 {
             let n = Double(passTimeFrames)
             var times = passTimeOrder.map { (name: $0, ms: passTimeSums[$0]! / n) }

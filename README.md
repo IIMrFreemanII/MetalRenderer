@@ -2328,6 +2328,12 @@ on the right.
   and up, pscale, scale). Saved assets reload in the dev build. The **Procedural (assets)** scene
   (`METALRENDERER_SCENE=procedural`) shows the demo's: a rock field (scatter → random orient and pscale → `instance`
   rocks), a fence swept along a curve, L-system bushes of three seeds, a big rock with its own size.
+- **A placed copy's values.** The main window's **Object** inspector (*Object Inspector*, Option-Cmd-I; it shows
+  itself when a `proc:` copy is clicked, unless it was closed) lists the selected object of the scene's file and, for a
+  procedural asset, the parameters it promotes: this copy's values in bold with a button back to the asset's default,
+  the others at the asset's. A field submitted or a slider let go writes the object's `proc:<slug>?…` string into the
+  scene's file (`Renderer.setPlacedAsset`, through `editPlaced`) and makes the scene again with the asset cooked with it;
+  the copy stays selected. *Edit Asset in Modeller* opens the asset's network on a new object in the Procedural tab.
 - **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
   `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"wire": …}`, `{"flag": …}` steps, by node
   name, and the network in its state (`ProceduralScripting.swift`).

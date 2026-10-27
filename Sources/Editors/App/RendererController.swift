@@ -191,6 +191,11 @@ final class RendererController: InputHandler {
     /// Adds glTF models in front of the camera, or an HDR image as the sky (Renderer.addModels).
     func addModels(_ urls: [URL]) { renderer.perform { $0.addModels(urls) } }
 
+    /// The placed object `index` of `kind`'s scene file with another asset string (the Object inspector's values).
+    func setPlacedAsset(_ index: Int, of kind: SceneKind, to asset: String) {
+        renderer.perform { $0.setPlacedAsset(index, of: kind, to: asset) }
+    }
+
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }

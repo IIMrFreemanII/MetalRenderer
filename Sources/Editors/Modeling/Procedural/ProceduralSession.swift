@@ -192,6 +192,29 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         }
     }
 
+    /// Opens the asset `slug` as a new object with its network and material slots, active, in the Procedural
+    /// workspace; saving it under its name writes the same file. False (and a message) if there is no such asset.
+    @discardableResult
+    func openAsset(_ slug: String, in folder: URL? = ProcStore.folder) -> Bool {
+        guard let model else { return false }
+        guard let asset = ProcStore.read(slug, in: folder) else {
+            model.report("No procedural asset \(slug)")
+            return false
+        }
+        var o = ModelObject(name: asset.name, mesh: EditMesh())
+        o.network = encoded(asset.graph)
+        o.materials = asset.materials
+        model.setWorkspace(.procedural)
+        model.edit("Open Procedural Asset") { d in
+            d.objects.append(o)
+            d.active = d.objects.count - 1
+            d.selection = [o.id]
+        }
+        assetSlug = slug
+        model.report("Opened the procedural asset \(slug)")
+        return true
+    }
+
     /// The scene's reference to the saved asset with its promoted parameters' values now.
     var assetReference: String? {
         guard let slug = assetSlug else { return nil }
