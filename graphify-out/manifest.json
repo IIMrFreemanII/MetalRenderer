@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793095043.6918314,
-    "seen": 1793095697.2587361,
-    "ast_hash": "ffb13eabf977c0339684b5a06fa03cfe",
+    "mtime": 1793096957.937566,
+    "seen": 1793097211.3366451,
+    "ast_hash": "aebdbe5f1a62d5cfad20dec04aa468ad",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -1776,9 +1776,9 @@
     "semantic_hash": ""
   },
   "Tools/perf/hot-functions.txt": {
-    "mtime": 1793053007.1710162,
-    "seen": 1793055836.0815492,
-    "ast_hash": "c7db9523f14eb2866fceccacf1030ed2",
+    "mtime": 1793097175.0046308,
+    "seen": 1793097211.336705,
+    "ast_hash": "8a4226b8d264db3479eb17be9fac24cd",
     "semantic_hash": ""
   },
   ".claude/skills/data-oriented/scripts/profile.py": {
@@ -5490,9 +5490,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/GroupPattern.swift": {
-    "mtime": 1793055604.299864,
-    "seen": 1793055836.081451,
-    "ast_hash": "ad4799f0bf71a374a4b2b5e561ea42d3",
+    "mtime": 1793096781.308126,
+    "seen": 1793097211.332406,
+    "ast_hash": "52ffc173db7b4646c1013b336f8a0f92",
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/ProcGeo.swift": {
@@ -5520,9 +5520,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/Generators.swift": {
-    "mtime": 1793055314.8124807,
-    "seen": 1793055836.081453,
-    "ast_hash": "b00a2d2c1e1a205070d7766b09bff1f2",
+    "mtime": 1793096570.1068828,
+    "seen": 1793097211.3325179,
+    "ast_hash": "8030c28ab68d146d82999e6a43b4797c",
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/PolygonNodes.swift": {
@@ -5622,9 +5622,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ScatterNodes.swift": {
-    "mtime": 1793057848.56159,
-    "seen": 1793058234.9536781,
-    "ast_hash": "7168c506dbe0ea3681afbb7cb7dea5cf",
+    "mtime": 1793096545.8716466,
+    "seen": 1793097211.332624,
+    "ast_hash": "1f681a95cafb892de3f6d19546c7d0f4",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralScatterTests.swift": {
@@ -5634,9 +5634,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/CurveNodes.swift": {
-    "mtime": 1793056962.5408163,
-    "seen": 1793057055.501122,
-    "ast_hash": "6760c718d9184e1ec1cf9bfa2786b03e",
+    "mtime": 1793096596.8622556,
+    "seen": 1793097211.332496,
+    "ast_hash": "8def68d8224afe7ffd30b0b7f52a81aa",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralCurveTests.swift": {
@@ -5730,9 +5730,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/procedural-handoff.md": {
-    "mtime": 1793095679.8546746,
-    "seen": 1793095697.2580569,
-    "ast_hash": "aa1d610598b305d45e997225348be290",
+    "mtime": 1793096968.0287383,
+    "seen": 1793097211.3358731,
+    "ast_hash": "16a1f2e3b654702212cf2d3fe166214f",
     "semantic_hash": ""
   },
   "Sources/Editors/Placement/ObjectInspectorModel.swift": {
@@ -5799,6 +5799,12 @@
     "mtime": 1793095043.6902032,
     "seen": 1793095697.258371,
     "ast_hash": "33070672ae4c39e942e4a4d87bab99c6",
+    "semantic_hash": ""
+  },
+  "Tests/MetalRendererTests/Procedural/ProceduralPerfTests.swift": {
+    "mtime": 1793096596.8824322,
+    "seen": 1793097211.334189,
+    "ast_hash": "d868b9ae29b837e9c4a94c4c0e0e1bfa",
     "semantic_hash": ""
   }
 }

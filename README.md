@@ -2348,9 +2348,29 @@ on the right.
   `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"wire": …}`, `{"flag": …}` steps, by node
   name, and the network in its state (`ProceduralScripting.swift`).
 
+Cook times at scale, release on the M4 Max (`ProceduralPerfTests`, `PROC_PERF=1 Tools/release.sh test --filter
+ProceduralPerfTests`): a node's own cook, the best of three, nothing cached; the network's (its inputs too) where they
+differ.
+
+| Cook | Output | Node | Network |
+|---|---|---|---|
+| Scatter 1M points on a 100×100 grid | 1M points | 20 ms | |
+| … relaxed, 2 passes | 1M points | 267 ms (was 2.7 s) | |
+| Copy to Points: 10k boxes | 80k points, 60k prims | 1.5 ms | |
+| Copy to Points: 10k spheres (8×12) | 740k points, 840k prims | 19.5 ms | |
+| Attribute Wrangle over a 1000×1000 grid (3 attributes, noise) | 1M points | 4.1 ms | 14 ms (was 117 ms) |
+| Resample a helix to 100k points | 99k points | 11 ms | |
+| Sweep a 16-column tube along it | 1.6M points, 1.6M quads | 18.8 ms (was 94 ms) | 30 ms |
+
+The wrangle's time leaves out its compile (above). What the profile showed and was fixed: `PointGrid` (fuse,
+attribute transfer, relax, `nearpoint`) looked cells up in a Dictionary, and now uses a flat table; relax ran on one
+core; Grid, Sweep and the polygons' winding made a small array per quad. Each change keeps the output bit for bit (the
+test prints a fingerprint of each).
+
 Tests: `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
 `ProceduralCurveTests`, `ProceduralWrangleTests`, `ProceduralAssetTests`, `ProceduralEditorTests` (MODELING_PNG writes the
-tab's window; PROCEDURAL_DEMO=1 writes the demo's assets and scene file again).
+tab's window; PROCEDURAL_DEMO=1 writes the demo's assets and scene file again), `ProceduralPerfTests` (the timings
+above, with PROC_PERF=1).
 
 ### Geometry debug views
 

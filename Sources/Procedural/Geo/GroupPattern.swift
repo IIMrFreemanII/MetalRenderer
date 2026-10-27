@@ -129,12 +129,20 @@ package enum GroupPattern {
 }
 
 /// Points in a uniform grid of cells, for nearest-point and radius queries (fuse, attribute transfer, relax).
+///
+/// The cells that hold points are an open-addressed table, a power of two long (no Dictionary: a query reads a few
+/// dozen cells, and relaxing a million points asks a hundred million times).
 package struct PointGrid {
     private let cell: Float
     private let origin: SIMD3<Float>
     private var order: [Int32] = []
-    private var cells: [UInt64: Range<Int>] = [:]
+    /// Each slot's cell key (`PointGrid.empty`: none) and its run of `order`.
+    private var slotKey: [UInt64] = []
+    private var slotStart: [Int32] = []
+    private var slotEnd: [Int32] = []
+    private var shift: UInt64 = 61
     private let points: [SIMD3<Float>]
+    private static let empty = UInt64.max   // (a key has 63 bits)
 
     /// A grid over `points`; `cell` 0 picks one from their spread (about two points a cell).
     package init(_ points: [SIMD3<Float>], cell: Float = 0) {
@@ -154,26 +162,57 @@ package struct PointGrid {
                             : cbrt(e.x * e.y * e.z * 2 / Float(max(1, points.count)))
             self.cell = max(size, 1e-5)
         }
-        var keyed = points.indices.map { (key: key(coords(points[$0])), index: Int32($0)) }
-        keyed.sort { $0.key < $1.key }
+        // The points by cell, those of a cell in their own order.
+        var keyed = [(key: UInt64, index: Int32)](unsafeUninitializedCapacity: points.count) { out, n in
+            for i in 0..<points.count { (out.baseAddress! + i).initialize(to: (key(coords(points[i])), Int32(i))) }
+            n = points.count
+        }
+        keyed.sort { $0.key != $1.key ? $0.key < $1.key : $0.index < $1.index }
         order = keyed.map(\.index)
+        var cells = 0
+        for i in keyed.indices where i == 0 || keyed[i].key != keyed[i - 1].key { cells += 1 }
+        var bits: UInt64 = 3
+        while (1 << bits) < cells * 2 { bits += 1 }
+        shift = 64 - bits
+        let size = 1 << Int(bits)
+        slotKey = [UInt64](repeating: PointGrid.empty, count: size)
+        slotStart = [Int32](repeating: 0, count: size)
+        slotEnd = [Int32](repeating: 0, count: size)
         var i = 0
         while i < keyed.count {
             var j = i
             while j < keyed.count && keyed[j].key == keyed[i].key { j += 1 }
-            cells[keyed[i].key] = i..<j
+            let s = slot(keyed[i].key)
+            slotKey[s] = keyed[i].key
+            slotStart[s] = Int32(i)
+            slotEnd[s] = Int32(j)
             i = j
         }
     }
 
     @inline(__always) private func coords(_ p: SIMD3<Float>) -> SIMD3<Int32> {
-        SIMD3<Int32>(((p - origin) / cell).rounded(.down))
+        let f = ((p - origin) / cell).rounded(.down)
+        return SIMD3(Int32(f.x), Int32(f.y), Int32(f.z))   // (SIMD3's own conversion isn't specialised: 10× slower)
     }
 
     @inline(__always) private func key(_ c: SIMD3<Int32>) -> UInt64 {
         UInt64(UInt32(bitPattern: c.x &+ (1 << 20)) & 0x1F_FFFF) << 42
             | UInt64(UInt32(bitPattern: c.y &+ (1 << 20)) & 0x1F_FFFF) << 21
             | UInt64(UInt32(bitPattern: c.z &+ (1 << 20)) & 0x1F_FFFF)
+    }
+
+    /// The slot of `key`: where it is, or the empty one it would go in.
+    @inline(__always) private func slot(_ key: UInt64) -> Int {
+        let mask = slotKey.count - 1
+        var s = Int(truncatingIfNeeded: (key &* 0x9E37_79B9_7F4A_7C15) >> shift) & mask
+        while slotKey[s] != key && slotKey[s] != PointGrid.empty { s = (s + 1) & mask }
+        return s
+    }
+
+    /// The run of `order` in the cell at `c` (empty if it has no points).
+    @inline(__always) private func run(_ c: SIMD3<Int32>) -> Range<Int> {
+        let s = slot(key(c))
+        return Int(slotStart[s])..<Int(slotEnd[s])
     }
 
     /// The nearest point to `p` (-1 if there are none or none within `maxDistance`), skipping `except`.
@@ -185,16 +224,27 @@ package struct PointGrid {
         let limit = maxDistance.isFinite ? Int32(min(Float(1 << 19), (maxDistance / cell).rounded(.up))) + 1 : Int32(1 << 19)
         while ring <= limit {
             // The shell of cells `ring` away.
-            for dx in -ring...ring { for dy in -ring...ring { for dz in -ring...ring
-                where max(abs(dx), abs(dy), abs(dz)) == ring {
-                guard let r = cells[key(c &+ SIMD3(dx, dy, dz))] else { continue }
-                for k in r {
-                    let i = order[k]
-                    if i == except { continue }
-                    let d = simd_distance_squared(points[Int(i)], p)
-                    if d < bestD || (d == bestD && best >= 0 && i < best) { bestD = d; best = i }
+            var dx = -ring
+            while dx <= ring {
+                var dy = -ring
+                while dy <= ring {
+                    var dz = -ring
+                    while dz <= ring {
+                        // (Inside the shell: only its two faces along z.)
+                        if max(abs(dx), abs(dy), abs(dz)) == ring {
+                            for k in run(c &+ SIMD3(dx, dy, dz)) {
+                                let i = order[k]
+                                if i == except { continue }
+                                let d = simd_distance_squared(points[Int(i)], p)
+                                if d < bestD || (d == bestD && best >= 0 && i < best) { bestD = d; best = i }
+                            }
+                        }
+                        dz += abs(dx) == ring || abs(dy) == ring || dz == ring ? 1 : 2 * ring
+                    }
+                    dy += 1
                 }
-            } } }
+                dx += 1
+            }
             // Done once the next shell is farther than the best.
             if best >= 0 {
                 let reach = Float(ring) * cell
@@ -212,14 +262,45 @@ package struct PointGrid {
         return best
     }
 
+    /// Calls `body` with every point within `radius` of `p` (by cell, x then y then z, each cell's in their order).
+    @inline(__always) package func forEach(within radius: Float, of p: SIMD3<Float>, _ body: (Int32) -> Void) {
+        let lo = coords(p - radius), hi = coords(p + radius)
+        let r2 = radius * radius
+        let mask = slotKey.count - 1, shift = shift
+        order.withUnsafeBufferPointer { order in
+        points.withUnsafeBufferPointer { points in
+        slotKey.withUnsafeBufferPointer { keys in
+        slotStart.withUnsafeBufferPointer { starts in
+        slotEnd.withUnsafeBufferPointer { ends in
+            var x = lo.x
+            while x <= hi.x {
+                var y = lo.y
+                while y <= hi.y {
+                    var z = lo.z
+                    while z <= hi.z {
+                        // The cell's slot (as `slot`).
+                        let key = key(SIMD3(x, y, z))
+                        var s = Int(truncatingIfNeeded: (key &* 0x9E37_79B9_7F4A_7C15) >> shift) & mask
+                        while keys[s] != key && keys[s] != PointGrid.empty { s = (s + 1) & mask }
+                        var k = Int(starts[s])
+                        let end = Int(ends[s])
+                        while k < end {
+                            let i = order[k]
+                            if simd_distance_squared(points[Int(i)], p) <= r2 { body(i) }
+                            k += 1
+                        }
+                        z += 1
+                    }
+                    y += 1
+                }
+                x += 1
+            }
+        } } } } }
+    }
+
     /// Every point within `radius` of `p`, into `out` (cleared first).
     package func within(_ p: SIMD3<Float>, radius: Float, into out: inout [Int32]) {
         out.removeAll(keepingCapacity: true)
-        let lo = coords(p - radius), hi = coords(p + radius)
-        let r2 = radius * radius
-        for x in lo.x...hi.x { for y in lo.y...hi.y { for z in lo.z...hi.z {
-            guard let r = cells[key(SIMD3(x, y, z))] else { continue }
-            for k in r where simd_distance_squared(points[Int(order[k])], p) <= r2 { out.append(order[k]) }
-        } } }
+        forEach(within: radius, of: p) { out.append($0) }
     }
 }

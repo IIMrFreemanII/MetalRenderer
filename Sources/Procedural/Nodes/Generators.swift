@@ -16,9 +16,18 @@ enum Generators {
     /// Turns every polygon's front to `normal`'s side if the first one's isn't.
     static func face(_ g: inout ProcGeo, toward normal: SIMD3<Float>) {
         guard g.primCount > 0, simd_dot(g.primNormal(0), normal) < 0 else { return }
-        for p in 0..<g.primCount { g.vertexPoint[g.vertexRange(p)].reverse() }
+        let starts = g.primStart
+        func reverse<T>(_ a: inout [T]) {
+            a.withUnsafeMutableBufferPointer { a in
+                for p in 0..<(starts.count - 1) {
+                    var lo = Int(starts[p]), hi = Int(starts[p + 1]) - 1
+                    while lo < hi { a.swapAt(lo, hi); lo += 1; hi -= 1 }
+                }
+            }
+        }
+        reverse(&g.vertexPoint)
         if case .vector2(var uv)? = g.vertices["uv"] {
-            for p in 0..<g.primCount { uv[g.vertexRange(p)].reverse() }
+            reverse(&uv)
             g.vertices.set("uv", .vector2(uv))
         }
     }
@@ -74,16 +83,22 @@ enum Generators {
                 g.P.append(t + u * (a * size.x) + v * (b * size.y))
             }
         }
+        let quads = (rows - 1) * (cols - 1)
         var uv: [SIMD2<Float>] = []
+        uv.reserveCapacity(quads * 4)
+        g.vertexPoint.reserveCapacity(quads * 4)
+        g.primStart.reserveCapacity(quads + 1)
+        g.primClosed.reserveCapacity(quads)
         for r in 0..<(rows - 1) {
             for k in 0..<(cols - 1) {
                 let i = Int32(r * cols + k)
-                g.vertexPoint += [i, i + 1, i + 1 + Int32(cols), i + Int32(cols)]
+                g.vertexPoint.append(i); g.vertexPoint.append(i + 1)
+                g.vertexPoint.append(i + 1 + Int32(cols)); g.vertexPoint.append(i + Int32(cols))
                 g.primStart.append(Int32(g.vertexPoint.count))
                 g.primClosed.append(true)
                 let u0 = Float(k) / Float(cols - 1), u1 = Float(k + 1) / Float(cols - 1)
                 let v0 = Float(r) / Float(rows - 1), v1 = Float(r + 1) / Float(rows - 1)
-                uv += [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]
+                uv.append([u0, v0]); uv.append([u1, v0]); uv.append([u1, v1]); uv.append([u0, v1])
             }
         }
         g.syncCounts()

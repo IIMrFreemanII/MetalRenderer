@@ -109,3 +109,9 @@ sculptCopyRange(_:_:_:_:)
 sculptAreaSums(_:_:_:_:_:_:)
 sculptVertexNormals(_:_:_:_:_:_:_:_:)
 sculptWriteVertices(_:_:_:_:_:_:_:_:_:)
+
+# Procedural cooks (ProceduralPerfTests), per point on every core: the grid's queries, Scatter's placing and relaxing.
+PointGrid.forEach(within:of:_:)
+PointGrid.nearest(_:maxDistance:except:)
+closure #1 in closure #1 in closure #1 in closure #3 in static ScatterNodes.scatter(_:)
+closure #1 in closure #1 in closure #1 in closure #1 in closure #1 in static ScatterNodes.scatter(_:)

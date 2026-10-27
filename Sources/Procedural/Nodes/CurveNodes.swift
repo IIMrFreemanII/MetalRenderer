@@ -193,33 +193,43 @@ enum CurveNodes {
             let len = lengths(pts, closed: closed)
             let total = max(len[pts.count - 1], 1e-9)
             let base = Int32(out.P.count)
-            for (i, id) in ids.enumerated() {
-                var s = scale * (pscale?[id] ?? 1) * (widths.map { $0[id] } ?? 1)
-                if useRamp { s *= ProcParam.sample(ramp, len[i] / total) }
-                for q in shape {
-                    out.P.append(pts[i] + (f[i].b * q.x + f[i].n * q.y) * s)
-                    pointRows.append(Int32(id))
-                }
-            }
             let cols = shape.count, rows = pts.count
             let colSpans = shapeClosed ? cols : cols - 1
             let rowSpans = closed ? rows : rows - 1
+            out.P.reserveCapacity(out.P.count + rows * cols)
+            pointRows.reserveCapacity(pointRows.count + rows * cols)
+            for (i, id) in ids.enumerated() {
+                var s = scale * (pscale?[id] ?? 1) * (widths.map { $0[id] } ?? 1)
+                if useRamp { s *= ProcParam.sample(ramp, len[i] / total) }
+                let o = pts[i], b = f[i].b, n = f[i].n
+                for q in shape {
+                    out.P.append(o + (b * q.x + n * q.y) * s)
+                    pointRows.append(Int32(id))
+                }
+            }
             let shapeLen = lengths(shape.map { SIMD3($0.x, $0.y, 0) }, closed: shapeClosed)
             let shapeTotal = max(shapeLen[shapeLen.count - 1], 1e-9)
+            let quads = rowSpans * colSpans
+            out.vertexPoint.reserveCapacity(out.vertexPoint.count + quads * 4)
+            out.primStart.reserveCapacity(out.primStart.count + quads)
+            out.primClosed.reserveCapacity(out.primClosed.count + quads)
+            primRows.reserveCapacity(primRows.count + quads)
+            if doUV { uvs.reserveCapacity(uvs.count + quads * 4) }
             for i in 0..<rowSpans {
                 for k in 0..<colSpans {
                     let i1 = (i + 1) % rows, k1 = (k + 1) % cols
                     let a = base + Int32(i * cols + k), b = base + Int32(i * cols + k1)
                     let cc = base + Int32(i1 * cols + k1), d = base + Int32(i1 * cols + k)
                     // Fronts outward for a profile running counter-clockwise (the tube's).
-                    out.vertexPoint += [a, d, cc, b]
+                    out.vertexPoint.append(a); out.vertexPoint.append(d); out.vertexPoint.append(cc); out.vertexPoint.append(b)
                     out.primStart.append(Int32(out.vertexPoint.count))
                     out.primClosed.append(true)
                     primRows.append(Int32(p))
                     if doUV {
                         let u0 = shapeLen[k] / shapeTotal, u1 = (k + 1 == cols ? shapeTotal : shapeLen[k + 1]) / shapeTotal
                         let v0 = len[i] * uvScale.y, v1 = (i + 1 == rows ? len[rows] : len[i + 1]) * uvScale.y
-                        uvs += [SIMD2(u0 * uvScale.x, v0), SIMD2(u0 * uvScale.x, v1), SIMD2(u1 * uvScale.x, v1), SIMD2(u1 * uvScale.x, v0)]
+                        uvs.append(SIMD2(u0 * uvScale.x, v0)); uvs.append(SIMD2(u0 * uvScale.x, v1))
+                        uvs.append(SIMD2(u1 * uvScale.x, v1)); uvs.append(SIMD2(u1 * uvScale.x, v0))
                     }
                 }
             }

@@ -103,27 +103,36 @@ package enum ScatterNodes {
             let n = simd_cross(tris.b[Int(t)] - tris.a[Int(t)], tris.c[Int(t)] - tris.a[Int(t)])
             return simd_length(n) > 0 ? simd_normalize(n) : SIMD3(0, 1, 0)
         }
-        // Relaxing: each point pushed away from those nearer than the spacing, in its triangle's plane.
+        // Relaxing: each point pushed away from those nearer than the spacing, in its triangle's plane. Each pass reads
+        // the last one's places only, so its points move on every core.
         let iterations = max(0, c.int("relaxiterations"))
         if iterations > 0 && count > 1 {
             let spacing = sqrt(total / Float(count)) * 1.1
-            var near: [Int32] = []
+            var moved = P
             for _ in 0..<iterations {
                 let grid = PointGrid(P, cell: spacing)
-                var moved = P
-                for i in 0..<count {
-                    grid.within(P[i], radius: spacing, into: &near)
-                    var push = SIMD3<Float>.zero
-                    for j in near where Int(j) != i {
-                        let d = P[i] - P[Int(j)]
-                        let l = simd_length(d)
-                        if l > 1e-9 { push += d / l * (spacing - l) * 0.5 }
+                P.withUnsafeBufferPointer { P in
+                    moved.withUnsafeMutableBufferPointer { moved in
+                        normals.withUnsafeBufferPointer { normals in
+                            parallelChunks(count, grain: 2048) { range in
+                                for i in range {
+                                    let p = P[i]
+                                    var push = SIMD3<Float>.zero
+                                    grid.forEach(within: spacing, of: p) { j in
+                                        guard Int(j) != i else { return }
+                                        let d = p - P[Int(j)]
+                                        let l = simd_length(d)
+                                        if l > 1e-9 { push += d / l * (spacing - l) * 0.5 }
+                                    }
+                                    let n = normals[i]
+                                    push -= n * simd_dot(push, n)
+                                    moved[i] = p + push * 0.5
+                                }
+                            }
+                        }
                     }
-                    let n = normals[i]
-                    push -= n * simd_dot(push, n)
-                    moved[i] = P[i] + push * 0.5
                 }
-                P = moved
+                swap(&P, &moved)
             }
             // Back onto the surface: each point onto the plane of the triangle it started in.
             for i in 0..<count {
