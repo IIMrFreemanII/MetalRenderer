@@ -73,6 +73,8 @@ package struct ProcParamSpec {
     package var folder = ""
     package var help = ""
     package var shown: Condition?
+    /// Its expressions may vary per element (`$PT`, `@P`): the node reads it with `ProcCook.elementValues`.
+    package var perElement = false
 
     package init(_ name: String, _ title: String, _ value: ProcParam, _ ui: UI, folder: String = "", help: String = "",
                  when shown: Condition? = nil) {
@@ -84,6 +86,9 @@ package struct ProcParamSpec {
         self.help = help
         self.shown = shown
     }
+
+    /// The parameter, its expressions evaluated per element.
+    func varying() -> Self { var s = self; s.perElement = true; return s }
 
     // Short makers for the spec table.
     static func float(_ n: String, _ t: String, _ v: Float, _ span: ClosedRange<Float> = 0...1, folder: String = "", when: Condition? = nil) -> Self {

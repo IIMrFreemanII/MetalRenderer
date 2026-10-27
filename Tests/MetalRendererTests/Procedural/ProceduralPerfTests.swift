@@ -165,6 +165,14 @@ final class ProceduralPerfTests: XCTestCase {
             g.link(small, to: cd); g.link(cd, to: cx)
             try time("copy and transform a grid 5000 times", g, cx)
         }
+        do {
+            // An expression per point: the expression VM over 1M points.
+            var g = ProcGraph()
+            let a = g.add(.attribcreate, params: ["name": .string("h")])
+            g.nodes[g.index(of: a)!].expressions["valuex"] = "@P.z * 2 + sin($PT)"
+            g.link(grid(&g), to: a)
+            try time("attribute create by an expression per point", g, a)
+        }
         if WrangleCompiler.shared.problem() == nil {
             // The wrangle reads the int as a float: converted.
             var g = ProcGraph()

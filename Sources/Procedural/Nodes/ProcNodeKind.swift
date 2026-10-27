@@ -189,7 +189,7 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
         case .attribcreate:
             return ProcNodeSpec("Attribute Create", .attribute, "attribcreate", symbol: "plus.square", inputs: ["Geometry"], params: [
                 P.text("name", "Name", "attrib1"), P.classes(), P.menu("type", "Type", AttributeType.allCases.map(\.rawValue)),
-                P.vec4("value", "Value", .zero), P.text("string", "String", when: ProcNodeKind.onlyFor("type", "string")),
+                P.vec4("value", "Value", .zero).varying(), P.text("string", "String", when: ProcNodeKind.onlyFor("type", "string")),
                 P.group("group", "Group"),
             ], "Makes an attribute (or sets it) to a value, on the group's elements.")
         case .attribdelete:
@@ -241,8 +241,9 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
         case .sort:
             return ProcNodeSpec("Sort", .attribute, "sort", symbol: "arrow.up.arrow.down.square", inputs: ["Geometry"], params: [
                 P.classes("class", "Class", .point, ProcNodeKind.classes2),
-                P.menu("key", "Sort By", ["none", "x", "y", "z", "random", "attribute"]),
+                P.menu("key", "Sort By", ["none", "x", "y", "z", "random", "attribute", "expression"]),
                 P.int("seed", "Seed", 0, 0...100, when: ProcNodeKind.onlyFor("key", "random")),
+                P.float("expression", "Expression", 0, 0...1, when: ProcNodeKind.onlyFor("key", "expression")).varying(),
                 P.attribute("attribute", "Attribute", "", nil, when: ProcNodeKind.onlyFor("key", "attribute")),
                 P.bool("reverse", "Reverse", false),
             ], "Renumbers points or primitives in an order.")
@@ -345,7 +346,9 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
                 P.vec3("dir", "Direction", [0, 1, 0], folder: "Normal"), P.float("angle", "Spread Angle", 30, 0...180, folder: "Normal"),
                 P.bool("userandom", "Keep Random", false, folder: "Random"),
                 P.float("percent", "Percent", 50, 0...100, folder: "Random"), P.int("seed", "Seed", 0, 0...100, folder: "Random"),
-            ], "Makes a group from a pattern, a box, a facing direction and a random share, each narrowing the last.")
+                P.bool("useexpr", "Keep by Expression", false, folder: "Expression"),
+                P.float("expression", "Expression", 1, 0...1, folder: "Expression").varying(),
+            ], "Makes a group from a pattern, a box, a facing direction, a random share and an expression (non-zero keeps an element), each narrowing the last.")
         case .blast:
             return ProcNodeSpec("Blast", .group, "blast", symbol: "scissors", inputs: ["Geometry"], params: [
                 P.group(), pointsOrPrims, P.bool("negate", "Delete Non-Selected", false),

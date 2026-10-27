@@ -175,6 +175,64 @@ final class ProceduralEditorTests: XCTestCase {
         XCTAssertTrue(f.description.contains("kinds: box"))
     }
 
+    func testExpressionsAndTheFrame() throws {
+        model.setWorkspace(.procedural)
+        session.makeNetwork()
+        let box = session.graph.nodes[0].id
+        func width() -> Float { let x = mesh.positions.map(\.x); return (x.max() ?? 0) - (x.min() ?? 0) }
+        session.setExpression(box, "sizex", "$F")
+        session.frame = 3
+        XCTAssertEqual(width(), 3, accuracy: 1e-5)
+        XCTAssertEqual(session.info[box]?.channels["sizex"], 3)
+        model.undo.undo()
+        XCTAssertNil(session.graph.node(box)?.expressions["sizex"])
+        XCTAssertEqual(width(), 1, accuracy: 1e-5)
+        // A number typed over an expression: the value, the expression gone.
+        session.setExpression(box, "sizex", "$F")
+        session.setChannelValue(box, "size", 0, 2)
+        XCTAssertNil(session.graph.node(box)?.expressions["sizex"])
+        XCTAssertEqual(width(), 2, accuracy: 1e-5)
+        // Delete Channels keeps the last value.
+        session.setExpression(box, "sizex", "$F * 2")
+        session.frame = 2
+        session.deleteChannels(box, "size")
+        XCTAssertEqual(session.graph.node(box)?.expressions, [:])
+        XCTAssertEqual(session.graph.node(box)?.param("size").vec3.x, 4)
+        // Copy Parameter, Paste Relative References.
+        session.selection = [box]
+        let xf = try XCTUnwrap(session.add(.transform))
+        session.copiedParameter = (box, "size")
+        session.pasteRelativeReferences(xf, "t")
+        XCTAssertEqual(session.graph.node(xf)?.expressions["ty"], "ch(\"../box1/sizey\")")
+        XCTAssertEqual(session.info[xf]?.channels["tx"], 4)
+        // The scripted steps, and the state they show.
+        let modeller = ScriptModeller(device: try XCTUnwrap(MTLCreateSystemDefaultDevice()))
+        let json = #"[{"workspace": "procedural"}, {"network": "new"}, {"expr": {"node": "box1", "channel": "sizey", "source": "$F + 1"}},"#
+            + #" {"frame": 5}]"#
+        _ = try modeller.perform(try ModellerStep.decode(list: JSONSerialization.jsonObject(with: Data(json.utf8))).get())
+        let network = try XCTUnwrap(try modeller.state()["network"] as? [String: Any])
+        XCTAssertEqual(network["frame"] as? Double, 5)
+        let node = try XCTUnwrap((network["nodes"] as? [[String: Any]])?.first)
+        XCTAssertEqual(node["expressions"] as? [String: String], ["sizey": "$F + 1"])
+        XCTAssertEqual((node["channels"] as? [String: Any])?["sizey"] as? Double, 6)
+        let bad = try JSONSerialization.jsonObject(with: Data(#"[{"expr": {"node": "box1", "channel": "nope", "source": "1"}}]"#.utf8))
+        XCTAssertThrowsError(try modeller.perform(try ModellerStep.decode(list: bad).get()))
+        // A failing expression; the node above it cooked from the cache keeps its channels' values for the pane.
+        session.setExpression(box, "sizez", "$F * 0.5")
+        session.setExpression(xf, "rx", "nofunction()")
+        XCTAssertEqual(session.info[xf]?.error, "Rotate: nofunction() isn't a function here")
+        XCTAssertEqual(session.info[box]?.channels["sizez"], 1)
+        // The pane with an expression (green) and one that fails (red).
+        if let path = ProcessInfo.processInfo.environment["MODELING_PNG"] {
+            model.viewSize = [900, 640]
+            model.pixelScale = 2
+            session.focus = box
+            let rep = try XCTUnwrap(ModelingPictures.window(model))
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: path).appendingPathComponent("window-procedural-expressions.png"))
+        }
+    }
+
     func testHandlesDragParameters() throws {
         model.setWorkspace(.procedural)
         session.makeNetwork()

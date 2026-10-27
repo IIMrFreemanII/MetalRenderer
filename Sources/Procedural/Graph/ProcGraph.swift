@@ -10,6 +10,9 @@ package struct ProcNode: Codable, Equatable, Identifiable {
     package var name: String
     package var kind: ProcNodeKind
     package var params: [String: ProcParam] = [:]
+    /// Expressions by channel (`tx`, `seed`: ProcExprContext.swift), hscript's: a channel with one is cooked from it;
+    /// its value in `params` stays for when it is removed.
+    package var expressions: [String: String] = [:]
     package var at = SIMD2<Float>.zero
     package var display = false
     package var render = false
@@ -30,13 +33,14 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         params[name] ?? kind.spec.param(name)?.value ?? .float(0)
     }
 
-    private enum Key: String, CodingKey { case id, name, kind, params, at, display, render, bypass, template, comment }
+    private enum Key: String, CodingKey { case id, name, kind, params, expressions, at, display, render, bypass, template, comment }
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         id = try c.decode(String.self, forKey: .id)
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? id
         kind = try c.decode(ProcNodeKind.self, forKey: .kind)
         params = try c.decodeIfPresent([String: ProcParam].self, forKey: .params) ?? [:]
+        expressions = try c.decodeIfPresent([String: String].self, forKey: .expressions) ?? [:]
         at = try c.decodeIfPresent(SIMD2<Float>.self, forKey: .at) ?? .zero
         display = try c.decodeIfPresent(Bool.self, forKey: .display) ?? false
         render = try c.decodeIfPresent(Bool.self, forKey: .render) ?? false
@@ -50,6 +54,7 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         if name != id { try c.encode(name, forKey: .name) }
         try c.encode(kind, forKey: .kind)
         if !params.isEmpty { try c.encode(params, forKey: .params) }
+        if !expressions.isEmpty { try c.encode(expressions, forKey: .expressions) }
         try c.encode(at, forKey: .at)
         if display { try c.encode(true, forKey: .display) }
         if render { try c.encode(true, forKey: .render) }
@@ -254,11 +259,17 @@ package struct ProcGraph: Codable, Equatable {
     /// default) into the node parameters it targets.
     package func applying(_ values: [String: ProcParam]) -> ProcGraph {
         var g = self
-        for p in interface {
+        for (k, p) in interface.enumerated() {
             let v = values[p.name] ?? p.value
+            // What `ch("../name")` reads.
+            g.interface[k].value = v
             for t in p.targets {
                 guard let i = g.nodes.firstIndex(where: { $0.name == t.node || $0.id == t.node }) else { continue }
                 g.nodes[i].params[t.param] = v
+                // The promoted value wins over the target's expressions.
+                if let spec = g.nodes[i].kind.spec.param(t.param) {
+                    for c in ProcExprContext.channels(of: spec) { g.nodes[i].expressions[c] = nil }
+                }
             }
         }
         return g

@@ -22,13 +22,17 @@ enum AttributeNodes {
         let type = AttributeType(rawValue: c.string("type")) ?? .float
         let n = g.count(cls)
         let picked = cls == .detail ? [true] : try c.group(in: g, cls)
+        // Per element when its expressions say so ($PT, @P).
+        let each = type == .string ? nil : try c.elementValues("value", in: g, cls)
         if name == "P" && cls == .point {
             let v = c.vec4("value")
-            for i in 0..<n where picked[i] { g.P[i] = SIMD3(v.x, v.y, v.z) }
+            for i in 0..<n where picked[i] { let e = each?[i] ?? v; g.P[i] = SIMD3(e.x, e.y, e.z) }
             return g
         }
         var values = g.table(cls)[name].map { $0.type == type ? $0 : $0.converted(to: type) } ?? .zeros(type, count: n)
-        if picked.allSatisfy({ $0 }) {
+        if let each {
+            for i in 0..<n where picked[i] { values.set(i, each[i]) }
+        } else if picked.allSatisfy({ $0 }) {
             values = .filled(type, count: n, with: c.vec4("value"), string: c.string("string"))
         } else {
             for i in 0..<n where picked[i] {
@@ -319,6 +323,11 @@ enum AttributeNodes {
             let name = c.string("attribute")
             guard let a = g.table(cls)[name] else { throw ProcCookError("No \(cls.rawValue) attribute \"\(name)\"") }
             order.sort { a.component(Int($0), 0) != a.component(Int($1), 0) ? a.component(Int($0), 0) < a.component(Int($1), 0) : $0 < $1 }
+        case "expression":
+            // Its value per element (one value for all: the order stays).
+            if let v = try c.elementValues("expression", in: g, cls) {
+                order.sort { v[Int($0)].x != v[Int($1)].x ? v[Int($0)].x < v[Int($1)].x : $0 < $1 }
+            }
         default: break
         }
         if c.bool("reverse") { order.reverse() }
@@ -349,6 +358,13 @@ enum AttributeNodes {
         if c.bool("userandom") {
             let share = c.float("percent") / 100, seed = c.int("seed")
             for i in 0..<n where keep[i] { keep[i] = ProcNoise.random(i, seed: seed, 7) < share }
+        }
+        if c.bool("useexpr") {
+            if let v = try c.elementValues("expression", in: g, cls) {
+                for i in 0..<n where keep[i] { keep[i] = v[i].x != 0 }
+            } else if c.float("expression") == 0 {
+                keep = [Bool](repeating: false, count: n)
+            }
         }
         let old = g.table(cls).group(name)
         if let old {

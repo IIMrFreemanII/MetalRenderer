@@ -259,7 +259,8 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         let g = graph
         let focus = self.focus
         let doc = model?.document
-        let environment = fileEnvironment(doc, object: id)
+        var environment = fileEnvironment(doc, object: id)
+        environment.frame = frame
         let work = { [cooker, latest] () -> CookResult in
             cooker.environment = environment
             var r = CookResult(generation: gen, object: id)
@@ -410,9 +411,83 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         edit("Change \(n.name)", coalesce: "proc:\(node).\(name)") { $0.setParam(node, name, value) }
     }
 
+    // MARK: Expressions
+
+    /// The frame expressions read (`$F`, `$T`): the network bar's.
+    @Published var frame: Float = 1 { didSet { if frame != oldValue { requestCook() } } }
+    /// Playing the frames at 24 a second, 1 to 240 and round again.
+    @Published var playing = false {
+        didSet {
+            player?.invalidate()
+            player = nil
+            guard playing else { return }
+            player = Timer.scheduledTimer(withTimeInterval: 1 / Double(ProcExprContext.fps), repeats: true) { [weak self] _ in
+                guard let self else { return }
+                self.frame = self.frame >= 240 ? 1 : self.frame.rounded(.down) + 1
+            }
+        }
+    }
+    private var player: Timer?
+    /// The parameter Copy Parameter took, for Paste Relative References.
+    @Published var copiedParameter: (node: String, param: String)?
+
+    /// Sets channel `channel`'s expression (empty: removes it).
+    func setExpression(_ node: String, _ channel: String, _ source: String) {
+        let s = source.trimmingCharacters(in: .whitespaces)
+        let new = s.isEmpty ? nil : s
+        guard let n = graph.node(node), n.expressions[channel] != new else { return }
+        edit("Expression on \(n.name)", coalesce: "proc:\(node).\(channel).expr") { g in
+            if let i = g.index(of: node) { g.nodes[i].expressions[channel] = new }
+        }
+    }
+
+    /// A number typed into a channel that has an expression: the value, the expression gone.
+    func setChannelValue(_ node: String, _ param: String, _ component: Int?, _ value: Float) {
+        guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let channels = ProcExprContext.channels(of: spec)
+        let channel = component.map { channels[$0] } ?? param
+        edit("Change \(n.name)") { g in
+            guard let i = g.index(of: node) else { return }
+            g.nodes[i].params[param] = g.nodes[i].param(param).setting(component, value)
+            g.nodes[i].expressions[channel] = nil
+        }
+    }
+
+    /// Houdini's Delete Channels: the parameter's expressions removed, each channel keeping its last value.
+    func deleteChannels(_ node: String, _ param: String) {
+        guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let channels = ProcExprContext.channels(of: spec)
+        guard channels.contains(where: { n.expressions[$0] != nil }) else { return }
+        let values = info[node]?.channels ?? [:]
+        edit("Delete Channels") { g in
+            guard let i = g.index(of: node) else { return }
+            var v = g.nodes[i].param(param)
+            for (k, c) in channels.enumerated() where g.nodes[i].expressions[c] != nil {
+                if let x = values[c] ?? nil { v = v.setting(channels.count > 1 ? k : nil, x) }
+                g.nodes[i].expressions[c] = nil
+            }
+            g.nodes[i].params[param] = v
+        }
+    }
+
+    /// Each channel of `param` as `ch()` of the copied parameter's channel at the same place.
+    func pasteRelativeReferences(_ node: String, _ param: String) {
+        guard let (fromNode, fromParam) = copiedParameter, let src = graph.node(fromNode), let srcSpec = src.kind.spec.param(fromParam),
+              let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let from = ProcExprContext.channels(of: srcSpec), to = ProcExprContext.channels(of: spec)
+        edit("Paste Relative References") { g in
+            guard let i = g.index(of: node) else { return }
+            for (k, c) in to.enumerated() where k < from.count {
+                g.nodes[i].expressions[c] = src.id == n.id ? "ch(\"\(from[k])\")" : "ch(\"../\(src.name)/\(from[k])\")"
+            }
+        }
+    }
+
     func revertParam(_ node: String, _ name: String) {
         edit("Revert Parameter") { g in
-            if let i = g.index(of: node) { g.nodes[i].params[name] = nil }
+            guard let i = g.index(of: node) else { return }
+            g.nodes[i].params[name] = nil
+            for c in g.nodes[i].kind.spec.param(name).map(ProcExprContext.channels) ?? [] { g.nodes[i].expressions[c] = nil }
         }
     }
 

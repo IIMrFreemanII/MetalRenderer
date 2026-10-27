@@ -150,11 +150,30 @@ struct ProcParamRow: View {
     private var value: ProcParam { node.param(spec.name) }
     private func set(_ v: ProcParam) { session.setParam(node.id, spec.name, v) }
 
+    // MARK: Expressions
+
+    private var channels: [String] { ProcExprContext.channels(of: spec) }
+    private var hasExpression: Bool { channels.contains { node.expressions[$0] != nil } }
+
+    /// A channel's field (component `k`, nil: the number): a value, or an expression (typed in: anything that isn't a
+    /// number), shown green with its value from the last cook, red when the parameter's evaluation failed.
+    private func field(_ v: Double, _ k: Int?, integer: Bool = false, commit: @escaping (Double) -> Void) -> ProcNumberField {
+        let c = k.map { channels[$0] } ?? spec.name
+        let e = node.expressions[c]
+        let shown = e == nil ? nil : session.info[node.id]?.channels[c].map { $0.map(ProcExprContext.format) ?? "per element" }
+        let failed = e != nil && session.info[node.id]?.error?.hasPrefix("\(spec.title):") == true
+        let session = session, node = node.id, param = spec.name
+        return ProcNumberField(value: v, integer: integer, expression: e, shows: shown, failed: failed, help: failed ? session.info[node]?.error : nil,
+                               commit: { x in
+                                   if e != nil { session.setChannelValue(node, param, k, Float(x)) } else { commit(x) }
+                               }, onExpression: { session.setExpression(node, c, $0) })
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Text(spec.title)
                 .font(ProcTheme.font)
-                .foregroundColor(node.params[spec.name] == nil ? ProcTheme.label : ProcTheme.text)
+                .foregroundColor(node.params[spec.name] == nil && !hasExpression ? ProcTheme.label : ProcTheme.text)
                 .lineLimit(1)
                 .frame(width: 118, alignment: .trailing)
                 .padding(.top, 2)
@@ -164,7 +183,13 @@ struct ProcParamRow: View {
         }
         .padding(.horizontal, 8)
         .contextMenu {
-            Button("Revert to Default") { session.revertParam(node.id, spec.name) }.disabled(node.params[spec.name] == nil)
+            Button("Revert to Default") { session.revertParam(node.id, spec.name) }.disabled(node.params[spec.name] == nil && !hasExpression)
+            if hasExpression { Button("Delete Channels") { session.deleteChannels(node.id, spec.name) } }
+            if !channels.isEmpty {
+                Button("Copy Parameter") { session.copiedParameter = (node.id, spec.name) }
+                Button("Paste Relative References") { session.pasteRelativeReferences(node.id, spec.name) }
+                    .disabled(session.copiedParameter == nil)
+            }
             Button("Promote to Asset Parameter") { session.promote(node.id, spec.name) }
             Button("Copy Name") {
                 NSPasteboard.general.clearContents()
@@ -177,6 +202,7 @@ struct ProcParamRow: View {
     private var scrub: some Gesture {
         DragGesture(minimumDistance: 2)
             .onChanged { g in
+                guard !hasExpression else { return }
                 if scrubStart == nil { scrubStart = value }
                 guard let start = scrubStart else { return }
                 let dx = Float(g.translation.width)
@@ -195,20 +221,24 @@ struct ProcParamRow: View {
         switch spec.ui {
         case .number(let r):
             HStack(spacing: 4) {
-                ProcNumberField(value: Double(value.float)) { set(.float(Float($0))) }.frame(width: 64)
+                field(Double(value.float), nil) { set(.float(Float($0))) }.frame(width: 64)
                 Slider(value: Binding(get: { Double(min(max(value.float, r.lowerBound), r.upperBound)) },
                                       set: { set(.float(Float($0))) }), in: Double(r.lowerBound)...Double(r.upperBound))
-                    .controlSize(.mini)
+                    .controlSize(.mini).disabled(hasExpression)
             }
         case .integer(let r):
             HStack(spacing: 4) {
-                ProcNumberField(value: Double(value.int), integer: true) { set(.int(Int($0.rounded()))) }.frame(width: 64)
+                field(Double(value.int), nil, integer: true) { set(.int(Int($0.rounded()))) }.frame(width: 64)
                 Slider(value: Binding(get: { Double(min(max(value.int, r.lowerBound), r.upperBound)) },
                                       set: { set(.int(Int($0.rounded()))) }), in: Double(r.lowerBound)...Double(r.upperBound), step: 1)
-                    .controlSize(.mini)
+                    .controlSize(.mini).disabled(hasExpression)
             }
         case .toggle:
-            Toggle("", isOn: Binding(get: { value.bool }, set: { set(.bool($0)) })).toggleStyle(.checkbox).labelsHidden()
+            if node.expressions[spec.name] != nil {
+                field(value.bool ? 1 : 0, nil, integer: true) { set(.bool($0 != 0)) }.frame(width: 64)
+            } else {
+                Toggle("", isOn: Binding(get: { value.bool }, set: { set(.bool($0)) })).toggleStyle(.checkbox).labelsHidden()
+            }
         case .vector:
             vector
         case .color:
@@ -296,12 +326,12 @@ struct ProcParamRow: View {
         HStack(spacing: 3) {
             switch value {
             case .vec2(let v):
-                ForEach(0..<2, id: \.self) { k in ProcNumberField(value: Double(v[k])) { var w = v; w[k] = Float($0); set(.vec2(w)) } }
+                ForEach(0..<2, id: \.self) { k in field(Double(v[k]), k) { var w = v; w[k] = Float($0); set(.vec2(w)) } }
             case .vec4(let v):
-                ForEach(0..<4, id: \.self) { k in ProcNumberField(value: Double(v[k])) { var w = v; w[k] = Float($0); set(.vec4(w)) } }
+                ForEach(0..<4, id: \.self) { k in field(Double(v[k]), k) { var w = v; w[k] = Float($0); set(.vec4(w)) } }
             default:
                 let v = value.vec3
-                ForEach(0..<3, id: \.self) { k in ProcNumberField(value: Double(v[k])) { var w = v; w[k] = Float($0); set(.vec3(w)) } }
+                ForEach(0..<3, id: \.self) { k in field(Double(v[k]), k) { var w = v; w[k] = Float($0); set(.vec3(w)) } }
             }
         }
     }
@@ -343,7 +373,14 @@ struct ProcParamRow: View {
 struct ProcNumberField: View {
     let value: Double
     var integer = false
+    /// The channel's expression, and what shows of it while the field isn't being edited (its value).
+    var expression: String?
+    var shows: String?
+    var failed = false
+    var help: String?
     let commit: (Double) -> Void
+    /// Text that isn't a number becomes the channel's expression (nil: such text is ignored).
+    var onExpression: ((String) -> Void)?
     @State private var text = ""
     @FocusState private var focused: Bool
 
@@ -354,20 +391,37 @@ struct ProcNumberField: View {
             .foregroundColor(ProcTheme.text)
             .multilineTextAlignment(.trailing)
             .padding(.horizontal, 4).frame(height: 18)
-            .background(RoundedRectangle(cornerRadius: 3).fill(ProcTheme.field))
+            .background(RoundedRectangle(cornerRadius: 3).fill(expression == nil ? ProcTheme.field : failed ? ProcTheme.expressionError : ProcTheme.expression))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(ProcTheme.fieldBorder))
+            .help(help ?? expression ?? "")
             .focused($focused)
-            .onAppear { text = format(value) }
-            .onChange(of: value) { if !focused { text = format($0) } }
-            .onChange(of: focused) { if !$0 { submit() } }
+            .onAppear { text = shown }
+            .onChange(of: value) { _ in if !focused { text = shown } }
+            .onChange(of: expression) { _ in if !focused { text = shown } }
+            .onChange(of: shows) { _ in if !focused { text = shown } }
+            .onChange(of: focused) { f in if f { if let expression { text = expression } } else { submit() } }
             .onSubmit { submit() }
     }
 
     private func format(_ v: Double) -> String { integer ? String(Int(v.rounded())) : String(format: "%g", v) }
 
+    /// What the field shows unedited: the value, or the expression's value (its text before a cook has one).
+    private var shown: String { expression.map { shows ?? $0 } ?? format(value) }
+
     private func submit() {
-        if let v = ProcNumberField.evaluate(text), v != value { commit(v) }
-        text = format(ProcNumberField.evaluate(text) ?? value)
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if let onExpression {
+            if let expression, t == expression || t == shown { text = shown; return }
+            if let v = ProcNumberField.evaluate(t) {
+                if v != value || expression != nil { commit(v) }
+            } else if !t.isEmpty || expression != nil {
+                onExpression(t)
+            }
+            text = shown
+            return
+        }
+        if let v = ProcNumberField.evaluate(t), v != value { commit(v) }
+        text = format(ProcNumberField.evaluate(t) ?? value)
     }
 
     /// A number, or a simple expression of numbers and + - * / ( ) (nil if it isn't one).

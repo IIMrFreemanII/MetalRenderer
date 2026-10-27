@@ -25,6 +25,9 @@ enum ProcTheme {
     static let error = Color(red: 0.92, green: 0.25, blue: 0.22)
     static let warning = Color(red: 0.98, green: 0.72, blue: 0.20)
     static let slider = Color(red: 0.32, green: 0.45, blue: 0.62)
+    /// A field whose channel has an expression (Houdini's green), and one whose expression failed.
+    static let expression = Color(red: 0.19, green: 0.34, blue: 0.20)
+    static let expressionError = Color(red: 0.42, green: 0.15, blue: 0.14)
 
     static let font = Font.system(size: 11)
     static let small = Font.system(size: 10)

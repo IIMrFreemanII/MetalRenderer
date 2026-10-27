@@ -85,6 +85,19 @@ package enum ProcParam: Equatable, Hashable {
         default: ""
         }
     }
+    /// The value with component `k` of it (nil: the number itself) set to `x`, of the same kind.
+    package func setting(_ k: Int?, _ x: Float) -> ProcParam {
+        switch self {
+        case .float: return .float(x)
+        case .int: return .int(Int(x.rounded()))
+        case .bool: return .bool(x != 0)
+        case .vec2(var v): if let k, k < 2 { v[k] = x }; return .vec2(v)
+        case .vec3(var v): if let k, k < 3 { v[k] = x }; return .vec3(v)
+        case .vec4(var v): if let k, k < 4 { v[k] = x }; return .vec4(v)
+        default: return self
+        }
+    }
+
     package var points: [SIMD3<Float>] { if case .points(let p) = self { return p }; return [] }
     package var ramp: [SIMD2<Float>] { if case .ramp(let r) = self { return r }; return [SIMD2(0, 0), SIMD2(1, 1)] }
 

@@ -50,6 +50,11 @@ modelling" says what it is; this note says where things are, what was checked an
   quadratic: fixed). `testRay` and `testVoronoi`: Ray through a triangle tree (17–47× faster), Voronoi's cells on every
   core with the input's BSP tree built once (35–49×), same fingerprints. What Voronoi has left is spread out: the cells'
   clipping (`ConvexCell.size` per cut), the booleans' own clipping, the neighbours' sort.
-- Not there: Houdini's expressions in parameters (`$PT`, `ch()`), packed primitives in the viewport, VDB / volumes,
+- Expressions in parameters (`Sources/Procedural/Expr`: parser, a compiler that folds what doesn't vary, a stack VM
+  per element): `ProceduralExpressionTests`, the editor's in `ProceduralEditorTests.testExpressionsAndTheFrame`. Not
+  there yet: expressions on menus and toggles typed in (a toggle shows a field once it has one), Python expressions,
+  `chramp`, `$HIP`-style paths, absolute node paths, a channel's keyframes; a placed asset doesn't animate (its
+  `frame=` is fixed).
+- Not there: packed primitives in the viewport, VDB / volumes,
   curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes,
   subnetworks.

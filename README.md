@@ -2324,6 +2324,22 @@ on the right.
   build's modules (Xcode's tools needed) into a bundle kept in `~/Library/Caches/MetalRenderer/wrangles` by its
   source: the first compile of a session warms Swift's module cache (about 8 s), a new snippet after that takes well
   under a second, one seen before nothing.
+- **Expressions** (Houdini's hscript, `Sources/Procedural/Expr`). Type anything that isn't a number into a number
+  field and it becomes that channel's expression: the field turns green and shows its value (red, with the message,
+  when it fails); clicking it shows the text. A channel is a parameter (`seed`), or a vector's component (`tx`,
+  `sizey`). `ch("sizex")` reads this node's channel, `ch("../box1/sizex")` another node's, `ch("../seed")` the asset's
+  promoted parameter (an instance's value). `$F`, `$T` read the frame (the network bar's field, with play at 24 a
+  second; a placed asset cooks at frame 1, or `proc:<slug>?frame=12`); `$NPT`, `$CEX`, `$XMIN`, `$SIZEX` and
+  `npoints(0)`, `bbox(0, D_YMAX)`, `centroid(0, D_X)`, `point(0, "P", 3, 1)`, `detail(0, "iteration", 0)` read the
+  node's inputs (or a node by path, `npoints("../box1")`). Functions: `fit`, `fit01`, `clamp`, `lerp`, `smooth`, `rand`,
+  `noise`, `if`, `min`, `max`, `pow`, `sqrt`, `abs`, `floor`, `round`, `sin` … (degrees, as hscript's), `opdigits(".")`.
+  Per element, where Houdini evaluates per element (Attribute Create's Value, Group Create's *Keep by Expression*,
+  Sort by expression): `$PT`, `$PR`, `$TX`, `@P.y`, `@Cd.r`, any `@attr`. Text fields expand `` `expr` ``, `$OS` and
+  `$F` (`piece$F`). Right-click a parameter: *Delete Channels* (keeping the last value), *Copy Parameter*, *Paste
+  Relative References* (`ch()` of the copied one). An expression compiles once per cook: what doesn't vary is folded to
+  a number then, what does runs as flat code over a stack of floats on every core (1M points by
+  `@P.z * 2 + sin($PT)`: 4.7 ms, as the three-attribute wrangle's 4.2). A node's key holds its expressions and what they read (the frame only if it is read,
+  the channels it reads), so a new frame recooks only what reads it.
 - **Cooking.** A node's output is kept under a hash of its kind, parameters and inputs (`ProcCooker`): an edit cooks
   that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own.
 - **Inspecting.** Over the viewport: point dots, point and primitive numbers, normals, colour by `Cd`, and
@@ -2345,8 +2361,9 @@ on the right.
   scene's file (`Renderer.setPlacedAsset`, through `editPlaced`) and makes the scene again with the asset cooked with it;
   the copy stays selected. *Edit Asset in Modeller* opens the asset's network on a new object in the Procedural tab.
 - **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
-  `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"wire": …}`, `{"flag": …}` steps, by node
-  name, and the network in its state (`ProceduralScripting.swift`).
+  `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"expr": {"node": "box1", "channel": "sizex",
+  "source": "$F * 0.1"}}`, `{"frame": 12}`, `{"wire": …}`, `{"flag": …}` steps, by node name, and the network in its
+  state, expressions and their values too (`ProceduralScripting.swift`).
 
 Cook times at scale, release on the M4 Max (`ProceduralPerfTests`, `PROC_PERF=1 Tools/release.sh test --filter
 ProceduralPerfTests`): a node's own cook, the best of three, nothing cached; the network's (its inputs too) where they
@@ -2368,6 +2385,7 @@ differ.
 | Attribute Transfer of Cd from 1000 points, most out of reach | 1M points | 36 ms | 45 ms |
 | Copy and Transform a 10×10 grid 5000 times | 500k points, 405k prims | 14 ms | |
 | Wrangle reading an int attribute as a float (converted) | 1M points | 1.0 ms (was 3.1 ms) | 12 ms |
+| Attribute Create by an expression per point (`@P.z * 2 + sin($PT)`) | 1M points | 4.7 ms | 13 ms |
 | Ray: a 300×300 grid onto a sphere of 9k triangles, along a direction | 90k points | 3.2 ms (was 151 ms) | 5.5 ms |
 | … to the nearest place (minimum) | 90k points | 18 ms (was 309 ms) | 20 ms |
 | Voronoi Fracture of a 24×48 sphere into 100 cells, cut (exact booleans) | 4.9k points, 3k prims | 91 ms (was 4.4 s) | |
@@ -2391,7 +2409,7 @@ counts; the queries now read them through buffer pointers. At 10k points, before
 30 ms, Copy and Transform's 5000 merges 1.1 s → 0.2 s, Attribute Randomize 7.6 → 2.2 ms; at 1M points the transfer
 went from 650 s to 4 s.
 
-Tests: `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
+Tests: `ProceduralExpressionTests`, `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
 `ProceduralCurveTests`, `ProceduralWrangleTests`, `ProceduralAssetTests`, `ProceduralEditorTests` (MODELING_PNG writes the
 tab's window; PROCEDURAL_DEMO=1 writes the demo's assets and scene file again), `ProceduralPerfTests` (the timings
 above, with PROC_PERF=1).

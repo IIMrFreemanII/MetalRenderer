@@ -115,3 +115,5 @@ PointGrid.forEach(within:of:_:)
 PointGrid.nearest(_:maxDistance:except:)
 closure #1 in closure #1 in closure #1 in closure #3 in static ScatterNodes.scatter(_:)
 closure #1 in closure #1 in closure #1 in closure #1 in closure #1 in static ScatterNodes.scatter(_:)
+# Parameter expressions per element (Attribute Create's Value, Group Create's and Sort's expressions): the stack VM.
+closure #1 in closure #1 in closure #1 in closure #1 in closure #1 in ProcExprProgram.run()

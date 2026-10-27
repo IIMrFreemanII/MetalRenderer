@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793105670.750043,
-    "seen": 1793105687.672975,
-    "ast_hash": "2c640ea384e2b288612d55dc6862bcc6",
+    "mtime": 1793107884.3793614,
+    "seen": 1793107900.60704,
+    "ast_hash": "98d17217137b6ce7056da683fe9a59c3",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -3378,9 +3378,9 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/Geometry/BVH.swift": {
-    "mtime": 1793039076.4437878,
-    "seen": 1793055836.081244,
-    "ast_hash": "326cfa0a348c7e721f9f5c8bc36680c3",
+    "mtime": 1793107296.0088644,
+    "seen": 1793107900.5958688,
+    "ast_hash": "8b2049521788ae0792c69ad7df130c74",
     "semantic_hash": ""
   },
   "Sources/EngineCore/Geometry/MeshBuilder.swift": {
@@ -3738,9 +3738,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Destruction/Fracture/ConvexCell.swift": {
-    "mtime": 1793039076.4097311,
-    "seen": 1793055836.081429,
-    "ast_hash": "2f943c80f860f6c28e61676cd386cbdf",
+    "mtime": 1793107277.3340495,
+    "seen": 1793107900.602536,
+    "ast_hash": "b5c1551b03121ef825cbc19694fe3899",
     "semantic_hash": ""
   },
   "Sources/Physics/Destruction/Fracture/FracturePatterns.swift": {
@@ -5142,9 +5142,9 @@
     "semantic_hash": ""
   },
   "Sources/Modeling/Modifiers/BooleanOps.swift": {
-    "mtime": 1793039076.3872285,
-    "seen": 1793055836.081405,
-    "ast_hash": "9c7a18db3d8e8c29b71954414705164a",
+    "mtime": 1793107277.3317664,
+    "seen": 1793107900.6016982,
+    "ast_hash": "ddaaf2d0ba584aa6320fd802ed8f3e8c",
     "semantic_hash": ""
   },
   "Sources/Modeling/Modifiers/CatmullClark.swift": {
@@ -5490,9 +5490,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/GroupPattern.swift": {
-    "mtime": 1793105188.219596,
-    "seen": 1793105687.668698,
-    "ast_hash": "67bc33fbce628ecc7948012dc2dacb3a",
+    "mtime": 1793107277.3364327,
+    "seen": 1793107900.603297,
+    "ast_hash": "4a9e8ed664d1ce32a5ebd5073f46b5fb",
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/ProcGeo.swift": {
@@ -5622,9 +5622,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ScatterNodes.swift": {
-    "mtime": 1793102879.2316825,
-    "seen": 1793105687.668952,
-    "ast_hash": "636ce619686fb7a228e09408e07f04bd",
+    "mtime": 1793107296.0086148,
+    "seen": 1793107900.603518,
+    "ast_hash": "1b783af194af94fa2fc920c69431f18b",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralScatterTests.swift": {
@@ -5730,9 +5730,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/procedural-handoff.md": {
-    "mtime": 1793105670.750194,
-    "seen": 1793105687.672203,
-    "ast_hash": "122405ec42f6f7916e9edaf331176882",
+    "mtime": 1793107884.3794913,
+    "seen": 1793107900.6063612,
+    "ast_hash": "2652821c3ce466c51382cdd221728725",
     "semantic_hash": ""
   },
   "Sources/Editors/Placement/ObjectInspectorModel.swift": {
@@ -5802,9 +5802,15 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralPerfTests.swift": {
-    "mtime": 1793102768.7183337,
-    "seen": 1793105687.670505,
-    "ast_hash": "54872e2d51ef613e953f6b77bbcab517",
+    "mtime": 1793107048.326004,
+    "seen": 1793107900.604867,
+    "ast_hash": "9960d4adde9a1e483bc2154ff3cea4ae",
+    "semantic_hash": ""
+  },
+  "Sources/Procedural/Geo/TriangleBVH.swift": {
+    "mtime": 1793107296.0087314,
+    "seen": 1793107900.603314,
+    "ast_hash": "50f85fe889950194a8d2b7cdc02662a1",
     "semantic_hash": ""
   }
 }

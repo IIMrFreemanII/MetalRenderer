@@ -252,6 +252,13 @@ struct ProcNetworkBar: View {
             Text(session.model?.activeObject?.name ?? "").font(ProcTheme.font).foregroundColor(ProcTheme.text)
             if session.cooking { ProgressView().controlSize(.mini) }
             Spacer()
+            // The frame expressions read ($F, $T).
+            Button { session.playing = false; session.frame = 1 } label: { Image(systemName: "backward.end.fill") }
+                .buttonStyle(.borderless).help("Frame 1")
+            Button { session.playing.toggle() } label: { Image(systemName: session.playing ? "pause.fill" : "play.fill") }
+                .buttonStyle(.borderless).help(session.playing ? "Stop" : "Play (24 frames a second)")
+            Text("Frame").font(ProcTheme.small).foregroundColor(ProcTheme.dim)
+            ProcNumberField(value: Double(session.frame)) { session.frame = Float($0) }.frame(width: 44)
             Menu("Network") {
                 Button("Lay Out All  L") { session.selection = []; session.layout() }
                 Button("Frame All  F") { session.frameAll(in: session.canvasSize) }

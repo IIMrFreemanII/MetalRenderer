@@ -106,6 +106,7 @@ package struct ProcAsset: Codable, Equatable {
             let f = n.param("file").string
             h.add("\(f)@\(environment.stamp(f))")
         }
+        h.add("frame=\(environment.frame)")
         return "proc-" + h.name()
     }
 
@@ -161,6 +162,9 @@ package struct ProcAssetReference: Equatable {
             }
         }
     }
+
+    /// The frame its expressions read (`$F`, `$T`): its `frame=` value, else 1.
+    package var frame: Float { values["frame"].flatMap(Float.init) ?? 1 }
 
     /// The scene file's asset string (`proc:<slug>?…`).
     package var asset: String {

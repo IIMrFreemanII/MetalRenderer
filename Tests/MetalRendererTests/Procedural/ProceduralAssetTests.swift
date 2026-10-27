@@ -31,6 +31,26 @@ final class ProceduralAssetTests: XCTestCase {
         return ProcAsset(name: "Box", graph: g, materials: [MaterialSlot(name: "Material", baseColor: [1, 0, 0, 1])])
     }
 
+    /// `proc:<slug>?frame=<n>`: the frame its expressions read; each frame's cook is a mesh of its own, copies share it.
+    func testPlacedFrame() throws {
+        var g = ProcGraph()
+        let box = g.add(.box)
+        g.nodes[g.index(of: box)!].expressions["sizex"] = "$F"
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("proc-frame-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        setenv("METALRENDERER_PROCEDURAL", folder.path, 1)
+        defer { unsetenv("METALRENDERER_PROCEDURAL"); try? FileManager.default.removeItem(at: folder) }
+        try ProcStore.write(ProcAsset(name: "Bar", graph: g), slug: "bar")
+        let scene = Scene()
+        let instances = scene.instances.count
+        for f in ["1", "3", "3"] { scene.addProcAsset("bar?frame=\(f)", transform: matrix_identity_float4x4) }
+        XCTAssertEqual(scene.proceduralMeshes.count, 2)
+        XCTAssertEqual(scene.instances.count - instances, 3)
+        let widths = scene.proceduralMeshes.values.map { scene.meshBounds[$0.mesh] }.map { $0.1.x - $0.0.x }.sorted()
+        XCTAssertEqual(widths[0], 1, accuracy: 1e-5)
+        XCTAssertEqual(widths[1], 3, accuracy: 1e-5)
+    }
+
     func testCookWithValues() throws {
         let a = boxAsset()
         let values = a.values(["height": "1,3,1", "seed": "4", "unknown": "1"])

@@ -7,7 +7,7 @@ import simd
 /// Procedural assets (`Assets/Procedural/<slug>.proc.json`) in a scene: what a scene file's `proc:<slug>?…` object
 /// places. Each is cooked with its values when the scene is built (from the generated cache when the same asset and
 /// values were cooked before); copies with the same values share one mesh; the points that name an asset (their
-/// `instance`) place it.
+/// `instance`) place it. `frame=<n>` sets the frame its expressions read.
 extension Scene {
     /// The asset `reference` names (what follows `proc:`) at `transform`, with its materials (or `material`).
     package func addProcAsset(_ reference: String, transform: float4x4, material override: Int? = nil, depth: Int = 0) {
@@ -17,13 +17,16 @@ extension Scene {
             return
         }
         let values = asset.values(ref.values)
-        let key = asset.cacheName(values, environment: .assets)
+        // `frame=` is the frame its expressions read (1 without it): a placed asset doesn't animate.
+        var environment = ProcEnvironment.assets
+        environment.frame = ref.frame
+        let key = asset.cacheName(values, environment: environment)
         let cooked: ProcAsset.Cooked
         if let c = proceduralCooks[key] {
             cooked = c
         } else {
             let start = Date()
-            switch asset.cached(values) {
+            switch asset.cached(values, environment: environment) {
             case .success(let c):
                 cooked = c
                 proceduralCooks[key] = c

@@ -15,6 +15,8 @@ import simd
 ///                                                      true/false, strings, [[x, y, z], …] for points)
 ///   {"wire": {"from": "box1", "to": "merge1", "input": 1}}   a wire ({"unwire": {"to": …, "input": …}} takes one off)
 ///   {"flag": {"node": "box1", "display": true, "template": true, "bypass": false, "render": true}}
+///   {"expr": {"node": "box1", "channel": "sizex", "source": "$F * 0.1"}}   a channel's expression ("" removes it)
+///   {"frame": 12}                                      the frame expressions read ($F, $T)
 ///
 /// Cooks are synchronous in a scripted Modeller: a step's state shows its result.
 enum ProceduralStep {
@@ -26,8 +28,10 @@ enum ProceduralStep {
     case wire(from: String, to: String, input: Int?)
     case unwire(to: String, input: Int)
     case flag(node: String, display: Bool?, template: Bool?, bypass: Bool?, render: Bool?)
+    case expr(node: String, channel: String, source: String)
+    case frame(Float)
 
-    static let keys = ["network", "node", "parm", "wire", "unwire", "flag"]
+    static let keys = ["network", "node", "parm", "wire", "unwire", "flag", "expr", "frame"]
 
     typealias Failure = ScriptRequests.Failure
 
@@ -63,6 +67,14 @@ enum ProceduralStep {
         case "unwire":
             guard let to = o["to"] as? String else { return bad("give {\"to\": name, \"input\": n}") }
             return .success(.unwire(to: to, input: o["input"] as? Int ?? 0))
+        case "expr":
+            guard let node = o["node"] as? String, let channel = o["channel"] as? String, let source = o["source"] as? String else {
+                return bad("give {\"node\": name, \"channel\": \"tx\", \"source\": \"$F * 0.1\"}")
+            }
+            return .success(.expr(node: node, channel: channel, source: source))
+        case "frame":
+            guard let f = (value as? NSNumber)?.floatValue else { return bad("a number") }
+            return .success(.frame(f))
         default:
             guard let node = o["node"] as? String else { return bad("give {\"node\": name, \"display\": true, …}") }
             return .success(.flag(node: node, display: o["display"] as? Bool, template: o["template"] as? Bool,
@@ -131,6 +143,17 @@ enum ProceduralStep {
             if let t = template, t != current.template { s.toggleTemplate(n) }
             if let b = bypass, b != current.bypass { s.toggleBypass(n) }
             return "flags of \(node)"
+        case let .expr(node, channel, source):
+            let n = try id(node)
+            guard let kind = s.graph.node(n)?.kind, ProcExprContext.locate(channel, in: kind) != nil else {
+                let all = s.graph.node(n)?.kind.spec.params.flatMap(ProcExprContext.channels) ?? []
+                throw Failure("\(node) has no channel \(channel); its: \(all.joined(separator: ", "))")
+            }
+            s.setExpression(n, channel, source)
+            return source.isEmpty ? "removed \(node)/\(channel)'s expression" : "set \(node)/\(channel) to \(source)"
+        case .frame(let f):
+            s.frame = f
+            return "frame \(ProcExprContext.format(f))"
         }
     }
 
@@ -169,7 +192,11 @@ enum ProceduralStep {
                                         "bypass": n.bypass, "render": n.render, "at": [Double(n.at.x), Double(n.at.y)],
                                         "inputs": g.inputs(of: n.id).map { $0.flatMap { g.node($0)?.name } ?? "" }]
                 if !n.params.isEmpty { e["params"] = n.params.keys.sorted() }
+                if !n.expressions.isEmpty { e["expressions"] = n.expressions }
                 if let i = s.info[n.id] {
+                    if !i.channels.isEmpty {
+                        e["channels"] = i.channels.mapValues { v -> Any in v.map { Double($0) } ?? "per element" }
+                    }
                     if let err = i.error { e["error"] = err }
                     if !i.warnings.isEmpty { e["warnings"] = i.warnings }
                     e["points"] = i.points
@@ -179,6 +206,7 @@ enum ProceduralStep {
                 return e
             },
             "interface": g.interface.map(\.name),
+            "frame": Double(s.frame),
         ]
     }
 }
