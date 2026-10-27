@@ -294,9 +294,7 @@ package enum ScatterNodes {
             for a in table.attributes where namePatternMatches(pattern, a.name) {
                 // Out of reach: the element keeps its own value (or the default).
                 var v = a.values
-                if let old = keepOld[a.name], rows.contains(-1) {
-                    for i in 0..<rows.count where rows[i] < 0 { v.set(i, old.vector(i)) }
-                }
+                if let old = keepOld[a.name], rows.contains(-1) { v.fill(rows, from: old) }
                 t.set(a.name, v)
             }
         }

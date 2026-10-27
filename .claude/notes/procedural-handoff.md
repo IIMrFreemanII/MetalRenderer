@@ -45,9 +45,9 @@ modelling" says what it is; this note says where things are, what was checked an
   (the skills folder is write-protected here): add `Sources/Procedural/*` → the nine Procedural suites, and
   `Sources/Editors/Placement/*` → ObjectInspectorTests.
 - Performance: cooks are off the frame. `ProceduralPerfTests` (PROC_PERF=1, release) times a 1M scatter (and relaxed),
-  10k copies, a 1M wrangle, a 100k-point sweep; README has the M4 Max numbers. Not profiled yet: Ray's brute force over
-  triangles, Voronoi's exact booleans per cell, `AttributeValues.set(_:_:)` in a loop (it copies the column per row:
-  `converted(to:)` and Attribute Transfer's out-of-reach rows are quadratic).
+  10k copies, a 1M wrangle, a 100k-point sweep; README has the M4 Max numbers. `testAttributeWrites` times the row-by-row
+  attribute nodes, conversions and merge loops (`PROC_PERF_SIDE=100` for an unoptimised build, where they were
+  quadratic: fixed). Not profiled yet: Ray's brute force over triangles, Voronoi's exact booleans per cell.
 - Not there: Houdini's expressions in parameters (`$PT`, `ch()`), packed primitives in the viewport, VDB / volumes,
   curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes,
   subnetworks.

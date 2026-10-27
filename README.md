@@ -2361,11 +2361,26 @@ differ.
 | Attribute Wrangle over a 1000×1000 grid (3 attributes, noise) | 1M points | 4.1 ms | 14 ms (was 117 ms) |
 | Resample a helix to 100k points | 99k points | 11 ms | |
 | Sweep a 16-column tube along it | 1.6M points, 1.6M quads | 18.8 ms (was 94 ms) | 30 ms |
+| Attribute Randomize a float on a 1000×1000 grid | 1M points | 2.3 ms | 16 ms |
+| Attribute Noise added to it | 1M points | 22 ms | 33 ms |
+| Attribute Randomize an int as a vector (converted) | 1M points | 3.8 ms | 13 ms |
+| Attribute Promote P to prims, minimum | 1M points | 16.5 ms | 26 ms |
+| Attribute Transfer of Cd from 1000 points, most out of reach | 1M points | 36 ms | 45 ms |
+| Copy and Transform a 10×10 grid 5000 times | 500k points, 405k prims | 14 ms | |
+| Wrangle reading an int attribute as a float (converted) | 1M points | 1.0 ms (was 3.1 ms) | 12 ms |
 
 The wrangle's time leaves out its compile (above). What the profile showed and was fixed: `PointGrid` (fuse,
 attribute transfer, relax, `nearpoint`) looked cells up in a Dictionary, and now uses a flat table; relax ran on one
 core; Grid, Sweep and the polygons' winding made a small array per quad. Each change keeps the output bit for bit (the
 test prints a fingerprint of each).
+
+Unoptimised (Xcode's Debug build of the package; `PROC_PERF_SIDE=100` for a 100×100 grid) two of them were quadratic or
+close to it. An attribute written row by row (`AttributeValues.set`), or appended in a merge loop, copied its whole column
+each time: the optimiser removes that copy, an unoptimised build doesn't. Each case now takes the array out of the enum
+before changing it. And every core's grid queries retained the grid's arrays per cell, all contending for the same
+counts; the queries now read them through buffer pointers. At 10k points, before → after: Attribute Transfer 4.4 s →
+30 ms, Copy and Transform's 5000 merges 1.1 s → 0.2 s, Attribute Randomize 7.6 → 2.2 ms; at 1M points the transfer
+went from 650 s to 4 s.
 
 Tests: `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
 `ProceduralCurveTests`, `ProceduralWrangleTests`, `ProceduralAssetTests`, `ProceduralEditorTests` (MODELING_PNG writes the

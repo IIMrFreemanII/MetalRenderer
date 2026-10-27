@@ -4,7 +4,8 @@ import simd
 @testable import Procedural
 
 /// Cooks at scale, timed (release: `Tools/release.sh test --filter ProceduralPerfTests` with PROC_PERF=1): a 1M-point
-/// scatter (and relaxed), 10k copies to points, a wrangle over 1M points, a sweep along a 100k-point curve. Prints each
+/// scatter (and relaxed), 10k copies to points, a wrangle over 1M points, a sweep along a 100k-point curve, the attribute
+/// nodes that write row by row or convert (PROC_PERF_SIDE: their grid's side, smaller unoptimised). Prints each
 /// node's own cook time (the best of three cooks, each by a new cooker: nothing cached) with the whole network's, and a
 /// fingerprint of the output (its positions, topology and attributes) that an optimisation must leave as it is.
 final class ProceduralPerfTests: XCTestCase {
@@ -101,6 +102,70 @@ final class ProceduralPerfTests: XCTestCase {
         _ = try ProcCooker(environment: environment).cook(g, w).get()   // compiled (or found in the bundle cache) first
         let out = try time("wrangle over 1M points (3 attributes)", g, w)
         XCTAssertTrue(out.points["Cd"] != nil)   // (not XCTAssertNotNil: it prints the million values)
+    }
+
+    /// The nodes that write an attribute row by row, or convert one to another type, over 1M points.
+    func testAttributeWrites() throws {
+        try perf()
+        print("Attribute writes:")
+        let side = Int(ProcessInfo.processInfo.environment["PROC_PERF_SIDE"] ?? "") ?? 1000   // (smaller for an unoptimised build)
+        func grid(_ g: inout ProcGraph) -> String {
+            g.add(.grid, params: ["size": .vec2([100, 100]), "rows": .int(side), "cols": .int(side)])
+        }
+        do {
+            var g = ProcGraph()
+            let r = g.add(.attribrandomize, params: ["name": .string("mass"), "dims": .int(1)])
+            g.link(grid(&g), to: r)
+            try time("randomize a float on \(side * side) points", g, r)
+            let n = g.add(.attribnoise, params: ["name": .string("mass")])
+            g.link(r, to: n)
+            try time("noise added to it", g, n)
+        }
+        do {
+            // An int read as a vector: converted, then written row by row.
+            var g = ProcGraph()
+            let id = g.add(.attribcreate, params: ["name": .string("id"), "type": .string("int"), "value": .vec4([3, 0, 0, 0])])
+            let r = g.add(.attribrandomize, params: ["name": .string("id"), "dims": .int(3)])
+            g.link(grid(&g), to: id); g.link(id, to: r)
+            try time("randomize an int attribute as a vector", g, r)
+        }
+        do {
+            var g = ProcGraph()
+            let pr = g.add(.attribpromote, params: ["name": .string("P"), "from": .string("point"), "to": .string("primitive"),
+                                                    "method": .string("minimum"), "deleteoriginal": .bool(false)])
+            g.link(grid(&g), to: pr)
+            try time("promote P to prims, minimum", g, pr)
+        }
+        do {
+            // Colours from 1000 points, most of the grid out of their reach: it keeps its own.
+            var g = ProcGraph()
+            let cd = g.add(.attribcreate, params: ["name": .string("Cd"), "type": .string("vector3"), "value": .vec4([0.5, 0.5, 0.5, 0])])
+            let src = g.add(.grid, params: ["size": .vec2([100, 100])])
+            let s = g.add(.scatter, params: ["npts": .int(1000), "seed": .int(3)])
+            let sc = g.add(.attribrandomize, params: ["name": .string("Cd")])
+            let tr = g.add(.attribtransfer, params: ["attribs": .string("Cd"), "distance": .float(0.5)])
+            g.link(grid(&g), to: cd); g.link(src, to: s); g.link(s, to: sc)
+            g.link(cd, to: tr, 0); g.link(sc, to: tr, 1)
+            try time("transfer Cd, most out of reach", g, tr)
+        }
+        do {
+            // Merged copy by copy: every attribute column (Cd, uv, copynum) grows 5000 times.
+            var g = ProcGraph()
+            let small = g.add(.grid, params: ["rows": .int(10), "cols": .int(10)])
+            let cd = g.add(.attribrandomize, params: ["name": .string("Cd")])
+            let cx = g.add(.copyxform, params: ["ncy": .int(5000), "copynum": .bool(true)])
+            g.link(small, to: cd); g.link(cd, to: cx)
+            try time("copy and transform a grid 5000 times", g, cx)
+        }
+        if WrangleCompiler.shared.problem() == nil {
+            // The wrangle reads the int as a float: converted.
+            var g = ProcGraph()
+            let id = g.add(.attribcreate, params: ["name": .string("id"), "type": .string("int"), "value": .vec4([3, 0, 0, 0])])
+            let w = g.add(.attribwrangle, params: ["snippet": .string("f@id *= 2")])
+            g.link(grid(&g), to: id); g.link(id, to: w)
+            _ = try ProcCooker(environment: environment).cook(g, w).get()
+            try time("wrangle reads an int as a float", g, w)
+        }
     }
 
     func testSweep() throws {

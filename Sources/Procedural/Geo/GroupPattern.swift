@@ -209,19 +209,41 @@ package struct PointGrid {
         return s
     }
 
-    /// The run of `order` in the cell at `c` (empty if it has no points).
-    @inline(__always) private func run(_ c: SIMD3<Int32>) -> Range<Int> {
-        let s = slot(key(c))
-        return Int(slotStart[s])..<Int(slotEnd[s])
+    /// The grid's arrays as buffers, for the queries that look at many cells: no retain, release or exclusivity check
+    /// per cell (unoptimised, those were most of a query, and every core contended for the same counts).
+    private struct Tables {
+        let order, starts, ends: UnsafeBufferPointer<Int32>
+        let points: UnsafeBufferPointer<SIMD3<Float>>
+        let keys: UnsafeBufferPointer<UInt64>
+        let shift: UInt64
+
+        /// The run of `order` in the cell of `key` (empty if it has no points), found as `slot` finds it.
+        @inline(__always) func run(_ key: UInt64) -> (start: Int, end: Int) {
+            let mask = keys.count - 1, empty = UInt64.max   // (PointGrid.empty)
+            var s = Int(truncatingIfNeeded: (key &* 0x9E37_79B9_7F4A_7C15) >> shift) & mask
+            while keys[s] != key && keys[s] != empty { s = (s + 1) & mask }
+            return (Int(starts[s]), Int(ends[s]))
+        }
+    }
+
+    @inline(__always) private func withTables<R>(_ body: (Tables) -> R) -> R {
+        order.withUnsafeBufferPointer { order in
+        points.withUnsafeBufferPointer { points in
+        slotKey.withUnsafeBufferPointer { keys in
+        slotStart.withUnsafeBufferPointer { starts in
+        slotEnd.withUnsafeBufferPointer { ends in
+            body(Tables(order: order, starts: starts, ends: ends, points: points, keys: keys, shift: shift))
+        } } } } }
     }
 
     /// The nearest point to `p` (-1 if there are none or none within `maxDistance`), skipping `except`.
     package func nearest(_ p: SIMD3<Float>, maxDistance: Float = .infinity, except: Int32 = -1) -> Int32 {
         guard !points.isEmpty else { return -1 }
-        let c = coords(p)
+        let c = coords(p), cell = cell
+        let limit = maxDistance.isFinite ? Int32(min(Float(1 << 19), (maxDistance / cell).rounded(.up))) + 1 : Int32(1 << 19)
+        return withTables { t in
         var best: Int32 = -1, bestD = maxDistance * maxDistance
         var ring: Int32 = 0
-        let limit = maxDistance.isFinite ? Int32(min(Float(1 << 19), (maxDistance / cell).rounded(.up))) + 1 : Int32(1 << 19)
         while ring <= limit {
             // The shell of cells `ring` away.
             var dx = -ring
@@ -232,10 +254,12 @@ package struct PointGrid {
                     while dz <= ring {
                         // (Inside the shell: only its two faces along z.)
                         if max(abs(dx), abs(dy), abs(dz)) == ring {
-                            for k in run(c &+ SIMD3(dx, dy, dz)) {
-                                let i = order[k]
+                            var (k, end) = t.run(key(c &+ SIMD3(dx, dy, dz)))
+                            while k < end {
+                                let i = t.order[k]
+                                k += 1
                                 if i == except { continue }
-                                let d = simd_distance_squared(points[Int(i)], p)
+                                let d = simd_distance_squared(t.points[Int(i)], p)
                                 if d < bestD || (d == bestD && best >= 0 && i < best) { bestD = d; best = i }
                             }
                         }
@@ -252,41 +276,34 @@ package struct PointGrid {
             }
             ring += 1
             if ring > 3 && best < 0 && !maxDistance.isFinite {   // far from every point: look at all of them
-                for (i, q) in points.enumerated() where Int32(i) != except {
-                    let d = simd_distance_squared(q, p)
-                    if d < bestD { bestD = d; best = Int32(i) }
+                var i = 0
+                while i < t.points.count {
+                    let d = simd_distance_squared(t.points[i], p)
+                    if Int32(i) != except && d < bestD { bestD = d; best = Int32(i) }
+                    i += 1
                 }
                 break
             }
         }
         return best
+        }
     }
 
     /// Calls `body` with every point within `radius` of `p` (by cell, x then y then z, each cell's in their order).
     @inline(__always) package func forEach(within radius: Float, of p: SIMD3<Float>, _ body: (Int32) -> Void) {
         let lo = coords(p - radius), hi = coords(p + radius)
         let r2 = radius * radius
-        let mask = slotKey.count - 1, shift = shift
-        order.withUnsafeBufferPointer { order in
-        points.withUnsafeBufferPointer { points in
-        slotKey.withUnsafeBufferPointer { keys in
-        slotStart.withUnsafeBufferPointer { starts in
-        slotEnd.withUnsafeBufferPointer { ends in
+        withTables { t in
             var x = lo.x
             while x <= hi.x {
                 var y = lo.y
                 while y <= hi.y {
                     var z = lo.z
                     while z <= hi.z {
-                        // The cell's slot (as `slot`).
-                        let key = key(SIMD3(x, y, z))
-                        var s = Int(truncatingIfNeeded: (key &* 0x9E37_79B9_7F4A_7C15) >> shift) & mask
-                        while keys[s] != key && keys[s] != PointGrid.empty { s = (s + 1) & mask }
-                        var k = Int(starts[s])
-                        let end = Int(ends[s])
+                        var (k, end) = t.run(key(SIMD3(x, y, z)))
                         while k < end {
-                            let i = order[k]
-                            if simd_distance_squared(points[Int(i)], p) <= r2 { body(i) }
+                            let i = t.order[k]
+                            if simd_distance_squared(t.points[Int(i)], p) <= r2 { body(i) }
                             k += 1
                         }
                         z += 1
@@ -295,7 +312,7 @@ package struct PointGrid {
                 }
                 x += 1
             }
-        } } } } }
+        }
     }
 
     /// Every point within `radius` of `p`, into `out` (cleared first).

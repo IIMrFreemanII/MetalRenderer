@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793096957.937566,
-    "seen": 1793097211.3366451,
-    "ast_hash": "aebdbe5f1a62d5cfad20dec04aa468ad",
+    "mtime": 1793105670.750043,
+    "seen": 1793105687.672975,
+    "ast_hash": "2c640ea384e2b288612d55dc6862bcc6",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -5472,9 +5472,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/Attributes.swift": {
-    "mtime": 1793054777.9550335,
-    "seen": 1793055836.08145,
-    "ast_hash": "56e051c96cedef05cd508281ca7f6ac2",
+    "mtime": 1793105408.7793887,
+    "seen": 1793105687.668653,
+    "ast_hash": "42d1b2394ead95126d2cee11d71a3173",
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/EditMeshBridge.swift": {
@@ -5490,9 +5490,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/GroupPattern.swift": {
-    "mtime": 1793096781.308126,
-    "seen": 1793097211.332406,
-    "ast_hash": "52ffc173db7b4646c1013b336f8a0f92",
+    "mtime": 1793105188.219596,
+    "seen": 1793105687.668698,
+    "ast_hash": "67bc33fbce628ecc7948012dc2dacb3a",
     "semantic_hash": ""
   },
   "Sources/Procedural/Geo/ProcGeo.swift": {
@@ -5622,9 +5622,9 @@
     "semantic_hash": ""
   },
   "Sources/Procedural/Nodes/ScatterNodes.swift": {
-    "mtime": 1793096545.8716466,
-    "seen": 1793097211.332624,
-    "ast_hash": "1f681a95cafb892de3f6d19546c7d0f4",
+    "mtime": 1793102879.2316825,
+    "seen": 1793105687.668952,
+    "ast_hash": "636ce619686fb7a228e09408e07f04bd",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralScatterTests.swift": {
@@ -5730,9 +5730,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/procedural-handoff.md": {
-    "mtime": 1793096968.0287383,
-    "seen": 1793097211.3358731,
-    "ast_hash": "16a1f2e3b654702212cf2d3fe166214f",
+    "mtime": 1793105670.750194,
+    "seen": 1793105687.672203,
+    "ast_hash": "122405ec42f6f7916e9edaf331176882",
     "semantic_hash": ""
   },
   "Sources/Editors/Placement/ObjectInspectorModel.swift": {
@@ -5802,9 +5802,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Procedural/ProceduralPerfTests.swift": {
-    "mtime": 1793096596.8824322,
-    "seen": 1793097211.334189,
-    "ast_hash": "d868b9ae29b837e9c4a94c4c0e0e1bfa",
+    "mtime": 1793102768.7183337,
+    "seen": 1793105687.670505,
+    "ast_hash": "54872e2d51ef613e953f6b77bbcab517",
     "semantic_hash": ""
   }
 }

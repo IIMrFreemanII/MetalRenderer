@@ -133,15 +133,21 @@ package enum AttributeValues: Equatable {
     }
 
     /// Another attribute's rows after this one's: of the same type, else converted to it.
+    ///
+    /// Each case (here and in the setters) takes its array out of `self` before changing it (`self = .placeholder`):
+    /// otherwise `self` still holds it, and every call copies the whole column (quadratic in a merge loop, or row by
+    /// row in an unoptimised build).
     package mutating func append(_ other: AttributeValues) {
         let o = other.type == type ? other : other.converted(to: type)
-        switch (self, o) {
-        case (.float(var a), .float(let b)): a += b; self = .float(a)
-        case (.int(var a), .int(let b)): a += b; self = .int(a)
-        case (.vector2(var a), .vector2(let b)): a += b; self = .vector2(a)
-        case (.vector3(var a), .vector3(let b)): a += b; self = .vector3(a)
-        case (.vector4(var a), .vector4(let b)): a += b; self = .vector4(a)
-        case (.string(var a, var t), .string(let b, let u)):
+        switch self {
+        case .float(var a): self = .placeholder; if case .float(let b) = o { a += b }; self = .float(a)
+        case .int(var a): self = .placeholder; if case .int(let b) = o { a += b }; self = .int(a)
+        case .vector2(var a): self = .placeholder; if case .vector2(let b) = o { a += b }; self = .vector2(a)
+        case .vector3(var a): self = .placeholder; if case .vector3(let b) = o { a += b }; self = .vector3(a)
+        case .vector4(var a): self = .placeholder; if case .vector4(let b) = o { a += b }; self = .vector4(a)
+        case .string(var a, var t):
+            self = .placeholder
+            guard case .string(let b, let u) = o else { self = .string(a, table: t); return }
             // The other's table's strings into this one's.
             var map = [Int32](repeating: 0, count: u.count)
             var index = [String: Int32](uniqueKeysWithValues: t.enumerated().map { ($1, Int32($0)) })
@@ -151,9 +157,11 @@ package enum AttributeValues: Equatable {
             a.reserveCapacity(a.count + b.count)
             for v in b { a.append(map[Int(v)]) }
             self = .string(a, table: t)
-        default: break
         }
     }
+
+    /// An empty value `self` holds while a case's array is out of it.
+    private static var placeholder: AttributeValues { .int([]) }
 
     /// `n` more rows of the default.
     package mutating func appendDefaults(_ n: Int) {
@@ -173,9 +181,46 @@ package enum AttributeValues: Equatable {
             }
             return .string(rows, table: table)
         }
-        var out = AttributeValues.zeros(t, count: n)
-        for r in 0..<n { out.set(r, vector(r)) }
-        return out
+        // As `set(_:_:)` writes each row of `vector(_:)`, a whole column at a time.
+        switch t {
+        case .float: return .float(mapped { $0.x })
+        case .int: return .int(mapped { Int32($0.x.rounded()) })
+        case .vector2: return .vector2(mapped { SIMD2($0.x, $0.y) })
+        case .vector3: return .vector3(mapped { SIMD3($0.x, $0.y, $0.z) })
+        case .vector4: return .vector4(mapped { $0 })
+        case .string: fatalError("handled above")
+        }
+    }
+
+    /// `f` of every row as `vector(_:)` gives it (a string table's numbers parsed once).
+    private func mapped<T>(_ f: (SIMD4<Float>) -> T) -> [T] {
+        switch self {
+        case .float(let a): return a.map { f(SIMD4($0, 0, 0, 0)) }
+        case .int(let a): return a.map { f(SIMD4(Float($0), 0, 0, 0)) }
+        case .vector2(let a): return a.map { f(SIMD4($0.x, $0.y, 0, 0)) }
+        case .vector3(let a): return a.map { f(SIMD4($0.x, $0.y, $0.z, 0)) }
+        case .vector4(let a): return a.map(f)
+        case .string(let a, let t):
+            let parsed = t.map { SIMD4<Float>(Float($0) ?? 0, 0, 0, 0) }
+            return a.map { f(parsed[Int($0)]) }
+        }
+    }
+
+    /// The rows `rows` marks negative taken from `other` (of as many rows), as `set(i, other.vector(i))` would.
+    package mutating func fill(_ rows: [Int32], from other: AttributeValues) {
+        if type == .string {
+            for i in 0..<rows.count where rows[i] < 0 { set(i, other.vector(i)) }
+            return
+        }
+        let o = other.type == type ? other : other.converted(to: type)
+        switch self {
+        case .float(var a): self = .placeholder; if case .float(let b) = o { fillRows(&a, rows, b) }; self = .float(a)
+        case .int(var a): self = .placeholder; if case .int(let b) = o { fillRows(&a, rows, b) }; self = .int(a)
+        case .vector2(var a): self = .placeholder; if case .vector2(let b) = o { fillRows(&a, rows, b) }; self = .vector2(a)
+        case .vector3(var a): self = .placeholder; if case .vector3(let b) = o { fillRows(&a, rows, b) }; self = .vector3(a)
+        case .vector4(var a): self = .placeholder; if case .vector4(let b) = o { fillRows(&a, rows, b) }; self = .vector4(a)
+        case .string: break
+        }
     }
 
     // MARK: Rows, one at a time (the spreadsheet, patterns, tests: not loops over many)
@@ -208,17 +253,18 @@ package enum AttributeValues: Equatable {
     /// Sets row `r` from four floats (a string: its printed number).
     package mutating func set(_ r: Int, _ v: SIMD4<Float>) {
         switch self {
-        case .float(var a): a[r] = v.x; self = .float(a)
-        case .int(var a): a[r] = Int32(v.x.rounded()); self = .int(a)
-        case .vector2(var a): a[r] = SIMD2(v.x, v.y); self = .vector2(a)
-        case .vector3(var a): a[r] = SIMD3(v.x, v.y, v.z); self = .vector3(a)
-        case .vector4(var a): a[r] = v; self = .vector4(a)
+        case .float(var a): self = .placeholder; a[r] = v.x; self = .float(a)
+        case .int(var a): self = .placeholder; a[r] = Int32(v.x.rounded()); self = .int(a)
+        case .vector2(var a): self = .placeholder; a[r] = SIMD2(v.x, v.y); self = .vector2(a)
+        case .vector3(var a): self = .placeholder; a[r] = SIMD3(v.x, v.y, v.z); self = .vector3(a)
+        case .vector4(var a): self = .placeholder; a[r] = v; self = .vector4(a)
         case .string: setString(r, String(format: "%g", v.x))
         }
     }
 
     package mutating func setString(_ r: Int, _ s: String) {
         guard case .string(var a, var t) = self else { set(r, SIMD4(Float(s) ?? 0, 0, 0, 0)); return }
+        self = .placeholder
         if let k = t.firstIndex(of: s) { a[r] = Int32(k) } else { a[r] = Int32(t.count); t.append(s) }
         self = .string(a, table: t)
     }
@@ -232,6 +278,12 @@ package enum AttributeValues: Equatable {
         case .vector4(let a): a.count * 16
         case .string(let a, let t): a.count * 4 + t.reduce(0) { $0 + $1.utf8.count + 16 }
         }
+    }
+}
+
+@inline(__always) func fillRows<T>(_ a: inout [T], _ rows: [Int32], _ b: [T]) {
+    a.withUnsafeMutableBufferPointer { a in
+        for i in 0..<rows.count where rows[i] < 0 { a[i] = b[i] }
     }
 }
 
