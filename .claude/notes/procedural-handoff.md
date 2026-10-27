@@ -25,6 +25,9 @@ modelling" says what it is; this note says where things are, what was checked an
 ## Verified
 - All eight Procedural suites green in the dev build, with ModelingEditorTests, ModelingScriptTests,
   ModelingIOTests, ModelingViewportTests, SceneRegistryTests, SettingsTableTests, SceneFileTests, BenchmarkModesTests.
+- The fence posts' shaded sides were black with radiance cascades (no probe on a 1-2 px face): fixed in
+  RadianceCascades.metal (cascade 0 traces the bins below a probe's surface; the resolve falls back to the distance
+  weights where no probe matches). `-m procedural` renders the scene with cascades, path traced and the GI views.
 - Window pictures (MODELING_PNG): the tab with a network, the spreadsheet. Offscreen render of the Procedural scene
   (default look and path traced): every asset cooks at load and places.
 - Wrangles compile and run in the test process; the first compile ~8 s (module cache), later ones under a second.
@@ -32,7 +35,6 @@ modelling" says what it is; this note says where things are, what was checked an
 ## Not done / next
 - Never shown in the window by hand (no window unasked): the network's scroll / pinch / keys inside the Modeller's
   window, the handle drags with a real mouse, the code editor's focus are checked through the model only.
-- The default look (radiance cascades) draws some thin fence posts black in the demo; path traced they're right.
 - `.claude/skills/tests/scripts/related.sh` has no rows for `Sources/Procedural`, `Editors/Modeling/Procedural`
   (the skills folder is write-protected here): add `Sources/Procedural/*` → the eight Procedural suites.
 - The scene-switching check (`switches.py`) isn't on this branch (`Scripts/scene-switches.swift` is missing): run it

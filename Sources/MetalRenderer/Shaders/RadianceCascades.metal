@@ -24,6 +24,7 @@ struct RCParams {
 constant uint RC_MAX_CASCADES = 5;
 constant float RC_INTERIOR_START = 0.1f;   // the farthest an interval starts in the interiors' box: under a partition (0.12 m)
 constant float RC_INTERIOR_BLEND = 0.1f;   // this frame's least share of the indirect light in the interiors' box
+constant float RC_CONFIDENT = 0.1f;        // a pixel's matching probes' share of its probes' weight that is trusted whole
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -129,7 +130,13 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         offset = float2(float(h & 0xFFFFu), float(h >> 16)) * (1.0f / 65536.0f);
     }
     float3 dir = equalAreaOctDecode((float2(bc) + offset) / float(dirSide) * 2.0f - 1.0f);
-    if (dot(dir, ng) < -0.05f) { merged.write(float4(0.0f), texel); return; }   // below the surface: never used
+    // Below the probe's surface. Cascade 0 traces these too: they hit the probe's own surface, so they hold the light
+    // it gives off. A pixel with the probe's normal doesn't see them (to L1 they cancel in rcEvalSH), but a pixel facing
+    // elsewhere does: a face too thin for a probe of its own (a fence post's shaded side, 1-2 pixels wide) takes its
+    // light from probes on the faces round it, and with these bins dark it lost the light off the sunlit ground beside
+    // it and went black. Alpha marks them for rcSHKernel's ambient. Above cascade 0 they're never used.
+    bool below = dot(dir, ng) < -0.05f;
+    if (below && p.layout.z != 0) { merged.write(float4(0.0f), texel); return; }
 
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
@@ -187,7 +194,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         }
         radiance = wsum > 1e-4f ? sum / wsum : (wPlain > 0.0f ? sumPlain / wPlain : float3(0.0f));
     }
-    merged.write(float4(radiance, 0.0f), texel);
+    merged.write(float4(radiance, below ? 1.0f : 0.0f), texel);
 }
 
 // Per atlas texel of an upper cascade (1 and up), in the walkable interiors' box: its direction's radiance averaged
@@ -245,16 +252,18 @@ kernel void rcSHKernel(constant RCParams&               p        [[buffer(9)]], 
     uint dirSide = p.layout.y;
     float dOmega = 4.0f * M_PI_F / float(dirSide * dirSide);
     float4 r = float4(0.0f), g = float4(0.0f), b = float4(0.0f);
+    float3 upper = float3(0.0f);   // the L00 term of the bins above the surface alone
     for (uint k = 0; k < dirSide * dirSide; ++k) {
         uint2 bc = uint2(k % dirSide, k / dirSide);
         float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
         float4 basis = float4(0.282095f, 0.488603f * dir.y, 0.488603f * dir.z, 0.488603f * dir.x) * dOmega;
-        float3 L = merged.read(tid * dirSide + bc).rgb;
+        float4 L = merged.read(tid * dirSide + bc);   // w = 1: below the surface (rcTraceMergeKernel)
+        if (L.w == 0.0f) upper += L.rgb * basis.x;
         r += L.r * basis; g += L.g * basis; b += L.b * basis;
     }
     shR.write(r, tid); shG.write(g, tid); shB.write(b, tid);
     // Mean irradiance over the probe's hemisphere ~ L00 term (illumination units: E / pi = 0.282095 * L00).
-    float3 mean = 0.282095f * float3(r.x, g.x, b.x) * 2.0f;   // x2: only the upper hemisphere carries light
+    float3 mean = 0.282095f * upper * 2.0f;   // x2: the upper hemisphere's light over the whole sphere's L00
     atomic_fetch_add_explicit(&ambient[0], uint(clamp(mean.r, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
     atomic_fetch_add_explicit(&ambient[1], uint(clamp(mean.g, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
     atomic_fetch_add_explicit(&ambient[2], uint(clamp(mean.b, 0.0f, 1e5f) * 1024.0f), memory_order_relaxed);
@@ -272,12 +281,15 @@ inline float rcEvalSH(float4 sh, float3 n) {
 
 // Weighted sum (rgb) and weight (w) of the 4x4 cascade-0 probes round probe-grid point g, `stride` probes apart: a
 // smooth distance falloff (bilinear-wide at stride 1) x plane/normal similarity, each probe evaluated for normal n.
+// Where no probe is on x's surface (their similarity's share of the falloff under RC_CONFIDENT: a face too thin for a
+// probe) it goes over to the falloff alone: else the probe that matched least badly took it all (a fence post's shaded
+// side, 1-2 pixels wide, came out black; with the falloff alone it matches the path tracer).
 inline float4 rcGather(constant RCParams& p, texture2d<float, access::read> probePos, texture2d<float, access::read> probeNs,
                        texture2d<float, access::read> shR, texture2d<float, access::read> shG,
                        texture2d<float, access::read> shB, float2 g, int stride, float3 x, float3 n, float depth) {
     int2 base = (int2(floor(g / float(stride))) - 1) * stride;   // on the stride's own lattice: no flip cell to cell
-    float3 sum = float3(0.0f);
-    float wsum = 0.0f;
+    float3 sum = float3(0.0f), plain = float3(0.0f);
+    float wsum = 0.0f, wplain = 0.0f;
     float scale = 0.8f / float(stride * stride);
     for (int k = 0; k < 16; ++k) {
         int2 qi = base + int2(k & 3, k >> 2) * stride;
@@ -288,10 +300,13 @@ inline float4 rcGather(constant RCParams& p, texture2d<float, access::read> prob
         float2 d = float2(qi) - g;
         float falloff = exp(-dot(d, d) * scale);
         float w = falloff * rcProbeWeight(qp, probeNs.read(q).xyz, x, n, depth) + 1e-6f * falloff;
-        sum += float3(rcEvalSH(shR.read(q), n), rcEvalSH(shG.read(q), n), rcEvalSH(shB.read(q), n)) * w;
-        wsum += w;
+        float3 e = float3(rcEvalSH(shR.read(q), n), rcEvalSH(shG.read(q), n), rcEvalSH(shB.read(q), n));
+        sum += e * w; wsum += w;
+        plain += e * falloff; wplain += falloff;
     }
-    return float4(sum, wsum);
+    if (wsum <= 0.0f) return float4(0.0f);
+    float confident = saturate(wsum / (RC_CONFIDENT * wplain));
+    return float4(mix(plain / wplain, sum / wsum, confident) * wsum, wsum);
 }
 
 // Per pixel: weighted average over the 4x4 nearest cascade-0 probes (smooth distance falloff x plane/normal

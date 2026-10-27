@@ -70,6 +70,17 @@ extension Benchmark {
         return out
     }
 
+    /// The procedural assets' scene (Assets/Scenes/procedural.scene, cooked at load): paused frames with cascades and
+    /// path traced, and the views that show the indirect light and the normals the cooks gave.
+    static func procedural() -> [Config] {
+        let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: SceneSettings(kind: .procedural))
+        var out = [base.named("cascades").still(), base.named("pt").with { $0.giMode = .pathTraced }.still()]
+        for view in ["Raw indirect", "Indirect only", "GI debug", "Normals"] {
+            out.append(base.named(view.lowercased()).view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
+        }
+        return out
+    }
+
     /// The physics scene (Scene+Physics.swift) at its look (RenderSettings.usePhysicsLook): paused at 5 s with the
     /// GPU's steps, the CPU's steps there too (their own pile: 300 steps
     /// of a pile tell float rounding apart), then the first 5 s moving for timing: the "physics" pass at a few body
