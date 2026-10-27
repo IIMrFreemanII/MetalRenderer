@@ -2293,6 +2293,170 @@ when there's enough of it) ~100 ms at 2M.
 
 The brushes' per-vertex loops, the normals and the viewport's copy are in `Tools/perf/hot-functions.txt` (clean).
 
+### Procedural modelling
+
+Houdini's way of modelling, in the Modeller's **Procedural** workspace (the fifth tab): an object's mesh is what a
+network of nodes makes, and every node can be changed at any time. The tab is laid out as Houdini's Build desktop, in
+its look: the viewport (or the **Geometry Spreadsheet**) on the left; the **parameter pane** over the **network view**
+on the right.
+
+- **Networks.** *New Network* gives the active object one (a box), *Add Procedural Object* a new object (`geo1`) with
+  one. Nodes flow top to bottom: inputs on top, the output below, a click on the right end's blue strip sets the
+  **display** flag (what the object shows; Option-click: render), the pink strip **template** (drawn as grey wires
+  beside it), the left end's yellow strip **bypass**. **Tab** opens the node menu: the new node is wired below the
+  selected one and displayed. Drag from an output to an input to wire; Delete wires around what it removes; copy and
+  paste; **L** lays out, **R**/**B**/**T** set the current node's flags, **I** its info (counts, attributes, groups,
+  cook time). Errors and warnings show as badges; every edit is one undo step of the Modeller's.
+- **Geometry** is Houdini's: points, vertices, primitives (polygons and polylines) and the detail, each with attributes
+  of any name and type (`P`, `N`, `Cd`, `uv`, `pscale`, `orient`, your own) and groups. Group fields take Houdini's
+  patterns: `name`, `side*`, `0-9:2`, `@P.y>0.5`, `* ^top`.
+- **Nodes** (`Sources/Procedural/Nodes`, 55 kinds): Box, Grid, Sphere, Tube, Torus, Circle, Line, Add, File (a model
+  asset or another object); Transform, Merge, Copy and Transform, Mirror; PolyExtrude, Subdivide, Boolean, PolyBevel,
+  PolyReduce, Divide, Fuse, Clean, Facet, Normal, Reverse, Smooth, Thicken, UV Unwrap; Attribute Create / Delete /
+  Rename / Randomize / Noise / Promote / Transfer, Color, Measure, Connectivity, Sort; Group Create, Blast; Scatter,
+  Copy to Points, Ray, Point Jitter, Voronoi Fracture; Curve, Resample, Sweep, Revolve, PolyWire, Carve, Ends,
+  L-System; Null, Output, Switch, **Attribute Wrangle**, Block Begin / Block End (**For-Each** over pieces, points or a
+  count, merging or feeding back). Nodes that run the Modeller's own operations (subdivision, booleans, bevels) give
+  the result the input's other attributes from the nearest elements.
+- **Attribute Wrangle** runs Swift over every point (primitive, vertex, the detail) on every core, with VEX's
+  bindings: `@P.y += sin(@P.x * 4) * 0.1`, `f@mass = rand(@ptnum)`, `v@Cd = SIMD3(1, 0, 0)`, `i@near = nearpoint(1,
+  @P)`, `addpoint`, `removeprim` …; `rand`, `noise`, `curlnoise`, `fit`, `lerp` besides simd's. It compiles with the
+  build's modules (Xcode's tools needed) into a bundle kept in `~/Library/Caches/MetalRenderer/wrangles` by its
+  source: the first compile of a session warms Swift's module cache (about 8 s), a new snippet after that takes well
+  under a second, one seen before nothing.
+- **Expressions** (Houdini's hscript, `Sources/Procedural/Expr`). Type anything that isn't a number into a number
+  field and it becomes that channel's expression: the field turns green and shows its value (red, with the message,
+  when it fails); clicking it shows the text. A channel is a parameter (`seed`), or a vector's component (`tx`,
+  `sizey`). `ch("sizex")` reads this node's channel, `ch("../box1/sizex")` another node's, `ch("../seed")` the asset's
+  promoted parameter (an instance's value). `$F`, `$T` read the frame (the timeline's, with play at 24 a second; a
+  placed asset plays its frames, or `proc:<slug>?frame=12` pins one); `$NPT`, `$CEX`, `$XMIN`, `$SIZEX` and
+  `npoints(0)`, `bbox(0, D_YMAX)`, `centroid(0, D_X)`, `point(0, "P", 3, 1)`, `detail(0, "iteration", 0)` read the
+  node's inputs (or a node by path, `npoints("../box1")`). Functions: `fit`, `fit01`, `clamp`, `lerp`, `smooth`, `rand`,
+  `noise`, `if`, `min`, `max`, `pow`, `sqrt`, `abs`, `floor`, `round`, `sin` … (degrees, as hscript's), `opdigits(".")`.
+  Per element, where Houdini evaluates per element (Attribute Create's Value, Group Create's *Keep by Expression*,
+  Sort by expression): `$PT`, `$PR`, `$TX`, `@P.y`, `@Cd.r`, any `@attr`. Text fields expand `` `expr` ``, `$OS` and
+  `$F` (`piece$F`). Right-click a parameter: *Delete Channels* (keeping the last value), *Copy Parameter*, *Paste
+  Relative References* (`ch()` of the copied one). An expression compiles once per cook: what doesn't vary is folded to
+  a number then, what does runs as flat code over a stack of floats on every core (1M points by
+  `@P.z * 2 + sin($PT)`: 4.7 ms, as the three-attribute wrangle's 4.2). A node's key holds its expressions and what they read (the frame only if it is read,
+  the channels it reads), so a new frame recooks only what reads it.
+- **Keyframes** (`Graph/ProcCurve.swift`). Option-click a parameter's label (or right-click ▸ *Set Key*) to key its
+  channels on the frame; a keyed field is amber (brighter on a key), and a value typed, slid or scrubbed into it keys
+  that frame (auto-key). Between keys: *Spline* (Houdini's bezier with automatic slopes, flat at a peak, never past its
+  keys), *Linear*, *Constant*, *Ease*, *Ease In*, *Ease Out*; before the first and after the last: *Hold*, *Cycle*,
+  *Cycle with Offset*, *Linear*. A channel has a value, an expression or keys: an expression replaces keys and keys an
+  expression; *Delete Channels* keeps the frame's value. `chf("../box1/tx", $F - 1)` reads a keyed channel on another
+  frame. The **timeline** across the window's foot plays the network's range (saved with it), scrubs, and shows the
+  current node's keys: drag one to move that frame's keys, right-click it for their interpolation. The **Curves** tab
+  under the parameters is the animation editor: the node's keyed channels (x red, y green, z blue), keys to click,
+  box-select and drag (to whole frames), a spline key's handles for its slopes (Option: one side), double-click to key a
+  curve, Delete, F to frame; scroll pans, Control-scroll zooms. A keyed channel adds its value on the frame to its
+  node's key, not the frame: frames where it holds cook once.
+- **Animated placed assets.** A placed `proc:` asset whose network cooks differently from frame to frame plays its
+  range (`?frames=12-48` another) by the scene's clock, 24 frames a second, round again: when the scene loads, each
+  distinct frame is cooked (frames with the same cook key share one cook and one mesh; finding them cooks nothing), and
+  its instance takes each frame's mesh as the clock runs. The assets its points place move with its frames when every
+  frame places the same ones. One that doesn't read the frame is one still mesh, as before.
+- **Subnetworks** (`Graph/ProcContents.swift`). A *Subnetwork* holds a network of its own: its inputs are the
+  *Sub-Network Input* nodes inside (as many as the highest's number, each labelled; nothing wired: no geometry), its
+  output the Output node inside, else the display flag. Double-click it or press Return to go in, U (or the bar's path,
+  `geo1 › subnet1`) to go up; inside, the viewport shows that level's display node, cooked with the subnetwork's real
+  inputs and parameters. Select nodes and press Shift-C (*Collapse into Subnetwork*) to put them in one: the nodes
+  wired into them become its inputs, the one feeding the outside its output (more than one is refused), and the paths
+  in expressions follow (`../box9` inside becomes `../../box9`, `../xform1` outside `../subnet1/xform1`; promoted
+  targets too). *Extract Contents* puts them back. *Edit Parameter Interface…* (the node's menu, or the slider button in
+  its parameter header) gives it parameters: add by type (Float, Integer, Toggle, Vector 2–4, String), name, label,
+  default, range, order; inside, `ch("../name")` reads one, and its value on the subnetwork can be keyed or an
+  expression like any other. A renamed parameter keeps its values and keys, and the `ch()` inside follow it. Paths now
+  go up and down (`../../box1/sizex`, `../subnet1/box1/tx`); one that leads nowhere is an error saying so.
+- **Asset nodes.** The Tab menu's *Procedural Assets* (and the right-click menu's) add a library asset as a node: its
+  network is the asset's, put in from `Assets/Procedural` whenever the network changes (a changed asset recooks every
+  network and placed copy that holds it), locked (shown, not edited) until *Allow Editing of Contents*; *Save to
+  Definition* writes the edited network back to the library and locks it again, *Match Current Definition* drops the
+  edits. Its parameters are the asset's promoted ones. An asset that contains itself is an error on its node; one the
+  library lacks cooks the network it was saved with. A placed asset's nested assets add their material slots.
+- **Cooking.** A node's output is kept under a hash of its kind, parameters and inputs (`ProcCooker`): an edit cooks
+  that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own. A subnetwork's or asset
+  node's key is its own and its network's output's (nothing of ids or names: two equal subnetworks cook once); its
+  network cooks in a pass of its own under its container's, and `info` names its nodes by the containers' ids
+  (`n3/n2`).
+- **Inspecting.** Over the viewport: point dots, point and primitive numbers, normals, colour by `Cd`, and
+  **handles** (the current node's translate or origin as axes, a curve's points as crosses) dragged in the viewport.
+  The spreadsheet lists the current node's elements, a column per attribute component.
+- **Assets.** *Network ▸ Save as Procedural Asset…* writes `Assets/Procedural/<slug>.proc.json` (the network, its
+  promoted parameters — a parameter row's right-click *Promote to Asset Parameter* — and the object's material slots).
+  A scene file places it as `proc:<slug>`, or `proc:<slug>?seed=7&size=1.6` with its own values (*Place Copy in Scene*
+  places one with the pane's values). It cooks as the scene loads, into the generated cache by the asset and its
+  values (a load after that reads the mesh); copies with the same values share a mesh; a point with a string
+  attribute `instance` (`proc:rock`, `mesh:<slug>`, `prefab:<name>`) places that asset at its frame (P, orient or N
+  and up, pscale, scale). Saved assets reload in the dev build. The **Procedural (assets)** scene
+  (`METALRENDERER_SCENE=procedural`) shows the demo's: a rock field (scatter → random orient and pscale → `instance`
+  rocks), a fence swept along a curve, L-system bushes of three seeds, a big rock with its own size.
+- **A placed copy's values.** The main window's **Object** inspector (*Object Inspector*, Option-Cmd-I; it shows
+  itself when a `proc:` copy is clicked, unless it was closed) lists the selected object of the scene's file and, for a
+  procedural asset, the parameters it promotes: this copy's values in bold with a button back to the asset's default,
+  the others at the asset's. A field submitted or a slider let go writes the object's `proc:<slug>?…` string into the
+  scene's file (`Renderer.setPlacedAsset`, through `editPlaced`) and makes the scene again with the asset cooked with it;
+  the copy stays selected. *Edit Asset in Modeller* opens the asset's network on a new object in the Procedural tab.
+- **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
+  `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"expr": {"node": "box1", "channel": "sizex",
+  "source": "$F * 0.1"}}`, `{"frame": 12}`, `{"keyframe": {"node": "box1", "channel": "tx", "frame": 24, "value": 2}}`,
+  `{"range": [1, 48]}`, `{"wire": …}`, `{"flag": …}`, `{"dive": "subnet1"}` (`".."` up, `"/"` the top),
+  `{"collapse": {"nodes": [...], "name": "wall"}}`, `{"extract": "wall"}`, `{"interface": {"node": "wall", "add":
+  {"name": "height", "value": 2, "range": [0, 10]}}}`, `{"node": {"add": "asset", "asset": "fence"}}`,
+  `{"definition": {"node": "fence1", "action": "allow" | "match" | "save"}}` steps, by node name at the level shown,
+  and the network in its state, expressions, keys, channel values, the path and the contents too
+  (`ProceduralScripting.swift`).
+
+Cook times at scale, release on the M4 Max (`ProceduralPerfTests`, `PROC_PERF=1 Tools/release.sh test --filter
+ProceduralPerfTests`): a node's own cook, the best of three, nothing cached; the network's (its inputs too) where they
+differ.
+
+| Cook | Output | Node | Network |
+|---|---|---|---|
+| Scatter 1M points on a 100×100 grid | 1M points | 20 ms | |
+| … relaxed, 2 passes | 1M points | 267 ms (was 2.7 s) | |
+| Copy to Points: 10k boxes | 80k points, 60k prims | 1.5 ms | |
+| Copy to Points: 10k spheres (8×12) | 740k points, 840k prims | 19.5 ms | |
+| Attribute Wrangle over a 1000×1000 grid (3 attributes, noise) | 1M points | 4.1 ms | 14 ms (was 117 ms) |
+| Resample a helix to 100k points | 99k points | 11 ms | |
+| Sweep a 16-column tube along it | 1.6M points, 1.6M quads | 18.8 ms (was 94 ms) | 30 ms |
+| Attribute Randomize a float on a 1000×1000 grid | 1M points | 2.3 ms | 16 ms |
+| Attribute Noise added to it | 1M points | 22 ms | 33 ms |
+| Attribute Randomize an int as a vector (converted) | 1M points | 3.8 ms | 13 ms |
+| Attribute Promote P to prims, minimum | 1M points | 16.5 ms | 26 ms |
+| Attribute Transfer of Cd from 1000 points, most out of reach | 1M points | 36 ms | 45 ms |
+| Copy and Transform a 10×10 grid 5000 times | 500k points, 405k prims | 14 ms | |
+| Wrangle reading an int attribute as a float (converted) | 1M points | 1.0 ms (was 3.1 ms) | 12 ms |
+| Attribute Create by an expression per point (`@P.z * 2 + sin($PT)`) | 1M points | 4.7 ms | 13 ms |
+| Ray: a 300×300 grid onto a sphere of 9k triangles, along a direction | 90k points | 3.2 ms (was 151 ms) | 5.5 ms |
+| … to the nearest place (minimum) | 90k points | 18 ms (was 309 ms) | 20 ms |
+| Voronoi Fracture of a 24×48 sphere into 100 cells, cut (exact booleans) | 4.9k points, 3k prims | 91 ms (was 4.4 s) | |
+| … into 2000 cells, not cut | 113k points, 23k prims | 141 ms (was 5.0 s) | |
+
+The wrangle's time leaves out its compile (above). What the profile showed and was fixed: `PointGrid` (fuse,
+attribute transfer, relax, `nearpoint`) looked cells up in a Dictionary, and now uses a flat table; relax ran on one
+core; Grid, Sweep and the polygons' winding made a small array per quad. Ray tested every triangle for every point, and now
+walks a tree over them (`TriangleBVH`, EngineCore's SAH builder), which finds the same triangle (the lowest on a tie).
+Voronoi Fracture built the input's BSP tree again for each cell's boolean (now once, each boolean working on a copy:
+`BooleanOps.Operand`), asked its seed grid for every cell within twice the input's size (now the grid's points in
+order when a query reaches all of them), measured the cell's corners after every neighbour (now after a cut that changed
+it), and made its cells on one core (now all, merged in the seeds' order). Each change keeps the output bit for bit (the
+test prints a fingerprint of each: of a SIMD3 its three lanes, the fourth being padding that differs run to run).
+
+Unoptimised (Xcode's Debug build of the package; `PROC_PERF_SIDE=100` for a 100×100 grid) two of them were quadratic or
+close to it. An attribute written row by row (`AttributeValues.set`), or appended in a merge loop, copied its whole column
+each time: the optimiser removes that copy, an unoptimised build doesn't. Each case now takes the array out of the enum
+before changing it. And every core's grid queries retained the grid's arrays per cell, all contending for the same
+counts; the queries now read them through buffer pointers. At 10k points, before → after: Attribute Transfer 4.4 s →
+30 ms, Copy and Transform's 5000 merges 1.1 s → 0.2 s, Attribute Randomize 7.6 → 2.2 ms; at 1M points the transfer
+went from 650 s to 4 s.
+
+Tests: `ProceduralExpressionTests`, `ProceduralGeoTests`, `ProceduralNodeTests`, `ProceduralCookerTests`, `ProceduralScatterTests`,
+`ProceduralCurveTests`, `ProceduralWrangleTests`, `ProceduralAssetTests`, `ProceduralEditorTests` (MODELING_PNG writes the
+tab's window; PROCEDURAL_DEMO=1 writes the demo's assets and scene file again), `ProceduralPerfTests` (the timings
+above, with PROC_PERF=1).
+
 ### Geometry debug views
 
 The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.

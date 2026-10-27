@@ -42,6 +42,7 @@ package enum ModelAsset {
             var renders: Bool
             var vertices: Int, edges: Int, faces: Int, corners: Int
             var multires: [Int]?          // sculpt, viewport, render, base faces, base corners, then each level's count
+            var network: String?          // the procedural network (ProcGraph's JSON)
         }
         var name: String
         var objects: [Object]
@@ -78,7 +79,7 @@ package enum ModelAsset {
             }
             objects.append(Meta.Object(id: o.id, name: o.name, transform: o.transform, modifiers: o.modifiers, materials: o.materials,
                                        visible: o.visible, renders: o.renders, vertices: m.vertexCount, edges: m.edgeCount,
-                                       faces: m.faceCount, corners: m.cornerCount, multires: multires))
+                                       faces: m.faceCount, corners: m.cornerCount, multires: multires, network: o.network))
         }
         let json = try JSONEncoder().encode(Meta(name: doc.name, objects: objects, active: doc.active, renderedMaterials: rendered.materials))
         w.add(meta, [UInt8](json))
@@ -130,6 +131,7 @@ package enum ModelAsset {
             object.materials = o.materials
             object.visible = o.visible
             object.renders = o.renders
+            object.network = o.network
             if let r = o.multires, r.count >= 5 {
                 var data = MultiresData()
                 (data.sculptLevel, data.viewportLevel, data.renderLevel, data.baseFaces, data.baseCorners) = (r[0], r[1], r[2], r[3], r[4])

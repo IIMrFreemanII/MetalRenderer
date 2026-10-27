@@ -62,6 +62,7 @@ extension SceneKind {
     static let demolition = SceneKind("demolition")
     static let cars = SceneKind("cars")
     static let stage = SceneKind("stage")
+    static let procedural = SceneKind("procedural")
 }
 
 extension GameScenes {
@@ -338,6 +339,12 @@ extension GameScenes {
             scene(.stage, "Stage (scripts)", "buildStage", build: { $0.buildStage() }) {
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 4, 14], pitch: -0.2)
+            },
+            // The stage with procedural assets on it (Assets/Scenes/procedural.scene: `proc:` objects, cooked as it
+            // loads; README, "Procedural modelling").
+            scene(.procedural, "Procedural (assets)", "buildStage", build: { $0.buildStage() }) {
+                $0.sky = courtyard
+                $0.camera = Scene.camera([0, 5, 15], pitch: -0.28)
             },
         ]
     }

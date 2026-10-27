@@ -44,6 +44,9 @@ package struct ViewportObjectDraw {
     package var selectMode: SelectMode = .vertex
     /// Sculpt mode: show mask and face sets.
     package var sculpt = false
+    /// Drawn as its wires only, light grey, and never picked: a procedural network's template node, shown beside what
+    /// it displays.
+    package var template = false
     package var objectID: UInt32 = 0
 
     package init(mesh: ViewportMesh, transform: float4x4, color: SIMD3<Float>, materialColors: [SIMD4<Float>]) {
@@ -256,7 +259,7 @@ package final class ViewportRenderer {
     ]
 
     private func drawFaces(_ enc: MTLRenderCommandEncoder, _ o: ViewportObjectDraw, uniforms u: inout ObjectUniforms, view: inout ViewUniforms) {
-        guard let v = o.mesh.vertices, let ix = o.mesh.indices, o.mesh.indexCount > 0 else { return }
+        guard !o.template, let v = o.mesh.vertices, let ix = o.mesh.indices, o.mesh.indexCount > 0 else { return }
         enc.setVertexBuffer(v, offset: 0, index: 0)
         enc.setVertexBytes(&view, length: MemoryLayout<ViewUniforms>.stride, index: 1)
         enc.setVertexBytes(&u, length: MemoryLayout<ObjectUniforms>.stride, index: 2)
@@ -352,11 +355,12 @@ package final class ViewportRenderer {
         enc.setDepthStencilState(f.shading.xray || wireframe ? depthNone : depthTest)
         var theme = Self.themeColors
         for (i, o) in f.objects.enumerated() {
-            let showWire = o.edit || wireframe || (f.overlays.enabled && f.overlays.wireframe)
+            let showWire = o.edit || o.template || wireframe || (f.overlays.enabled && f.overlays.wireframe)
             guard showWire, let edges = o.mesh.edges, let positions = o.mesh.cagePositions, o.mesh.edgeCount > 0 else { continue }
             var ou = objectUniforms(o, f, index: i)
             if !o.edit && !wireframe { ou.wire = SIMD4(0, 0, 0, 0.35) }
             if !o.edit && wireframe && !o.selected { ou.wire = linearColor(0x101010) }
+            if o.template { ou.wire = SIMD4(0.55, 0.55, 0.6, 0.7) }
             enc.setVertexBuffer(edges, offset: 0, index: 0)
             enc.setVertexBuffer(positions, offset: 0, index: 1)
             enc.setVertexBytes(&u, length: MemoryLayout<ViewUniforms>.stride, index: 2)

@@ -56,6 +56,8 @@ extension Scene {
                     _ = make(self, transform, material)
                 } else if o.asset.hasPrefix("mesh:") {
                     addModelAsset(String(o.asset.dropFirst("mesh:".count)), transform: transform, material: material)
+                } else if o.asset.hasPrefix("proc:") {
+                    addProcAsset(String(o.asset.dropFirst("proc:".count)), transform: transform, material: material)
                 } else if o.asset.hasPrefix("model:") {
                     let url = Scene.assetsDirectory.appendingPathComponent(String(o.asset.dropFirst("model:".count)))
                     do {

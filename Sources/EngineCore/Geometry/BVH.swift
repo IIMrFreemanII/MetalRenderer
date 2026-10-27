@@ -65,9 +65,9 @@ package struct AABB {
     }
 }
 
-enum BVHBuilder {
+package enum BVHBuilder {
     /// A built tree before it is written as child-pair nodes: `order` holds primitive indices, leaves own ranges of it.
-    struct Node {
+    package struct Node {
         package var box: AABB
         package var left = -1, right = -1      // -1 = leaf
         package var start = 0, count = 0
@@ -78,7 +78,7 @@ enum BVHBuilder {
     private static let traversalCost: Float = 1   // relative to one primitive test
     /// A range of more primitives than this is split and its two halves are built at the same time, level after
     /// level: a big mesh's tree is built on every core. Below it a subtree is built by one thread.
-    static let parallelGrain = 1 << 15
+    package static let parallelGrain = 1 << 15
 
     /// A subtree as it was built: its nodes in depth-first order with indices local to it, or a node whose halves
     /// were built apart.
@@ -106,7 +106,7 @@ enum BVHBuilder {
     /// bins: this runs over ~18M triangles for the gallery. A node's split depends only on its own range of `order`,
     /// so the halves of a large range are built in parallel and the result is the same tree, node for node, as a
     /// build by one thread (`grain` = .max; BVHTests checks it).
-    static func build(boxes: [AABB], masks: [UInt32]?, maxLeaf: Int, grain: Int = parallelGrain) -> (nodes: [Node], order: [Int]) {
+    package static func build(boxes: [AABB], masks: [UInt32]?, maxLeaf: Int, grain: Int = parallelGrain) -> (nodes: [Node], order: [Int]) {
         let n = boxes.count
         var order = Array(0..<n)
         guard n > 0 else { return ([], order) }

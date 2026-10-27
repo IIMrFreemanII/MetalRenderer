@@ -93,6 +93,17 @@ enum GraphColors {
     static let selected = Color(red: 0.98, green: 0.72, blue: 0.25)
 }
 
+/// How a canvas looks: its background and its grid (lines, as the VFX editor's and the Material Designer's; dots, as
+/// Houdini's network view).
+struct GraphCanvasStyle {
+    var background = GraphColors.canvas
+    var dots = false
+    var minor = GraphColors.gridMinor
+    var major = GraphColors.gridMajor
+
+    static let standard = GraphCanvasStyle()
+}
+
 /// An input pin: its node's (or block's) id and its name.
 struct GraphPin: Hashable {
     var owner: String
@@ -117,6 +128,7 @@ struct GraphCanvas<Model: GraphCanvasModel, Graph: View, Menu: View, Search: Vie
     /// The ids whose boxes meet a rectangle (the graph's units), and the input pin near a point.
     let items: (CGRect) -> Set<String>
     let inputNear: (CGPoint) -> GraphPin?
+    var style = GraphCanvasStyle.standard
     @ViewBuilder let graph: (GraphDrags<Model>) -> Graph
     @ViewBuilder let menu: (SIMD2<Float>) -> Menu
     @ViewBuilder let search: () -> Search
@@ -131,7 +143,7 @@ struct GraphCanvas<Model: GraphCanvasModel, Graph: View, Menu: View, Search: Vie
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                GraphGrid(pan: model.pan, zoom: model.zoom)
+                GraphGrid(pan: model.pan, zoom: model.zoom, style: style)
                     .frame(width: geo.size.width, height: geo.size.height)
                     .contentShape(Rectangle())
                     .gesture(backgroundDrag)
@@ -166,7 +178,7 @@ struct GraphCanvas<Model: GraphCanvasModel, Graph: View, Menu: View, Search: Vie
             .onAppear { model.canvasSize = geo.size; model.canvasOrigin = geo.frame(in: .global).origin }
             .onChange(of: geo.frame(in: .global)) { f in model.canvasSize = f.size; model.canvasOrigin = f.origin }
         }
-        .background(GraphColors.canvas)
+        .background(style.background)
     }
 
     /// A click on the grid clears the selection; a drag selects a box (Shift: adds to it).
@@ -196,11 +208,33 @@ struct GraphCanvas<Model: GraphCanvasModel, Graph: View, Menu: View, Search: Vie
 struct GraphGrid: View {
     let pan: CGPoint
     let zoom: CGFloat
+    var style = GraphCanvasStyle.standard
 
     var body: some View {
         Canvas { ctx, size in
             let step = 24 * zoom
             guard step > 4 else { return }
+            if style.dots {
+                // A dot where lines would cross, a brighter one every fifth.
+                let x0 = pan.x.truncatingRemainder(dividingBy: step), y0 = pan.y.truncatingRemainder(dividingBy: step)
+                var minor = Path(), major = Path()
+                var i = Int(((x0 - pan.x) / step).rounded())
+                var x = x0
+                while x < size.width {
+                    var j = Int(((y0 - pan.y) / step).rounded())
+                    var y = y0
+                    while y < size.height {
+                        let r: CGFloat = i % 5 == 0 && j % 5 == 0 ? 1.4 : 0.9
+                        let dot = Path(ellipseIn: CGRect(x: x - r, y: y - r, width: 2 * r, height: 2 * r))
+                        if i % 5 == 0 && j % 5 == 0 { major.addPath(dot) } else { minor.addPath(dot) }
+                        y += step; j += 1
+                    }
+                    x += step; i += 1
+                }
+                ctx.fill(minor, with: .color(style.minor))
+                ctx.fill(major, with: .color(style.major))
+                return
+            }
             var minor = Path(), major = Path()
             let x0 = pan.x.truncatingRemainder(dividingBy: step), y0 = pan.y.truncatingRemainder(dividingBy: step)
             var i = Int(((x0 - pan.x) / step).rounded())
@@ -217,8 +251,8 @@ struct GraphGrid: View {
                 if j % 5 == 0 { major.addPath(line) } else { minor.addPath(line) }
                 y += step; j += 1
             }
-            ctx.stroke(minor, with: .color(GraphColors.gridMinor), lineWidth: 1)
-            ctx.stroke(major, with: .color(GraphColors.gridMajor), lineWidth: 1)
+            ctx.stroke(minor, with: .color(style.minor), lineWidth: 1)
+            ctx.stroke(major, with: .color(style.major), lineWidth: 1)
         }
     }
 }
@@ -236,15 +270,18 @@ struct GraphWires: View {
     let area: CGRect
     let wires: [Wire]
     let dragged: Wire?
+    /// Wires leave down and arrive from above (Houdini's networks flow top to bottom).
+    var vertical = false
 
     var body: some View {
         Canvas { ctx, _ in
             ctx.translateBy(x: -area.minX, y: -area.minY)
+            let curve = vertical ? GraphWires.verticalCurve : GraphWires.curve
             for w in wires {
-                ctx.stroke(GraphWires.curve(w.from, w.to), with: .color(w.color.opacity(w.selected ? 1 : 0.75)), lineWidth: w.selected ? 2.6 : 1.8)
+                ctx.stroke(curve(w.from, w.to), with: .color(w.color.opacity(w.selected ? 1 : 0.75)), lineWidth: w.selected ? 2.6 : 1.8)
             }
             if let w = dragged {
-                ctx.stroke(GraphWires.curve(w.from, w.to), with: .color(w.color), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                ctx.stroke(curve(w.from, w.to), with: .color(w.color), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
             }
         }
         .frame(width: area.width, height: area.height)
@@ -258,6 +295,15 @@ struct GraphWires: View {
             let dx = max(abs(b.x - a.x) * 0.5, 50)
             p.move(to: a)
             p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
+        }
+    }
+
+    /// A wire from an output to an input: a curve leaving down, arriving from above.
+    static func verticalCurve(_ a: CGPoint, _ b: CGPoint) -> Path {
+        Path { p in
+            let dy = max(abs(b.y - a.y) * 0.5, 30)
+            p.move(to: a)
+            p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
         }
     }
 }

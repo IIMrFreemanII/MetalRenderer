@@ -28,4 +28,8 @@ final class RendererModelingHost: ModelingHost {
     func placeModelAsset(_ slug: String) {
         renderer.perform { r in r.addPlaced(asset: "mesh:\(slug)") }
     }
+
+    func placeAsset(_ asset: String) {
+        renderer.perform { r in r.addPlaced(asset: asset) }
+    }
 }

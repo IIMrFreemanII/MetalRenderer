@@ -78,7 +78,8 @@ func run(_ run: ScriptRun) {
             go("cars")
         case "remake":
             // Made again in place well into the scene's clock: a hot reload's remake and a setting of the scene.
-            for name in ["muscles", "fluids", "softbodies"] {
+            // (The procedural scene: its assets cooked again, as a hot reload of Assets/Procedural or an inspector's edit.)
+            for name in ["muscles", "fluids", "softbodies", "procedural"] {
                 go(name)
                 run.wait(seconds: 15)
                 run.render { $0.remakeScene(because: "the switch harness") }

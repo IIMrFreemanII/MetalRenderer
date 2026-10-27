@@ -24,6 +24,8 @@ import simd
 ///   {"new": true}, {"save": "<name>"} ({"save": true}: under its asset's name), {"place": true} (the saved model into
 ///   the app's scene, in front of its camera: `mesh:<slug>`), {"size": [w, h]},
 ///   {"wait": seconds}, {"close": true}
+///   {"network": …}, {"node": …}, {"parm": …}, {"wire": …}, {"unwire": …}, {"flag": …}   the Procedural workspace's
+///                                            network, by node name (ProceduralStep)
 enum ModellerStep {
     case keys([KeyChord])
     case type(String)
@@ -47,6 +49,7 @@ enum ModellerStep {
     case size(SIMD2<Float>)
     case wait(Double)
     case close
+    case procedural(ProceduralStep)
 
     /// A point of the viewport (points from its top left), or of the world (where the camera shows it, when the step
     /// runs).
@@ -72,6 +75,7 @@ enum ModellerStep {
     /// The steps' keys, as the errors list them.
     static let keys = ["keys", "type", "click", "drag", "move", "scroll", "run", "pick", "add", "mode", "selectMode", "tool",
                        "shading", "workspace", "brush", "open", "new", "save", "place", "size", "wait", "close"]
+                       + ProceduralStep.keys
 
     /// The steps of a JSON list (each an object of one key, or a bare string of keys); the first bad one fails all.
     static func decode(list: Any) -> Result<[ModellerStep], Failure> {
@@ -93,6 +97,7 @@ enum ModellerStep {
             return .failure(Failure("no step in \(body.keys.sorted()); the steps: \(keys.joined(separator: ", "))", badRequest: true))
         }
         let value = body[key]!
+        if ProceduralStep.keys.contains(key) { return ProceduralStep.decode(key, value).map { .procedural($0) } }
         func bad(_ text: String) -> Result<ModellerStep, Failure> { .failure(Failure("\(key): \(text)", badRequest: true)) }
         func named<E: RawRepresentable & CaseIterable>(_: E.Type) -> E? where E.RawValue == String {
             guard let s = value as? String else { return nil }

@@ -79,6 +79,9 @@ package struct ModelObject: Identifiable {
     package var visible = true
     /// Part of the model when it is saved and rendered (a boolean's cutter isn't).
     package var renders = true
+    /// The procedural network that makes the mesh (its JSON, the Procedural module's `ProcGraph`; nil: none). The mesh
+    /// is the network's cooked output; the Modeller's Procedural workspace edits the network.
+    package var network: String?
 
     package init(name: String, mesh: EditMesh) {
         self.name = name

@@ -1,0 +1,208 @@
+{
+  "format" : 1,
+  "graph" : {
+    "interface" : [
+      {
+        "name" : "count",
+        "span" : [
+          0,
+          400
+        ],
+        "targets" : [
+          {
+            "node" : "spots",
+            "param" : "npts"
+          }
+        ],
+        "title" : "count",
+        "value" : {
+          "int" : 40
+        }
+      },
+      {
+        "name" : "seed",
+        "span" : [
+          0,
+          100
+        ],
+        "targets" : [
+          {
+            "node" : "spots",
+            "param" : "seed"
+          }
+        ],
+        "title" : "seed",
+        "value" : {
+          "int" : 2
+        }
+      }
+    ],
+    "links" : [
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n2"
+      },
+      {
+        "from" : "n2",
+        "input" : 0,
+        "to" : "n3"
+      },
+      {
+        "from" : "n3",
+        "input" : 0,
+        "to" : "n4"
+      },
+      {
+        "from" : "n4",
+        "input" : 0,
+        "to" : "n5"
+      }
+    ],
+    "nodes" : [
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n1",
+        "kind" : "grid",
+        "name" : "ground",
+        "params" : {
+          "cols" : {
+            "int" : 6
+          },
+          "rows" : {
+            "int" : 4
+          },
+          "size" : {
+            "vec2" : [
+              14,
+              8
+            ]
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n2",
+        "kind" : "scatter",
+        "name" : "spots",
+        "params" : {
+          "attribs" : {
+            "string" : ""
+          },
+          "npts" : {
+            "int" : 40
+          },
+          "relaxiterations" : {
+            "int" : 3
+          },
+          "seed" : {
+            "int" : 2
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n3",
+        "kind" : "attribrandomize",
+        "name" : "attribrandomize1",
+        "params" : {
+          "dims" : {
+            "int" : 1
+          },
+          "max" : {
+            "vec4" : [
+              1.2,
+              0,
+              0,
+              0
+            ]
+          },
+          "min" : {
+            "vec4" : [
+              0.3,
+              0,
+              0,
+              0
+            ]
+          },
+          "name" : {
+            "string" : "pscale"
+          },
+          "seed" : {
+            "int" : 5
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n4",
+        "kind" : "attribrandomize",
+        "name" : "attribrandomize2",
+        "params" : {
+          "dims" : {
+            "int" : 4
+          },
+          "max" : {
+            "vec4" : [
+              1,
+              1,
+              1,
+              1
+            ]
+          },
+          "min" : {
+            "vec4" : [
+              -1,
+              -1,
+              -1,
+              -1
+            ]
+          },
+          "name" : {
+            "string" : "orient"
+          },
+          "seed" : {
+            "int" : 9
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "display" : true,
+        "id" : "n5",
+        "kind" : "attribcreate",
+        "name" : "attribcreate1",
+        "params" : {
+          "name" : {
+            "string" : "instance"
+          },
+          "string" : {
+            "string" : "proc:rock"
+          },
+          "type" : {
+            "string" : "string"
+          }
+        }
+      }
+    ]
+  },
+  "materials" : [
+
+  ],
+  "name" : "Rock Field"
+}

@@ -1,0 +1,283 @@
+{
+  "format" : 1,
+  "graph" : {
+    "interface" : [
+      {
+        "name" : "spacing",
+        "span" : [
+          0.3,
+          5
+        ],
+        "targets" : [
+          {
+            "node" : "spacing",
+            "param" : "length"
+          }
+        ],
+        "title" : "spacing",
+        "value" : {
+          "float" : 1.5
+        }
+      }
+    ],
+    "links" : [
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n2"
+      },
+      {
+        "from" : "n3",
+        "input" : 0,
+        "to" : "n4"
+      },
+      {
+        "from" : "n2",
+        "input" : 1,
+        "to" : "n4"
+      },
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n5"
+      },
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n6"
+      },
+      {
+        "from" : "n5",
+        "input" : 0,
+        "to" : "n7"
+      },
+      {
+        "from" : "n6",
+        "input" : 1,
+        "to" : "n7"
+      },
+      {
+        "from" : "n7",
+        "input" : 0,
+        "to" : "n8"
+      },
+      {
+        "from" : "n4",
+        "input" : 0,
+        "to" : "n9"
+      },
+      {
+        "from" : "n8",
+        "input" : 1,
+        "to" : "n9"
+      },
+      {
+        "from" : "n9",
+        "input" : 0,
+        "to" : "n10"
+      }
+    ],
+    "nodes" : [
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n1",
+        "kind" : "curve",
+        "name" : "path",
+        "params" : {
+          "points" : {
+            "points" : [
+              [
+                -6,
+                0,
+                0
+              ],
+              [
+                -2,
+                0,
+                -1.5
+              ],
+              [
+                2,
+                0,
+                -1
+              ],
+              [
+                6,
+                0,
+                1
+              ]
+            ]
+          },
+          "type" : {
+            "string" : "smooth"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n2",
+        "kind" : "resample",
+        "name" : "spacing",
+        "params" : {
+          "length" : {
+            "float" : 1.5
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n3",
+        "kind" : "box",
+        "name" : "post",
+        "params" : {
+          "size" : {
+            "vec3" : [
+              0.12,
+              1.2,
+              0.12
+            ]
+          },
+          "t" : {
+            "vec3" : [
+              0,
+              0.6,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n4",
+        "kind" : "copytopoints",
+        "name" : "posts"
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n5",
+        "kind" : "transform",
+        "name" : "transform1",
+        "params" : {
+          "t" : {
+            "vec3" : [
+              0,
+              0.95,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n6",
+        "kind" : "transform",
+        "name" : "transform2",
+        "params" : {
+          "t" : {
+            "vec3" : [
+              0,
+              0.5,
+              0
+            ]
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n7",
+        "kind" : "merge",
+        "name" : "merge1"
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n8",
+        "kind" : "sweep",
+        "name" : "rails",
+        "params" : {
+          "surfaceshape" : {
+            "string" : "square"
+          },
+          "width" : {
+            "float" : 0.07
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n9",
+        "kind" : "merge",
+        "name" : "fence"
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "display" : true,
+        "id" : "n10",
+        "kind" : "attribcreate",
+        "name" : "attribcreate1",
+        "params" : {
+          "class" : {
+            "string" : "primitive"
+          },
+          "name" : {
+            "string" : "material"
+          },
+          "string" : {
+            "string" : "wood"
+          },
+          "type" : {
+            "string" : "string"
+          }
+        }
+      }
+    ]
+  },
+  "materials" : [
+    {
+      "baseColor" : [
+        0.42,
+        0.27,
+        0.15,
+        1
+      ],
+      "emission" : [
+        0,
+        0,
+        0
+      ],
+      "metallic" : 0,
+      "name" : "wood",
+      "roughness" : 0.7
+    }
+  ],
+  "name" : "Fence"
+}

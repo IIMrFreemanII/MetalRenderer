@@ -95,6 +95,10 @@ extension ModelingModel {
             if sculpt?.beginStroke(at: p, flags: flags, pressure: pressure, model: self) == true { gesture = .sculpting }
             return
         }
+        if workspace == .procedural, mode == .object, let s = proceduralSession, let o = activeObject, o.id == s.objectID,
+           s.beginHandleDrag(at: p, self, transform: o.transform.matrix) {
+            return
+        }
         if let handle = gizmoHandle(at: p) {
             beginGizmoDrag(handle)
             return
@@ -116,6 +120,10 @@ extension ModelingModel {
     func mouseDragged(to p: SIMD2<Float>, flags: NSEvent.ModifierFlags, pressure: Float = 1) {
         let last = mouse
         mouse = p
+        if let s = proceduralSession, s.handleDrag != nil, let o = activeObject {
+            s.dragHandle(to: p, self, transform: o.transform.matrix)
+            return
+        }
         switch gesture {
         case .navigate(let orbit, let pan, let zoom, let previous):
             let d = p - previous
@@ -152,6 +160,11 @@ extension ModelingModel {
 
     func mouseUp(_ button: Button, at p: SIMD2<Float>, flags: NSEvent.ModifierFlags) {
         mouse = p
+        if let s = proceduralSession, s.handleDrag != nil {
+            s.endHandleDrag()
+            redraw()
+            return
+        }
         switch gesture {
         case .navigate:
             gesture = .none

@@ -190,11 +190,36 @@ extension Renderer {
             for k in moved { movePlaced(k) }
             return
         }
+        // The selected object stays selected in the scene made again (its instances may be others: a procedural
+        // asset's new values make more or fewer).
+        if let k = placedSelection, let live, k < file.objects.count, file.objects[k].name == live.file.objects[k].name {
+            placedReselect = (kind, k)
+        }
         if loading != nil || placedPending != nil {
             placedPending = file
         } else {
             remakeScene(because: "its scene file changed")
         }
+    }
+
+    /// The placed object `k` of `kind`'s scene with `asset` in place of its own (the Object inspector's values for a
+    /// `proc:` asset: `proc:<slug>?name=value…`). Render thread.
+    package func setPlacedAsset(_ k: Int, of kind: SceneKind, to asset: String) {
+        guard kind == settings.scene.kind else { return }
+        editPlaced { file in
+            guard file.objects.indices.contains(k) else { return }
+            file.objects[k].asset = asset
+        }
+    }
+
+    /// After a scene is put in: the placed object an edit had selected, selected again (unless another edit's scene is
+    /// still to come).
+    package func reselectPlaced() {
+        guard let r = placedReselect, placedPending == nil else { return }
+        placedReselect = nil
+        guard r.kind == scene.settings.kind, let placed = scene.placed, placed.instances.indices.contains(r.object),
+              !placed.instances[r.object].isEmpty else { return }
+        select(FrameTarget(kind: scene.settings.kind, scope: MaterialAssignments.scope(scene.settings), instances: placed.instances[r.object]))
     }
 
     /// A scene file edited while a scene loaded (editPlaced): the scene made again from it once that one is in.

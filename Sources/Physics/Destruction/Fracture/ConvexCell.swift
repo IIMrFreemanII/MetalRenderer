@@ -62,6 +62,13 @@ package struct ConvexCell {
 
     /// The cell less what is outside `plane` (n . p > d), its new face tagged `tag`; nil if nothing is left.
     package func clipped(by plane: SIMD4<Float>, tag: Int32) -> ConvexCell? {
+        var changed = false
+        return clipped(by: plane, tag: tag, changed: &changed)
+    }
+
+    /// As `clipped(by:tag:)`, telling `changed` whether the plane cut anything off.
+    package func clipped(by plane: SIMD4<Float>, tag: Int32, changed: inout Bool) -> ConvexCell? {
+        changed = true
         let n = SIMD3(plane.x, plane.y, plane.z), d = plane.w
         let eps = max(size * 1e-6, 1e-8)
         var anyOut = false, anyIn = false
@@ -71,7 +78,7 @@ package struct ConvexCell {
                 if s > eps { anyOut = true } else if s < -eps { anyIn = true }
             }
         }
-        if !anyOut { return self }
+        if !anyOut { changed = false; return self }
         if !anyIn { return nil }
         var kept: [Face] = [], cut: [SIMD3<Float>] = []
         for f in faces {

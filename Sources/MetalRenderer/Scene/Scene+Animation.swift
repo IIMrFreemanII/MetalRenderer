@@ -33,6 +33,8 @@ extension Scene {
                 }
             }
         }
+        // The placed procedural assets that play their frames.
+        if !procFlipbooks.isEmpty, showProcFrames(at: t) { changed = true }
         defer {
             // (The loose furniture of an interior: only while some of it is awake.)
             let bodies = physics.map { p in settings.kind.simulates || p.bodies.contains { physicsBodyMoves(position: $0.position, info: $0.info) } || !p.particles.isEmpty

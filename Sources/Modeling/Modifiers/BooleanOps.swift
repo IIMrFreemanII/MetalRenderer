@@ -17,6 +17,25 @@ package enum BooleanOps {
         return exact(a, b, operation: operation)
     }
 
+    /// A first operand used against many second ones (Voronoi Fracture's cells): its BSP tree built once, each
+    /// boolean working on a copy of it. The same results as `apply` with the mesh.
+    package struct Operand {
+        package let mesh: EditMesh
+        private let tree: Node?
+
+        package init(_ mesh: EditMesh) {
+            self.mesh = mesh
+            tree = mesh.cornerCount > exactLimit * 4 ? nil : Node(polygons(mesh, sourceOffset: false))
+        }
+
+        package func apply(_ b: EditMesh, operation: Modifier.BooleanOperation, solver: Modifier.BooleanSolver, voxel: Float) -> EditMesh {
+            guard let tree, solver != .voxel, mesh.cornerCount + b.cornerCount <= exactLimit * 4 else {
+                return BooleanOps.apply(mesh, b, operation: operation, solver: solver, voxel: voxel)
+            }
+            return exact(tree.copy(), mesh, b, operation: operation)
+        }
+    }
+
     // MARK: Exact (BSP)
 
     struct Vertex { var p: SIMD3<Double>; var uv: SIMD2<Double> }
@@ -103,6 +122,19 @@ package enum BooleanOps {
 
         init(_ polys: [Polygon] = []) { if !polys.isEmpty { build(polys) } }
 
+        /// A copy of the tree, node for node (the operations change the trees they work on).
+        func copy() -> Node {
+            let root = Node()
+            var stack: [(Node, Node)] = [(self, root)]
+            while let (from, to) = stack.popLast() {
+                to.plane = from.plane
+                to.polygons = from.polygons
+                if let f = from.front { to.front = Node(); stack.append((f, to.front!)) }
+                if let b = from.back { to.back = Node(); stack.append((b, to.back!)) }
+            }
+            return root
+        }
+
         var nodes: [Node] {
             var out: [Node] = [], stack: [Node] = [self]
             while let n = stack.popLast() {
@@ -169,7 +201,12 @@ package enum BooleanOps {
     }
 
     package static func exact(_ a: EditMesh, _ b: EditMesh, operation: Modifier.BooleanOperation) -> EditMesh {
-        let A = Node(polygons(a, sourceOffset: false)), B = Node(polygons(b, sourceOffset: true))
+        exact(Node(polygons(a, sourceOffset: false)), a, b, operation: operation)
+    }
+
+    /// The boolean of `a`, whose tree is `A` (changed by it), and `b`.
+    static func exact(_ A: Node, _ a: EditMesh, _ b: EditMesh, operation: Modifier.BooleanOperation) -> EditMesh {
+        let B = Node(polygons(b, sourceOffset: true))
         let result: [Polygon]
         switch operation {
         case .union:

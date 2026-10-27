@@ -8,6 +8,7 @@ import Landscape
 import Materials
 import Physics
 import Plants
+import Procedural
 import simd
 
 /// A small Cornell-style room with static objects, animated objects and moving sphere lights, or one of the other
@@ -38,11 +39,13 @@ package final class Scene {
         package var sdf = -1
         /// A rigid body's: the physics (Physics.swift) moves it.
         package var simulated = false
+        /// A placed procedural asset's that plays its frames: `Scene.update` gives it each frame's mesh (Scene+ProcAsset).
+        package var flipbook = false
 
         /// Never moves or deforms: its transform is the one it was added with (a still scene's structure is built once).
-        package var isStatic: Bool { animation == nil && !poseAnimated && !deforms && !simulated }
+        package var isStatic: Bool { animation == nil && !poseAnimated && !deforms && !simulated && !flipbook }
         /// Its transform changes from frame to frame.
-        package var moves: Bool { animation != nil || poseAnimated || travels || simulated }
+        package var moves: Bool { animation != nil || poseAnimated || travels || simulated || flipbook }
         /// Solid geometry, which shadow and GI rays meet.
         package var isGeometry: Bool { mask == Scene.maskGeometry }
     }
@@ -506,6 +509,13 @@ package final class Scene {
     package var behaviour: SceneBehaviour?
     /// What its scene file placed (Scene.place), for the editor to move; nil when it had none.
     package var placed: PlacedFile?
+    /// Procedural assets cooked for this scene, and their meshes (with their first material), by their cache name:
+    /// copies with the same values share them (Scene+ProcAsset).
+    var proceduralCooks: [String: ProcAsset.Cooked] = [:]
+    var proceduralMeshes: [String: (mesh: Int, material: Int)] = [:]
+    /// The placed assets that play their frames, and the mesh of their frames with nothing to draw.
+    package internal(set) var procFlipbooks: [ProcFlipbook] = []
+    var procEmptyMesh: Int?
     /// The kit's meshes (Scene.kitMesh) and the materials a scene file's objects name (Scene.nameMaterial).
     package var kitMeshes: [Int: Int] = [:]
     package var namedMaterials: [String: Int] = [:]

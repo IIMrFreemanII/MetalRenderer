@@ -575,6 +575,7 @@ package final class Renderer: NSObject {
     package var scriptServer: ScriptServer?         // the socket Tools/script.py and the MCP server reach
     package var frameCaptures: [FrameCapture] = []  // the next frame's picture, asked for (captureFrame)
     package var placedPending: SceneFile?           // a scene file edited while a scene loads: made once it is in
+    package var placedReselect: (kind: SceneKind, object: Int)?   // the placed object selected again once its scene is made
 
     // MARK: - Procedural materials: state
 

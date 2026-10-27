@@ -234,6 +234,8 @@ package final class ScriptModeller {
             if mode == .rendered && m.stage == nil { throw Failure(m.message.isEmpty ? "no Rendered view" : m.message) }
         case .workspace(let w):
             m.setWorkspace(w)
+        case .procedural(let step):
+            note = try step.execute(in: m)
         case .brush(let b):
             m.selectBrush(b)
         case .open(let what):
@@ -387,6 +389,7 @@ package final class ScriptModeller {
                     return e
                 },
             ] as [String: Any]
+            if let p = m.proceduralSession, let network = ProceduralStep.state(p) { out["network"] = network }
             if let sc = m.sculpt {
                 out["sculpt"] = ["brush": m.sculptBrush.kind.rawValue, "radius": Double(m.sculptBrush.radius),
                                  "strength": Double(m.sculptBrush.strength), "vertices": sc.vertexCount,

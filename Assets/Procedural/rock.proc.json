@@ -1,0 +1,136 @@
+{
+  "format" : 1,
+  "graph" : {
+    "interface" : [
+      {
+        "name" : "seed",
+        "span" : [
+          0,
+          100
+        ],
+        "targets" : [
+          {
+            "node" : "bumps",
+            "param" : "seed"
+          }
+        ],
+        "title" : "seed",
+        "value" : {
+          "int" : 0
+        }
+      },
+      {
+        "name" : "size",
+        "span" : [
+          0.1,
+          3
+        ],
+        "targets" : [
+          {
+            "node" : "size",
+            "param" : "scale"
+          }
+        ],
+        "title" : "size",
+        "value" : {
+          "float" : 0.6
+        }
+      }
+    ],
+    "links" : [
+      {
+        "from" : "n1",
+        "input" : 0,
+        "to" : "n2"
+      },
+      {
+        "from" : "n2",
+        "input" : 0,
+        "to" : "n3"
+      }
+    ],
+    "nodes" : [
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n1",
+        "kind" : "sphere",
+        "name" : "shape",
+        "params" : {
+          "freq" : {
+            "int" : 3
+          },
+          "rad" : {
+            "vec3" : [
+              1,
+              0.7,
+              1
+            ]
+          },
+          "type" : {
+            "string" : "ico"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "id" : "n2",
+        "kind" : "attribnoise",
+        "name" : "bumps",
+        "params" : {
+          "amp" : {
+            "float" : 0.35
+          },
+          "freq" : {
+            "float" : 1.3
+          },
+          "octaves" : {
+            "int" : 4
+          },
+          "op" : {
+            "string" : "alongnormal"
+          }
+        }
+      },
+      {
+        "at" : [
+          0,
+          0
+        ],
+        "display" : true,
+        "id" : "n3",
+        "kind" : "transform",
+        "name" : "size",
+        "params" : {
+          "scale" : {
+            "float" : 0.6
+          }
+        }
+      }
+    ]
+  },
+  "materials" : [
+    {
+      "baseColor" : [
+        0.3,
+        0.28,
+        0.25,
+        1
+      ],
+      "emission" : [
+        0,
+        0,
+        0
+      ],
+      "metallic" : 0,
+      "name" : "Material",
+      "roughness" : 0.8
+    }
+  ],
+  "name" : "Rock"
+}
