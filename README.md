@@ -2357,8 +2357,29 @@ on the right.
   distinct frame is cooked (frames with the same cook key share one cook and one mesh; finding them cooks nothing), and
   its instance takes each frame's mesh as the clock runs. The assets its points place move with its frames when every
   frame places the same ones. One that doesn't read the frame is one still mesh, as before.
+- **Subnetworks** (`Graph/ProcContents.swift`). A *Subnetwork* holds a network of its own: its inputs are the
+  *Sub-Network Input* nodes inside (as many as the highest's number, each labelled; nothing wired: no geometry), its
+  output the Output node inside, else the display flag. Double-click it or press Return to go in, U (or the bar's path,
+  `geo1 › subnet1`) to go up; inside, the viewport shows that level's display node, cooked with the subnetwork's real
+  inputs and parameters. Select nodes and press Shift-C (*Collapse into Subnetwork*) to put them in one: the nodes
+  wired into them become its inputs, the one feeding the outside its output (more than one is refused), and the paths
+  in expressions follow (`../box9` inside becomes `../../box9`, `../xform1` outside `../subnet1/xform1`; promoted
+  targets too). *Extract Contents* puts them back. *Edit Parameter Interface…* (the node's menu, or the slider button in
+  its parameter header) gives it parameters: add by type (Float, Integer, Toggle, Vector 2–4, String), name, label,
+  default, range, order; inside, `ch("../name")` reads one, and its value on the subnetwork can be keyed or an
+  expression like any other. A renamed parameter keeps its values and keys, and the `ch()` inside follow it. Paths now
+  go up and down (`../../box1/sizex`, `../subnet1/box1/tx`); one that leads nowhere is an error saying so.
+- **Asset nodes.** The Tab menu's *Procedural Assets* (and the right-click menu's) add a library asset as a node: its
+  network is the asset's, put in from `Assets/Procedural` whenever the network changes (a changed asset recooks every
+  network and placed copy that holds it), locked (shown, not edited) until *Allow Editing of Contents*; *Save to
+  Definition* writes the edited network back to the library and locks it again, *Match Current Definition* drops the
+  edits. Its parameters are the asset's promoted ones. An asset that contains itself is an error on its node; one the
+  library lacks cooks the network it was saved with. A placed asset's nested assets add their material slots.
 - **Cooking.** A node's output is kept under a hash of its kind, parameters and inputs (`ProcCooker`): an edit cooks
-  that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own.
+  that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own. A subnetwork's or asset
+  node's key is its own and its network's output's (nothing of ids or names: two equal subnetworks cook once); its
+  network cooks in a pass of its own under its container's, and `info` names its nodes by the containers' ids
+  (`n3/n2`).
 - **Inspecting.** Over the viewport: point dots, point and primitive numbers, normals, colour by `Cd`, and
   **handles** (the current node's translate or origin as axes, a curve's points as crosses) dragged in the viewport.
   The spreadsheet lists the current node's elements, a column per attribute component.
@@ -2380,8 +2401,12 @@ on the right.
 - **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
   `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"expr": {"node": "box1", "channel": "sizex",
   "source": "$F * 0.1"}}`, `{"frame": 12}`, `{"keyframe": {"node": "box1", "channel": "tx", "frame": 24, "value": 2}}`,
-  `{"range": [1, 48]}`, `{"wire": …}`, `{"flag": …}` steps, by node name, and the network in its state, expressions,
-  keys and channel values too (`ProceduralScripting.swift`).
+  `{"range": [1, 48]}`, `{"wire": …}`, `{"flag": …}`, `{"dive": "subnet1"}` (`".."` up, `"/"` the top),
+  `{"collapse": {"nodes": [...], "name": "wall"}}`, `{"extract": "wall"}`, `{"interface": {"node": "wall", "add":
+  {"name": "height", "value": 2, "range": [0, 10]}}}`, `{"node": {"add": "asset", "asset": "fence"}}`,
+  `{"definition": {"node": "fence1", "action": "allow" | "match" | "save"}}` steps, by node name at the level shown,
+  and the network in its state, expressions, keys, channel values, the path and the contents too
+  (`ProceduralScripting.swift`).
 
 Cook times at scale, release on the M4 Max (`ProceduralPerfTests`, `PROC_PERF=1 Tools/release.sh test --filter
 ProceduralPerfTests`): a node's own cook, the best of three, nothing cached; the network's (its inputs too) where they

@@ -42,7 +42,7 @@ modelling" says what it is; this note says where things are, what was checked an
   window, the handle drags with a real mouse, the code editor's focus are checked through the model only;
   so is the Object inspector panel (its model by tests, its edits in a headless app, its look in offscreen pictures).
 - `.claude/skills/tests/scripts/related.sh` has no rows for `Sources/Procedural`, `Editors/Modeling/Procedural`
-  (the skills folder is write-protected here): add `Sources/Procedural/*` → the nine Procedural suites, and
+  (the skills folder is write-protected here): add `Sources/Procedural/*` → the Procedural suites (ProceduralSubnetTests and ProceduralKeyframeTests among them), and
   `Sources/Editors/Placement/*` → ObjectInspectorTests.
 - Performance: cooks are off the frame. `ProceduralPerfTests` (PROC_PERF=1, release) times a 1M scatter (and relaxed),
   10k copies, a 1M wrangle, a 100k-point sweep; README has the M4 Max numbers. `testAttributeWrites` times the row-by-row
@@ -65,6 +65,16 @@ modelling" says what it is; this note says where things are, what was checked an
   `proc:<cache name>` (they were `proc:<slug>`, which let another scene's structure of a different cook be reused).
   `ProceduralAssetTests.testPlacedAssetsPlay` / `testPlacedChildrenFollowFrames`. An emissive placed asset that plays
   keeps its first frame's mesh lights.
+- Subnetworks and asset nodes (`Graph/ProcContents.swift`: `ProcNode.contents`, `editable`, the dynamic `spec`,
+  `syncingDefinitions`, `collapse` / `extract` and `ProcPathMove`'s path rewriting). The cooker cooks a container's
+  network in a child `Pass` (`parent`, `prefix`, `slugs`, `children`; released after each cook: parents and children
+  hold each other); `place(_:from:_:)` is the one path resolver (`ch`, `chs`, `chf`, geometry functions, keys). The
+  session keeps `root` and `path`; `graph` is the level shown; `edit` refuses inside a locked asset and syncs
+  definitions (`ProcStore.cachedRead`, by file date). `ProceduralSubnetTests`, `ProceduralEditorTests.testSubnetworks`
+  / `testAssetNodes` / `testScriptedSubnetworks`. Never tried by hand: the double-click dive (a `TapGesture(count: 2)`
+  beside the header's drag), Return / U / Shift-C in the window, the interface editor sheet (its edits are tested
+  through `setInterface`, its look isn't pictured). Not there: absolute paths, an asset node's own material slots in
+  the Modeller (only placed copies merge them), expressions on a container's parameters when a path cook reads a key
+  (`key(_:at:_:)` uses their values as set), Houdini's per-level viewport choice (always the level's display).
 - Not there: packed primitives in the viewport, VDB / volumes,
-  curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes,
-  subnetworks.
+  curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes.

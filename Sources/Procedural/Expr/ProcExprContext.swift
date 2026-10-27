@@ -12,29 +12,48 @@ package final class ProcExprState {
 
 /// A node's expressions in one cook: what their names mean there. Channels are a parameter's name, plus x y z w for a
 /// vector's components (`tx`, `sizey`); a path in `ch()` is a channel of this node (`sizex`), of another
-/// (`../box1/sizex`), or the network's promoted parameter (`../seed`). Variables: `$F $FF $T $FPS $PI $E` and `$OS`
+/// (`../box1/sizex`, `../../box1/sizex` beside the subnetwork this node is in, `../subnet1/box1/sizex` in one), or a
+/// parameter of the node this network is in (`../width`; at the top, the asset's promoted `../seed`). Variables: `$F $FF $T $FPS $PI $E` and `$OS`
 /// (the node's name, in text); the node's first input's `$NPT $NPR $NVTX $CEX… $XMIN… $SIZEX…`; per element `$PT $PR
 /// $TX… $NX… $CR…` and `@attr`. The cooker gives the context its inputs and other nodes' outputs, cooked on demand.
 package final class ProcExprContext {
+    /// What a path's node part names: a node (its context), or the top network's promoted parameters (`..` there).
+    package enum Place {
+        case node(ProcExprContext)
+        case parameters([PromotedParam])
+    }
+
     package let graph: ProcGraph
     package let node: ProcNode
     package let frame: Float
     let input: (Int) throws -> ProcGeo?
-    let cook: (String) throws -> ProcGeo
-    let other: (String) -> ProcExprContext?
+    let find: (String) throws -> Place
+    let output: () throws -> ProcGeo
     let state: ProcExprState
 
-    /// `input`: this node's input `i` (nil if nothing is wired there); `cook`: a node's output, by id; `other`:
-    /// another node's context, by id.
+    /// `input`: this node's input `i` (nil if nothing is wired there); `find`: what a node path names (`..`,
+    /// `../box1`, `../../subnet1`; a bare name: a node beside this one); `output`: this node's geometry.
     package init(graph: ProcGraph, node: ProcNode, frame: Float, state: ProcExprState, input: @escaping (Int) throws -> ProcGeo?,
-                 cook: @escaping (String) throws -> ProcGeo, other: @escaping (String) -> ProcExprContext?) {
+                 find: @escaping (String) throws -> Place, output: @escaping () throws -> ProcGeo = { throw ProcExprError("no cooking here") }) {
         self.graph = graph
         self.node = node
         self.frame = frame
         self.state = state
         self.input = input
-        self.cook = cook
-        self.other = other
+        self.find = find
+        self.output = output
+    }
+
+    /// A channel path's node part (nil: this node) and its channel.
+    package static func split(_ path: String) -> (place: String?, channel: String) {
+        guard let k = path.lastIndex(of: "/") else { return (nil, path) }
+        let place = String(path[..<k])
+        return (place == "." ? nil : place, String(path[path.index(after: k)...]))
+    }
+
+    private func place(_ path: String?) throws -> Place {
+        guard let path, path != "." else { return .node(self) }
+        return try find(path)
     }
 
     package static let fps: Float = 24
@@ -53,10 +72,14 @@ package final class ProcExprContext {
     }
 
     /// The parameter a channel is of, and its component (nil: the parameter is a number). `r g b a` name a colour's.
-    package static func locate(_ channel: String, in kind: ProcNodeKind) -> (spec: ProcParamSpec, component: Int?)? {
-        if let s = kind.spec.param(channel), channels(of: s) == [channel] { return (s, nil) }
+    package static func locate(_ channel: String, in node: ProcNode) -> (spec: ProcParamSpec, component: Int?)? {
+        locate(channel, in: node.spec)
+    }
+
+    package static func locate(_ channel: String, in spec: ProcNodeSpec) -> (spec: ProcParamSpec, component: Int?)? {
+        if let s = spec.param(channel), channels(of: s) == [channel] { return (s, nil) }
         guard let last = channel.last, let k = ProcExprParser.component(last) else { return nil }
-        guard let s = kind.spec.param(String(channel.dropLast())) else { return nil }
+        guard let s = spec.param(String(channel.dropLast())) else { return nil }
         let n = channels(of: s).count
         return n > 1 && k < n ? (s, k) : nil
     }
@@ -65,7 +88,7 @@ package final class ProcExprContext {
     package func value(ofChannel channel: String) throws -> Float {
         let key = "\(node.id)/\(channel)"
         if let v = state.values[key] { return v }
-        guard let (spec, k) = ProcExprContext.locate(channel, in: node.kind) else {
+        guard let (spec, k) = ProcExprContext.locate(channel, in: node) else {
             throw ProcExprError("\(node.name) has no channel \(channel)")
         }
         let v: Float
@@ -92,7 +115,7 @@ package final class ProcExprContext {
     /// Channel `channel` of this node at `frame` (`chf`'s second argument): its keys' value there, else its value as
     /// set. An expression's is an error: it is evaluated at the cook's frame only.
     package func value(ofChannel channel: String, at frame: Float) throws -> Float {
-        guard let (spec, k) = ProcExprContext.locate(channel, in: node.kind) else {
+        guard let (spec, k) = ProcExprContext.locate(channel, in: node) else {
             throw ProcExprError("\(node.name) has no channel \(channel)")
         }
         if let curve = node.curves[channel] { return curve.value(at: frame) }
@@ -106,46 +129,30 @@ package final class ProcExprContext {
     /// The value of a `ch()` path at `frame` (nil: the cook's).
     package func channel(_ path: String, at frame: Float?) throws -> Float {
         guard let frame else { return try channel(path) }
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        switch parts.count {
-        case 1: return try value(ofChannel: path, at: frame)
-        case 2 where parts[0] == ".": return try value(ofChannel: parts[1], at: frame)
-        case 2 where parts[0] == "..": return try promoted(parts[1])
-        case 3 where parts[0] == "..":
-            guard let n = graph.named(parts[1]) ?? graph.node(parts[1]), let c = other(n.id) else {
-                throw ProcExprError("chf(\"\(path)\"): no node \(parts[1])")
-            }
-            return try c.value(ofChannel: parts[2], at: frame)
-        default:
-            throw ProcExprError("chf(\"\(path)\"): a path is a channel (sizex), ../node/channel or ../parameter")
+        let (at, name) = ProcExprContext.split(path)
+        switch try place(at) {
+        case .node(let c): return try c.value(ofChannel: name, at: frame)
+        case .parameters(let ps): return try ProcExprContext.promoted(name, ps)
         }
     }
 
     /// The value of a `ch()` path.
     package func channel(_ path: String) throws -> Float {
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        switch parts.count {
-        case 1: return try value(ofChannel: path)
-        case 2 where parts[0] == ".": return try value(ofChannel: parts[1])
-        case 2 where parts[0] == "..": return try promoted(parts[1])
-        case 3 where parts[0] == "..":
-            guard let n = graph.named(parts[1]) ?? graph.node(parts[1]), let c = other(n.id) else {
-                throw ProcExprError("ch(\"\(path)\"): no node \(parts[1])")
-            }
-            return try c.value(ofChannel: parts[2])
-        default:
-            throw ProcExprError("ch(\"\(path)\"): a path is a channel (sizex), ../node/channel or ../parameter")
+        let (at, name) = ProcExprContext.split(path)
+        switch try place(at) {
+        case .node(let c): return try c.value(ofChannel: name)
+        case .parameters(let ps): return try ProcExprContext.promoted(name, ps)
         }
     }
 
     /// A promoted parameter's value (`../seed`, `../sizex` of a vector one).
-    private func promoted(_ name: String) throws -> Float {
-        if let p = graph.interface.first(where: { $0.name == name }) {
+    private static func promoted(_ name: String, _ interface: [PromotedParam]) throws -> Float {
+        if let p = interface.first(where: { $0.name == name }) {
             if case .string = p.value { throw ProcExprError("../\(name) is text") }
             return p.value.float
         }
         if let last = name.last, let k = ProcExprParser.component(last),
-           let p = graph.interface.first(where: { $0.name == String(name.dropLast()) }) {
+           let p = interface.first(where: { $0.name == String(name.dropLast()) }) {
             return p.value.vec4[k]
         }
         throw ProcExprError("The network promotes no parameter \(name)")
@@ -153,33 +160,23 @@ package final class ProcExprContext {
 
     /// A `chs()` path's text: a text parameter (expanded), or a promoted one.
     package func channelString(_ path: String) throws -> String {
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
-        if parts.count == 2, parts[0] == "..", let p = graph.interface.first(where: { $0.name == parts[1] }) { return p.value.string }
-        var ctx: ProcExprContext = self
-        var name = path
-        if parts.count == 2, parts[0] == "." { name = parts[1] }
-        if parts.count == 3, parts[0] == ".." {
-            guard let n = graph.named(parts[1]) ?? graph.node(parts[1]), let c = other(n.id) else {
-                throw ProcExprError("chs(\"\(path)\"): no node \(parts[1])")
+        let (at, name) = ProcExprContext.split(path)
+        switch try place(at) {
+        case .parameters(let ps):
+            guard let p = ps.first(where: { $0.name == name }) else { throw ProcExprError("The network promotes no parameter \(name)") }
+            return p.value.string
+        case .node(let ctx):
+            if let spec = ctx.node.spec.param(name), case .string(let s) = ctx.node.param(name) {
+                return ProcExprContext.expands(spec) ? try ctx.expand(s) : s
             }
-            ctx = c
-            name = parts[2]
+            return ProcExprContext.format(try ctx.channel(name))
         }
-        if let spec = ctx.node.kind.spec.param(name), case .string(let s) = ctx.node.param(name) {
-            return ProcExprContext.expands(spec) ? try ctx.expand(s) : s
-        }
-        return ProcExprContext.format(try ctx.channel(name))
     }
 
     /// The number at the end of a node's name (`copy3`: 3; `.`: this node).
     func opdigits(_ path: String) throws -> Float {
-        var name = node.name
-        if path != "." {
-            let last = path.split(separator: "/").last.map(String.init) ?? path
-            guard let n = graph.named(last) ?? graph.node(last) else { throw ProcExprError("opdigits(\"\(path)\"): no node \(last)") }
-            name = n.name
-        }
-        return Float(String(name.reversed().prefix { $0.isNumber }.reversed())) ?? 0
+        guard case .node(let c) = try place(path) else { throw ProcExprError("opdigits(\"\(path)\"): not a node") }
+        return Float(String(c.node.name.reversed().prefix { $0.isNumber }.reversed())) ?? 0
     }
 
     // MARK: Variables and geometry
@@ -214,11 +211,8 @@ package final class ProcExprContext {
             guard let g = try input(k) else { throw ProcExprError("Input \(k) (the \(k + 1)\(k == 0 ? "st" : k == 1 ? "nd" : "th") one) isn't connected") }
             return g
         case .path(let p):
-            let name = p.split(separator: "/").last.map(String.init) ?? p
-            guard p != ".", let n = graph.named(name) ?? graph.node(name), n.id != node.id else {
-                throw ProcExprError("\"\(p)\" isn't another node of the network")
-            }
-            return try cook(n.id)
+            guard p != ".", case .node(let c) = try find(p) else { throw ProcExprError("\"\(p)\" isn't another node") }
+            return try c.output()
         }
     }
 

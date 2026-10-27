@@ -22,6 +22,8 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
     case groupcreate, blast
     // Utility
     case null, output, switchnode = "switch", attribwrangle, foreachbegin, foreachend
+    // Networks in a node (ProcContents.swift)
+    case subnet, asset, subinput
 
     package var id: String { rawValue }
 
@@ -385,6 +387,19 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
             return ProcNodeSpec("Switch", .flow, "switch", symbol: "switch.2", inputs: ["Geometry"], multiInput: true, params: [
                 P.int("input", "Select Input", 0, 0...9),
             ], "Passes one of its inputs on; only that one is cooked.")
+
+        // MARK: Networks in a node
+        case .subnet:
+            return ProcNodeSpec("Subnetwork", .flow, "subnet", symbol: "square.stack.3d.down.right", params: [],
+                                "A network of its own: its inputs are the Sub-Network Inputs inside, its output the Output (else the display flag) inside, its parameters the ones its interface has.")
+        case .asset:
+            return ProcNodeSpec("Procedural Asset", .flow, "asset", symbol: "shippingbox", params: [
+                P("asset", "Asset", .string(""), .text, help: "a procedural asset of the library (its slug)"),
+            ], "A procedural asset of the library as a node: its network inside, locked until its contents are allowed editing; its parameters the asset's.")
+        case .subinput:
+            return ProcNodeSpec("Sub-Network Input", .flow, "subinput", symbol: "arrow.down.to.line.compact", params: [
+                P.int("input", "Input", 1, 1...9), P.text("label", "Label"),
+            ], "What is wired into the subnetwork's input of this number (nothing wired: no geometry).")
         }
     }
 }

@@ -15,7 +15,7 @@ struct ProcParameterPane: View {
         VStack(spacing: 0) {
             if let id = session.focus ?? session.graph.displayNode, let n = session.graph.node(id) {
                 header(n)
-                let spec = n.kind.spec
+                let spec = n.spec
                 let folders = spec.folders.filter { !$0.isEmpty }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 3) {
@@ -58,6 +58,7 @@ struct ProcParameterPane: View {
             }
         }
         .background(ProcTheme.pane)
+        .sheet(item: $session.interfaceEditing) { ProcInterfaceEditor(session: session, target: $0) }
     }
 
     private func shown(_ p: ProcParamSpec, _ n: ProcNode) -> Bool {
@@ -75,6 +76,12 @@ struct ProcParameterPane: View {
             if n.display { flag("Display", ProcTheme.display) }
             if n.template { flag("Template", ProcTheme.template) }
             if n.bypass { flag("Bypass", ProcTheme.bypass) }
+            if n.kind.isContainer {
+                Button { session.interfaceEditing = .init(node: n.id) } label: { Image(systemName: "slider.horizontal.3") }
+                    .buttonStyle(.borderless)
+                    .disabled(n.kind == .asset && !n.editable || session.locked)
+                    .help("Edit Parameter Interface: the parameters its network reads with ch(\"../name\")")
+            }
         }
         .padding(.horizontal, 8)
         .frame(height: 28)
@@ -87,18 +94,19 @@ struct ProcParameterPane: View {
             .background(RoundedRectangle(cornerRadius: 3).fill(color))
     }
 
-    /// The asset's promoted parameters (what a placed copy can set).
+    /// The asset's promoted parameters (what a placed copy can set), at the top of the network.
     @ViewBuilder private var interface: some View {
-        if !session.graph.interface.isEmpty {
+        if session.path.isEmpty, !session.root.interface.isEmpty {
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
                     Text("Asset Parameters").font(.system(size: 11, weight: .semibold)).foregroundColor(ProcTheme.label)
                     Spacer()
+                    Button("Edit…") { session.interfaceEditing = .init(node: nil) }.controlSize(.small)
                     if session.assetSlug != nil {
                         Button("Place Copy in Scene") { session.placeAsset() }.controlSize(.small)
                     }
                 }
-                ForEach(session.graph.interface) { p in
+                ForEach(session.root.interface) { p in
                     HStack {
                         Text(p.title).font(ProcTheme.small).foregroundColor(ProcTheme.text)
                         switch p.value {
@@ -108,7 +116,7 @@ struct ProcParameterPane: View {
                         }
                         Text(p.targets.map { "\($0.node).\($0.param)" }.joined(separator: ", ")).font(ProcTheme.small).foregroundColor(ProcTheme.dim)
                         Spacer()
-                        Button { session.edit("Remove Asset Parameter") { g in g.interface.removeAll { $0.name == p.name } } } label: {
+                        Button { session.edit("Remove Asset Parameter", at: []) { g in g.interface.removeAll { $0.name == p.name } } } label: {
                             Image(systemName: "minus.circle")
                         }
                         .buttonStyle(.borderless)
@@ -215,7 +223,7 @@ struct ProcParamRow: View {
                 Button("Paste Relative References") { session.pasteRelativeReferences(node.id, spec.name) }
                     .disabled(session.copiedParameter == nil)
             }
-            Button("Promote to Asset Parameter") { session.promote(node.id, spec.name) }
+            Button(session.path.isEmpty ? "Promote to Asset Parameter" : "Promote to Subnetwork Parameter") { session.promote(node.id, spec.name) }
             Button("Copy Name") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(spec.name, forType: .string)

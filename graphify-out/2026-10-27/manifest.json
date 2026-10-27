@@ -2208,9 +2208,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/Scene.swift": {
-    "mtime": 1793112426.8637562,
-    "seen": 1793113231.096722,
-    "ast_hash": "75ddc4a657381dbe072036d8357129f9",
+    "mtime": 1793113432.7550058,
+    "seen": 1793113560.202175,
+    "ast_hash": "7bfc7a11a3295c94cf03a7c207d553d3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Scene/SceneBuffers.swift": {
@@ -5838,9 +5838,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProcCurveEditor.swift": {
-    "mtime": 1793112799.9260447,
-    "seen": 1793113231.090636,
-    "ast_hash": "db68015443c1019d446766c43f861dcd",
+    "mtime": 1793113518.9975188,
+    "seen": 1793113560.195467,
+    "ast_hash": "b929b5d2aa99becce7e87cc9418ef673",
     "semantic_hash": ""
   },
   "Sources/Editors/Modeling/Procedural/ProcTimeline.swift": {

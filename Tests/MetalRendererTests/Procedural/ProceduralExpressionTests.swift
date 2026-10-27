@@ -19,7 +19,7 @@ final class ProceduralExpressionTests: XCTestCase {
         let geo = try input ?? ProcCooker(environment: environment()).cook(g, box).get()
         let node = ProcNode(.transform, id: "t", name: name)
         return ProcExprContext(graph: g, node: node, frame: frame, state: ProcExprState(), input: { $0 == 0 ? geo : nil },
-                               cook: { _ in throw ProcExprError("no cooking here") }, other: { _ in nil })
+                               find: { _ in throw ProcExprError("no other nodes here") })
     }
 
     private func value(_ source: String, frame: Float = 1, file: StaticString = #filePath, line: UInt = #line) -> Float {

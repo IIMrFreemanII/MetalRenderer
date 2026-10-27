@@ -130,7 +130,7 @@ struct ProcCurveEditor: View {
 
     /// x y z w (r g b a) red, green, blue, white, as Houdini colours them; a number's yellow.
     private func color(_ node: String, _ channel: String) -> Color {
-        guard let kind = session.graph.node(node)?.kind, let k = ProcExprContext.locate(channel, in: kind)?.component else { return ProcTheme.keyOn }
+        guard let pn = session.graph.node(node), let k = ProcExprContext.locate(channel, in: pn)?.component else { return ProcTheme.keyOn }
         return [Color(red: 0.95, green: 0.35, blue: 0.32), Color(red: 0.45, green: 0.85, blue: 0.40),
                 Color(red: 0.40, green: 0.60, blue: 1.0), Color(white: 0.9)][k]
     }

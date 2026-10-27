@@ -22,6 +22,10 @@ package struct ProcNode: Codable, Equatable, Identifiable {
     package var bypass = false
     package var template = false
     package var comment = ""
+    /// A Subnetwork's or a Procedural Asset node's network (ProcContents.swift).
+    package var contents: ProcGraph?
+    /// An asset node whose contents are its own (Allow Editing of Contents), not put in again from its definition.
+    package var editable = false
 
     package init(_ kind: ProcNodeKind, id: String, name: String? = nil, params: [String: ProcParam] = [:], at: SIMD2<Float> = .zero) {
         self.kind = kind
@@ -33,13 +37,13 @@ package struct ProcNode: Codable, Equatable, Identifiable {
 
     /// A parameter's value: what is set, else the spec's default.
     package func param(_ name: String) -> ProcParam {
-        params[name] ?? kind.spec.param(name)?.value ?? .float(0)
+        params[name] ?? spec.param(name)?.value ?? .float(0)
     }
 
     /// Is channel `c` cooked from something other than its value as set (an expression, keys)?
     package func isDriven(_ c: String) -> Bool { expressions[c] != nil || curves[c] != nil }
 
-    private enum Key: String, CodingKey { case id, name, kind, params, expressions, curves, at, display, render, bypass, template, comment }
+    private enum Key: String, CodingKey { case id, name, kind, params, expressions, curves, at, display, render, bypass, template, comment, contents, editable }
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         id = try c.decode(String.self, forKey: .id)
@@ -54,6 +58,9 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         bypass = try c.decodeIfPresent(Bool.self, forKey: .bypass) ?? false
         template = try c.decodeIfPresent(Bool.self, forKey: .template) ?? false
         comment = try c.decodeIfPresent(String.self, forKey: .comment) ?? ""
+        contents = try c.decodeIfPresent(ProcGraph.self, forKey: .contents)
+        editable = try c.decodeIfPresent(Bool.self, forKey: .editable) ?? false
+        if kind == .subnet, contents == nil { contents = ProcGraph() }
     }
     package func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
@@ -69,6 +76,8 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         if bypass { try c.encode(true, forKey: .bypass) }
         if template { try c.encode(true, forKey: .template) }
         if !comment.isEmpty { try c.encode(comment, forKey: .comment) }
+        if let contents { try c.encode(contents, forKey: .contents) }
+        if editable { try c.encode(true, forKey: .editable) }
     }
 }
 
@@ -86,7 +95,8 @@ package struct ProcLink: Codable, Equatable, Hashable {
     }
 }
 
-/// A parameter an asset shows: its name and title, its default and slider span, and the node parameters it sets.
+/// A parameter an asset (or a container node) shows: its name and title, its default and slider span, and the node
+/// parameters it sets (a target's node by name, or a path of names into the networks in nodes: `subnet1/box1`).
 package struct PromotedParam: Codable, Equatable, Identifiable {
     package struct Target: Codable, Equatable, Hashable {
         package var node: String
@@ -156,8 +166,9 @@ package struct ProcGraph: Codable, Equatable {
     package func inputs(of id: String) -> [String?] {
         guard let n = node(id) else { return [] }
         let wires = links.filter { $0.to == id }.sorted { $0.input < $1.input }
-        if n.kind.spec.multiInput { return wires.map { $0.from } }
-        var out = [String?](repeating: nil, count: n.kind.spec.inputs.count)
+        let spec = n.spec
+        if spec.multiInput { return wires.map { $0.from } }
+        var out = [String?](repeating: nil, count: spec.inputs.count)
         for w in wires where w.input < out.count { out[w.input] = w.from }
         return out
     }
@@ -200,6 +211,7 @@ package struct ProcGraph: Codable, Equatable {
     package mutating func add(_ kind: ProcNodeKind, at: SIMD2<Float> = .zero, params: [String: ProcParam] = [:], name: String? = nil) -> String {
         let id = uniqueID()
         var n = ProcNode(kind, id: id, name: name ?? uniqueName(kind.spec.baseName), params: params, at: at)
+        if kind == .subnet { n.contents = ProcGraph() }
         if !nodes.contains(where: { $0.display }) { n.display = true }
         nodes.append(n)
         return id
@@ -214,14 +226,14 @@ package struct ProcGraph: Codable, Equatable {
     /// place, the wires after it moved along). False if it would make a cycle.
     @discardableResult
     package mutating func link(_ from: String, to: String, _ input: Int = 0) -> Bool {
-        guard canLink(from, to: to), let n = node(to) else { return false }
-        if n.kind.spec.multiInput {
+        guard canLink(from, to: to), let spec = node(to)?.spec else { return false }
+        if spec.multiInput {
             let at = min(input, links.filter { $0.to == to }.count)
             for i in links.indices where links[i].to == to && links[i].input >= at { links[i].input += 1 }
             links.append(ProcLink(from, to: to, at))
             renumber(to)
         } else {
-            guard input < n.kind.spec.inputs.count else { return false }
+            guard input < spec.inputs.count else { return false }
             links.removeAll { $0.to == to && $0.input == input }
             links.append(ProcLink(from, to: to, input))
         }
@@ -231,7 +243,7 @@ package struct ProcGraph: Codable, Equatable {
     /// Takes the wire off input `input` of `to`.
     package mutating func unlink(to: String, _ input: Int) {
         links.removeAll { $0.to == to && $0.input == input }
-        if node(to)?.kind.spec.multiInput == true { renumber(to) }
+        if node(to)?.spec.multiInput == true { renumber(to) }
     }
 
     /// A multi-input node's wires numbered 0, 1, 2… in their order.
@@ -249,13 +261,18 @@ package struct ProcGraph: Codable, Equatable {
             for l in links where l.from == id && !ids.contains(l.to) { bridges.append(ProcLink(above, to: l.to, l.input)) }
         }
         let hadDisplay = nodes.contains { ids.contains($0.id) && $0.display }
+        let names = Set(nodes.filter { ids.contains($0.id) }.map(\.name))
         nodes.removeAll { ids.contains($0.id) }
         links.removeAll { ids.contains($0.from) || ids.contains($0.to) }
         for b in bridges { link(b.from, to: b.to, b.input) }
-        interface = interface.compactMap { p in
-            var p = p
-            p.targets.removeAll { ids.contains($0.node) }
-            return p.targets.isEmpty ? nil : p
+        // A parameter whose targets all went goes too; one that never had any (a container's own) stays.
+        interface = interface.compactMap { old in
+            var p = old
+            p.targets.removeAll { t in
+                let first = String(t.node.split(separator: "/").first ?? "")
+                return ids.contains(first) || names.contains(first)
+            }
+            return p.targets.isEmpty && !old.targets.isEmpty ? nil : p
         }
         if hadDisplay, let last = bridges.first?.from ?? nodes.last?.id { setDisplay(last) }
     }
@@ -292,12 +309,13 @@ package struct ProcGraph: Codable, Equatable {
             // What `ch("../name")` reads.
             g.interface[k].value = v
             for t in p.targets {
-                guard let i = g.nodes.firstIndex(where: { $0.name == t.node || $0.id == t.node }) else { continue }
-                g.nodes[i].params[t.param] = v
+                guard let (n, path) = g.node(named: t.node), var net = g[path: path], let i = net.index(of: n.id) else { continue }
+                net.nodes[i].params[t.param] = v
                 // The promoted value wins over the target's expressions and keys.
-                if let spec = g.nodes[i].kind.spec.param(t.param) {
-                    for c in ProcExprContext.channels(of: spec) { g.nodes[i].expressions[c] = nil; g.nodes[i].curves[c] = nil }
+                if let spec = net.nodes[i].spec.param(t.param) {
+                    for c in ProcExprContext.channels(of: spec) { net.nodes[i].expressions[c] = nil; net.nodes[i].curves[c] = nil }
                 }
+                g[path: path] = net
             }
         }
         return g

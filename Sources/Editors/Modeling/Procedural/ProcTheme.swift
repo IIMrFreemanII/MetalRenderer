@@ -67,7 +67,7 @@ enum ProcNetworkLayout {
 
     /// The input slots along the top: a node's inputs, or a multi-input node's wires and one more.
     static func inputCount(_ g: ProcGraph, _ n: ProcNode) -> Int {
-        n.kind.spec.multiInput ? g.inputs(of: n.id).count + 1 : n.kind.spec.inputs.count
+        n.spec.multiInput ? g.inputs(of: n.id).count + 1 : n.spec.inputs.count
     }
 
     static func input(_ n: ProcNode, _ i: Int, of count: Int) -> CGPoint {
@@ -100,7 +100,7 @@ enum ProcNetworkLayout {
         return nil
     }
 
-    private static func count(_ n: ProcNode) -> Int { n.kind.spec.inputs.count }
+    private static func count(_ n: ProcNode) -> Int { n.spec.inputs.count }
 
     static func items(in r: CGRect, of g: ProcGraph) -> Set<String> {
         Set(g.nodes.filter { rect($0).intersects(r) }.map(\.id))

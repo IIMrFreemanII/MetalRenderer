@@ -46,20 +46,39 @@ package struct ProcAsset: Codable, Equatable {
         return out
     }
 
+    /// The asset with its asset nodes' contents put in from the library as it is now.
+    package func synced(_ environment: ProcEnvironment) -> ProcAsset {
+        var a = self
+        a.graph = graph.syncingDefinitions(environment.definition)
+        return a
+    }
+
+    /// The material slots: the asset's, then those of the assets its asset nodes put in, for the names it hasn't.
+    package func slots(_ environment: ProcEnvironment) -> [MaterialSlot] {
+        var out = materials
+        graph.walk { n, _ in
+            guard let slug = n.definition, let d = environment.definition(slug) else { return }
+            for m in d.materials where !out.contains(where: { $0.name == m.name }) { out.append(m) }
+        }
+        return out
+    }
+
     /// The asset cooked with `values`: its output node's geometry as a scene's mesh, and the instances it asks for.
     package func cook(_ values: [String: ProcParam], environment: ProcEnvironment = .assets) -> Result<Cooked, ProcCookError> {
-        let g = graph.applying(values)
+        let a = synced(environment)
+        let g = a.graph.applying(values)
         guard let out = g.outputNode else { return .failure(ProcCookError("\(name): an empty network")) }
         let cooker = ProcCooker(environment: environment)
+        let slots = a.slots(environment)
         return cooker.cook(g, out).map { geo in
-            Cooked(rendered: ProcAsset.rendered(geo, slots: materials), instances: ProcAsset.instances(geo))
+            Cooked(rendered: ProcAsset.rendered(geo, slots: slots), instances: ProcAsset.instances(geo))
         }
     }
 
     /// The output's cook key on each of `frames` (nil: nothing to cook): frames with one key cook the same. Nothing is
     /// cooked to find them.
     package func frameKeys(_ values: [String: ProcParam], environment: ProcEnvironment = .assets, frames: ClosedRange<Int>) -> [UInt64]? {
-        let g = graph.applying(values)
+        let g = graph.syncingDefinitions(environment.definition).applying(values)
         guard let out = g.outputNode else { return nil }
         let cooker = ProcCooker(environment: environment)
         return frames.map { f in
@@ -94,8 +113,9 @@ package struct ProcAsset: Codable, Equatable {
     /// Bumped when what a cook makes of the same asset changes.
     package static let version = 1
 
-    /// `cook(values)`, from the generated cache (GeneratedCache) or into it: the file is named by the asset (its JSON),
-    /// the values, the cooker's version and the model assets its File nodes read.
+    /// `cook(values)`, from the generated cache (GeneratedCache) or into it: the file is named by the asset (its JSON,
+    /// with the library's assets its asset nodes put in), the values, the cooker's version and the model assets its
+    /// File nodes read.
     package func cached(_ values: [String: ProcParam], environment: ProcEnvironment = .assets) -> Result<Cooked, ProcCookError> {
         let name = cacheName(values, environment: environment), key = "proc asset v\(ProcAsset.version).\(ProcCooker.version)"
         if let file = GeneratedCache.load(name, key: key), let c = ProcAsset.read(file) { return .success(c) }
@@ -108,13 +128,16 @@ package struct ProcAsset: Codable, Equatable {
         var h = GeneratedCache.Hasher()
         let e = JSONEncoder()
         e.outputFormatting = [.sortedKeys]
-        h.add((try? e.encode(self)).map { String(decoding: $0, as: UTF8.self) } ?? name)
+        let a = synced(environment)
+        h.add((try? e.encode(a)).map { String(decoding: $0, as: UTF8.self) } ?? name)
+        for m in a.slots(environment).dropFirst(materials.count) { h.add("\(m)") }
         for k in values.keys.sorted() {
             var p = Hasher64()
             values[k]!.hash(into: &p)
             h.add("\(k)=\(p.value)")
         }
-        for n in graph.nodes where n.kind == .file {
+        a.graph.walk { n, _ in
+            guard n.kind == .file else { return }
             let f = n.param("file").string
             h.add("\(f)@\(environment.stamp(f))")
         }
@@ -230,6 +253,24 @@ package enum ProcStore {
         guard let url = url(slug, in: folder), let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(ProcAsset.self, from: data)
     }
+
+    /// `read`, kept until the file changes (asset nodes put their definitions in on every edit of a network).
+    package static func cachedRead(_ slug: String, in folder: URL? = ProcStore.folder) -> ProcAsset? {
+        guard let url = url(slug, in: folder) else { return nil }
+        let date = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        reads.lock.lock()
+        defer { reads.lock.unlock() }
+        if let (d, a) = reads.cache[url], d == date { return a }
+        let a = date == nil ? nil : read(slug, in: folder)
+        reads.cache[url] = (date, a)
+        return a
+    }
+
+    private final class Reads: @unchecked Sendable {
+        let lock = NSLock()
+        var cache: [URL: (Date?, ProcAsset?)] = [:]
+    }
+    private static let reads = Reads()
 
     package static func write(_ asset: ProcAsset, slug: String, in folder: URL? = ProcStore.folder) throws {
         guard let url = url(slug, in: folder) else { return }

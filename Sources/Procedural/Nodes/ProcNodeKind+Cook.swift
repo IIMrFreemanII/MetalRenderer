@@ -60,6 +60,7 @@ extension ProcNodeKind {
         case .null, .output, .foreachbegin: try c.input()
         case .attribwrangle: try FlowNodes.wrangle(&c)
         case .foreachend: throw ProcCookError("A Block End cooks in the cooker (its loop)")
+        case .subnet, .asset, .subinput: throw ProcCookError("A network in a node cooks in the cooker")
         case .switchnode: c.inputs.compactMap { $0 }.first ?? ProcGeo()   // (the cooker cooks only the input it picks)
         }
     }

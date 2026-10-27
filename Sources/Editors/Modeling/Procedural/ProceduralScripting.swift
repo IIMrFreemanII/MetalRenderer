@@ -20,11 +20,18 @@ import simd
 ///   {"keyframe": {"node": "box1", "channel": "tx", "frame": 24, "value": 2, "interpolation": "linear"}}   a key
 ///                                                      (value: the channel's on the frame; "delete": true removes it)
 ///   {"range": [1, 48]}                                 the frames the network plays
+///   {"node": {"add": "asset", "asset": "fence"}}       a node of the library's asset `fence`
+///   {"dive": "subnet1"}, {"dive": ".."}, {"dive": "/"}  into a subnetwork's or asset's network, up a level, to the top
+///   {"collapse": {"nodes": ["box1", "xform1"], "name": "wall"}}   the nodes into a subnetwork; {"extract": "wall"}
+///   {"interface": {"node": "wall", "add": {"name": "height", "value": 2, "range": [0, 10]}}}   a parameter of a
+///                                                      container (no node: the asset's); {"remove": name},
+///                                                      {"rename": {"from": a, "to": b}} as well
+///   {"definition": {"node": "fence1", "action": "allow" | "match" | "save"}}   an asset node's contents
 ///
 /// Cooks are synchronous in a scripted Modeller: a step's state shows its result.
 enum ProceduralStep {
     case network(String)
-    case add(ProcNodeKind, name: String?, after: String?, at: SIMD2<Float>?)
+    case add(ProcNodeKind, name: String?, after: String?, at: SIMD2<Float>?, asset: String?)
     case remove(String)
     case select(String)
     case parm(node: String, name: String, value: Any)
@@ -35,8 +42,14 @@ enum ProceduralStep {
     case frame(Float)
     case keyframe(node: String, channel: String, frame: Float?, value: Float?, interpolation: ProcInterpolation?, delete: Bool)
     case range(ClosedRange<Int>)
+    case dive(String)
+    case collapse(nodes: [String], name: String?)
+    case extract(String)
+    case interface(node: String?, add: [String: Any]?, remove: String?, rename: (from: String, to: String)?)
+    case definition(node: String, action: String)
 
-    static let keys = ["network", "node", "parm", "wire", "unwire", "flag", "expr", "frame", "keyframe", "range"]
+    static let keys = ["network", "node", "parm", "wire", "unwire", "flag", "expr", "frame", "keyframe", "range",
+                       "dive", "collapse", "extract", "interface", "definition"]
 
     typealias Failure = ScriptRequests.Failure
 
@@ -56,7 +69,8 @@ enum ProceduralStep {
                     let c = a.compactMap { ($0 as? NSNumber)?.floatValue }
                     return c.count == 2 ? SIMD2(c[0], c[1]) : nil
                 }
-                return .success(.add(kind, name: o["name"] as? String, after: o["after"] as? String, at: at))
+                if kind == .asset, o["asset"] as? String == nil { return bad("an asset node names its asset: {\"add\": \"asset\", \"asset\": slug}") }
+                return .success(.add(kind, name: o["name"] as? String, after: o["after"] as? String, at: at, asset: o["asset"] as? String))
             }
             if let n = o["remove"] as? String { return .success(.remove(n)) }
             if let n = o["select"] as? String { return .success(.select(n)) }
@@ -94,6 +108,25 @@ enum ProceduralStep {
         case "range":
             guard let r = (value as? [Any])?.compactMap({ ($0 as? NSNumber)?.intValue }), r.count == 2, r[0] <= r[1] else { return bad("[first, last]") }
             return .success(.range(r[0]...r[1]))
+        case "dive":
+            guard let n = value as? String else { return bad("a container's name, \"..\" or \"/\"") }
+            return .success(.dive(n))
+        case "collapse":
+            guard let nodes = o["nodes"] as? [String], !nodes.isEmpty else { return bad("give {\"nodes\": [names], \"name\": name}") }
+            return .success(.collapse(nodes: nodes, name: o["name"] as? String))
+        case "extract":
+            guard let n = value as? String else { return bad("a subnetwork's name") }
+            return .success(.extract(n))
+        case "interface":
+            let r = o["rename"] as? [String: Any]
+            let rename = (r?["from"] as? String).flatMap { a in (r?["to"] as? String).map { (a, $0) } }
+            guard o["add"] != nil || o["remove"] != nil || rename != nil else { return bad("give \"add\", \"remove\" or \"rename\"") }
+            return .success(.interface(node: o["node"] as? String, add: o["add"] as? [String: Any], remove: o["remove"] as? String, rename: rename))
+        case "definition":
+            guard let node = o["node"] as? String, let a = o["action"] as? String, ["allow", "match", "save"].contains(a) else {
+                return bad("give {\"node\": name, \"action\": \"allow\" | \"match\" | \"save\"}")
+            }
+            return .success(.definition(node: node, action: a))
         default:
             guard let node = o["node"] as? String else { return bad("give {\"node\": name, \"display\": true, …}") }
             return .success(.flag(node: node, display: o["display"] as? Bool, template: o["template"] as? Bool,
@@ -121,7 +154,14 @@ enum ProceduralStep {
             default: try needNetwork(); s.selection = []; s.layout()
             }
             return "network \(what)"
-        case let .add(kind, name, after, at):
+        case let .add(.asset, name, _, at, asset?):
+            try needNetwork()
+            guard let new = s.addAsset(asset, at: at ?? s.graph.nodes.last.map { $0.at + [0, ProcNetworkLayout.rowGap] } ?? .zero) else {
+                throw Failure("couldn't add the asset \(asset)")
+            }
+            if let name { s.rename(new, to: name) }
+            return "added \(s.graph.node(new)?.name ?? new)"
+        case let .add(kind, name, after, at, _):
             try needNetwork()
             let above = try after.map(id)
             // (Wired only below `after`: not the Tab menu's selected node.)
@@ -141,8 +181,8 @@ enum ProceduralStep {
             return "selected \(name)"
         case let .parm(node, name, value):
             let n = try id(node)
-            guard let spec = s.graph.node(n)?.kind.spec.param(name) else {
-                throw Failure("\(node) has no parameter \(name); its: \(s.graph.node(n)?.kind.spec.params.map(\.name).joined(separator: ", ") ?? "")")
+            guard let spec = s.graph.node(n)?.spec.param(name) else {
+                throw Failure("\(node) has no parameter \(name); its: \(s.graph.node(n)?.spec.params.map(\.name).joined(separator: ", ") ?? "")")
             }
             guard let v = ProceduralStep.value(value, like: spec.value) else { throw Failure("\(name): can't read \(value) as \(spec.value)") }
             s.setParam(n, name, v)
@@ -164,8 +204,8 @@ enum ProceduralStep {
             return "flags of \(node)"
         case let .expr(node, channel, source):
             let n = try id(node)
-            guard let kind = s.graph.node(n)?.kind, ProcExprContext.locate(channel, in: kind) != nil else {
-                let all = s.graph.node(n)?.kind.spec.params.flatMap(ProcExprContext.channels) ?? []
+            guard let pn = s.graph.node(n), ProcExprContext.locate(channel, in: pn) != nil else {
+                let all = s.graph.node(n)?.spec.params.flatMap(ProcExprContext.channels) ?? []
                 throw Failure("\(node) has no channel \(channel); its: \(all.joined(separator: ", "))")
             }
             s.setExpression(n, channel, source)
@@ -175,8 +215,8 @@ enum ProceduralStep {
             return "frame \(ProcExprContext.format(f))"
         case let .keyframe(node, channel, frame, value, interpolation, delete):
             let n = try id(node)
-            guard let p = s.graph.node(n), let (spec, k) = ProcExprContext.locate(channel, in: p.kind) else {
-                let all = s.graph.node(n)?.kind.spec.params.flatMap(ProcExprContext.channels) ?? []
+            guard let p = s.graph.node(n), let (spec, k) = ProcExprContext.locate(channel, in: p) else {
+                let all = s.graph.node(n)?.spec.params.flatMap(ProcExprContext.channels) ?? []
                 throw Failure("\(node) has no channel \(channel); its: \(all.joined(separator: ", "))")
             }
             let f = frame ?? s.frame
@@ -193,6 +233,73 @@ enum ProceduralStep {
         case .range(let r):
             s.setFrameRange(r)
             return "frames \(r.lowerBound)-\(r.upperBound)"
+        case .dive(let to):
+            try needNetwork()
+            switch to {
+            case "..": s.up()
+            case "/": s.jump(to: 0)
+            default:
+                let n = try id(to)
+                guard s.graph.node(n)?.kind.isContainer == true else { throw Failure("\(to) has no network inside") }
+                s.dive(into: n)
+            }
+            return "at /" + s.levels.dropFirst().map(\.name).joined(separator: "/")
+        case let .collapse(nodes, name):
+            s.selection = Set(try nodes.map(id))
+            s.collapseSelection()
+            guard let made = s.selection.first, s.selection.count == 1, s.graph.node(made)?.kind == .subnet else {
+                throw Failure("couldn't collapse \(nodes.joined(separator: ", ")) (more than one feeding the outside?)")
+            }
+            if let name { s.rename(made, to: name) }
+            return "collapsed into \(s.graph.node(made)?.name ?? made)"
+        case .extract(let name):
+            let n = try id(name)
+            guard s.graph.node(n)?.kind == .subnet else { throw Failure("\(name) isn't a subnetwork") }
+            s.extract(n)
+            return "extracted \(name)"
+        case let .interface(node, add, remove, rename):
+            let n = try node.map(id)
+            var params = n.map { s.graph.node($0)?.contents?.interface ?? [] } ?? s.root.interface
+            var renamed: [String: String] = [:]
+            if let add {
+                guard let name = add["name"] as? String, let raw = add["value"] else { throw Failure("add: give {\"name\": …, \"value\": …}") }
+                let value: ProcParam
+                switch raw {
+                case let x as NSNumber where CFGetTypeID(x) == CFBooleanGetTypeID(): value = .bool(x.boolValue)
+                case let x as NSNumber: value = CFNumberIsFloatType(x) ? .float(x.floatValue) : .int(x.intValue)
+                case let t as String: value = .string(t)
+                case let a as [Any]:
+                    let c = a.compactMap { ($0 as? NSNumber)?.floatValue }
+                    switch c.count {
+                    case 2: value = .vec2(SIMD2(c[0], c[1]))
+                    case 3: value = .vec3(SIMD3(c[0], c[1], c[2]))
+                    case 4: value = .vec4(SIMD4(c[0], c[1], c[2], c[3]))
+                    default: throw Failure("a vector has 2 to 4 numbers")
+                    }
+                default: throw Failure("can't read \(raw) as a parameter's value")
+                }
+                let r = (add["range"] as? [Any])?.compactMap { ($0 as? NSNumber)?.floatValue }
+                params.removeAll { $0.name == name }
+                params.append(PromotedParam(name, title: add["title"] as? String, value: value,
+                                            span: r.flatMap { $0.count == 2 ? $0[0]...$0[1] : nil }, targets: []))
+            }
+            if let remove { params.removeAll { $0.name == remove } }
+            if let (a, b) = rename {
+                guard let i = params.firstIndex(where: { $0.name == a }) else { throw Failure("no parameter \(a)") }
+                params[i].name = b
+                renamed[a] = b
+            }
+            s.setInterface(n, params, renamed: renamed)
+            return "parameters of \(node ?? "the asset"): \(params.map(\.name).joined(separator: ", "))"
+        case let .definition(node, action):
+            let n = try id(node)
+            guard s.graph.node(n)?.kind == .asset else { throw Failure("\(node) isn't an asset node") }
+            switch action {
+            case "allow": s.allowEditing(n)
+            case "match": s.matchDefinition(n)
+            default: guard s.saveDefinition(n) else { throw Failure("couldn't save \(node)'s definition") }
+            }
+            return "\(action) \(node)"
         }
     }
 
@@ -237,6 +344,10 @@ enum ProceduralStep {
                         ["frame": Double(k.frame), "value": Double(k.value), "interpolation": k.interpolation.rawValue]
                     } }
                 }
+                if let c = n.contents {
+                    e["contents"] = c.nodes.count
+                    if n.kind == .asset { e["asset"] = n.definition ?? ""; e["locked"] = !n.editable }
+                }
                 if let i = s.info[n.id] {
                     if !i.channels.isEmpty {
                         e["channels"] = i.channels.mapValues { v -> Any in v.map { Double($0) } ?? "per element" }
@@ -250,6 +361,8 @@ enum ProceduralStep {
                 return e
             },
             "interface": g.interface.map(\.name),
+            "path": s.levels.dropFirst().map(\.name),
+            "locked": s.locked,
             "frame": Double(s.frame),
             "frames": [g.frames.lowerBound, g.frames.upperBound],
         ]

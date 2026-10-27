@@ -6,8 +6,10 @@ import simd
 
 /// The network view: Houdini's, nodes flowing top to bottom on a dotted grid. Tab adds a node (wired below the
 /// selected one), drag from an output dot to an input to wire, click the flags (left: bypass; right: template,
-/// display; Option-click display: render), right-click a node for its menu. Keys (GraphHostingView, ProcNetworkHost):
-/// Delete, Tab, F frames, L lays out, R display, B bypass, T template, I info.
+/// display; Option-click display: render), right-click a node for its menu. A subnetwork or asset node is dived into
+/// with a double-click or Return, and U goes up; the bar's path goes to any level above. Keys (GraphHostingView,
+/// ProcNetworkHost): Delete, Tab, F frames, L lays out, R display, B bypass, T template, I info, Shift-C collapses the
+/// selection into a subnetwork.
 struct ProcNetworkView: View {
     @ObservedObject var session: ProceduralSession
 
@@ -24,6 +26,10 @@ struct ProcNetworkView: View {
                     addMenu(at: at)
                 } search: {
                     ProcNodeSearch(session: session)
+                }
+                if session.locked {
+                    // A locked asset's network: shown, not edited.
+                    Color.black.opacity(0.18).allowsHitTesting(false)
                 }
                 if let id = session.infoNode, let n = g.node(id) {
                     ProcNodeInfoView(session: session, node: n).padding(10)
@@ -81,12 +87,22 @@ struct ProcNetworkView: View {
 
     @ViewBuilder private func addMenu(at: SIMD2<Float>) -> some View {
         ForEach(ProcFamily.allCases, id: \.self) { f in
-            let kinds = ProcNodeKind.allCases.filter { $0.spec.family == f }
+            let kinds = ProcNodeSearch.kinds(session).filter { $0.spec.family == f }
             if !kinds.isEmpty {
                 Menu(f.title) {
                     ForEach(kinds) { k in Button(k.spec.title) { session.add(k, at: at) } }
                 }
             }
+        }
+        let assets = ProcStore.list(in: session.library)
+        if !assets.isEmpty {
+            Menu("Procedural Assets") {
+                ForEach(assets, id: \.self) { a in Button(a) { session.addAsset(a, at: at) } }
+            }
+        }
+        if !session.selection.isEmpty {
+            Divider()
+            Button("Collapse into Subnetwork  ⇧C") { session.collapseSelection() }
         }
         Divider()
         Button("Lay Out All  L") { session.selection = []; session.layout() }
@@ -119,8 +135,15 @@ struct ProcNodeView: View {
                     Rectangle().fill(ProcTheme.body(node.kind).opacity(node.bypass ? 0.45 : 1))
                     Image(systemName: node.kind.spec.symbol).font(.system(size: 12, weight: .semibold))
                         .foregroundColor(Color.black.opacity(0.7))
+                    if node.kind.isContainer {
+                        // A network inside: Houdini's folded corner.
+                        Image(systemName: node.kind == .asset ? (node.editable ? "lock.open.fill" : "lock.fill") : "chevron.down.square.fill")
+                            .font(.system(size: 7, weight: .bold)).foregroundColor(Color.black.opacity(0.6))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing).padding(2)
+                    }
                 }
                 .gesture(drags.header(node.id))
+                .simultaneousGesture(TapGesture(count: 2).onEnded { session.dive(into: node.id) }, including: node.kind.isContainer ? .all : .none)
                 Rectangle().fill(node.template ? ProcTheme.template : ProcTheme.flagOff).frame(width: f / 2 + 1)
                     .onTapGesture { session.toggleTemplate(node.id) }
                     .help("Template (T)")
@@ -152,7 +175,7 @@ struct ProcNodeView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(node.name).font(ProcTheme.font).foregroundColor(selected ? ProcTheme.selected : ProcTheme.text)
                 HStack(spacing: 4) {
-                    Text(node.kind.spec.title).font(ProcTheme.small).foregroundColor(ProcTheme.dim)
+                    Text(node.definition.map { "Asset \($0)" } ?? node.kind.spec.title).font(ProcTheme.small).foregroundColor(ProcTheme.dim)
                     if let ms = info?.milliseconds, ms >= 1, info?.cached == false {
                         Text(String(format: "%.0f ms", ms)).font(ProcTheme.small).foregroundColor(ProcTheme.dim.opacity(0.8))
                     }
@@ -197,6 +220,24 @@ struct ProcNodeView: View {
         Divider()
         Button("Info") { session.infoNode = node.id }
         Button("Rename…") { ProcRenamePrompt.ask(session, node) }
+        if node.kind.isContainer {
+            Divider()
+            Button("Dive In  ↩") { session.dive(into: node.id) }
+            Button("Edit Parameter Interface…") { session.interfaceEditing = .init(node: node.id) }
+                .disabled(node.kind == .asset && !node.editable)
+            if node.kind == .subnet { Button("Extract Contents") { session.extract(node.id) } }
+            if node.kind == .asset {
+                if node.editable {
+                    Button("Save to Definition") { session.saveDefinition(node.id) }
+                    Button("Match Current Definition") { session.matchDefinition(node.id) }
+                } else {
+                    Button("Allow Editing of Contents") { session.allowEditing(node.id) }
+                }
+            }
+        }
+        if session.selection.contains(node.id) {
+            Button("Collapse into Subnetwork  ⇧C") { session.collapseSelection() }
+        }
         Divider()
         Button("Delete") { session.selection = [node.id]; session.deleteSelection() }
     }
@@ -236,9 +277,17 @@ struct ProcNodeSearch: View {
     @ObservedObject var session: ProceduralSession
 
     var body: some View {
-        GraphNodeSearch(placeholder: "Add a node", items: ProcNodeKind.allCases.map { k in
+        GraphNodeSearch(placeholder: "Add a node", items: ProcNodeSearch.kinds(session).map { k in
             .init(id: k.rawValue, title: k.spec.title, detail: k.spec.family.title) { session.add(k, at: session.searchAt) }
+        } + ProcStore.list(in: session.library).map { a in
+            .init(id: "proc:" + a, title: a, detail: "Procedural Asset") { session.addAsset(a, at: session.searchAt) }
         }, close: { session.closeSearch() })
+    }
+
+    /// The kinds the menus offer: not the asset node (each library asset is offered by name instead), and a
+    /// Sub-Network Input only inside a network in a node.
+    static func kinds(_ session: ProceduralSession) -> [ProcNodeKind] {
+        ProcNodeKind.allCases.filter { $0 != .asset && ($0 != .subinput || !session.path.isEmpty) }
     }
 }
 
@@ -249,13 +298,30 @@ struct ProcNetworkBar: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "point.3.connected.trianglepath.dotted").foregroundColor(ProcTheme.dim)
-            Text(session.model?.activeObject?.name ?? "").font(ProcTheme.font).foregroundColor(ProcTheme.text)
+            // The path: each level above the one shown goes back to it.
+            let levels = session.levels
+            ForEach(levels.indices, id: \.self) { k in
+                if k > 0 { Text("›").font(ProcTheme.font).foregroundColor(ProcTheme.dim) }
+                if k == levels.count - 1 {
+                    Text(levels[k].name).font(ProcTheme.font).foregroundColor(ProcTheme.text)
+                } else {
+                    Button(levels[k].name) { session.jump(to: k) }.buttonStyle(.plain).font(ProcTheme.font).foregroundColor(ProcTheme.label)
+                }
+            }
+            if session.locked {
+                Label("Locked asset: Allow Editing of Contents to change it", systemImage: "lock.fill")
+                    .font(ProcTheme.small).foregroundColor(ProcTheme.warning)
+            }
             if session.cooking { ProgressView().controlSize(.mini) }
             Spacer()
+            if !session.path.isEmpty {
+                Button { session.up() } label: { Image(systemName: "arrow.up") }.buttonStyle(.borderless).help("Up a level (U)")
+            }
             Menu("Network") {
                 Button("Lay Out All  L") { session.selection = []; session.layout() }
                 Button("Frame All  F") { session.frameAll(in: session.canvasSize) }
                 Divider()
+                Button("Edit Asset Parameters…") { session.interfaceEditing = .init(node: nil) }
                 Button("Save as Procedural Asset…") { ProcAssetPrompt.ask(session) }
                 Button("Place Asset in Scene") { session.placeAsset() }.disabled(session.assetSlug == nil)
                 Divider()
@@ -322,7 +388,18 @@ struct ProcNetworkHost: NSViewRepresentable {
         host.keys = { [weak session] event in
             guard let session, session.searchAt == nil else { return false }
             let target = session.focus ?? session.selection.first
+            if event.keyCode == 36 || event.keyCode == 76 {
+                // Return: into the selected subnetwork or asset.
+                guard let t = target, session.graph.node(t)?.kind.isContainer == true else { return false }
+                session.dive(into: t)
+                return true
+            }
+            if event.modifierFlags.contains(.shift), event.charactersIgnoringModifiers?.lowercased() == "c" {
+                session.collapseSelection()
+                return true
+            }
             switch event.charactersIgnoringModifiers?.lowercased() {
+            case "u": session.up()
             case "l": session.layout()
             case "r": if let t = target { session.setDisplay(t) }
             case "b": if let t = target { session.toggleBypass(t) }

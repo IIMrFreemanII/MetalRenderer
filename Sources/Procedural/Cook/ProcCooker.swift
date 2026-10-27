@@ -14,16 +14,20 @@ package struct ProcCookError: Error, Equatable, CustomStringConvertible {
 }
 
 /// What a network reads from outside it: the geometry a File node names (`mesh:<slug>`, `object:<name>`) and a
-/// stamp that changes when that geometry does (part of the node's cook key).
+/// stamp that changes when that geometry does (part of the node's cook key), and the library's assets an asset node
+/// puts in (`ProcGraph.syncingDefinitions`).
 package struct ProcEnvironment {
     package var file: (String) -> ProcGeo?
     package var stamp: (String) -> UInt64
+    package var definition: (String) -> ProcAsset?
     /// The frame expressions read (`$F`, `$T`): the Procedural workspace's frame field, a placed asset's `frame=`.
     package var frame: Float = 1
 
-    package init(file: @escaping (String) -> ProcGeo?, stamp: @escaping (String) -> UInt64) {
+    package init(file: @escaping (String) -> ProcGeo?, stamp: @escaping (String) -> UInt64,
+                 definition: @escaping (String) -> ProcAsset? = { ProcStore.cachedRead($0) }) {
         self.file = file
         self.stamp = stamp
+        self.definition = definition
     }
 
     /// Model assets (`mesh:<slug>` in ModelStore's folder): their objects' meshes, placed, as one geometry.
@@ -85,11 +89,12 @@ package final class ProcCooker {
     private var cache: [UInt64: Entry] = [:]
     private var bytes = 0
     private var tick: UInt64 = 0
-    /// The last cook's report per node id (of the nodes it reached).
+    /// The last cook's report per node (of the nodes it reached): by id, a node in a container's network by the
+    /// containers' ids and its own (`n3/n2`).
     package private(set) var info: [String: ProcNodeInfo] = [:]
 
     /// Bumped when a node's cook changes, so outputs cooked before aren't taken for the new ones'.
-    package static let version = 3
+    package static let version = 4
 
     package init(environment: ProcEnvironment = .assets) { self.environment = environment }
 
@@ -101,7 +106,8 @@ package final class ProcCooker {
 
     package var cachedBytes: Int { bytes }
 
-    /// One cook: its keys and outputs by node, so a node two others read cooks once.
+    /// One cook of a network: its keys and outputs by node, so a node two others read cooks once. A container's
+    /// network has a pass of its own, below its container's.
     private final class Pass {
         let graph: ProcGraph
         var keys: [String: UInt64] = [:]
@@ -112,22 +118,58 @@ package final class ProcCooker {
         var overrides: [String: (geo: ProcGeo, key: UInt64)] = [:]
         /// The expressions' channels found in this pass (a For-Each pass has its own: its piece differs).
         let expressions = ProcExprState()
-        /// The channels a key is being found for (a `ch()` loop).
-        var channelKeys: Set<String> = []
+        /// The channels a key is being found for, in every pass of the cook (a `ch()` loop).
+        let channelKeys: Visits
+        /// The pass of the network this one's container is in, and the container (nil: the top network).
+        private(set) var parentPass: Pass?
+        let parentNode: String?
+        /// The containers' ids down to this network (`n3/n7/`; empty at the top): what `info` is keyed by.
+        let prefix: String
+        /// The assets this network is in (an asset that contains itself).
+        let slugs: [String]
+        /// The passes of the containers' networks in this one, by container.
+        var children: [String: Pass] = [:]
 
-        init(graph: ProcGraph, cancelled: @escaping () -> Bool) {
+        final class Visits { var set: Set<String> = [] }
+
+        init(graph: ProcGraph, cancelled: @escaping () -> Bool, parent: Pass? = nil, node: String? = nil, prefix: String = "",
+             slugs: [String] = [], channelKeys: Visits = Visits()) {
             self.graph = graph
             self.cancelled = cancelled
+            parentPass = parent
+            parentNode = node
+            self.prefix = prefix
+            self.slugs = slugs
+            self.channelKeys = channelKeys
+        }
+
+        var parent: (pass: Pass, node: String)? {
+            guard let p = parentPass, let n = parentNode else { return nil }
+            return (p, n)
+        }
+
+        /// A pass beside this one (a For-Each pass): the same place, keys and outputs of its own.
+        func sibling() -> Pass {
+            Pass(graph: graph, cancelled: cancelled, parent: parentPass, node: parentNode, prefix: prefix, slugs: slugs, channelKeys: channelKeys)
+        }
+
+        /// Lets go of the passes below (they hold this one).
+        func release() {
+            for c in children.values { c.release() }
+            children.removeAll()
+            parentPass = nil
         }
     }
 
-    /// Node `id`'s geometry (cooking what it needs), or why it can't be had. `cancelled` is asked between nodes: a
+    /// Node `id`'s geometry (cooking what it needs), or why it can't be had. `path`: the containers (ids, from the
+    /// top) whose network `id` is in, cooked with their inputs and parameters. `cancelled` is asked between nodes: a
     /// cook a newer edit made stale stops there.
-    package func cook(_ graph: ProcGraph, _ id: String, cancelled: @escaping () -> Bool = { false }) -> Result<ProcGeo, ProcCookError> {
-        let pass = Pass(graph: graph, cancelled: cancelled)
+    package func cook(_ graph: ProcGraph, at path: [String] = [], _ id: String, cancelled: @escaping () -> Bool = { false }) -> Result<ProcGeo, ProcCookError> {
+        let root = Pass(graph: graph, cancelled: cancelled)
+        defer { root.release() }
         tick += 1
         do {
-            let g = try geometry(id, pass)
+            let g = try geometry(id, try pass(root, at: path))
             trim()
             return .success(g)
         } catch let e as ProcCookError {
@@ -138,10 +180,110 @@ package final class ProcCooker {
         }
     }
 
-    /// Node `id`'s cook key.
-    package func key(_ graph: ProcGraph, _ id: String) -> UInt64? {
-        let pass = Pass(graph: graph, cancelled: { false })
-        return try? key(id, pass)
+    /// Node `id`'s cook key (`path`: as for `cook`).
+    package func key(_ graph: ProcGraph, at path: [String] = [], _ id: String) -> UInt64? {
+        let root = Pass(graph: graph, cancelled: { false })
+        defer { root.release() }
+        return try? key(id, try pass(root, at: path))
+    }
+
+    /// The pass of the network at `path` below `root`'s: each container's with its parameters' values.
+    private func pass(_ root: Pass, at path: [String]) throws -> Pass {
+        var p = root
+        for id in path {
+            guard let node = p.graph.node(id) else { throw ProcCookError("no node \(id)", node: id) }
+            var values: [String: ProcParam]?
+            if node.contents?.interface.contains(where: { s in ProcExprContext.channels(of: ProcParamSpec(promoted: s)).contains(where: node.isDriven) }) == true,
+               let x = expressions(id, p) {
+                do {
+                    values = try resolve(node, x).params
+                } catch let e as ProcCookError {
+                    throw ProcCookError(e.message, node: id)
+                }
+            }
+            p = try contents(id, in: p, values: values)
+        }
+        return p
+    }
+
+    // MARK: Networks in nodes
+
+    /// The pass of container `id`'s network: its contents with `values` (nil: the container's parameters as set)
+    /// put into their interface's targets. The one made before is kept for the keys and the cook.
+    private func contents(_ id: String, in pass: Pass, values: [String: ProcParam]? = nil) throws -> Pass {
+        if values == nil, let p = pass.children[id] { return p }
+        guard let node = pass.graph.node(id) else { throw ProcCookError("no node \(id)", node: id) }
+        guard node.kind.isContainer else { throw ProcCookError("\(node.name) has no network inside", node: id) }
+        var slugs = pass.slugs
+        if let slug = node.definition {
+            guard !slugs.contains(slug) else { throw ProcCookError("proc:\(slug) contains itself", node: id) }
+            slugs.append(slug)
+        }
+        guard let c = node.contents else { throw ProcCookError("The library has no procedural asset \(node.definition ?? "")", node: id) }
+        var set: [String: ProcParam] = [:]
+        for p in c.interface { set[p.name] = node.param(p.name) }
+        let child = Pass(graph: c.applying(values ?? set), cancelled: pass.cancelled, parent: pass, node: id,
+                         prefix: pass.prefix + id + "/", slugs: slugs, channelKeys: pass.channelKeys)
+        pass.children[id]?.release()
+        pass.children[id] = child
+        return child
+    }
+
+    /// What a Sub-Network Input passes on: the node wired into its container's input of its number, and its pass.
+    private func subinputSource(_ node: ProcNode, _ pass: Pass) -> (pass: Pass, id: String)? {
+        guard let (p, container) = pass.parent else { return nil }
+        let inputs = p.graph.inputs(of: container)
+        let i = node.param("input").int - 1
+        guard i >= 0, i < inputs.count, let up = inputs[i] else { return nil }
+        return (p, up)
+    }
+
+    /// A container's geometry: its network's output (its Output node, else its display flag) cooked with its
+    /// parameters' values.
+    private func cookContents(_ id: String, _ c: ProcCook, _ pass: Pass) throws -> ProcGeo {
+        let interface = c.node.contents?.interface ?? []
+        var values: [String: ProcParam] = [:]
+        for p in interface { values[p.name] = c.param(p.name) }
+        let child = try contents(id, in: pass, values: interface.allSatisfy { c.resolved[$0.name] == nil } ? nil : values)
+        guard let out = child.graph.outputNode else { return ProcGeo() }
+        do {
+            return try geometry(out, child)
+        } catch let e as ProcCookError where e != .cancelled {
+            guard let n = child.graph.node(e.node) else { throw ProcCookError(e.message) }
+            throw ProcCookError("\(n.name): \(e.message)")
+        }
+    }
+
+    /// Where a node path leads from node `from` of `pass`'s network: `.` stays, `..` is the network's container
+    /// (from a network: its container's), a name a node of the network reached (from a node: of its network inside).
+    /// A bare name is a node beside `from`.
+    private enum Place {
+        case node(Pass, String)
+        /// The network itself: its container (`..`), or at the top the asset (its promoted parameters).
+        case network(Pass)
+    }
+
+    private func place(_ path: String, from: String, _ pass: Pass) throws -> Place {
+        let parts = path.split(separator: "/").map(String.init)
+        var at = Place.node(pass, from)
+        if parts.count == 1, parts[0] != ".", parts[0] != ".." { at = .network(pass) }
+        for part in parts {
+            switch (part, at) {
+            case (".", _): break
+            case ("..", .node(let p, _)): at = .network(p)
+            case ("..", .network(let p)):
+                guard let up = p.parent else { throw ProcCookError("\"\(path)\" goes above the top network") }
+                at = .network(up.pass)
+            case (_, .network(let p)):
+                guard let n = p.graph.named(part) ?? p.graph.node(part) else { throw ProcCookError("\"\(path)\": no node \(part)") }
+                at = .node(p, n.id)
+            case (_, .node(let p, let id)):
+                let c = try contents(id, in: p)
+                guard let n = c.graph.named(part) ?? c.graph.node(part) else { throw ProcCookError("\"\(path)\": no node \(part)") }
+                at = .node(c, n.id)
+            }
+        }
+        return at
     }
 
     // MARK: Keys
@@ -163,7 +305,7 @@ package final class ProcCooker {
         }
         h.add(ProcCooker.version)
         h.add(node.kind.rawValue)
-        for s in node.kind.spec.params {
+        for s in node.spec.params {
             h.add(s.name)
             node.param(s.name).hash(into: &h)
             if ProcExprContext.expands(s), case .string(let t) = node.param(s.name) { try textDependencies(t, of: node, pass, into: &h) }
@@ -189,6 +331,13 @@ package final class ProcCooker {
             }
         }
         if node.kind == .file { h.add(environment.stamp(node.param("file").string)) }
+        if node.kind == .subinput { h.add(try subinputSource(node, pass).map { try key($0.id, $0.pass) } ?? 0) }
+        if node.kind.isContainer {
+            // Its network's output's key (which has what it reads through `..`), nothing of its ids or names.
+            let child = try contents(id, in: pass)
+            h.add("contents")
+            h.add(try child.graph.outputNode.map { try key($0, child) } ?? 0)
+        }
         pass.keys[id] = h.value
         return h.value
     }
@@ -201,8 +350,8 @@ package final class ProcCooker {
         for path in refs.channels { try channelKey(path, from: node, pass, into: &h) }
         for path in refs.otherFrames { try channelKey(path, from: node, pass, anyFrame: true, into: &h) }
         for path in refs.nodes {
-            let name = path.split(separator: "/").last.map(String.init) ?? path
-            if let n = pass.graph.named(name) ?? pass.graph.node(name), n.id != node.id { h.add(try key(n.id, pass)) }
+            guard case .node(let p, let id)? = try? place(path, from: node.id, pass), p !== pass || id != node.id else { continue }
+            h.add(try key(id, p))
         }
     }
 
@@ -221,42 +370,46 @@ package final class ProcCooker {
     /// (and its node's inputs, which it may read).
     private func channelKey(_ path: String, from owner: ProcNode, _ pass: Pass, anyFrame: Bool = false, into h: inout Hasher64) throws {
         h.add(path)
-        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        let (at, channel) = ProcExprContext.split(path)
         var target = owner
-        var channel = path
-        switch parts.count {
-        case 1: break
-        case 2 where parts[0] == ".": channel = parts[1]
-        case 2 where parts[0] == "..":
-            let name = parts[1]
-            let p = pass.graph.interface.first { $0.name == name } ?? pass.graph.interface.first { $0.name == String(name.dropLast()) }
-            p?.value.hash(into: &h)
-            return
-        case 3 where parts[0] == "..":
-            guard let n = pass.graph.named(parts[1]) ?? pass.graph.node(parts[1]) else { return }
-            target = n
-            channel = parts[2]
-        default: return
+        var tp = pass
+        if let at {
+            // A path that leads nowhere: the cook says so.
+            guard let place = try? place(at, from: owner.id, pass) else { return }
+            switch place {
+            case .node(let p, let id):
+                guard let n = p.graph.node(id) else { return }
+                (tp, target) = (p, n)
+            case .network(let p):
+                if let (up, c) = p.parent, let n = up.graph.node(c) {
+                    (tp, target) = (up, n)
+                } else {
+                    let i = p.graph.interface
+                    let promoted = i.first { $0.name == channel } ?? i.first { $0.name == String(channel.dropLast()) }
+                    promoted?.value.hash(into: &h)
+                    return
+                }
+            }
         }
-        let visit = "\(target.id)/\(channel)"
-        guard !pass.channelKeys.contains(visit) else {
+        let visit = "\(tp.prefix)\(target.id)/\(channel)"
+        guard !pass.channelKeys.set.contains(visit) else {
             throw ProcCookError("\(target.name)/\(channel) reads itself through ch()", node: owner.id)
         }
-        pass.channelKeys.insert(visit)
-        defer { pass.channelKeys.remove(visit) }
+        pass.channelKeys.set.insert(visit)
+        defer { pass.channelKeys.set.remove(visit) }
         if let curve = target.curves[channel] {
             h.add("curve")
             if anyFrame { curve.hash(into: &h) } else { h.add(curve.value(at: environment.frame)) }
         } else if let source = target.expressions[channel] {
             h.add(source)
-            try dependencies(source, of: target, pass, into: &h)
-            if target.id != owner.id, (try? ProcExpr.parse(source).references.inputs) == true {
-                for i in pass.graph.inputs(of: target.id) { h.add(try i.map { try key($0, pass) } ?? 0) }
+            try dependencies(source, of: target, tp, into: &h)
+            if tp !== pass || target.id != owner.id, (try? ProcExpr.parse(source).references.inputs) == true {
+                for i in tp.graph.inputs(of: target.id) { h.add(try i.map { try key($0, tp) } ?? 0) }
             }
-        } else if let spec = ProcExprContext.locate(channel, in: target.kind)?.spec ?? target.kind.spec.param(channel) {
+        } else if let spec = ProcExprContext.locate(channel, in: target)?.spec ?? target.spec.param(channel) {
             let v = target.param(spec.name)
             v.hash(into: &h)
-            if case .string(let t) = v { try textDependencies(t, of: target, pass, into: &h) }
+            if case .string(let t) = v { try textDependencies(t, of: target, tp, into: &h) }
         }
     }
 
@@ -276,11 +429,22 @@ package final class ProcCooker {
                 guard i < ids.count, let up = ids[i] else { return nil }
                 return try self.geometry(up, pass)
             },
-            cook: { [unowned self] n in
-                guard geometry else { throw refuse }
-                return try self.geometry(n, pass)
+            find: { [unowned self] path in
+                let place: Place
+                do { place = try self.place(path, from: id, pass) } catch let e as ProcCookError { throw ProcExprError(e.message) }
+                switch place {
+                case .node(let p, let n):
+                    guard let x = self.expressions(n, p, geometry: geometry) else { throw ProcExprError("\"\(path)\": no node") }
+                    return .node(x)
+                case .network(let p):
+                    if let (up, c) = p.parent, let x = self.expressions(c, up, geometry: geometry) { return .node(x) }
+                    return .parameters(p.graph.interface)
+                }
             },
-            other: { [unowned self] n in self.expressions(n, pass, geometry: geometry) })
+            output: { [unowned self] in
+                guard geometry else { throw refuse }
+                return try self.geometry(id, pass)
+            })
     }
 
     /// The input a Switch passes (its expression evaluated), clamped to its inputs (nil without inputs).
@@ -301,7 +465,7 @@ package final class ProcCooker {
     private func resolve(_ node: ProcNode, _ x: ProcExprContext) throws -> (params: [String: ProcParam], channels: [String: Float?]) {
         var params: [String: ProcParam] = [:]
         var channels: [String: Float?] = [:]
-        for s in node.kind.spec.params {
+        for s in node.spec.params {
             do {
                 if let v = try x.resolved(s) { params[s.name] = v }
                 for c in ProcExprContext.channels(of: s) where node.isDriven(c) {
@@ -319,9 +483,10 @@ package final class ProcCooker {
 
     private func geometry(_ id: String, _ pass: Pass) throws -> ProcGeo {
         if let g = pass.geos[id] { return g }
+        let at = pass.prefix + id
         if let o = pass.overrides[id] {
             pass.geos[id] = o.geo
-            record(id, o.geo, ms: 0, cached: false, warnings: [])
+            record(at, o.geo, ms: 0, cached: false, warnings: [])
             return o.geo
         }
         let k = try key(id, pass)
@@ -329,8 +494,8 @@ package final class ProcCooker {
         if var e = cache[k] {
             e.used = tick
             cache[k] = e
-            record(id, e.geo, ms: 0, cached: true, warnings: info[id]?.warnings ?? [])
-            info[id]?.channels = e.channels
+            record(at, e.geo, ms: 0, cached: true, warnings: info[at]?.warnings ?? [])
+            info[at]?.channels = e.channels
             pass.geos[id] = e.geo
             return e.geo
         }
@@ -339,18 +504,18 @@ package final class ProcCooker {
         if node.bypass {
             let g = try inputIDs.first.flatMap { $0 }.map { try geometry($0, pass) } ?? ProcGeo()
             pass.geos[id] = g
-            record(id, g, ms: 0, cached: false, warnings: [])
+            record(at, g, ms: 0, cached: false, warnings: [])
             return g
         }
-        // The inputs (a Switch: only the one it passes).
+        // The inputs (a Switch: only the one it passes; a container's network cooks those it reads).
         var inputs = [ProcGeo?](repeating: nil, count: inputIDs.count)
         let pick = node.kind == .switchnode ? try switchIndex(node, inputIDs.count, pass) : nil
         for (i, up) in inputIDs.enumerated() {
-            guard let up, node.kind != .switchnode || i == pick else { continue }
+            guard let up, node.kind != .switchnode || i == pick, !node.kind.isContainer else { continue }
             do {
                 inputs[i] = try geometry(up, pass)
             } catch let e as ProcCookError where e != .cancelled {
-                info[id] = ProcNodeInfo(error: "Input \(i + 1) has an error")
+                info[at] = ProcNodeInfo(error: "Input \(i + 1) has an error")
                 throw e
             }
         }
@@ -363,7 +528,7 @@ package final class ProcCooker {
             do {
                 (c.resolved, channels) = try resolve(node, x)
             } catch let e as ProcCookError where e != .cancelled {
-                info[id] = ProcNodeInfo(error: e.message)
+                info[at] = ProcNodeInfo(error: e.message)
                 throw ProcCookError(e.message, node: id)
             }
             c.expressions = x
@@ -371,15 +536,20 @@ package final class ProcCooker {
         let start = DispatchTime.now().uptimeNanoseconds
         let g: ProcGeo
         do {
-            g = node.kind == .foreachend ? try forEach(id, c, pass) : try node.kind.cook(&c)
+            switch node.kind {
+            case .foreachend: g = try forEach(id, c, pass)
+            case .subnet, .asset: g = try cookContents(id, c, pass)
+            case .subinput: g = try subinputSource(node, pass).map { try geometry($0.id, $0.pass) } ?? ProcGeo()
+            default: g = try node.kind.cook(&c)
+            }
         } catch let e as ProcCookError {
-            info[id] = ProcNodeInfo(error: e.message)
+            info[at] = ProcNodeInfo(error: e.message)
             throw ProcCookError(e.message, node: id)
         } catch let e as GroupPattern.Failure {
-            info[id] = ProcNodeInfo(error: e.description)
+            info[at] = ProcNodeInfo(error: e.description)
             throw ProcCookError(e.description, node: id)
         } catch let e as ProcExprError {
-            info[id] = ProcNodeInfo(error: e.message)
+            info[at] = ProcNodeInfo(error: e.message)
             throw ProcCookError(e.message, node: id)
         }
         let ms = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
@@ -390,8 +560,8 @@ package final class ProcCooker {
         cache[k] = Entry(geo: g, bytes: size, used: tick, channels: channels)
         bytes += size
         pass.geos[id] = g
-        record(id, g, ms: ms, cached: false, warnings: c.warnings)
-        info[id]?.channels = channels
+        record(at, g, ms: ms, cached: false, warnings: c.warnings)
+        info[at]?.channels = channels
         return g
     }
 
@@ -444,7 +614,8 @@ package final class ProcCooker {
             h.add(feedback ? lastKey : baseKey)
             h.add(k)
             h.add(method)
-            let sub = Pass(graph: pass.graph, cancelled: pass.cancelled)
+            let sub = pass.sibling()
+            defer { sub.release() }
             sub.overrides = pass.overrides
             sub.overrides[begin] = (g, h.value)
             let out = try geometry(tail, sub)
@@ -501,7 +672,7 @@ package struct ProcCook {
 
     /// A per-element parameter's value for each element of class `c` of `geo` (nil: it doesn't vary, `param` stands).
     package func elementValues(_ name: String, in geo: ProcGeo, _ c: AttributeClass) throws -> [SIMD4<Float>]? {
-        guard let x = expressions, let spec = node.kind.spec.param(name), spec.perElement else { return nil }
+        guard let x = expressions, let spec = node.spec.param(name), spec.perElement else { return nil }
         return try x.elementValues(spec, over: ProcExprElements(geo, c))
     }
     package func float(_ name: String) -> Float { param(name).float }
@@ -515,7 +686,8 @@ package struct ProcCook {
     /// Input `i`'s geometry, or an error naming it if nothing is wired there.
     package func input(_ i: Int = 0) throws -> ProcGeo {
         guard i < inputs.count, let g = inputs[i] else {
-            let label = i < node.kind.spec.inputs.count ? node.kind.spec.inputs[i] : "\(i + 1)"
+            let inputs = node.spec.inputs
+            let label = i < inputs.count ? inputs[i] : "\(i + 1)"
             throw ProcCookError("Input \(i + 1) (\(label)) isn't connected")
         }
         return g

@@ -407,4 +407,129 @@ final class ProceduralEditorTests: XCTestCase {
         try XCTUnwrap(sheet.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: path).appendingPathComponent("window-procedural-spreadsheet.png"))
     }
+
+    // MARK: Networks in nodes
+
+    func testSubnetworks() throws {
+        model.setWorkspace(.procedural)
+        session.makeNetwork()
+        let box = session.graph.nodes[0].id
+        session.selection = [box]
+        let xf = session.add(.transform)!
+        // Shift-C: the Transform into a subnetwork, one undo step, the same mesh.
+        session.selection = [xf]
+        session.collapseSelection()
+        XCTAssertEqual(model.undo.undoActionName, "Collapse into Subnetwork")
+        let s = try XCTUnwrap(session.selection.first)
+        XCTAssertEqual(session.graph.node(s)?.kind, .subnet)
+        XCTAssertEqual(session.graph.displayNode, s)
+        XCTAssertEqual(mesh.faceCount, 6)
+        // In: its network, the level's display in the viewport, edits there.
+        session.dive(into: s)
+        XCTAssertEqual(session.path, [s])
+        XCTAssertEqual(session.levels.map(\.name), [model.activeObject!.name, "subnet1"])
+        XCTAssertEqual(Set(session.graph.nodes.map(\.kind)), [.subinput, .transform])
+        session.setParam(xf, "t", .vec3([0, 5, 0]))
+        XCTAssertEqual(session.displayGeometry?.bounds.lo.y ?? 0, 4.5, accuracy: 1e-5)
+        XCTAssertEqual(model.undo.undoActionName, "Change transform1")
+        model.undo.undo()
+        XCTAssertEqual(session.displayGeometry?.bounds.lo.y ?? 0, -0.5, accuracy: 1e-5)
+        XCTAssertEqual(session.path, [s])
+        // Undoing the collapse from inside: back up to the level that is left.
+        model.undo.undo()
+        XCTAssertEqual(session.path, [])
+        XCTAssertNil(session.graph.node(s))
+        model.undo.redo()
+        XCTAssertEqual(session.graph.node(s)?.kind, .subnet)
+        // Its parameters (Edit Parameter Interface), read inside with ch("../lift").
+        session.setInterface(s, [PromotedParam("lift", value: .float(1), span: 0...10, targets: [])])
+        XCTAssertEqual(session.graph.node(s)?.spec.param("lift")?.ui, .number(0...10))
+        session.dive(into: s)
+        session.setExpression(xf, "ty", #"ch("../lift")"#)
+        session.up()
+        XCTAssertEqual(session.path, [])
+        XCTAssertEqual(session.selection, [s])
+        session.setParam(s, "lift", .float(3))
+        XCTAssertEqual(session.displayGeometry?.bounds.lo.y ?? 0, 2.5, accuracy: 1e-5)
+        // Renamed: its value and the paths inside go with it.
+        session.setInterface(s, [PromotedParam("height", value: .float(1), span: 0...10, targets: [])], renamed: ["lift": "height"])
+        XCTAssertEqual(session.graph.node(s)?.params["height"], .float(3))
+        XCTAssertEqual(session.graph.node(s)?.contents?.node(xf)?.expressions["ty"], #"ch("../height")"#)
+        XCTAssertEqual(session.displayGeometry?.bounds.lo.y ?? 0, 2.5, accuracy: 1e-5)
+        // Extracted: the nodes back, the parameter the network's, the same mesh.
+        session.extract(s)
+        XCTAssertNil(session.graph.node(s))
+        XCTAssertEqual(session.root.interface.map(\.name), ["height"])
+        XCTAssertEqual(session.graph.named("transform1")?.expressions["ty"], #"ch("../height")"#)
+        XCTAssertEqual(session.displayGeometry?.bounds.lo.y ?? 0, 2.5, accuracy: 1e-5)
+    }
+
+    func testAssetNodes() throws {
+        let library = FileManager.default.temporaryDirectory.appendingPathComponent("proc-assets-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: library) }
+        var tower = ProcGraph()
+        let b = tower.add(.box)
+        tower.nodes[0].expressions["sizey"] = #"ch("../height")"#
+        tower.interface = [PromotedParam("height", value: .float(3), span: 0...20, targets: [])]
+        try ProcStore.write(ProcAsset(name: "Tower", graph: tower), slug: "tower", in: library)
+        session.library = library
+        model.setWorkspace(.procedural)
+        session.makeNetwork()
+        session.selection = []
+        let a = try XCTUnwrap(session.addAsset("tower"))
+        XCTAssertEqual(session.graph.node(a)?.name, "tower1")
+        XCTAssertNotNil(session.graph.node(a)?.contents)
+        session.setDisplay(a)
+        XCTAssertEqual(session.displayGeometry.map { $0.bounds.hi.y - $0.bounds.lo.y } ?? 0, 3, accuracy: 1e-5)
+        session.setParam(a, "height", .float(6))
+        XCTAssertEqual(session.displayGeometry.map { $0.bounds.hi.y - $0.bounds.lo.y } ?? 0, 6, accuracy: 1e-5)
+        // Locked inside: edits refused.
+        session.dive(into: a)
+        XCTAssertTrue(session.locked)
+        session.setParam(b, "divs", .vec3([2, 2, 2]))
+        XCTAssertNil(session.graph.node(b)?.params["divs"])
+        session.up()
+        // Allowed editing, changed, saved to the library: locked to the new definition.
+        session.allowEditing(a)
+        session.dive(into: a)
+        XCTAssertFalse(session.locked)
+        session.setParam(b, "divs", .vec3([2, 2, 2]))
+        XCTAssertEqual(session.graph.node(b)?.params["divs"], .vec3([2, 2, 2]))
+        session.up()
+        XCTAssertTrue(session.saveDefinition(a))
+        XCTAssertEqual(session.graph.node(a)?.editable, false)
+        XCTAssertEqual(ProcStore.read("tower", in: library)?.graph.nodes[0].params["divs"], .vec3([2, 2, 2]))
+        XCTAssertEqual(ProcStore.read("tower", in: library)?.name, "Tower")
+        XCTAssertEqual(session.graph.node(a)?.contents?.nodes[0].params["divs"], .vec3([2, 2, 2]))
+        // The network as it is in the window: inside the asset, its path in the bar.
+        if let path = ProcessInfo.processInfo.environment["MODELING_PNG"] {
+            model.viewSize = [900, 640]
+            model.pixelScale = 2
+            session.allowEditing(a)
+            session.dive(into: a)
+            session.selection = []
+            let rep = try XCTUnwrap(ModelingPictures.window(model))
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: path).appendingPathComponent("window-procedural-asset.png"))
+        }
+    }
+
+    func testScriptedSubnetworks() throws {
+        let modeller = ScriptModeller(device: try XCTUnwrap(MTLCreateSystemDefaultDevice()))
+        let json = #"[{"workspace": "procedural"}, {"network": "new"}, {"node": {"add": "transform", "after": "box1"}},"#
+            + #" {"collapse": {"nodes": ["transform1"], "name": "lifter"}},"#
+            + #" {"interface": {"node": "lifter", "add": {"name": "lift", "value": 2.5, "range": [0, 10]}}},"#
+            + #" {"dive": "lifter"}, {"expr": {"node": "transform1", "channel": "ty", "source": "ch(\"../lift\")"}}]"#
+        _ = try modeller.perform(try ModellerStep.decode(list: JSONSerialization.jsonObject(with: Data(json.utf8))).get())
+        var network = try XCTUnwrap(try modeller.state()["network"] as? [String: Any])
+        XCTAssertEqual(network["path"] as? [String], ["lifter"])
+        let xf = try XCTUnwrap((network["nodes"] as? [[String: Any]])?.first { $0["name"] as? String == "transform1" })
+        XCTAssertEqual((xf["channels"] as? [String: Any])?["ty"] as? Double, 2.5)
+        let up = #"[{"dive": ".."}, {"extract": "lifter"}]"#
+        _ = try modeller.perform(try ModellerStep.decode(list: JSONSerialization.jsonObject(with: Data(up.utf8))).get())
+        network = try XCTUnwrap(try modeller.state()["network"] as? [String: Any])
+        XCTAssertEqual(network["path"] as? [String], [])
+        XCTAssertEqual(network["interface"] as? [String], ["lift"])
+        XCTAssertEqual((network["nodes"] as? [[String: Any]])?.map { $0["name"] as? String }, ["box1", "transform1"])
+    }
 }

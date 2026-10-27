@@ -31,7 +31,7 @@ extension ProceduralSession {
     var handles: [Handle] {
         guard showHandles, let id = focus ?? graph.displayNode, let n = graph.node(id) else { return [] }
         var out: [Handle] = []
-        for name in ["t", "origin"] where n.kind.spec.param(name).map({ if case .vector = $0.ui { true } else { false } }) == true {
+        for name in ["t", "origin"] where n.spec.param(name).map({ if case .vector = $0.ui { true } else { false } }) == true {
             out.append(Handle(at: n.param(name).vec3, param: name, index: nil, axes: true))
         }
         if case .points(let pts) = n.param("points") {
