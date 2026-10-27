@@ -32,6 +32,9 @@ modelling" says what it is; this note says where things are, what was checked an
   weights where no probe matches). `-m procedural` renders the scene with cascades, path traced and the GI views.
 - Window pictures (MODELING_PNG): the tab with a network, the spreadsheet. Offscreen render of the Procedural scene
   (default look and path traced): every asset cooks at load and places.
+- Main merged 2026-10-27; `switches.py` and `switches.py --saved` pass with the procedural scene in the tour (loads in
+  ~440 ms) and in `remake` (Scripts/scene-switches.swift: its assets cooked again, as a hot reload or the inspector's
+  edit). The scene is the stage's builder plus placed objects (no systems of its own).
 - Wrangles compile and run in the test process; the first compile ~8 s (module cache), later ones under a second.
 
 ## Not done / next
@@ -41,8 +44,6 @@ modelling" says what it is; this note says where things are, what was checked an
 - `.claude/skills/tests/scripts/related.sh` has no rows for `Sources/Procedural`, `Editors/Modeling/Procedural`
   (the skills folder is write-protected here): add `Sources/Procedural/*` → the nine Procedural suites, and
   `Sources/Editors/Placement/*` → ObjectInspectorTests.
-- The scene-switching check (`switches.py`) isn't on this branch (`Scripts/scene-switches.swift` is missing): run it
-  after merging main. The procedural scene is the stage's builder plus placed objects (no systems of its own).
 - Performance: cooks are off the frame; not profiled. Big scatters (1M points), relax (O(n·k) per iteration, CPU),
   Ray's brute force over triangles, Voronoi's exact booleans per cell are the slow ones. M4 Max / Metal 4 untested.
 - Not there: Houdini's expressions in parameters (`$PT`, `ch()`), packed primitives in the viewport, VDB / volumes,
