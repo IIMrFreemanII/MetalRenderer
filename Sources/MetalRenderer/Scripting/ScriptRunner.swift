@@ -75,7 +75,7 @@ package final class ScriptRunner {
         let entry = unsafeBitCast(symbol, to: (@convention(c) (UnsafeRawPointer) -> Void).self)
         // The same script run again: its closures of the last run stop first (the render thread runs work in order).
         let owner = url.path
-        renderer.perform { $0.scriptHooks.removeAll { $0.owner == owner } }
+        renderer.perform { $0.session.scriptHooks.removeAll { $0.owner == owner } }
         let run = ScriptRun(renderer: renderer, path: owner, arguments: arguments, output: output)
         let handle = Unmanaged.passRetained(run)
         let finished = DispatchSemaphore(value: 0)

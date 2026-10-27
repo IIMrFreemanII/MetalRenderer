@@ -118,7 +118,7 @@ extension Renderer {
         // Sculpt mode: a stroke of the terrain's brush (Option: the camera's, as always).
         if terrainMouseDown(at: cursor, pressure: penPressure, option: optionHeld, invert: controlHeld, smooth: shiftHeld) { return }
         holding = nil
-        gizmoDrag = nil
+        session.gizmoDrag = nil
         navDrag = nil
         leftLook = false
         navCursor = cursor
@@ -126,7 +126,7 @@ extension Renderer {
         if walker == nil, placementMouseDown(at: cursor) { return }
         if walker == nil, optionHeld {
             navDrag = commandHeld ? .pan : .orbit
-            flight = nil
+            session.flight = nil
             return
         }
         // The VFX editor's handle: an arrow under the cursor is dragged along its axis.
@@ -135,7 +135,7 @@ extension Renderer {
             var axis = SIMD3<Float>.zero
             axis[k] = 1
             let s = VFXGizmos.along(origin: handle, axis: axis, from: camera.position, dir: cursorRay(cursor))
-            gizmoDrag = (axis, handle, s)
+            session.gizmoDrag = (axis, handle, s)
             onGizmoMoved?(target.effect, emitter, .zero, 0)
             return
         }
@@ -154,10 +154,10 @@ extension Renderer {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
         if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
         if placementMouseDragged(at: cursor) { return }
-        if let drag = gizmoDrag {
+        if let drag = session.gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
-            gizmoDrag?.last = s
+            session.gizmoDrag?.last = s
             if move != 0, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, drag.axis * move, 1) }
             return
         }
@@ -184,8 +184,8 @@ extension Renderer {
             clickAt = nil
             return
         }
-        if gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
-        gizmoDrag = nil
+        if session.gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
+        session.gizmoDrag = nil
         // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
         if let c = clickAt, holding == nil, navDrag == nil {
             if pickArmed {
@@ -215,7 +215,7 @@ extension Renderer {
         rightHeld = true
         rightDrag = walker == nil && optionHeld ? .dolly : .look
         navCursor = cursor
-        flight = nil
+        session.flight = nil
     }
     package func rightMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: 1) { return }
@@ -231,7 +231,7 @@ extension Renderer {
     /// The middle button: pans.
     package func otherMouseDown(at cursor: SIMD2<Float>) {
         navCursor = cursor
-        flight = nil
+        session.flight = nil
     }
     package func otherMouseDragged(dx: Float, dy: Float, at cursor: SIMD2<Float>) {
         guard walker == nil, painter.active == nil else { return }
@@ -240,7 +240,7 @@ extension Renderer {
 
     /// A drag's step (`dx`, `dy`: in points; `cursor`: where it is now, 0...1 across and down).
     package func navigate(_ nav: NavDrag, dx: Float, dy: Float, at cursor: SIMD2<Float>) {
-        flight = nil
+        session.flight = nil
         switch nav {
         case .orbit:
             let p = pivot
@@ -275,7 +275,7 @@ extension Renderer {
             settings.moveSpeed = RenderSettings.moveSpeedRange.clamp(settings.moveSpeed * exp(dy * 0.05))
             return
         }
-        flight = nil
+        session.flight = nil
         pivot = camera.dolly(by: exp(dy * 0.05), pivot: pivot)
     }
 

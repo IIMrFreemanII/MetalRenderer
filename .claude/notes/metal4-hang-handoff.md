@@ -131,6 +131,13 @@ renderer's clock ran on through the switch, and the GPU's soft bodies replayed f
 watchdog. Fixed by starting a switched-to scene at its clock's zero (`Renderer.install`). `Metal4Frame.commit` now
 says when an interlude's wait gives up ("the frame's work before … took over 2000 ms"): look at the Metal 4 work
 before it, not the interlude.
+Then (branch `claude/scene-switching`): every switch and remake starts the clock at zero (`SceneChange`), physics takes
+at most 20 steps a frame in the app, the interlude waits for the Metal 4 work before it to be done *or failed* (a failed
+Metal 4 command buffer signals it; a 10 s backstop), and a failed interlude gets a new queue: before, one timeout left
+the queue ignoring every submission for the rest of the run (a frame every 2 s). The scene-switching skill's
+`switches.py` (`jump`, `remake`, `slow` with `METALRENDERER_STEPS_PER_FRAME=500`) covers it. Found on the way: a Metal 4
+command buffer of 27 s (the whole jump in one frame) was never killed by a watchdog; past the 10 s backstop its interlude
+timed out, the renewed queue's first two (queued on the old one) were ignored, and every frame after was clean.
 
 ## Still open
 - **Scene loads** build their BLASes on a Metal 3 queue in the background (`SceneBuffers`, `VirtualTracing`'s

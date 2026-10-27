@@ -549,6 +549,9 @@ package final class Scene {
     /// The CPU's steps on a thread of their own, behind the frame (PhysicsStepper): the renderer turns it on
     /// (PhysicsSettings.asynchronous, for a scene that simulates on the CPU, not a benchmark's unless asked).
     package var physicsAsync = false
+    /// The CPU's steps a frame takes on the render thread at most (the rest of the time is skipped): the renderer's,
+    /// `Renderer.stepsPerFrame` in the app; a benchmark's config replays its still in one frame.
+    package var physicsStepLimit = Int.max
     package var physicsStepper: PhysicsStepper?
     /// The time the CPU's steps were last asked for (a frame at the same time: paused, a still, waits for them).
     package var physicsTime: Float?

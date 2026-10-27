@@ -49,6 +49,7 @@ name first, then by its folder (`by_name`, `by_folder`).
 |---|---|
 | `Settings*.swift`, `SceneSettings` | SettingsTableTests, BenchmarkModesTests |
 | `SceneDefinition`, `GameScenes*`, `Scene+Kit` | SceneRegistryTests, SettingsTableTests, BenchmarkModesTests |
+| `SceneChange`, `SceneLoadQueue`, `SceneSession` | SceneSwitchTests (the switches on the GPU: the `scene-switching` skill's `switches.py`) |
 | `Benchmark*.swift` | BenchmarkModesTests, CapabilitiesTests |
 | `Script*.swift`, `SceneCommand`, `Renderer+Scripting`, `Scene+Stage` | ScriptingTests |
 | `SceneFile`, `Scene+SceneFile`, `Renderer+Placement` | SceneFileTests, ScriptingTests |

@@ -43,6 +43,7 @@ by_name() {
     SourceTree.swift) add ShaderSourceTests EXRImageTests MaterialGraphTests ;;   # where the shaders and fixtures are found
     Settings*.swift|SceneSettings.swift) add SettingsTableTests BenchmarkModesTests ;;
     SceneDefinition.swift|GameScenes*.swift|Scene+Kit.swift) add SceneRegistryTests SettingsTableTests BenchmarkModesTests ;;
+    SceneChange.swift|SceneLoadQueue.swift|SceneSession.swift) add SceneSwitchTests ;;
     Benchmark*.swift) add BenchmarkModesTests CapabilitiesTests ;;
     Script*.swift|SceneCommand.swift|Renderer+Scripting.swift|Scene+Stage.swift) add ScriptingTests ;;
     SceneFile.swift|Scene+SceneFile.swift|Renderer+Placement.swift) add SceneFileTests ScriptingTests ;;

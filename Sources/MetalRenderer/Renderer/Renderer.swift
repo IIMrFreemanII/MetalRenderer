@@ -142,9 +142,6 @@ package final class Renderer: NSObject {
         return VFXGizmos.Target(effect: parts.first ?? "", emitter: parts.count > 1 ? parts[1] : nil)
     }
     package var gizmoHandle: SIMD3<Float>?
-    /// The placed object's arrow dragged (Renderer+Placement.swift).
-    package var placementDrag: PlacementDrag?
-    package var gizmoDrag: (axis: SIMD3<Float>, origin: SIMD3<Float>, last: Float)?
     package var gizmoBuffers = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
     package var gizmoViewSize = SIMD2<Float>(1280, 800)
     /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
@@ -416,7 +413,6 @@ package final class Renderer: NSObject {
     /// of a frame (encodePick), read back when that frame's slot comes round again, and told to `onMaterialPicked`.
     package var pickArmed = false
     package var pickRequest: SIMD2<Float>?
-    package var pickPending: Int?
     package var pickBuffer: MTLBuffer?
     /// The pick is a plain click's: what it finds is selected (`selectedInView`), not told to `onMaterialPicked`.
     package var pickSelects = false
@@ -467,7 +463,7 @@ package final class Renderer: NSObject {
         guard let queue = device.makeCommandQueue() else {
             throw RendererError.resourceCreation("command queue")
         }
-        guard let metal4 = Metal4Frame(device: device, streamQueue: queue, framesInFlight: Renderer.maxFramesInFlight,
+        guard let metal4 = Metal4Frame(device: device, framesInFlight: Renderer.maxFramesInFlight,
                                        layer: (surface as? LayerSurface)?.layer) else {
             throw RendererError.resourceCreation("Metal 4 command queue")
         }
@@ -565,7 +561,10 @@ package final class Renderer: NSObject {
 
     // MARK: - Setup: state
 
-    package var loading: SceneSettings?            // being prepared in the background
+    /// The scene loads: one prepared in the background at a time (on `sceneLoads`), only the latest put in.
+    package var loads = SceneLoadQueue()
+    package var loading: SceneSettings? { loads.loading }   // being prepared in the background
+    package let sceneLoads = DispatchQueue(label: "scene loads", qos: .userInitiated)
     package var sceneRemake: String?                // the scene's builder runs again, with the same settings: why
     package var devReload: DevReload?               // the dev build's hot reload (startDevReload)
     package var streaming = Streaming()
@@ -574,26 +573,23 @@ package final class Renderer: NSObject {
 
     package var scripts: ScriptRunner?              // compiles and runs Swift scripts (Renderer+Scripting)
     package var scriptServer: ScriptServer?         // the socket Tools/script.py and the MCP server reach
-    package var scriptHooks: [ScriptHook] = []      // the scripts' per-frame closures (ScriptRun.onFrame)
     package var frameCaptures: [FrameCapture] = []  // the next frame's picture, asked for (captureFrame)
     package var placedPending: SceneFile?           // a scene file edited while a scene loads: made once it is in
     package var placedReselect: (kind: SceneKind, object: Int)?   // the placed object selected again once its scene is made
 
     // MARK: - Procedural materials: state
 
-    package var pendingInstanceEdits: [Set<Int>] = []
-    package var stillRefitPending = false
 
     // MARK: - Interiors on demand: state
 
-    package var interiorWanted: (key: String?, since: Double)?
     package var lastCameraPosition: SIMD3<Float>?
 
     // MARK: - The selection, and where the camera flies: state
 
-    /// The camera flying (0.6 s, eased) to what the Project Graph showed or F framed, or (`about`) turning about the
-    /// pivot to the scene gizmo's view; where it turns about when there; the target asked for before its scene was in.
-    package var flight: (from: Camera, to: Camera, target: SIMD3<Float>, distance: Float, start: Double, seconds: Double, about: Bool)?
+    /// What names the scene or was begun in it (picks, drags, a flight, the scripts' closures): what of it a scene put
+    /// in keeps is its SceneChange's (SceneSession.after).
+    package var session = SceneSession()
+    /// The target asked for before its scene was in.
     package var pendingFrame: FrameTarget?
     /// What is selected in the view (a click, the Project Graph): its instances, and the box round them now (drawn
     /// while it is selected); Shift-F's lock: where the box's centre was last frame (the camera follows it).

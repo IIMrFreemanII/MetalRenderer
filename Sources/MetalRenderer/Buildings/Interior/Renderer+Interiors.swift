@@ -36,11 +36,11 @@ extension Renderer {
         } else {
             wanted = nil
         }
-        guard wanted != current else { interiorWanted = nil; return }
-        if interiorWanted?.key != wanted { interiorWanted = (wanted, now); return }
-        if let since = interiorWanted?.since, now - since > 0.4 || benchmark != nil {
+        guard wanted != current else { session.interiorWanted = nil; return }
+        if session.interiorWanted?.key != wanted { session.interiorWanted = (wanted, now); return }
+        if let since = session.interiorWanted?.since, now - since > 0.4 || benchmark != nil {
             settings.scene.interior = wanted
-            interiorWanted = nil
+            session.interiorWanted = nil
         }
     }
 }

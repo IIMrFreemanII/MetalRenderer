@@ -352,10 +352,20 @@ the choice is kept.
   with the MB built), **Virtual geometry**, and **Install** (on the render thread, after the frames in flight). The old
   scene keeps drawing until then. Picking another scene meanwhile drops the load: the gallery stops loading models and
   the BLAS stop between batches. A line on the console sums it up: `Loaded Gallery (Assets) in 2.4 s: shaders 1.5 s, …`.
-  The scene switched to starts at its clock's zero, as at launch (its physics, particles, animations and day). Until
-  October 2026 the clock ran on, and a scene's physics replayed from zero to it in its first frame: the GPU's muscles
-  took 3-8 s a minute or two in, the frame's Metal 3 work behind them timed out (`ErrorTimeout`), and so did every
-  frame's after it.
+  Loads run one at a time, each numbered (`SceneLoadQueue`): only the latest asked for is put in, and going back to
+  the scene drawn while another loads drops that load.
+  **What a scene keeps of the one before** is its `SceneChange` (`Renderer.install`; the `scene-switching` skill has
+  the table): another kind is *switched* to (its camera, its clock from zero, nothing kept); the same kind *remade*
+  (a setting, a hot reload, a placed file) gets a clock from zero too, the camera kept; the world's next tile, the
+  city's next interior and a workshop's edit *continue* (clock, camera and history kept). What the renderer holds that
+  names a scene's contents (a pick, a drag, a flight, a script's `onFrame`) is in `SceneSession`, dropped by the
+  change; a scene's behaviour hears `leaving` and `entered`. Physics takes at most 20 steps a frame in the app
+  (`Renderer.stepsPerFrame`; a benchmark's still replays at once): a jump of the clock catches up over frames and the
+  log says so (`Physics: … steps behind`). Until October 2026 the clock ran on through switches and remakes, a scene's
+  physics replayed from zero to it in its first frame (the GPU's muscles: 3-8 s a minute or two in), the frame's
+  Metal 3 work behind it timed out (`ErrorTimeout`), and so did every frame's after it.
+  `.claude/skills/scene-switching/scripts/switches.py` checks all of this in a headless app (a tour of every scene,
+  the heavy pairs, switches mid-load, remakes, jumps, stale pictures).
 * **Compiling shaders**, at launch and after R.
 * **Streaming in:** what keeps coming once the scene is in. Texture levels and virtual geometry pages (and the cut's
   BLAS) while the new scene settles, for 20 s at most (later, as the camera moves, they stream without showing);
@@ -3219,7 +3229,7 @@ Measured on an M4 Max (macOS 26.5, 640×400 traced → 1920×1200, moving frames
 * Tried for it and scoring the same (within 0.2 dB): a fixed exposure texture instead of auto exposure, and a denoise-strength mask over the sky and the emitters. Its view matrices make no difference at all on macOS 26.5. The jitter's sign, the motion vectors' sign and the reversed depth all matter (1–6 dB when wrong), and match the temporal scaler's.
 * Not tried: the specular hit distance and the transparency overlay (fog), which the scenes scored here don't exercise.
 
-**What stays on the Metal 3 queue.** Every frame is Metal 4's, but some work has no working Metal 4 form on macOS 27 and goes through a Metal 3 command queue. Inside a frame it is an *interlude* (`Metal4Frame.interlude`): a Metal 3 command buffer between two of the frame's, committed only once the Metal 4 work before it is done (committed earlier, it hung the GPU now and then: `.claude/notes/metal4-hang-handoff.md`). Each costs about 0.15 ms of idle GPU. Move each over as its Metal 4 form becomes reliable:
+**What stays on the Metal 3 queue.** Every frame is Metal 4's, but some work has no working Metal 4 form on macOS 27 and goes through a Metal 3 command queue. Inside a frame it is an *interlude* (`Metal4Frame.interlude`): a Metal 3 command buffer between two of the frame's, on the interludes' own queue, committed only once the Metal 4 work before it is done or has failed (committed earlier, it hung the GPU now and then: `.claude/notes/metal4-hang-handoff.md`; committed after a fixed 2 s, it waited on the GPU behind a slow pass and timed out). A failed Metal 4 command buffer signals the interlude after it itself, and an interlude that fails gets its queue made again: macOS ignores every later submission to a queue whose command buffer timed out, and every frame's interludes failed from then on. Each costs about 0.15 ms of idle GPU. Move each over as its Metal 4 form becomes reliable:
 * **MetalFX's denoising scaler.** Metal 4's (`METALRENDERER_MFX4=1`, macOS 27) timed out in the first frames of a big scene after a switch: see below.
 * **MetalFX's frame interpolator**, when it runs: it has no Metal 4 form.
 * **Refits of the structures that deform** (`PrimitiveRefit`: the cars' panels, the crowd's poses, the water's near patch), and the builds that come with them (virtual geometry's clusters, the terrain's sectors, displaced meshes). On macOS 27.0.1 a Metal 4 refit of a structure Metal 3 built lost its triangles, and one of a structure Metal 4 built came out stale after a change of scene (`ComputePass.swift`). Tried again for the cars on macOS 27.0 (M4 Max, October 2026): each car structure built by Metal 4 in the frame first, then refitted there, still lost the car's body from the first refit (the 1-car laps: its wheels alone). Built by Metal 4 every frame instead, the cars draw right, but the pass takes 6.1 ms against the interlude's 0.77.

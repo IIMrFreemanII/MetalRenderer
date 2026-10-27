@@ -94,7 +94,7 @@ extension Scene {
                 placeBodies(drawn)
                 behaviour?.drawn(self, drawn)
             } else {
-                physics.advance(to: t)
+                physics.advance(to: t, atMost: physicsStepLimit)
                 placeBodies()
                 behaviour?.drawn(self, PhysicsStepper.Drawn(physics))
             }

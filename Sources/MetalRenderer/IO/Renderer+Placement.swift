@@ -58,20 +58,20 @@ extension Renderer {
         var axis = SIMD3<Float>.zero
         axis[axisIndex] = 1
         let s = VFXGizmos.along(origin: origin, axis: axis, from: camera.position, dir: cursorRay(cursor))
-        placementDrag = PlacementDrag(axis: axisIndex, object: k, last: s, mode: optionHeld ? .turn : controlHeld ? .scale : .move)
+        session.placementDrag = PlacementDrag(axis: axisIndex, object: k, last: s, mode: optionHeld ? .turn : controlHeld ? .scale : .move)
         return true
     }
 
     /// The drag: the object (and what hangs from it) moved, turned or scaled as far as the cursor went along the axis.
     package func placementMouseDragged(at cursor: SIMD2<Float>) -> Bool {
-        guard var drag = placementDrag, var placed = scene.placed, placed.file.objects.indices.contains(drag.object) else { return false }
+        guard var drag = session.placementDrag, var placed = scene.placed, placed.file.objects.indices.contains(drag.object) else { return false }
         var axis = SIMD3<Float>.zero
         axis[drag.axis] = 1
         let origin = placementHandle()?.origin ?? .zero
         let s = VFXGizmos.along(origin: origin, axis: axis, from: camera.position, dir: cursorRay(cursor))
         let step = min(max(s - drag.last, -5), 5)
         drag.last = s
-        placementDrag = drag
+        session.placementDrag = drag
         guard step != 0 else { return true }
         var o = placed.file.objects[drag.object]
         switch drag.mode {
@@ -87,8 +87,8 @@ extension Renderer {
 
     /// The drag let go: the file written. True when there was one.
     package func placementMouseUp() -> Bool {
-        guard placementDrag != nil else { return false }
-        placementDrag = nil
+        guard session.placementDrag != nil else { return false }
+        session.placementDrag = nil
         savePlaced()
         return true
     }

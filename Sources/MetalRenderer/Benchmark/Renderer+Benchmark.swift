@@ -77,7 +77,7 @@ extension Renderer {
         if settings.scene.effects != scene.settings.effects { editEffects() }   // the VFX editor's edits, as the app runs them
         if settings.scene.materials != scene.settings.materials { editMaterials() }   // the Material Designer's
         if settings.scene != scene.settings || virtualGeometryChanged || plantSeasonChanged {
-            rebuildScene(resetCamera: false)
+            rebuildScene()
         }
         camera = c.track?.camera(at: 0)
             ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)

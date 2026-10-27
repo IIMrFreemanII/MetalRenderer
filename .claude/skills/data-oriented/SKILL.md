@@ -107,3 +107,4 @@ The patterns, as code from this repo: [references/patterns.md](references/patter
   are).
 * Its hot loops are in `Tools/perf/hot-functions.txt` and `hotcalls.py` passes.
 * Images unchanged where the feature is off; related tests green; `graphify update .` (CLAUDE.md).
+* A scene, or a system a scene carries: the `scene-switching` skill's rules hold and its `switches.py` passes.

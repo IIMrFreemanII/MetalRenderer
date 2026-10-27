@@ -33,6 +33,12 @@ Plan and build them with the `data-oriented` skill (`.claude/skills/data-oriente
 things is written in the fast subset of Swift and proven with a profile and `Tools/perf/hotcalls.py`; the rest stays
 plain Swift.
 
+## Scenes and switching
+
+A new scene, a system a scene carries, or anything a scene load builds or resets follows the `scene-switching` skill
+(`.claude/skills/scene-switching`): per-scene state on the scene or `SceneSession`, simulations from the scene's zero,
+GPU work in the frame's order, and `scripts/switches.py` passing before it is done.
+
 ## graphify
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.

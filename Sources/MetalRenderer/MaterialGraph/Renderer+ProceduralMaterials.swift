@@ -145,17 +145,17 @@ extension Renderer {
     /// descriptors written again, the top level refitted. A still scene's are one set for every slot: written once.
     package func writeInstanceEdits(slot: Int, still: Bool) {
         let edits = scene.takeInstanceEdits()
-        while pendingInstanceEdits.count < Renderer.maxFramesInFlight { pendingInstanceEdits.append([]) }
-        if !edits.isEmpty { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s].formUnion(edits) } }
-        let list = pendingInstanceEdits[slot]
+        while session.pendingInstanceEdits.count < Renderer.maxFramesInFlight { session.pendingInstanceEdits.append([]) }
+        if !edits.isEmpty { for s in session.pendingInstanceEdits.indices { session.pendingInstanceEdits[s].formUnion(edits) } }
+        let list = session.pendingInstanceEdits[slot]
         guard !list.isEmpty else { return }
-        if still { for s in pendingInstanceEdits.indices { pendingInstanceEdits[s] = [] } } else { pendingInstanceEdits[slot] = [] }
+        if still { for s in session.pendingInstanceEdits.indices { session.pendingInstanceEdits[s] = [] } } else { session.pendingInstanceEdits[slot] = [] }
         let records = instanceDataBuffers[slot].contents().bindMemory(to: GPUInstanceData.self, capacity: scene.instances.count)
         for i in list where i < scene.instances.count {
             scene.writeInstanceData(into: records, all: true, range: i..<(i + 1))
             sceneBuffers.writeInstanceDescriptors(slot: slot, scene: scene, all: true, range: i..<(i + 1))
         }
-        if still { stillRefitPending = true } else { instanceASStale[slot] = true }
+        if still { session.stillRefitPending = true } else { instanceASStale[slot] = true }
     }
 
     /// The terrain's sectors the brushes changed (Renderer+Terrain.swift): their new vertices copied into their
@@ -164,11 +164,11 @@ extension Renderer {
     package func encodeTerrain(slot: Int, passes: FrameEncoder) {
         guard let work = prepareTerrainFrame(slot: slot, buffers: sceneBuffers), !work.meshes.isEmpty, var build = sceneBuffers.terrainBuild else {
             // (Instances moved for good in a still scene: its one top level refitted.)
-            if stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
-            stillRefitPending = false
+            if session.stillRefitPending, let refit = sceneBuffers.stillRefit { passes.updateTLAS(refit, pass: "terrain tlas") }
+            session.stillRefitPending = false
             return
         }
-        stillRefitPending = false
+        session.stillRefitPending = false
         passes.copyBuffers(work.copies, pass: "terrain copy")
         build.meshes = work.meshes
         passes.updatePrimitives(build, pass: "terrain")
@@ -323,13 +323,13 @@ extension Renderer {
         enc.useResource(buffer, usage: [.read, .write])
         dispatch(enc, .pick, width: 1, height: 1)
         passes.endCompute()
-        pickPending = plan.slot
+        session.pickPending = plan.slot
     }
 
     /// A pick traced in `slot`'s last frame (which is done): what it found.
     package func readPick(slot: Int) {
-        guard pickPending == slot, let buffer = pickBuffer else { return }
-        pickPending = nil
+        guard session.pickPending == slot, let buffer = pickBuffer else { return }
+        session.pickPending = nil
         let v = buffer.contents().bindMemory(to: SIMD4<Float>.self, capacity: 3)
         if pickSelects {
             pickSelects = false
@@ -381,23 +381,26 @@ extension Renderer {
         passes.endCompute()
     }
 
-    /// Replaces the scene with `settings.scene` right away (benchmarks; the app loads in the background).
-    package func rebuildScene(resetCamera: Bool) {
-        loading = nil   // a scene still loading is for settings this one replaces
+    /// Replaces the scene with `settings.scene` right away (benchmarks, whose configs then set the camera and the clock;
+    /// the app loads in the background).
+    package func rebuildScene() {
+        loads.clear()   // a scene still loading is for settings this one replaces
         let remake = sceneRemake
         sceneRemake = nil
         if let remake { print("\(settings.scene.kind.title) made again: \(remake)") }
         do {
             let reuse = remake == nil && settings.scene == scene.settings ? scene : nil
-            install(try prepareScene(settings.scene, reuse: reuse, options: loadOptions), resetCamera: resetCamera)
+            install(try prepareScene(settings.scene, reuse: reuse, options: loadOptions), remade: remake != nil, configured: true)
         } catch {
             print("Scene rebuild failed, keeping the previous scene: \(error)")
             settings.scene = scene.settings
         }
     }
 
-    /// Swaps in a prepared scene. Waits for in-flight frames, since they still read the old buffers.
-    package func install(_ prepared: PreparedScene, resetCamera: Bool) {
+    /// Swaps in a prepared scene. Waits for in-flight frames, since they still read the old buffers. What it keeps of the
+    /// scene before is the `SceneChange`'s (`remade`: asked for by `remakeScene`); `configured`: a benchmark's config,
+    /// which sets the camera and the clock itself.
+    package func install(_ prepared: PreparedScene, remade: Bool, configured: Bool = false) {
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let oldPipelines = pipelines
@@ -407,6 +410,8 @@ extension Renderer {
                                          virtualTracing: virtualTracing, buffers: sceneBuffers, pipelines: nil,
                                          shaderGeneration: shaderGeneration))
         let oldSettings = scene.settings, oldPlace = scene.worldPlace
+        let oldScene = scene, oldBehaviour = scene.behaviour
+        let oldLights = (count: scene.lights.count, meshes: !scene.meshLights.isEmpty)
         let start = CACurrentMediaTime()
         scene = prepared.scene
         do {
@@ -426,13 +431,20 @@ extension Renderer {
             pipelines = oldPipelines
             try? createSceneResources(old.parts)
         }
+        let change = SceneChange(from: oldSettings, to: scene.settings, remade: remade)
+        // (Only when it was put in: a load that failed brings the scene back, behaviour and all.)
+        if scene !== oldScene { oldBehaviour?.leaving(self, change: change) }
+        session = session.after(change)   // (nothing of the scene before that names its contents reaches this one)
         // The open world made around another tile is the same world in the same place: what the frames have gathered
         // of it holds.
         // ...and the city with another building's interior in it: the same city where it was.
-        let sameWorld = scene.settings.isSameWorld(as: oldSettings) || scene.settings.isSameCity(as: oldSettings)
+        let sameWorld = change == .continued && (scene.settings.isSameWorld(as: oldSettings) || scene.settings.isSameCity(as: oldSettings))
         // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
         // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
-        let sameWorkshop = scene.settings.isSameWorkshop(as: oldSettings)
+        let sameWorkshop = change == .continued && scene.settings.isSameWorkshop(as: oldSettings)
+        // What the pixels kept of the lights (a reservoir names its light by its place in the scene's table) is of the
+        // scene before when the table may differ: at night the tiles' lights are other ones, an interior adds its own.
+        let lightsChanged = scene.lights.count != oldLights.count || oldLights.meshes || !scene.meshLights.isEmpty
         var moved = SIMD2<Float>()
         if sameWorld, let was = oldPlace, let now = scene.worldPlace {
             // The scene's origin has moved: the camera is where it was in the world.
@@ -444,30 +456,30 @@ extension Renderer {
             // ...and so is where Freeze LOD holds the detail for.
             frozenLOD?.0 += SIMD3(moved.x, 0, moved.y)
         }
-        if sameWorkshop {
-            resetReference()
-        } else if !(sameWorld && moved == .zero) {
+        if !(sameWorkshop || sameWorld && moved == .zero) {
             resetGIState()
             upscalerReset = true
             resetReference()
-        } else if !scene.meshLights.isEmpty || old.parts?.scene.meshLights.isEmpty == false {
-            // At night the tiles' lights are other ones: what the pixels kept of the lights (a reservoir names its
-            // light by its place in the scene's table) is of the scene before.
-            restirWritten = false
-            reservoirsWritten = false
+        } else {
+            if sameWorkshop { resetReference() }
+            if lightsChanged {
+                restirWritten = false
+                restirGIWritten = false
+                reservoirsWritten = false
+            }
         }
+        let resetCamera = change.resetsCamera && !configured
         if resetCamera {
             camera = scene.defaultCamera
             prevCamera = camera
-            // Another scene starts at its clock's zero, as at launch: its physics and particles step from there, so a
-            // scene switched to ten minutes in doesn't replay ten minutes first (the GPU's soft bodies in one command
-            // buffer: 3-8 s for the muscles a minute or two in, past the watchdog). (A benchmark's configs set their own
-            // time and load with resetCamera false.)
-            setTime(0)
         }
+        // A scene switched to or made again starts at its clock's zero, as at launch: its physics and particles step
+        // from there, so a scene put in ten minutes in doesn't replay ten minutes first (the GPU's soft bodies in one
+        // command buffer: 3-8 s for the muscles a minute or two in, past the watchdog). A benchmark's config sets its own.
+        if change.restartsClock && !configured { setTime(0) }
         // Walking: on in what it was on (the same workshop or city a little changed), off otherwise.
         walkGrid = scene.walkColliders.isEmpty && scene.walkGround == nil ? nil : ColliderGrid(scene.walkColliders)
-        if walkGrid == nil || !(sameWorkshop || scene.settings.isSameCity(as: oldSettings)) { walker = nil }
+        if walkGrid == nil || !(sameWorkshop || change == .continued && scene.settings.isSameCity(as: oldSettings)) { walker = nil }
         lastLiftY = scene.interiorControls?.lifts.map(\.y) ?? []
         // The workshops and the VFX stage: the camera turns about what they show, framed on it when that changes (the
         // stage's effects, not their edits: a capacity's edit makes the scene again).
@@ -490,6 +502,7 @@ extension Renderer {
         // ...and its sky is the same sky: no need to draw all of it again (a sixteenth a frame keeps it up to date).
         if sameWorld || sameWorkshop, let drawn = skyRefreshed { skyRefreshed = (drawn.sky, scene.serial) }
         metal4.noteSceneChange()
+        if scene !== oldScene { scene.behaviour?.entered(self, change: change) }
         DispatchQueue.global(qos: .utility).async { old.parts = nil }
         let installedMs = (CACurrentMediaTime() - start) * 1000
         if sameWorld, benchmark?.isMeasuring == true { streaming.installedMs.append(installedMs) }

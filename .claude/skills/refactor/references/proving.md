@@ -25,7 +25,8 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Reflections, specular light | `speccheck` |
 | The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |
 | Ray queries, acceleration structures, `TraceScene` | `quick`, `hwrt`; plants (variants, wind, leaf cards, voxels) `forestcheck`; virtual geometry `vgdebug`, `gallery`; SDF shapes `shapes` |
-| The frame encoder (Metal4Backend), its interludes | `quick`, `shot`, and the scene switches (Cars ↔ Destruction ↔ Stage) |
+| The frame encoder (Metal4Backend), its interludes | `quick`, `shot`, and the scene switches: the `scene-switching` skill's `scripts/switches.py` (and `--saved`) |
+| A scene load, `install`, what a scene keeps (`SceneChange`, `SceneSession`) | `quick`, and `switches.py` / `switches.py --saved` |
 | Virtual geometry, glTF, texture streaming | `vgdebug`, `gallery`, with `-- METALRENDERER_ASSETS=<repo>/Assets` (see below) |
 | Skinned characters, the crowd, deforming meshes | `crowd` with `-- METALRENDERER_CROWD_CHECK=1` (its log lines compare the GPU's vertices with the CPU's) |
 | The city, the building generator, glass, meshes of several materials | `city` (its first 17 settings are stills: narrow with `"overview\|street\|facade\|night"`) |

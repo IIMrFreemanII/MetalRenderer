@@ -12,6 +12,13 @@ import QuartzCore
 import simd
 
 extension Renderer {
+    /// The physics steps a frame takes at most. In the app 20: a jump of the clock (the VFX editor's timeline, a
+    /// script's `setTime`) catches up over frames, each well under the GPU's watchdog (the muscles: 7.5 ms a step on an
+    /// M4 Max). A benchmark's config replays its still in one frame; a headless app serving scripts is the app.
+    /// `METALRENDERER_STEPS_PER_FRAME=<n>` sets it (the switch harness's `slow` step, 500: passes of seconds on purpose).
+    package var stepsPerFrame: Int { Renderer.stepsPerFrameOverride ?? benchmark.map { $0.current.serves ? 20 : .max } ?? 20 }
+    private static let stepsPerFrameOverride = ProcessInfo.processInfo.environment["METALRENDERER_STEPS_PER_FRAME"].flatMap { Int($0) }
+
     // MARK: - Frame encoding
 
     /// The frame's encoder (Metal4Backend.swift).
@@ -54,8 +61,15 @@ extension Renderer {
                 // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
                 // buffer, past the watchdog: it catches up over the next frames instead.
                 // (Liquids and fractured objects: 20 steps a frame at most, so that a replay of thousands of bodies
-                // stays under the GPU's watchdog; the rest wait for the next frames.)
-                let (steps, restart) = scene.takePhysicsSteps(limit: physicsGPU.hasFluid || physicsGPU.fractures ? 20 : .max)
+                // stays under the GPU's watchdog; the rest wait for the next frames. In the app every scene: a jump of
+                // the clock catches up over frames, not in one command buffer.)
+                let limit = physicsGPU.hasFluid || physicsGPU.fractures ? 20 : stepsPerFrame
+                let (steps, restart) = scene.takePhysicsSteps(limit: limit)
+                let behind = scene.physicsPending.steps
+                if behind > 0 && !session.physicsBehind && limit == stepsPerFrame {
+                    print("Physics: \(behind) steps behind (\(steps) a frame till caught up): the clock jumped, or a scene stepped to it")
+                }
+                session.physicsBehind = behind > 0
                 physicsGPU.sendCommands()
                 if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }

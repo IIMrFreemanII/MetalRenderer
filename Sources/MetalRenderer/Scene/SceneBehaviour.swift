@@ -47,10 +47,18 @@ package protocol SceneBehaviour: AnyObject {
     var hud: SceneHUD? { get }
     /// The scene's own slow motion: the clock runs at this times the Time scale setting's rate.
     var timeScale: Float { get }
+    /// Its scene was put in (Renderer.install, render thread), its resources made, the clock and camera set by `change`:
+    /// where a behaviour starts what is its own beyond the scene (the scene-switching skill).
+    func entered(_ renderer: Renderer, change: SceneChange)
+    /// Its scene is being replaced (the frames that drew it are done): where it stops and lets go of what is its own
+    /// beyond the scene, a timer, a shared object's state. What is on the scene goes with it.
+    func leaving(_ renderer: Renderer, change: SceneChange)
 }
 
 package extension SceneBehaviour {
     func update(_ renderer: Renderer, dt: Float) -> Bool { false }
+    func entered(_ renderer: Renderer, change: SceneChange) {}
+    func leaving(_ renderer: Renderer, change: SceneChange) {}
     func keyDown(_ renderer: Renderer, _ key: String, isRepeat: Bool) -> Bool { false }
     func keyUp(_ renderer: Renderer, _ key: String) {}
     func mouseDown(_ renderer: Renderer) -> Bool { false }
