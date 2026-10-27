@@ -16,7 +16,10 @@ import simd
 ///   {"wire": {"from": "box1", "to": "merge1", "input": 1}}   a wire ({"unwire": {"to": …, "input": …}} takes one off)
 ///   {"flag": {"node": "box1", "display": true, "template": true, "bypass": false, "render": true}}
 ///   {"expr": {"node": "box1", "channel": "sizex", "source": "$F * 0.1"}}   a channel's expression ("" removes it)
-///   {"frame": 12}                                      the frame expressions read ($F, $T)
+///   {"frame": 12}                                      the frame expressions and keys read ($F, $T)
+///   {"keyframe": {"node": "box1", "channel": "tx", "frame": 24, "value": 2, "interpolation": "linear"}}   a key
+///                                                      (value: the channel's on the frame; "delete": true removes it)
+///   {"range": [1, 48]}                                 the frames the network plays
 ///
 /// Cooks are synchronous in a scripted Modeller: a step's state shows its result.
 enum ProceduralStep {
@@ -30,8 +33,10 @@ enum ProceduralStep {
     case flag(node: String, display: Bool?, template: Bool?, bypass: Bool?, render: Bool?)
     case expr(node: String, channel: String, source: String)
     case frame(Float)
+    case keyframe(node: String, channel: String, frame: Float?, value: Float?, interpolation: ProcInterpolation?, delete: Bool)
+    case range(ClosedRange<Int>)
 
-    static let keys = ["network", "node", "parm", "wire", "unwire", "flag", "expr", "frame"]
+    static let keys = ["network", "node", "parm", "wire", "unwire", "flag", "expr", "frame", "keyframe", "range"]
 
     typealias Failure = ScriptRequests.Failure
 
@@ -75,6 +80,20 @@ enum ProceduralStep {
         case "frame":
             guard let f = (value as? NSNumber)?.floatValue else { return bad("a number") }
             return .success(.frame(f))
+        case "keyframe":
+            guard let node = o["node"] as? String, let channel = o["channel"] as? String else {
+                return bad("give {\"node\": name, \"channel\": \"tx\", \"frame\": 24, \"value\": 2}")
+            }
+            var interpolation: ProcInterpolation?
+            if let i = o["interpolation"] as? String {
+                guard let m = ProcInterpolation(rawValue: i) else { return bad("interpolation: \(ProcInterpolation.allCases.map(\.rawValue).joined(separator: ", "))") }
+                interpolation = m
+            }
+            return .success(.keyframe(node: node, channel: channel, frame: (o["frame"] as? NSNumber)?.floatValue,
+                                      value: (o["value"] as? NSNumber)?.floatValue, interpolation: interpolation, delete: o["delete"] as? Bool ?? false))
+        case "range":
+            guard let r = (value as? [Any])?.compactMap({ ($0 as? NSNumber)?.intValue }), r.count == 2, r[0] <= r[1] else { return bad("[first, last]") }
+            return .success(.range(r[0]...r[1]))
         default:
             guard let node = o["node"] as? String else { return bad("give {\"node\": name, \"display\": true, …}") }
             return .success(.flag(node: node, display: o["display"] as? Bool, template: o["template"] as? Bool,
@@ -154,6 +173,26 @@ enum ProceduralStep {
         case .frame(let f):
             s.frame = f
             return "frame \(ProcExprContext.format(f))"
+        case let .keyframe(node, channel, frame, value, interpolation, delete):
+            let n = try id(node)
+            guard let p = s.graph.node(n), let (spec, k) = ProcExprContext.locate(channel, in: p.kind) else {
+                let all = s.graph.node(n)?.kind.spec.params.flatMap(ProcExprContext.channels) ?? []
+                throw Failure("\(node) has no channel \(channel); its: \(all.joined(separator: ", "))")
+            }
+            let f = frame ?? s.frame
+            var curve = p.curves[channel] ?? ProcCurve()
+            if delete {
+                curve.remove(at: f)
+            } else {
+                let now = s.current(p, spec.name)
+                curve.set(f, value ?? (k.map { now.vec4[$0] } ?? now.float))
+                if let interpolation, let i = curve.index(at: f) { curve.update(i) { $0.interpolation = interpolation } }
+            }
+            s.setCurves([(n, channel, curve.keys.isEmpty ? nil : curve)], delete ? "Delete Key" : "Set Key")
+            return delete ? "removed \(node)/\(channel)'s key on \(ProcExprContext.format(f))" : "keyed \(node)/\(channel) on \(ProcExprContext.format(f))"
+        case .range(let r):
+            s.setFrameRange(r)
+            return "frames \(r.lowerBound)-\(r.upperBound)"
         }
     }
 
@@ -193,6 +232,11 @@ enum ProceduralStep {
                                         "inputs": g.inputs(of: n.id).map { $0.flatMap { g.node($0)?.name } ?? "" }]
                 if !n.params.isEmpty { e["params"] = n.params.keys.sorted() }
                 if !n.expressions.isEmpty { e["expressions"] = n.expressions }
+                if !n.curves.isEmpty {
+                    e["keys"] = n.curves.mapValues { c in c.keys.map { k -> [String: Any] in
+                        ["frame": Double(k.frame), "value": Double(k.value), "interpolation": k.interpolation.rawValue]
+                    } }
+                }
                 if let i = s.info[n.id] {
                     if !i.channels.isEmpty {
                         e["channels"] = i.channels.mapValues { v -> Any in v.map { Double($0) } ?? "per element" }
@@ -207,6 +251,7 @@ enum ProceduralStep {
             },
             "interface": g.interface.map(\.name),
             "frame": Double(s.frame),
+            "frames": [g.frames.lowerBound, g.frames.upperBound],
         ]
     }
 }

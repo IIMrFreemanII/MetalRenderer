@@ -147,23 +147,29 @@ struct ProcParamRow: View {
     let spec: ProcParamSpec
     @State private var scrubStart: ProcParam?
 
-    private var value: ProcParam { node.param(spec.name) }
+    /// The value on the frame (its keyed channels' there).
+    private var value: ProcParam { session.current(node, spec.name) }
     private func set(_ v: ProcParam) { session.setParam(node.id, spec.name, v) }
 
     // MARK: Expressions
 
     private var channels: [String] { ProcExprContext.channels(of: spec) }
     private var hasExpression: Bool { channels.contains { node.expressions[$0] != nil } }
+    private var hasKeys: Bool { channels.contains { node.curves[$0] != nil } }
+    private var keyOnFrame: Bool { channels.contains { node.curves[$0]?.index(at: session.frame) != nil } }
 
     /// A channel's field (component `k`, nil: the number): a value, or an expression (typed in: anything that isn't a
-    /// number), shown green with its value from the last cook, red when the parameter's evaluation failed.
+    /// number), shown green with its value from the last cook, red when the parameter's evaluation failed. A keyed
+    /// channel's is tinted, brighter on a key: a value typed into it is a key on the frame.
     private func field(_ v: Double, _ k: Int?, integer: Bool = false, commit: @escaping (Double) -> Void) -> ProcNumberField {
         let c = k.map { channels[$0] } ?? spec.name
         let e = node.expressions[c]
         let shown = e == nil ? nil : session.info[node.id]?.channels[c].map { $0.map(ProcExprContext.format) ?? "per element" }
         let failed = e != nil && session.info[node.id]?.error?.hasPrefix("\(spec.title):") == true
         let session = session, node = node.id, param = spec.name
+        let curve = self.node.curves[c]
         return ProcNumberField(value: v, integer: integer, expression: e, shows: shown, failed: failed, help: failed ? session.info[node]?.error : nil,
+                               keyed: curve.map { $0.index(at: session.frame) != nil ? .onKey : .keyed } ?? .none,
                                commit: { x in
                                    if e != nil { session.setChannelValue(node, param, k, Float(x)) } else { commit(x) }
                                }, onExpression: { session.setExpression(node, c, $0) })
@@ -173,18 +179,37 @@ struct ProcParamRow: View {
         HStack(alignment: .top, spacing: 6) {
             Text(spec.title)
                 .font(ProcTheme.font)
-                .foregroundColor(node.params[spec.name] == nil && !hasExpression ? ProcTheme.label : ProcTheme.text)
+                .foregroundColor(hasKeys ? ProcTheme.keyOn : node.params[spec.name] == nil && !hasExpression ? ProcTheme.label : ProcTheme.text)
                 .lineLimit(1)
                 .frame(width: 118, alignment: .trailing)
                 .padding(.top, 2)
                 .gesture(scrub)
+                // Houdini's Alt-click: a key on the frame.
+                .simultaneousGesture(TapGesture().onEnded {
+                    if !channels.isEmpty, NSEvent.modifierFlags.contains(.option) { session.setKeys(node.id, spec.name) }
+                })
                 .help(spec.help.isEmpty ? spec.name : "\(spec.name): \(spec.help)")
             editor
         }
         .padding(.horizontal, 8)
         .contextMenu {
             Button("Revert to Default") { session.revertParam(node.id, spec.name) }.disabled(node.params[spec.name] == nil && !hasExpression)
-            if hasExpression { Button("Delete Channels") { session.deleteChannels(node.id, spec.name) } }
+            if !channels.isEmpty {
+                Button("Set Key  ⌥-click") { session.setKeys(node.id, spec.name) }
+                if keyOnFrame { Button("Delete Key") { session.deleteKeys(node.id, spec.name) } }
+                if hasKeys {
+                    Menu("Interpolation") {
+                        ForEach(ProcInterpolation.allCases, id: \.self) { m in
+                            Button(m.title) { session.setInterpolation(node.id, spec.name, m, onFrame: keyOnFrame) }
+                        }
+                    }
+                    Button("Show in Curve Editor") {
+                        session.curveSolo = Set(channels.filter { node.curves[$0] != nil }.map { "\(node.id)/\($0)" })
+                        session.lowerTab = .curves
+                    }
+                }
+            }
+            if hasExpression || hasKeys { Button("Delete Channels") { session.deleteChannels(node.id, spec.name) } }
             if !channels.isEmpty {
                 Button("Copy Parameter") { session.copiedParameter = (node.id, spec.name) }
                 Button("Paste Relative References") { session.pasteRelativeReferences(node.id, spec.name) }
@@ -378,6 +403,9 @@ struct ProcNumberField: View {
     var shows: String?
     var failed = false
     var help: String?
+    /// A keyed channel's field: tinted, brighter on a frame with a key.
+    enum Keyed { case none, keyed, onKey }
+    var keyed = Keyed.none
     let commit: (Double) -> Void
     /// Text that isn't a number becomes the channel's expression (nil: such text is ignored).
     var onExpression: ((String) -> Void)?
@@ -391,7 +419,7 @@ struct ProcNumberField: View {
             .foregroundColor(ProcTheme.text)
             .multilineTextAlignment(.trailing)
             .padding(.horizontal, 4).frame(height: 18)
-            .background(RoundedRectangle(cornerRadius: 3).fill(expression == nil ? ProcTheme.field : failed ? ProcTheme.expressionError : ProcTheme.expression))
+            .background(RoundedRectangle(cornerRadius: 3).fill(background))
             .overlay(RoundedRectangle(cornerRadius: 3).stroke(ProcTheme.fieldBorder))
             .help(help ?? expression ?? "")
             .focused($focused)
@@ -401,6 +429,15 @@ struct ProcNumberField: View {
             .onChange(of: shows) { _ in if !focused { text = shown } }
             .onChange(of: focused) { f in if f { if let expression { text = expression } } else { submit() } }
             .onSubmit { submit() }
+    }
+
+    private var background: Color {
+        if expression != nil { return failed ? ProcTheme.expressionError : ProcTheme.expression }
+        switch keyed {
+        case .none: return ProcTheme.field
+        case .keyed: return ProcTheme.keyed
+        case .onKey: return ProcTheme.keyedOnKey
+        }
     }
 
     private func format(_ v: Double) -> String { integer ? String(Int(v.rounded())) : String(format: "%g", v) }

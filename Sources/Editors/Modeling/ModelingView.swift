@@ -44,7 +44,7 @@ struct ModelingView: View {
                         ProcParameterPane(session: model.procedural)
                             .frame(height: parameterHeight)
                         ResizeHandle(axis: .vertical, size: $parameterHeight, range: 120...900)
-                        ProcNetworkHost(session: model.procedural)
+                        ProcLowerPane(session: model.procedural)
                     }
                     .frame(width: proceduralWidth)
                 } else {
@@ -53,6 +53,7 @@ struct ModelingView: View {
                 }
             }
             .background(BlenderTheme.window)
+            if model.workspace == .procedural { ProcTimeline(session: model.procedural) }
             ModelingStatusBar()
         }
         .background(BlenderTheme.window)

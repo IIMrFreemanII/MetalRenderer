@@ -28,6 +28,11 @@ enum ProcTheme {
     /// A field whose channel has an expression (Houdini's green), and one whose expression failed.
     static let expression = Color(red: 0.19, green: 0.34, blue: 0.20)
     static let expressionError = Color(red: 0.42, green: 0.15, blue: 0.14)
+    /// A keyed channel's field (between keys, on a key), a keyed parameter's label, and keys in the timeline and the
+    /// curve editor.
+    static let keyed = Color(red: 0.33, green: 0.27, blue: 0.13)
+    static let keyedOnKey = Color(red: 0.50, green: 0.38, blue: 0.12)
+    static let keyOn = Color(red: 0.98, green: 0.78, blue: 0.32)
 
     static let font = Font.system(size: 11)
     static let small = Font.system(size: 10)

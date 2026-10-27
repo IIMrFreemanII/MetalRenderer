@@ -300,6 +300,10 @@ struct ProcExprCompiler {
             let c = try args.map { try compile($0) }
             if let v = constants(c) { return .constant(ProcNoise.perlin(SIMD3(v[0], v[1], v[2]))) }
             return join(c, .noise)
+        case "chf" where args.count == 2:
+            // hscript's: the channel at another frame.
+            guard case .constant(let frame) = try compile(args[1]) else { throw error("chf()'s frame is the same for every element") }
+            return .constant(try context.channel(try path(f, args[0]), at: frame))
         case "ch", "chf", "chi":
             try arity(1)
             let v = try context.channel(try path(f, args[0]))

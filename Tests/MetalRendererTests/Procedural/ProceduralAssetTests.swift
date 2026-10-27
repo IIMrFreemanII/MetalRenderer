@@ -49,6 +49,82 @@ final class ProceduralAssetTests: XCTestCase {
         let widths = scene.proceduralMeshes.values.map { scene.meshBounds[$0.mesh] }.map { $0.1.x - $0.0.x }.sorted()
         XCTAssertEqual(widths[0], 1, accuracy: 1e-5)
         XCTAssertEqual(widths[1], 3, accuracy: 1e-5)
+        // Pinned by frame=: none plays.
+        XCTAssertTrue(scene.procFlipbooks.isEmpty)
+    }
+
+    /// A temporary library with `assets` in it, for the test's length.
+    private func library(_ assets: [String: ProcAsset]) throws -> () -> Void {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("proc-play-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        setenv("METALRENDERER_PROCEDURAL", folder.path, 1)
+        for (slug, a) in assets { try ProcStore.write(a, slug: slug) }
+        return { unsetenv("METALRENDERER_PROCEDURAL"); try? FileManager.default.removeItem(at: folder) }
+    }
+
+    /// A placed asset whose frames cook differently plays them: a mesh per distinct frame (frames that hold share one),
+    /// its instance given each frame's by the scene's clock, round again; one that doesn't read the frame stays one mesh.
+    func testPlacedAssetsPlay() throws {
+        var g = ProcGraph()
+        let box = g.add(.box)
+        g.nodes[g.index(of: box)!].curves["sizex"] = ProcCurve([ProcKey(frame: 1, value: 1, interpolation: .linear), ProcKey(frame: 5, value: 5)])
+        g.frames = 1...8
+        var still = ProcGraph()
+        still.add(.box)
+        let done = try library(["grow": ProcAsset(name: "Grow", graph: g), "still": ProcAsset(name: "Still", graph: still)])
+        defer { done() }
+        let scene = Scene()
+        let meshes = scene.proceduralMeshes.count
+        scene.addProcAsset("still", transform: matrix_identity_float4x4)
+        XCTAssertTrue(scene.procFlipbooks.isEmpty)
+        scene.addProcAsset("grow", transform: matrix_identity_float4x4)
+        XCTAssertEqual(scene.proceduralMeshes.count - meshes, 1 + 5)    // frames 5 to 8 hold: one mesh
+        let book = try XCTUnwrap(scene.procFlipbooks.first)
+        XCTAssertEqual(book.frames.count, 8)
+        XCTAssertTrue(scene.instances[book.instance].moves)
+        XCTAssertFalse(scene.instances[book.instance].isStatic)
+        func width() -> Float { let b = scene.meshBounds[scene.instances[book.instance].mesh]; return b.1.x - b.0.x }
+        XCTAssertEqual(width(), 1, accuracy: 1e-5)
+        XCTAssertTrue(scene.showProcFrames(at: 2.5 / 24))               // frame 3
+        XCTAssertEqual(width(), 3, accuracy: 1e-5)
+        _ = scene.showProcFrames(at: 5.5 / 24)
+        let six = scene.instances[book.instance].mesh
+        XCTAssertFalse(scene.showProcFrames(at: 7.5 / 24))              // frame 8: frame 6's mesh, nothing changed
+        XCTAssertEqual(scene.instances[book.instance].mesh, six)
+        XCTAssertEqual(width(), 5, accuracy: 1e-5)
+        _ = scene.showProcFrames(at: 8.5 / 24)                          // round again: frame 1
+        XCTAssertEqual(width(), 1, accuracy: 1e-5)
+        // frames= plays those frames only.
+        scene.addProcAsset("grow?frames=2-3", transform: matrix_identity_float4x4)
+        XCTAssertEqual(scene.procFlipbooks.count, 2)
+        XCTAssertEqual(scene.procFlipbooks[1].frames.count, 2)
+    }
+
+    /// The assets an asset's points place follow its frames.
+    func testPlacedChildrenFollowFrames() throws {
+        var parent = ProcGraph()
+        let line = parent.add(.line, params: ["points": .int(2), "dir": .vec3([1, 0, 0]), "dist": .float(2)])
+        let tag = parent.add(.attribcreate, params: ["name": .string("instance"), "type": .string("string"), "string": .string("proc:cube")])
+        parent.link(line, to: tag)
+        parent.setDisplay(tag)
+        parent.nodes[parent.index(of: line)!].curves["dist"] = ProcCurve([ProcKey(frame: 1, value: 2, interpolation: .linear), ProcKey(frame: 3, value: 6)])
+        parent.frames = 1...3
+        var cube = ProcGraph()
+        cube.add(.box)
+        let done = try library(["row": ProcAsset(name: "Row", graph: parent), "cube": ProcAsset(name: "Cube", graph: cube)])
+        defer { done() }
+        let scene = Scene()
+        let first = scene.instances.count
+        scene.addProcAsset("row", transform: translate([0, 10, 0]))
+        // The line has no triangles: only the two cubes, which move.
+        XCTAssertEqual(scene.instances.count - first, 2)
+        let far = scene.instances[first + 1]
+        let move = try XCTUnwrap(far.animation)
+        XCTAssertEqual(far.transform.columns.3.x, 2, accuracy: 1e-5)
+        XCTAssertEqual(move(0).columns.3.x, 2, accuracy: 1e-5)
+        XCTAssertEqual(move(2.5 / 24).columns.3.x, 6, accuracy: 1e-5)
+        XCTAssertEqual(move(2.5 / 24).columns.3.y, 10, accuracy: 1e-5)
+        XCTAssertEqual(scene.instances[first].animation?(2.5 / 24).columns.3.x ?? .nan, 0, accuracy: 1e-5)
     }
 
     func testCookWithValues() throws {

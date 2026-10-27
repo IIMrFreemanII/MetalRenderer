@@ -205,6 +205,8 @@ struct ProcExprParser {
 package struct ProcExprRefs: Equatable {
     /// `ch` paths, as written.
     package var channels: [String] = []
+    /// `chf(path, frame)` paths: channels read at another frame, whose whole keys the key holds.
+    package var otherFrames: [String] = []
     /// Nodes a geometry function names by path (`npoints("../box1")`).
     package var nodes: [String] = []
     package var frame = false
@@ -215,6 +217,7 @@ package struct ProcExprRefs: Equatable {
 
     package mutating func formUnion(_ o: ProcExprRefs) {
         channels += o.channels
+        otherFrames += o.otherFrames
         nodes += o.nodes
         frame = frame || o.frame
         inputs = inputs || o.inputs
@@ -240,7 +243,9 @@ extension ProcExpr {
             if ProcExpr.elementVariables.contains(v) { r.element = true; r.inputs = true }
         case .attribute: r.element = true; r.inputs = true
         case .call(let f, let args):
-            if ProcExpr.channelFunctions.contains(f), case .string(let path)? = args.first { r.channels.append(path) }
+            if ProcExpr.channelFunctions.contains(f), case .string(let path)? = args.first {
+                if f == "chf" && args.count == 2 { r.otherFrames.append(path) } else { r.channels.append(path) }
+            }
             if ProcExpr.geometryFunctions.contains(f) {
                 if case .string(let path)? = args.first { r.nodes.append(path) } else { r.inputs = true }
             }

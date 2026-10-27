@@ -53,8 +53,18 @@ modelling" says what it is; this note says where things are, what was checked an
 - Expressions in parameters (`Sources/Procedural/Expr`: parser, a compiler that folds what doesn't vary, a stack VM
   per element): `ProceduralExpressionTests`, the editor's in `ProceduralEditorTests.testExpressionsAndTheFrame`. Not
   there yet: expressions on menus and toggles typed in (a toggle shows a field once it has one), Python expressions,
-  `chramp`, `$HIP`-style paths, absolute node paths, a channel's keyframes; a placed asset doesn't animate (its
-  `frame=` is fixed).
+  `chramp`, `$HIP`-style paths, absolute node paths.
+- Keyframes (`Graph/ProcCurve.swift`: a curve per channel, `ProcNode.curves`; `ProcGraph.frames`, the range): keyed in
+  the parameter pane (Option-click a label, auto-key on edits), the timeline (`ProcTimeline.swift`) and the Curves tab
+  (`ProcCurveEditor.swift`). A keyed channel keys its node by its value on the frame. `ProceduralKeyframeTests`,
+  `ProceduralEditorTests.testKeys`. Never tried by hand in the window: the curve editor's drags, handles, scroll and
+  pinch, the timeline's key drags (their session edits are tested, the gestures aren't). Not there: per-key expressions
+  (Houdini's segment functions), keys on text or menus, a dope sheet.
+- Animated placed assets (`Scene+ProcAsset.swift`): each distinct frame's cook is a mesh at load; `Scene.procFlipbooks`
+  and `Instance.flipbook` swap the instance's mesh by the scene clock in `Scene.update`. Placed meshes are now named
+  `proc:<cache name>` (they were `proc:<slug>`, which let another scene's structure of a different cook be reused).
+  `ProceduralAssetTests.testPlacedAssetsPlay` / `testPlacedChildrenFollowFrames`. An emissive placed asset that plays
+  keeps its first frame's mesh lights.
 - Not there: packed primitives in the viewport, VDB / volumes,
   curve drawing in the viewport, edge groups, a ramp editor beyond the key list, network boxes / sticky notes,
   subnetworks.

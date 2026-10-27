@@ -2328,8 +2328,8 @@ on the right.
   field and it becomes that channel's expression: the field turns green and shows its value (red, with the message,
   when it fails); clicking it shows the text. A channel is a parameter (`seed`), or a vector's component (`tx`,
   `sizey`). `ch("sizex")` reads this node's channel, `ch("../box1/sizex")` another node's, `ch("../seed")` the asset's
-  promoted parameter (an instance's value). `$F`, `$T` read the frame (the network bar's field, with play at 24 a
-  second; a placed asset cooks at frame 1, or `proc:<slug>?frame=12`); `$NPT`, `$CEX`, `$XMIN`, `$SIZEX` and
+  promoted parameter (an instance's value). `$F`, `$T` read the frame (the timeline's, with play at 24 a second; a
+  placed asset plays its frames, or `proc:<slug>?frame=12` pins one); `$NPT`, `$CEX`, `$XMIN`, `$SIZEX` and
   `npoints(0)`, `bbox(0, D_YMAX)`, `centroid(0, D_X)`, `point(0, "P", 3, 1)`, `detail(0, "iteration", 0)` read the
   node's inputs (or a node by path, `npoints("../box1")`). Functions: `fit`, `fit01`, `clamp`, `lerp`, `smooth`, `rand`,
   `noise`, `if`, `min`, `max`, `pow`, `sqrt`, `abs`, `floor`, `round`, `sin` … (degrees, as hscript's), `opdigits(".")`.
@@ -2340,6 +2340,23 @@ on the right.
   a number then, what does runs as flat code over a stack of floats on every core (1M points by
   `@P.z * 2 + sin($PT)`: 4.7 ms, as the three-attribute wrangle's 4.2). A node's key holds its expressions and what they read (the frame only if it is read,
   the channels it reads), so a new frame recooks only what reads it.
+- **Keyframes** (`Graph/ProcCurve.swift`). Option-click a parameter's label (or right-click ▸ *Set Key*) to key its
+  channels on the frame; a keyed field is amber (brighter on a key), and a value typed, slid or scrubbed into it keys
+  that frame (auto-key). Between keys: *Spline* (Houdini's bezier with automatic slopes, flat at a peak, never past its
+  keys), *Linear*, *Constant*, *Ease*, *Ease In*, *Ease Out*; before the first and after the last: *Hold*, *Cycle*,
+  *Cycle with Offset*, *Linear*. A channel has a value, an expression or keys: an expression replaces keys and keys an
+  expression; *Delete Channels* keeps the frame's value. `chf("../box1/tx", $F - 1)` reads a keyed channel on another
+  frame. The **timeline** across the window's foot plays the network's range (saved with it), scrubs, and shows the
+  current node's keys: drag one to move that frame's keys, right-click it for their interpolation. The **Curves** tab
+  under the parameters is the animation editor: the node's keyed channels (x red, y green, z blue), keys to click,
+  box-select and drag (to whole frames), a spline key's handles for its slopes (Option: one side), double-click to key a
+  curve, Delete, F to frame; scroll pans, Control-scroll zooms. A keyed channel adds its value on the frame to its
+  node's key, not the frame: frames where it holds cook once.
+- **Animated placed assets.** A placed `proc:` asset whose network cooks differently from frame to frame plays its
+  range (`?frames=12-48` another) by the scene's clock, 24 frames a second, round again: when the scene loads, each
+  distinct frame is cooked (frames with the same cook key share one cook and one mesh; finding them cooks nothing), and
+  its instance takes each frame's mesh as the clock runs. The assets its points place move with its frames when every
+  frame places the same ones. One that doesn't read the frame is one still mesh, as before.
 - **Cooking.** A node's output is kept under a hash of its kind, parameters and inputs (`ProcCooker`): an edit cooks
   that node and what is below it, undo finds the old outputs. Cooks run on a queue of their own.
 - **Inspecting.** Over the viewport: point dots, point and primitive numbers, normals, colour by `Cd`, and
@@ -2362,8 +2379,9 @@ on the right.
   the copy stays selected. *Edit Asset in Modeller* opens the asset's network on a new object in the Procedural tab.
 - **Scripted**: the scripted Modeller's `{"network": "new"}`, `{"node": {"add": "polyextrude", "after": "box1"}}`,
   `{"parm": {"node": "polyextrude1", "name": "dist", "value": 0.5}}`, `{"expr": {"node": "box1", "channel": "sizex",
-  "source": "$F * 0.1"}}`, `{"frame": 12}`, `{"wire": …}`, `{"flag": …}` steps, by node name, and the network in its
-  state, expressions and their values too (`ProceduralScripting.swift`).
+  "source": "$F * 0.1"}}`, `{"frame": 12}`, `{"keyframe": {"node": "box1", "channel": "tx", "frame": 24, "value": 2}}`,
+  `{"range": [1, 48]}`, `{"wire": …}`, `{"flag": …}` steps, by node name, and the network in its state, expressions,
+  keys and channel values too (`ProceduralScripting.swift`).
 
 Cook times at scale, release on the M4 Max (`ProceduralPerfTests`, `PROC_PERF=1 Tools/release.sh test --filter
 ProceduralPerfTests`): a node's own cook, the best of three, nothing cached; the network's (its inputs too) where they

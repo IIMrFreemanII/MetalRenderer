@@ -89,7 +89,7 @@ package final class ProcCooker {
     package private(set) var info: [String: ProcNodeInfo] = [:]
 
     /// Bumped when a node's cook changes, so outputs cooked before aren't taken for the new ones'.
-    package static let version = 2
+    package static let version = 3
 
     package init(environment: ProcEnvironment = .assets) { self.environment = environment }
 
@@ -173,6 +173,12 @@ package final class ProcCooker {
             h.add(source)
             try dependencies(source, of: node, pass, into: &h)
         }
+        // A keyed channel's value at the frame, not the frame: frames where it holds share a cook.
+        for (channel, curve) in node.curves.sorted(by: { $0.key < $1.key }) {
+            h.add("curve")
+            h.add(channel)
+            h.add(curve.value(at: environment.frame))
+        }
         if node.kind == .switchnode {
             let pick = try switchIndex(node, inputs.count, pass)
             h.add(pick ?? -1)
@@ -193,6 +199,7 @@ package final class ProcCooker {
         guard let refs = try? ProcExpr.parse(source).references else { return }   // (the cook reports it)
         if refs.frame { h.add("frame"); h.add(environment.frame) }
         for path in refs.channels { try channelKey(path, from: node, pass, into: &h) }
+        for path in refs.otherFrames { try channelKey(path, from: node, pass, anyFrame: true, into: &h) }
         for path in refs.nodes {
             let name = path.split(separator: "/").last.map(String.init) ?? path
             if let n = pass.graph.named(name) ?? pass.graph.node(name), n.id != node.id { h.add(try key(n.id, pass)) }
@@ -209,9 +216,10 @@ package final class ProcCooker {
         }
     }
 
-    /// What a `ch()` path's value comes from: a promoted parameter's value, a channel's value as set, or its
-    /// expression and what that reads (and its node's inputs, which it may read).
-    private func channelKey(_ path: String, from owner: ProcNode, _ pass: Pass, into h: inout Hasher64) throws {
+    /// What a `ch()` path's value comes from: a promoted parameter's value, a channel's value as set, its keys' value
+    /// at the frame (`anyFrame`, `chf()` at another frame: all of its keys), or its expression and what that reads
+    /// (and its node's inputs, which it may read).
+    private func channelKey(_ path: String, from owner: ProcNode, _ pass: Pass, anyFrame: Bool = false, into h: inout Hasher64) throws {
         h.add(path)
         let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         var target = owner
@@ -236,7 +244,10 @@ package final class ProcCooker {
         }
         pass.channelKeys.insert(visit)
         defer { pass.channelKeys.remove(visit) }
-        if let source = target.expressions[channel] {
+        if let curve = target.curves[channel] {
+            h.add("curve")
+            if anyFrame { curve.hash(into: &h) } else { h.add(curve.value(at: environment.frame)) }
+        } else if let source = target.expressions[channel] {
             h.add(source)
             try dependencies(source, of: target, pass, into: &h)
             if target.id != owner.id, (try? ProcExpr.parse(source).references.inputs) == true {
@@ -276,7 +287,7 @@ package final class ProcCooker {
     private func switchIndex(_ node: ProcNode, _ count: Int, _ pass: Pass) throws -> Int? {
         guard count > 0 else { return nil }
         var pick = node.param("input").int
-        if node.expressions["input"] != nil, let x = expressions(node.id, pass, geometry: false) {
+        if node.isDriven("input"), let x = expressions(node.id, pass, geometry: false) {
             do {
                 pick = Int(try x.value(ofChannel: "input").rounded())
             } catch let e as ProcExprError {
@@ -293,7 +304,7 @@ package final class ProcCooker {
         for s in node.kind.spec.params {
             do {
                 if let v = try x.resolved(s) { params[s.name] = v }
-                for c in ProcExprContext.channels(of: s) where node.expressions[c] != nil {
+                for c in ProcExprContext.channels(of: s) where node.isDriven(c) {
                     let varying = s.perElement ? try x.varies(c) : false
                     channels[c] = varying ? Float?.none : try x.value(ofChannel: c)
                 }
@@ -345,7 +356,7 @@ package final class ProcCooker {
         }
         var c = ProcCook(node: node, inputs: inputs, environment: environment)
         var channels: [String: Float?] = [:]
-        if let x = expressions(id, pass, inputs: inputs), !node.expressions.isEmpty || node.params.values.contains(where: {
+        if let x = expressions(id, pass, inputs: inputs), !node.expressions.isEmpty || !node.curves.isEmpty || node.params.values.contains(where: {
             if case .string(let t) = $0 { return t.contains("`") || t.contains("$") }
             return false
         }) {

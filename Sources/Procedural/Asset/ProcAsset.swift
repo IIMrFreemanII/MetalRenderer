@@ -56,6 +56,18 @@ package struct ProcAsset: Codable, Equatable {
         }
     }
 
+    /// The output's cook key on each of `frames` (nil: nothing to cook): frames with one key cook the same. Nothing is
+    /// cooked to find them.
+    package func frameKeys(_ values: [String: ProcParam], environment: ProcEnvironment = .assets, frames: ClosedRange<Int>) -> [UInt64]? {
+        let g = graph.applying(values)
+        guard let out = g.outputNode else { return nil }
+        let cooker = ProcCooker(environment: environment)
+        return frames.map { f in
+            cooker.environment.frame = Float(f)
+            return cooker.key(g, out) ?? 0
+        }
+    }
+
     /// The geometry as the engine draws it: its polygons as triangles with corner normals (smooth with sharp edges
     /// past 60°, or its N), glTF's UVs, a material slot per triangle (by `material` name, the asset's slots' colours).
     package static func rendered(_ geo: ProcGeo, slots: [MaterialSlot]) -> ModelAsset.Rendered {
@@ -165,6 +177,15 @@ package struct ProcAssetReference: Equatable {
 
     /// The frame its expressions read (`$F`, `$T`): its `frame=` value, else 1.
     package var frame: Float { values["frame"].flatMap(Float.init) ?? 1 }
+    /// Pinned to its `frame=`: it doesn't play.
+    package var pinned: Bool { values["frame"] != nil }
+    /// The frames it plays (`frames=12-48`; nil: its network's range).
+    package var frames: ClosedRange<Int>? {
+        guard let s = values["frames"] else { return nil }
+        let parts = s.split(separator: "-").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 2, parts[0] <= parts[1] else { return nil }
+        return parts[0]...parts[1]
+    }
 
     /// The scene file's asset string (`proc:<slug>?…`).
     package var asset: String {

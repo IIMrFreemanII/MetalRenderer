@@ -406,16 +406,42 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         return id
     }
 
+    /// Sets a parameter. Its keyed channels take a key on the frame with their part of `value` (auto-key); the others
+    /// their value as set.
     func setParam(_ node: String, _ name: String, _ value: ProcParam) {
-        guard let n = graph.node(node), n.param(name) != value else { return }
-        edit("Change \(n.name)", coalesce: "proc:\(node).\(name)") { $0.setParam(node, name, value) }
+        guard let n = graph.node(node), current(n, name) != value else { return }
+        let channels = n.kind.spec.param(name).map(ProcExprContext.channels) ?? []
+        guard channels.contains(where: { n.curves[$0] != nil }) else {
+            edit("Change \(n.name)", coalesce: "proc:\(node).\(name)") { $0.setParam(node, name, value) }
+            return
+        }
+        let was = current(n, name).vec4, now = value.vec4, frame = frame
+        edit("Key \(n.name)", coalesce: "proc:\(node).\(name)") { g in
+            guard let i = g.index(of: node) else { return }
+            var literal = g.nodes[i].param(name)
+            for (k, c) in channels.enumerated() where was[k] != now[k] {
+                if g.nodes[i].curves[c] != nil { g.nodes[i].curves[c]!.set(frame, now[k]) } else { literal = literal.setting(channels.count > 1 ? k : nil, now[k]) }
+            }
+            g.nodes[i].params[name] = literal
+        }
+    }
+
+    /// A parameter as the frame has it: its keyed channels at their value on the frame.
+    func current(_ n: ProcNode, _ name: String) -> ProcParam {
+        var v = n.param(name)
+        guard !n.curves.isEmpty, let spec = n.kind.spec.param(name) else { return v }
+        let channels = ProcExprContext.channels(of: spec)
+        for (k, c) in channels.enumerated() {
+            if let curve = n.curves[c] { v = v.setting(channels.count > 1 ? k : nil, curve.value(at: frame)) }
+        }
+        return v
     }
 
     // MARK: Expressions
 
-    /// The frame expressions read (`$F`, `$T`): the network bar's.
+    /// The frame expressions and keys read (`$F`, `$T`): the timeline's.
     @Published var frame: Float = 1 { didSet { if frame != oldValue { requestCook() } } }
-    /// Playing the frames at 24 a second, 1 to 240 and round again.
+    /// Playing the frames at 24 a second, over the network's range and round again.
     @Published var playing = false {
         didSet {
             player?.invalidate()
@@ -423,7 +449,8 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
             guard playing else { return }
             player = Timer.scheduledTimer(withTimeInterval: 1 / Double(ProcExprContext.fps), repeats: true) { [weak self] _ in
                 guard let self else { return }
-                self.frame = self.frame >= 240 ? 1 : self.frame.rounded(.down) + 1
+                let r = self.graph.frames
+                self.frame = self.frame >= Float(r.upperBound) || self.frame < Float(r.lowerBound) ? Float(r.lowerBound) : self.frame.rounded(.down) + 1
             }
         }
     }
@@ -431,14 +458,120 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
     /// The parameter Copy Parameter took, for Paste Relative References.
     @Published var copiedParameter: (node: String, param: String)?
 
-    /// Sets channel `channel`'s expression (empty: removes it).
+    /// Sets channel `channel`'s expression (empty: removes it), in place of its keys.
     func setExpression(_ node: String, _ channel: String, _ source: String) {
         let s = source.trimmingCharacters(in: .whitespaces)
         let new = s.isEmpty ? nil : s
-        guard let n = graph.node(node), n.expressions[channel] != new else { return }
+        guard let n = graph.node(node), n.expressions[channel] != new || (new != nil && n.curves[channel] != nil) else { return }
         edit("Expression on \(n.name)", coalesce: "proc:\(node).\(channel).expr") { g in
-            if let i = g.index(of: node) { g.nodes[i].expressions[channel] = new }
+            guard let i = g.index(of: node) else { return }
+            g.nodes[i].expressions[channel] = new
+            if new != nil { g.nodes[i].curves[channel] = nil }
         }
+    }
+
+    // MARK: Keys
+
+    /// Which pane is under the parameters: the network, or the curve editor.
+    enum LowerTab { case network, curves }
+    @Published var lowerTab: LowerTab = .network
+    /// The channels the curve editor shows only ("node/channel"; empty: every keyed channel of the current node).
+    @Published var curveSolo: Set<String> = []
+
+    /// The node the parameter pane, the timeline and the curve editor show.
+    var currentNode: String? { focus ?? graph.displayNode }
+
+    /// The keyed channels the timeline and the curve editor show: the solo ones, else the current node's (in its
+    /// parameters' order).
+    var shownCurves: [(node: String, channel: String, curve: ProcCurve)] {
+        let solo = curveSolo.compactMap { id -> (String, String, ProcCurve)? in
+            let parts = id.split(separator: "/", maxSplits: 1).map(String.init)
+            guard parts.count == 2, let c = graph.node(parts[0])?.curves[parts[1]] else { return nil }
+            return (parts[0], parts[1], c)
+        }
+        if !solo.isEmpty { return solo.sorted { ($0.0, $0.1) < ($1.0, $1.1) } }
+        guard let id = currentNode, let n = graph.node(id) else { return [] }
+        return n.kind.spec.params.flatMap(ProcExprContext.channels).compactMap { c in n.curves[c].map { (id, c, $0) } }
+    }
+
+    /// Houdini's Alt-click on a label: a key on the frame for each of the parameter's channels, of the value it has
+    /// there (an expression's from the last cook: the key replaces it).
+    func setKeys(_ node: String, _ param: String) {
+        guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let channels = ProcExprContext.channels(of: spec)
+        guard !channels.isEmpty else { return }
+        let v = current(n, param).vec4, values = info[node]?.channels ?? [:], frame = frame
+        edit("Set Key") { g in
+            guard let i = g.index(of: node) else { return }
+            for (k, c) in channels.enumerated() {
+                let x = g.nodes[i].expressions[c] != nil ? (values[c] ?? nil) ?? v[k] : v[k]
+                var curve = g.nodes[i].curves[c] ?? ProcCurve()
+                curve.set(frame, x)
+                g.nodes[i].curves[c] = curve
+                g.nodes[i].expressions[c] = nil
+            }
+        }
+    }
+
+    /// The parameter's keys on the frame removed; a channel left with none keeps the value it had as set.
+    func deleteKeys(_ node: String, _ param: String) {
+        guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let channels = ProcExprContext.channels(of: spec).filter { n.curves[$0]?.index(at: frame) != nil }
+        guard !channels.isEmpty else { return }
+        let changes = channels.map { c -> (String, String, ProcCurve?) in
+            var curve = n.curves[c]!
+            curve.remove(at: frame)
+            return (node, c, curve.keys.isEmpty ? nil : curve)
+        }
+        setCurves(changes, "Delete Key")
+    }
+
+    /// The interpolation of the parameter's keys on the frame (nil: all its keys).
+    func setInterpolation(_ node: String, _ param: String, _ interpolation: ProcInterpolation, onFrame: Bool = true) {
+        guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
+        let changes = ProcExprContext.channels(of: spec).compactMap { c -> (String, String, ProcCurve?)? in
+            guard var curve = n.curves[c] else { return nil }
+            for i in curve.keys.indices where !onFrame || abs(curve.keys[i].frame - frame) < 0.005 {
+                curve.update(i) { $0.interpolation = interpolation }
+            }
+            return (node, c, curve)
+        }
+        setCurves(changes, "Interpolation")
+    }
+
+    /// Channels given new curves (nil: their keys removed, each keeping its value on the frame as set), as one undo
+    /// step named `name`.
+    func setCurves(_ changes: [(node: String, channel: String, curve: ProcCurve?)], _ name: String) {
+        guard !changes.isEmpty else { return }
+        let frame = frame
+        edit(name) { g in ProceduralSession.apply(changes, to: &g, frame: frame) }
+    }
+
+    /// ...during a drag (the curve editor's, the timeline's): no undo step (endDrag makes it).
+    func setCurvesLive(_ changes: [(node: String, channel: String, curve: ProcCurve?)]) {
+        guard let model, let i = objectIndex else { return }
+        ProceduralSession.apply(changes, to: &graph, frame: frame)
+        var d = model.document
+        d.objects[i].network = encoded(graph)
+        model.setDocument(d)
+        requestCook()
+    }
+
+    private static func apply(_ changes: [(node: String, channel: String, curve: ProcCurve?)], to g: inout ProcGraph, frame: Float) {
+        for (node, c, curve) in changes {
+            guard let i = g.index(of: node) else { continue }
+            if curve == nil, let old = g.nodes[i].curves[c], let (spec, k) = ProcExprContext.locate(c, in: g.nodes[i].kind) {
+                g.nodes[i].params[spec.name] = g.nodes[i].param(spec.name).setting(k, old.value(at: frame))
+            }
+            g.nodes[i].curves[c] = curve
+            if curve != nil { g.nodes[i].expressions[c] = nil }
+        }
+    }
+
+    /// The frames the timeline plays.
+    func setFrameRange(_ r: ClosedRange<Int>) {
+        guard r != graph.frames else { return }
+        edit("Frame Range") { $0.frames = r }
     }
 
     /// A number typed into a channel that has an expression: the value, the expression gone.
@@ -453,18 +586,21 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         }
     }
 
-    /// Houdini's Delete Channels: the parameter's expressions removed, each channel keeping its last value.
+    /// Houdini's Delete Channels: the parameter's expressions and keys removed, each channel keeping its value on the
+    /// frame.
     func deleteChannels(_ node: String, _ param: String) {
         guard let n = graph.node(node), let spec = n.kind.spec.param(param) else { return }
         let channels = ProcExprContext.channels(of: spec)
-        guard channels.contains(where: { n.expressions[$0] != nil }) else { return }
-        let values = info[node]?.channels ?? [:]
+        guard channels.contains(where: { n.isDriven($0) }) else { return }
+        let values = info[node]?.channels ?? [:], frame = frame
         edit("Delete Channels") { g in
             guard let i = g.index(of: node) else { return }
             var v = g.nodes[i].param(param)
-            for (k, c) in channels.enumerated() where g.nodes[i].expressions[c] != nil {
-                if let x = values[c] ?? nil { v = v.setting(channels.count > 1 ? k : nil, x) }
+            for (k, c) in channels.enumerated() where g.nodes[i].isDriven(c) {
+                let x = g.nodes[i].curves[c]?.value(at: frame) ?? (values[c] ?? nil)
+                if let x { v = v.setting(channels.count > 1 ? k : nil, x) }
                 g.nodes[i].expressions[c] = nil
+                g.nodes[i].curves[c] = nil
             }
             g.nodes[i].params[param] = v
         }
@@ -479,6 +615,7 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
             guard let i = g.index(of: node) else { return }
             for (k, c) in to.enumerated() where k < from.count {
                 g.nodes[i].expressions[c] = src.id == n.id ? "ch(\"\(from[k])\")" : "ch(\"../\(src.name)/\(from[k])\")"
+                g.nodes[i].curves[c] = nil
             }
         }
     }
@@ -487,7 +624,10 @@ final class ProceduralSession: ObservableObject, GraphCanvasModel {
         edit("Revert Parameter") { g in
             guard let i = g.index(of: node) else { return }
             g.nodes[i].params[name] = nil
-            for c in g.nodes[i].kind.spec.param(name).map(ProcExprContext.channels) ?? [] { g.nodes[i].expressions[c] = nil }
+            for c in g.nodes[i].kind.spec.param(name).map(ProcExprContext.channels) ?? [] {
+                g.nodes[i].expressions[c] = nil
+                g.nodes[i].curves[c] = nil
+            }
         }
     }
 

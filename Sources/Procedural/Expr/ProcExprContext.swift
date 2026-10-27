@@ -69,7 +69,9 @@ package final class ProcExprContext {
             throw ProcExprError("\(node.name) has no channel \(channel)")
         }
         let v: Float
-        if let source = node.expressions[channel] {
+        if let curve = node.curves[channel] {
+            v = curve.value(at: frame)
+        } else if let source = node.expressions[channel] {
             guard !state.visiting.contains(key) else { throw ProcExprError("\(node.name)/\(channel) reads itself through ch()") }
             state.visiting.insert(key)
             defer { state.visiting.remove(key) }
@@ -85,6 +87,38 @@ package final class ProcExprContext {
         }
         state.values[key] = v
         return v
+    }
+
+    /// Channel `channel` of this node at `frame` (`chf`'s second argument): its keys' value there, else its value as
+    /// set. An expression's is an error: it is evaluated at the cook's frame only.
+    package func value(ofChannel channel: String, at frame: Float) throws -> Float {
+        guard let (spec, k) = ProcExprContext.locate(channel, in: node.kind) else {
+            throw ProcExprError("\(node.name) has no channel \(channel)")
+        }
+        if let curve = node.curves[channel] { return curve.value(at: frame) }
+        if node.expressions[channel] != nil {
+            throw ProcExprError("\(node.name)/\(channel) has an expression: chf() reads another frame's keys or a value")
+        }
+        let p = node.param(spec.name)
+        return k.map { p.vec4[$0] } ?? p.float
+    }
+
+    /// The value of a `ch()` path at `frame` (nil: the cook's).
+    package func channel(_ path: String, at frame: Float?) throws -> Float {
+        guard let frame else { return try channel(path) }
+        let parts = path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        switch parts.count {
+        case 1: return try value(ofChannel: path, at: frame)
+        case 2 where parts[0] == ".": return try value(ofChannel: parts[1], at: frame)
+        case 2 where parts[0] == "..": return try promoted(parts[1])
+        case 3 where parts[0] == "..":
+            guard let n = graph.named(parts[1]) ?? graph.node(parts[1]), let c = other(n.id) else {
+                throw ProcExprError("chf(\"\(path)\"): no node \(parts[1])")
+            }
+            return try c.value(ofChannel: parts[2], at: frame)
+        default:
+            throw ProcExprError("chf(\"\(path)\"): a path is a channel (sizex), ../node/channel or ../parameter")
+        }
     }
 
     /// The value of a `ch()` path.
@@ -320,9 +354,9 @@ package final class ProcExprContext {
             return .string(try expand(s))
         }
         let names = ProcExprContext.channels(of: spec)
-        guard names.contains(where: { node.expressions[$0] != nil }) else { return nil }
+        guard names.contains(where: { node.isDriven($0) }) else { return nil }
         var v = set.vec4
-        for (k, name) in names.enumerated() where node.expressions[name] != nil {
+        for (k, name) in names.enumerated() where node.isDriven(name) {
             if spec.perElement, try varies(name) { continue }
             v[k] = try value(ofChannel: name)
         }
@@ -336,9 +370,9 @@ package final class ProcExprContext {
         }
     }
 
-    /// Does channel `name`'s expression vary per element?
+    /// Does channel `name`'s expression vary per element? (Keys don't.)
     package func varies(_ name: String) throws -> Bool {
-        guard let source = node.expressions[name] else { return false }
+        guard node.curves[name] == nil, let source = node.expressions[name] else { return false }
         return try ProcExpr.parse(source).references.element
     }
 

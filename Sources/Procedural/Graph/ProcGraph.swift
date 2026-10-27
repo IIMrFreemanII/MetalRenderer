@@ -13,6 +13,9 @@ package struct ProcNode: Codable, Equatable, Identifiable {
     /// Expressions by channel (`tx`, `seed`: ProcExprContext.swift), hscript's: a channel with one is cooked from it;
     /// its value in `params` stays for when it is removed.
     package var expressions: [String: String] = [:]
+    /// Keyframed channels (ProcCurve.swift): a channel with one is cooked from its value at the frame. A channel has an
+    /// expression or a curve, not both.
+    package var curves: [String: ProcCurve] = [:]
     package var at = SIMD2<Float>.zero
     package var display = false
     package var render = false
@@ -33,7 +36,10 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         params[name] ?? kind.spec.param(name)?.value ?? .float(0)
     }
 
-    private enum Key: String, CodingKey { case id, name, kind, params, expressions, at, display, render, bypass, template, comment }
+    /// Is channel `c` cooked from something other than its value as set (an expression, keys)?
+    package func isDriven(_ c: String) -> Bool { expressions[c] != nil || curves[c] != nil }
+
+    private enum Key: String, CodingKey { case id, name, kind, params, expressions, curves, at, display, render, bypass, template, comment }
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         id = try c.decode(String.self, forKey: .id)
@@ -41,6 +47,7 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         kind = try c.decode(ProcNodeKind.self, forKey: .kind)
         params = try c.decodeIfPresent([String: ProcParam].self, forKey: .params) ?? [:]
         expressions = try c.decodeIfPresent([String: String].self, forKey: .expressions) ?? [:]
+        curves = try c.decodeIfPresent([String: ProcCurve].self, forKey: .curves) ?? [:]
         at = try c.decodeIfPresent(SIMD2<Float>.self, forKey: .at) ?? .zero
         display = try c.decodeIfPresent(Bool.self, forKey: .display) ?? false
         render = try c.decodeIfPresent(Bool.self, forKey: .render) ?? false
@@ -55,6 +62,7 @@ package struct ProcNode: Codable, Equatable, Identifiable {
         try c.encode(kind, forKey: .kind)
         if !params.isEmpty { try c.encode(params, forKey: .params) }
         if !expressions.isEmpty { try c.encode(expressions, forKey: .expressions) }
+        if !curves.isEmpty { try c.encode(curves, forKey: .curves) }
         try c.encode(at, forKey: .at)
         if display { try c.encode(true, forKey: .display) }
         if render { try c.encode(true, forKey: .render) }
@@ -108,8 +116,28 @@ package struct ProcGraph: Codable, Equatable {
     package var nodes: [ProcNode] = []
     package var links: [ProcLink] = []
     package var interface: [PromotedParam] = []
+    /// The frames the network plays (the timeline's range), and a placed asset of it.
+    package var frames: ClosedRange<Int> = ProcGraph.defaultFrames
+
+    package static let defaultFrames = 1...240
 
     package init() {}
+
+    private enum Key: String, CodingKey { case nodes, links, interface, frames }
+    package init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Key.self)
+        nodes = try c.decodeIfPresent([ProcNode].self, forKey: .nodes) ?? []
+        links = try c.decodeIfPresent([ProcLink].self, forKey: .links) ?? []
+        interface = try c.decodeIfPresent([PromotedParam].self, forKey: .interface) ?? []
+        frames = try c.decodeIfPresent(ClosedRange<Int>.self, forKey: .frames) ?? ProcGraph.defaultFrames
+    }
+    package func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: Key.self)
+        try c.encode(nodes, forKey: .nodes)
+        try c.encode(links, forKey: .links)
+        try c.encode(interface, forKey: .interface)
+        if frames != ProcGraph.defaultFrames { try c.encode(frames, forKey: .frames) }
+    }
 
     package func index(of id: String) -> Int? { nodes.firstIndex { $0.id == id } }
     package func node(_ id: String) -> ProcNode? { index(of: id).map { nodes[$0] } }
@@ -266,9 +294,9 @@ package struct ProcGraph: Codable, Equatable {
             for t in p.targets {
                 guard let i = g.nodes.firstIndex(where: { $0.name == t.node || $0.id == t.node }) else { continue }
                 g.nodes[i].params[t.param] = v
-                // The promoted value wins over the target's expressions.
+                // The promoted value wins over the target's expressions and keys.
                 if let spec = g.nodes[i].kind.spec.param(t.param) {
-                    for c in ProcExprContext.channels(of: spec) { g.nodes[i].expressions[c] = nil }
+                    for c in ProcExprContext.channels(of: spec) { g.nodes[i].expressions[c] = nil; g.nodes[i].curves[c] = nil }
                 }
             }
         }
