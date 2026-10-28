@@ -110,6 +110,80 @@ final class CarGPUTests: XCTestCase {
         }
     }
 
+    // MARK: Damage
+
+    /// The cars' events (CarEvent's slots) in the GPU's ring of breaks for the steps after `from` (the ring holds 64
+    /// steps: read every 20).
+    private func ringEvents(_ gpu: PhysicsGPU, after from: Int) -> (events: [GPUBreakEvent], last: Int) {
+        let raw = gpu.breakRing.contents(), slots = PhysicsWorld.ringSlots, per = PhysicsWorld.ringEvents
+        let all = raw.advanced(by: 16 * slots).bindMemory(to: GPUBreakEvent.self, capacity: slots * per)
+        var out: [GPUBreakEvent] = [], last = from
+        for slot in 0..<slots {
+            let header = raw.advanced(by: 16 * slot).load(as: SIMD4<UInt32>.self)
+            let step = Int(header.x) - 1
+            guard step > from else { continue }
+            last = max(last, step)
+            out += (0..<Int(header.y)).map { all[slot * per + $0] }.filter { $0.velocity.w >= Float(CarEvent.firstSlot) }
+        }
+        return (out, last)
+    }
+
+    /// Into the wall at 50 and 100 km/h on the GPU, as on the CPU (CarDamageTests.testAWallBreaksTheGlassAndTheEngine):
+    /// the front crushed and bent for good, the car stopped, the front bumper off and the rear's parts on, glass
+    /// broken, the radiator leaking; at 50 the engine runs (steam), at 100 it has seized (smoke); the nodes crushed (the
+    /// look's bytes), the events in the ring for the dust.
+    func testAWallBreaksTheCarAsOnTheCPU() throws {
+        let m = try metal()
+        for kmh: Float in [50, 100] {
+            let settings = CarSettings(style: .civic, cars: 1, demo: .wall, demoSpeed: kmh)
+            let g = try GPU(try scene(settings), m), cpu = try scene(settings).physics!
+            var events: [GPUBreakEvent] = [], seen = -1
+            for _ in 0..<(seconds(4) / 20) {
+                g.step(20)
+                let r = ringEvents(g.gpu, after: seen)
+                events += r.events
+                seen = r.last
+            }
+            cpu.advance(to: Float(seconds(4) / 20 * 20) * PhysicsWorld.stepLength + PhysicsWorld.stepLength / 2)
+            let a = g.telemetry[0], b = cpu.carTelemetry(0)
+            let s = cpu.carSystem.cars[0]
+            let parts = g.gpu.cars!.readParts(cpu.carSystem.parts.count)
+            func off(_ list: [CarPart]) -> [String] {
+                list[Int(s.firstPart)..<Int(s.firstPart + s.partCount)].filter { $0.flags & CarPart.off != 0 }.map { CarPartKind(rawValue: $0.kind)!.title }
+            }
+            let nodes = g.gpu.readParticles()
+            let crushed = (Int(s.firstNode)..<Int(s.firstNode + s.nodeCount)).filter { nodes[$0].info.z & 0xFF > 128 }.count
+            let cpuCrushed = (Int(s.firstNode)..<Int(s.firstNode + s.nodeCount)).filter { cpu.particles[$0].info.z & 0xFF > 128 }.count
+            func kind(_ k: CarEvent, _ list: [GPUBreakEvent]) -> Int { list.filter { UInt32($0.velocity.w) == k.slot }.count }
+            let cpuEvents = cpu.breakLog
+            for (name, t, o, c, e) in [("GPU", a, off(parts), crushed, events), ("CPU", b, off(cpu.carSystem.parts), cpuCrushed, cpuEvents)] {
+                print(String(format: "%.0f km/h %@: speed %.2f, front crushed %.2f m, bent %d, broken %d, coolant %.2f, engine %.2f, running %@, panes %d, wheels off %d, parts off %d (%@); %d nodes crushed; events %d glass, %d steam, %d smoke, %d debris",
+                             kmh, name, t.speed, t.frontCrush, t.bent, t.broken, t.coolant, t.engineDamage, t.running ? "yes" : "no", t.panesBroken, t.wheelsOff,
+                             t.partsOff, o.joined(separator: ", "), c, kind(.glass, e), kind(.steam, e), kind(.smoke, e), kind(.debris, e)))
+            }
+            // A wheel off its axle is a body of the world's again: its mass, no wheel's flag.
+            let bodies = g.gpu.readBodies()
+            for w in g.gpu.cars!.readWheels(cpu.carSystem.wheels.count) where w.flags & CarWheel.off != 0 {
+                let o = bodies[Int(w.body)]
+                XCTAssertEqual(o.info.y & (PhysicsWorld.wheelBit | PhysicsWorld.kinematicBit), 0, "\(kmh): a wheel off")
+                XCTAssertGreaterThan(o.position.w, 0, "\(kmh): a wheel off has its mass")
+                XCTAssertGreaterThan(o.position.y, 0, "\(kmh): a wheel off on the ground")
+            }
+            if kmh == 100 { XCTAssertEqual(a.wheelsOff, b.wheelsOff, "100: wheels off") }
+            XCTAssertLessThan(abs(a.speed), 1, "\(kmh): stopped")
+            XCTAssertGreaterThan(a.bent, 20, "\(kmh)")
+            XCTAssertEqual(a.frontCrush, b.frontCrush, accuracy: max(0.1, 0.25 * b.frontCrush), "\(kmh): front crush")
+            XCTAssertGreaterThan(crushed, 10, "\(kmh)")
+            XCTAssertGreaterThan(a.panesBroken, 0, "\(kmh)")
+            XCTAssertGreaterThan(kind(.glass, events), 0, "\(kmh)")
+            XCTAssertLessThan(a.coolant, 1, "\(kmh)")
+            XCTAssert(off(parts).contains(CarPartKind.frontBumper.title), "\(kmh): the front bumper")
+            XCTAssertFalse(off(parts).contains(CarPartKind.rearBumper.title) || off(parts).contains(CarPartKind.trunk.title), "\(kmh): the rear's parts")
+            XCTAssertEqual(a.running, b.running, "\(kmh): the engine")
+            XCTAssertGreaterThan(kind(a.running ? .steam : .smoke, events), 0, "\(kmh)")
+        }
+    }
+
     /// Each style's beams in colours: how many a pass takes (its barriers), the corners' too.
     func testColourCounts() throws {
         let m = try metal()

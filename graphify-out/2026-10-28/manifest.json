@@ -3882,9 +3882,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSettings.swift": {
-    "mtime": 1793206894.0757747,
-    "seen": 1793210629.809623,
-    "ast_hash": "ed3d126ebf523e02b0355d2b19b41ed7",
+    "mtime": 1793210678.8499503,
+    "seen": 1793211636.001163,
+    "ast_hash": "fbf458222309bba869e9699eac0295a3",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSkin.swift": {
@@ -4818,9 +4818,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Cars/Benchmark+Cars.swift": {
-    "mtime": 1793206907.759064,
-    "seen": 1793210629.803328,
-    "ast_hash": "1100e0e6d8acd1576aff353541865b2f",
+    "mtime": 1793210678.8517413,
+    "seen": 1793211635.994625,
+    "ast_hash": "8e7f0f58477d795e70f6e193b6b68ee0",
     "semantic_hash": ""
   },
   "Sources/Game/Cars/CarPlayer.swift": {
@@ -4830,9 +4830,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Cars/Scene+CarGround.swift": {
-    "mtime": 1793168304.8493898,
-    "seen": 1793171284.145361,
-    "ast_hash": "e1d4b5d00648397f2f529149679bfe7f",
+    "mtime": 1793210759.5315409,
+    "seen": 1793211635.994719,
+    "ast_hash": "556e678a32893792f8f4f96c2be54640",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Cars/Scene+Cars.swift": {
@@ -5952,9 +5952,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Cars/CarGPUTests.swift": {
-    "mtime": 1793208309.483247,
-    "seen": 1793210629.8106182,
-    "ast_hash": "30e391ba993336e116ab1eeddcbb5520",
+    "mtime": 1793210759.5316956,
+    "seen": 1793211636.002292,
+    "ast_hash": "01a2004a36f1d9b6b9e27b51d432488c",
     "semantic_hash": ""
   }
 }

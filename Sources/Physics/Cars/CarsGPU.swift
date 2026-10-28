@@ -450,6 +450,7 @@ package final class CarsGPU {
         return out
     }
     func readParts(_ n: Int) -> [CarPart] { read(state, at: partsAt, n) }
+    func readPanes(_ n: Int) -> [CarPane] { read(state, at: panesAt, n) }
     func readTelemetry() -> [CarTelemetry] { read(telemetry, at: 0, count).map { (t: GPUCarTelemetry) in t.telemetry } }
 
     private func read<T>(_ b: MTLBuffer, at offset: Int, _ n: Int) -> [T] {
