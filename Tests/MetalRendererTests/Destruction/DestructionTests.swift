@@ -261,6 +261,43 @@ final class DestructionTests: XCTestCase {
     /// The massive setting's building through its demo on the GPU, a line every half second: the building's live and
     /// sleeping pieces, their speeds and kinetic energy, the heap's height and reach, pieces faded, bodies with full pair
     /// lists, one-sided pair entries, the deepest contact. (A heap that never settled: DESTRUCTION_SETTLE=1.)
+    /// The GPU's steps of the demo (breaks, dust, loose links; colours, lists and the kicks' sums by Jacobi built by
+    /// atomics in no fixed order): to 4.5 s in steps of a second, then back to the start and there in steps of a
+    /// quarter: the same bodies, bit for bit.
+    func testTheGPUsReplayIsTheSame() throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
+        let pipelines = try Pipelines(device: device, source: DestructionTests.shaders, lightTypes: 0x3F, stats: false)
+        var settings = SceneSettings(kind: .destruction)
+        settings.physics.backend = .gpu
+        let s = Scene(settings)
+        let w = s.physics!
+        let sdf = try SDFBuffers(device: device, scene: s)
+        let gpu = try PhysicsGPU(device: device, world: w, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
+        func run(reset: Bool, chunk: Int) -> [GPUPhysicsBody] {
+            let total = Int(4.5 / PhysicsWorld.stepLength)
+            var done = 0
+            while done < total {
+                let cmd = queue.makeCommandBuffer()!
+                let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+                if reset && done == 0 { gpu.encodeReset(Metal3Pass(enc: enc), pipelines: pipelines) }
+                let steps = min(chunk, total - done)
+                gpu.encodeSteps(Metal3Pass(enc: enc), pipelines: pipelines, steps: steps)
+                enc.endEncoding()
+                cmd.commit()
+                cmd.waitUntilCompleted()
+                XCTAssertNil(cmd.error)
+                done += steps
+            }
+            return gpu.readBodies()
+        }
+        let first = run(reset: false, chunk: 60), again = run(reset: true, chunk: 15)
+        let broken = gpu.readFractureState().indices.filter { first[$0].info.y & PhysicsWorld.pieceBit != 0 && first[$0].info.y & PhysicsWorld.disabledBit == 0 }.count
+        let same = zip(first, again).filter { x, y in withUnsafeBytes(of: x) { a in withUnsafeBytes(of: y) { b in a.elementsEqual(b) } } }.count
+        print("GPU replay at 4.5 s: \(same) of \(first.count) bodies the same, \(broken) pieces live")
+        XCTAssertGreaterThan(broken, 0, "something broke")
+        XCTAssertEqual(same, first.count, "the replay is the same, bit for bit")
+    }
+
     func testTheBuildingSettles() throws {
         guard ProcessInfo.processInfo.environment["DESTRUCTION_SETTLE"] != nil else { throw XCTSkip("set DESTRUCTION_SETTLE=1") }
         guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }

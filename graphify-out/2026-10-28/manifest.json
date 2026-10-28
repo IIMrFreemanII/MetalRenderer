@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793171261.622275,
-    "seen": 1793171284.145631,
-    "ast_hash": "39a99061e270daf145f4af127fd09d5e",
+    "mtime": 1793173209.973757,
+    "seen": 1793173227.229269,
+    "ast_hash": "7bbedb2214a2af2fc2949b2625c307c5",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -492,9 +492,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Physics.metal": {
-    "mtime": 1793168656.9565263,
-    "seen": 1793171284.145463,
-    "ast_hash": "d1b868141339922084cfd7d298ad4941",
+    "mtime": 1793172884.4670835,
+    "seen": 1793173227.2226088,
+    "ast_hash": "70b0ace26cafc0006214b1d199163e00",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
@@ -1806,9 +1806,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/destruction-handoff.md": {
-    "mtime": 1793171261.6226337,
-    "seen": 1793171284.14561,
-    "ast_hash": "2b912b57eaccdbfeae655a61d05074b1",
+    "mtime": 1793173209.9739063,
+    "seen": 1793173227.228395,
+    "ast_hash": "4ee60755c55a8ced4d9850179c221835",
     "semantic_hash": ""
   },
   "Sources/CPhysicsAtomics/atomics.c": {
@@ -2016,9 +2016,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/GPUTypes.swift": {
-    "mtime": 1793168656.9566605,
-    "seen": 1793171284.14543,
-    "ast_hash": "00c4b7335c7ccc46439f6e904b97aa95",
+    "mtime": 1793171956.6176631,
+    "seen": 1793173227.2211452,
+    "ast_hash": "4bd6936d05421cb4b3331716733c9f5e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Lighting/Atmosphere.swift": {
@@ -2424,8 +2424,8 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Destruction/DestructionTests.swift": {
-    "mtime": 1793168304.8822098,
-    "seen": 1793171284.1455512,
+    "mtime": 1793172934.4446507,
+    "seen": 1793173227.22601,
     "ast_hash": "3bbe36be1444da49b859de81e591f8e8",
     "semantic_hash": ""
   },
@@ -2958,9 +2958,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Settings/GameScenes+Rows.swift": {
-    "mtime": 1793168876.5819476,
-    "seen": 1793171284.1453729,
-    "ast_hash": "171d2c350f0d3142c76c39411e76cad5",
+    "mtime": 1793172462.2660618,
+    "seen": 1793173227.218714,
+    "ast_hash": "b60dedaafbcc624dbd44ae22a1f77ae3",
     "semantic_hash": ""
   },
   "Sources/Game/Terrain/Benchmark+Terrain.swift": {
@@ -3360,9 +3360,9 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/Pipelines.swift": {
-    "mtime": 1793168304.901868,
-    "seen": 1793171284.1453362,
-    "ast_hash": "9122c1d39bdb0c50ff04ade66589ca1c",
+    "mtime": 1793171980.6687965,
+    "seen": 1793173227.2171578,
+    "ast_hash": "0d66a8ce481d51f584b60b855bd8c51f",
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/RendererError.swift": {
@@ -3768,9 +3768,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Destruction/Fracture/Physics+Fracture.swift": {
-    "mtime": 1793170287.6876411,
-    "seen": 1793171284.14551,
-    "ast_hash": "dbc4ee3188130f023b7957ef5aa130ff",
+    "mtime": 1793172521.5032356,
+    "seen": 1793173227.224469,
+    "ast_hash": "34dd66ae3bd85c4e87d91beb9752f5a0",
     "semantic_hash": ""
   },
   "Sources/Physics/FluidSurface.swift": {
@@ -3780,9 +3780,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Physics.swift": {
-    "mtime": 1793169301.954419,
-    "seen": 1793171284.1455119,
-    "ast_hash": "a3dcbf9636a1dbadd4756e5ab633254c",
+    "mtime": 1793171932.395626,
+    "seen": 1793173227.224489,
+    "ast_hash": "afae6e95dba9d9488b9bd44cf84abb48",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsCPU+Broad.swift": {
@@ -3858,15 +3858,15 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPU.swift": {
-    "mtime": 1793168304.8375828,
-    "seen": 1793171284.145518,
-    "ast_hash": "98fbd56db961e81bbb90f7f6e68ebe5f",
+    "mtime": 1793172884.4672446,
+    "seen": 1793173227.2247071,
+    "ast_hash": "9a647d4f6fbf20b2518e698fa5dfc220",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPUTypes.swift": {
-    "mtime": 1793170190.600144,
-    "seen": 1793171284.145518,
-    "ast_hash": "1c24570d842fb914b1d09a8407f4b6e9",
+    "mtime": 1793171956.6175127,
+    "seen": 1793173227.224708,
+    "ast_hash": "89c21998ca360fd80448d121157b9e38",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsHair.swift": {
@@ -3882,9 +3882,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSettings.swift": {
-    "mtime": 1793168876.5817127,
-    "seen": 1793171284.1455202,
-    "ast_hash": "c0e2b0922b37590cc49c5c3253882b07",
+    "mtime": 1793172521.5029871,
+    "seen": 1793173227.2247438,
+    "ast_hash": "05d23ecd57fe7287073e724c13851783",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsSkin.swift": {
@@ -5880,15 +5880,15 @@
     "semantic_hash": ""
   },
   "Sources/Physics/Destruction/Fracture/Physics+LooseJoints.swift": {
-    "mtime": 1793170543.1016846,
-    "seen": 1793171284.145511,
-    "ast_hash": "baea13115c2271afe5f68b6fadbde680",
+    "mtime": 1793171941.9555998,
+    "seen": 1793173227.22447,
+    "ast_hash": "ee65072bcfcf58231e46f9380dc5a5db",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Destruction/LooseJointTests.swift": {
-    "mtime": 1793170576.3819177,
-    "seen": 1793171284.145552,
-    "ast_hash": "24a7476584f52d5de6df524ea7499175",
+    "mtime": 1793172307.5597255,
+    "seen": 1793173227.22601,
+    "ast_hash": "b7cc98619c76057daa24ffdfb8ae18d8",
     "semantic_hash": ""
   }
 }
