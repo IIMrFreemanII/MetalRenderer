@@ -77,7 +77,8 @@ struct PhysicsCar {            // GPUCar (CarState's)
     int  bent, broken, partsOff;
     int  wheelsOff, panesBroken, sinceSmoke, eventCount;
     int  hitCount;
-    uint pad0, pad1, pad2;
+    uint statics;              // its candidates' statics (the bodies after them)
+    uint pad1, pad2;
 };
 static_assert(sizeof(PhysicsCar) == 288, "PhysicsCar: GPUCar");
 constant uint PHYS_CAR_MANUAL = 1u, PHYS_CAR_AUTOPILOT = 2u, PHYS_CAR_RUNNING = 4u, PHYS_CAR_AWAKE = 8u, PHYS_CAR_ASLEEP = 16u;
@@ -112,7 +113,7 @@ constant uint PHYS_CAR = 8u;                 // PhysicsParticle.info.y: a car's 
 constant uint PHYS_WHEEL = 128u;             // PhysicsBody.info.y: a car's wheel (PhysicsWorld.wheelBit)
 constant uint PHYS_CAR_COMMAND = 7u;         // PhysicsWorld.FractureCommand.car
 constant uint PHYS_CAR_SHIFT_UP = 1u << 8, PHYS_CAR_SHIFT_DOWN = 2u << 8, PHYS_CAR_CMD_MANUAL = 4u << 8, PHYS_CAR_CMD_AUTOPILOT = 8u << 8;
-constant uint PHYS_CAR_CANDIDATES = 256;     // CarsGPU.maxCandidates
+constant uint PHYS_CAR_CANDIDATES = 512;     // CarsGPU.maxCandidates
 constant uint PHYS_CAR_EVENTS = 16;          // CarSystem.maxEvents
 // CarBeam's bits and kinds (CarBeamKind), the arm zone (CarBeamZone.arm).
 constant uint PHYS_BEAM_BROKEN = 1u << 7, PHYS_BEAM_HULL = 1u << 16, PHYS_BEAM_CORNER = 1u << 17, PHYS_BEAM_ATTACH = 1u << 18;
@@ -138,6 +139,26 @@ constant float PHYS_GLASS_STRAIN = 0.008f, PHYS_LAMP_STRAIN = 0.03f;
 constant uint  PHYS_EVENT_GLASS = 8, PHYS_EVENT_STEAM = 9, PHYS_EVENT_SMOKE = 10, PHYS_EVENT_DEBRIS = 11;   // CarEvent.slot
 // The hull's middles' pushes summed in fixed point (an int's step: 0.1 µm).
 constant float PHYS_CAR_FIXED = 1e7f;
+// What the cars do to a body over a group of substeps, summed in fixed point (CarsGPU.bodyWords ints a body): their
+// nodes' pushes (mass-weighted corrections: kg m) and their turns, how many; their tyres' kicks (N s) and turns, how
+// many; over the step, their knocks on a piece (N s), where (m N s) and which way (N s), and which cars knocked it (a
+// bit a car).
+constant uint PHYS_BODY_WORDS = 24;
+constant uint PHYS_CAR_CARRIED = 32;   // the bodies a car carries its own pushes on through a group (physCarNode)
+constant uint PHYS_ACC_PUSH = 0, PHYS_ACC_PUSH_TWIST = 3, PHYS_ACC_PUSHES = 6, PHYS_ACC_KICK = 8, PHYS_ACC_KICK_TWIST = 11, PHYS_ACC_KICKS = 14;
+constant uint PHYS_ACC_KNOCK = 16, PHYS_ACC_KNOCK_POINT = 17, PHYS_ACC_KNOCK_PUSH = 20, PHYS_ACC_HITS = 23;
+constant float PHYS_PUSH_FIXED = 1e6f, PHYS_KICK_FIXED = 1e5f, PHYS_KNOCK_FIXED = 1e4f, PHYS_POINT_FIXED = 1e3f;
+
+inline void physAddFixed(device atomic_int* a, float3 v, float scale) {
+    int3 f = int3(round(v * scale));
+    atomic_fetch_add_explicit(a, f.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(a + 1, f.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(a + 2, f.z, memory_order_relaxed);
+}
+inline float3 physFixed3(device atomic_int* a, float scale) {
+    return float3(atomic_load_explicit(a, memory_order_relaxed), atomic_load_explicit(a + 1, memory_order_relaxed),
+                  atomic_load_explicit(a + 2, memory_order_relaxed)) / scale;
+}
 
 // MARK: - Helpers
 
@@ -161,11 +182,11 @@ inline void physStoreWheel(device PhysicsBody* bodies, PhysicsCarWheel w, Physic
 
 // A car's node as its substeps' kernel keeps it (in threadgroup memory: the particle's position, velocity and prevPosition).
 struct PhysCarNode { float4 position, velocity, prevPosition; };
-constant int PHYS_CAR_NODES = 448;   // CarsGPU.maxNodes
+constant int PHYS_CAR_NODES = 432;   // CarsGPU.maxNodes
 constant int PHYS_CAR_CORNERS = 288; // CarsGPU.maxCorners: a car's corners' beams, at most
 // The substeps' scratch in threadgroup memory: the corners' beams and their lambdas, then (once they are done) the hull's
 // middles' pushes (four ints a node).
-constant constexpr int PHYS_CAR_SCRATCH = 448 * 16 > 288 * 36 ? 448 * 16 : 288 * 36;   // (max of the two)
+constant constexpr int PHYS_CAR_SCRATCH = 432 * 16 > 288 * 36 ? 432 * 16 : 288 * 36;   // (max of the two)
 
 struct PhysCarFrame { float3 centre, forward, up, left, velocity; };
 
@@ -425,7 +446,8 @@ inline void physCarDrive(thread PhysicsCar& s, PhysicsCarTune t, threadgroup Phy
 // MARK: - A tyre (CarSolver.tyre): one thread a wheel
 
 inline void physCarTyre(device PhysicsCarWheel* wheels, int wk, PhysicsCarTune t, device const uint* candidates, uint firstCandidate,
-                        uint candidateCount, threadgroup PhysCarNode* q, int base, device PhysicsBody* bodies, device const PhysicsBody* statics,
+                        uint candidateCount, threadgroup PhysCarNode* q, int base, device PhysicsBody* bodies, device atomic_int* acc,
+                        device const PhysicsBody* statics,
                         device const float4* bounds, PhysicsShapes shapes, float h) {
     PhysicsCarWheel w = wheels[wk];
     PhysicsBody o = physWheelBody(bodies, w);
@@ -513,6 +535,13 @@ inline void physCarTyre(device PhysicsCarWheel* wheels, int wk, PhysicsCarTune t
     spin -= spin > 0.0f ? min(roll, spin) : max(-roll, spin);
     o.angular = float4(spinning + a * (spin - dot(spinning, a)), o.angular.w);
     physStoreWheel(bodies, w, o);
+    // (On a body: it takes the patch's impulse back, a kick: CarSolver.tyreKick.)
+    if (groundMoves) {
+        device atomic_int* k = acc + uint(best) * PHYS_BODY_WORDS;
+        physAddFixed(k + PHYS_ACC_KICK, -impulse, PHYS_KICK_FIXED);
+        physAddFixed(k + PHYS_ACC_KICK_TWIST, cross(patch - s.position.xyz, -impulse), PHYS_KICK_FIXED);
+        atomic_fetch_add_explicit(k + PHYS_ACC_KICKS, 1, memory_order_relaxed);
+    }
     physHubCouple(torque - a * about, w, q, base);
     w.load = load;
     w.slip = float2(sx, sy);
@@ -620,29 +649,94 @@ inline float2 physCarSliding(float3 moved, float3 n, float h) {
     return float2(along > PHYS_SCRAPE_SPEED * h ? along : 0.0f, along);
 }
 
-// CarSolver.nodeContacts against the statics (the bodies' pushes: stage 3). Node i (absolute; q's at i - base).
+// CarSolver.nodeContacts: node i (absolute; q's at i - base) pushed out of the statics and bodies among the candidates;
+// a body's share of a push summed for it (`acc`: the world applies them after the group, physicsCarBodiesKernel), its
+// mass as one of as many shares as it had pushes a substep the group before (`shares`: mass splitting); a piece knocked
+// faster than PHYS_IMPACT_SPEED, its knock summed for its strain (and car `bit` noted: physicsCarGiveWayKernel).
+//
+// The world moves the bodies after the group: within it, this car sees each of its first PHYS_CAR_CARRIED bodies where
+// its own pushes so far have shoved it (`carried`, its candidates' order from `firstBody`; `done` substeps of the group
+// before this one), or a car would push on against a crate that hasn't moved, and stop.
 inline void physCarNode(int i, threadgroup PhysCarNode* q, int base, device float2* wear, device const uint* candidates, uint first, uint count,
-                        device const PhysicsBody* statics, device const float4* bounds, PhysicsShapes shapes, float h) {
+                        device const PhysicsBody* statics, device const float4* bounds, device const PhysicsBody* bodies,
+                        device atomic_int* acc, device const float* shares, uint bit, threadgroup atomic_int* carried, uint firstBody,
+                        uint done, PhysicsShapes shapes, float h) {
     PhysCarNode p = q[i - base];
-    if (!(p.prevPosition.w > 0.0f)) return;
+    float wn = p.prevPosition.w;
+    if (!(wn > 0.0f)) return;
     float r = p.position.w;
     float3 prev = p.prevPosition.xyz, x = p.position.xyz;
     float2 slid = float2(0.0f);
     for (uint k = first; k < first + count; ++k) {
         uint code = candidates[k];
-        if ((code & PHYS_STATIC) == 0) continue;
-        uint st = code & ~PHYS_STATIC;
-        if (!physNearStatic(bounds, st, x, r)) continue;
-        PhysicsBody o = statics[st];
-        PhysPose pose = physPose(o);
-        float3 local = pose.toBody(x);
-        float depth = physDistance(shapes, o.info.x, local) - r;
-        if (!(depth < 0.0f)) continue;
-        float3 n = pose.direction(physGradient(shapes, o.info.x, local));
-        float3 moved = x - prev;
-        float overlap = min(-depth, max(-dot(moved, n), 0.0f) + PHYS_PUSH_SPEED * h);
-        x += physParticlePush(n, overlap, moved, sqrt(p.velocity.w * o.velocity.w));
-        slid += physCarSliding(moved, n, h);
+        if ((code & PHYS_STATIC) != 0) {
+            uint st = code & ~PHYS_STATIC;
+            if (!physNearStatic(bounds, st, x, r)) continue;
+            PhysicsBody o = statics[st];
+            PhysPose pose = physPose(o);
+            float3 local = pose.toBody(x);
+            float depth = physDistance(shapes, o.info.x, local) - r;
+            if (!(depth < 0.0f)) continue;
+            float3 n = pose.direction(physGradient(shapes, o.info.x, local));
+            float3 moved = x - prev;
+            float overlap = min(-depth, max(-dot(moved, n), 0.0f) + PHYS_PUSH_SPEED * h);
+            x += physParticlePush(n, overlap, moved, sqrt(p.velocity.w * o.velocity.w));
+            slid += physCarSliding(moved, n, h);
+        } else {
+            PhysicsBody o = bodies[code];
+            uint slot = k - firstBody;
+            threadgroup atomic_int* mine = slot < PHYS_CAR_CARRIED ? carried + 6 * slot : nullptr;
+            if (mine && done > 0 && o.position.w > 0.0f) {
+                float3 push = float3(atomic_load_explicit(mine, memory_order_relaxed), atomic_load_explicit(mine + 1, memory_order_relaxed),
+                                     atomic_load_explicit(mine + 2, memory_order_relaxed)) / PHYS_PUSH_FIXED;
+                float3 twist = float3(atomic_load_explicit(mine + 3, memory_order_relaxed), atomic_load_explicit(mine + 4, memory_order_relaxed),
+                                      atomic_load_explicit(mine + 5, memory_order_relaxed)) / PHYS_PUSH_FIXED;
+                float3 dx = push * o.position.w, turn = physInvInertia(o.rotation, o.invInertia.xyz, twist);
+                o.position.xyz += dx;
+                o.rotation = physTurn(o.rotation, turn);
+                o.velocity.xyz += dx / h;
+                o.angular.xyz += turn / h;
+            }
+            float3 centre = o.position.xyz;
+            float reach = r + o.invInertia.w;
+            if (length_squared(x - centre) > reach * reach) continue;
+            PhysPose pose = physPose(o);
+            float3 local = pose.toBody(x);
+            float depth = physDistance(shapes, o.info.x, local) - r;
+            if (!(depth < 0.0f)) continue;
+            float3 n = pose.direction(physGradient(shapes, o.info.x, local));
+            float3 lever = x - centre;
+            float3 surface = o.velocity.xyz + cross(o.angular.xyz, lever);
+            float3 slide = (x - prev) - surface * h;
+            float overlap = min(-depth, max(-dot(slide, n), 0.0f) + PHYS_PUSH_SPEED * h);
+            float3 push = physParticlePush(n, overlap, slide, sqrt(p.velocity.w * o.velocity.w));
+            slid += physCarSliding(slide, n, h);
+            float l = length(push);
+            if (!(l > 1e-9f)) continue;
+            float wb = physWeight(o, lever, push / l) / max(shares[code], 1.0f);
+            device atomic_int* a = acc + code * PHYS_BODY_WORDS;
+            if ((o.info.y & PHYS_PIECE) != 0 && max(-dot(slide, n), 0.0f) > PHYS_IMPACT_SPEED * h) {
+                float impulse = l / ((wn + wb) * h);
+                atomic_fetch_add_explicit(a + PHYS_ACC_KNOCK, int(round(impulse * PHYS_KNOCK_FIXED)), memory_order_relaxed);
+                physAddFixed(a + PHYS_ACC_KNOCK_POINT, x * impulse, PHYS_POINT_FIXED);
+                physAddFixed(a + PHYS_ACC_KNOCK_PUSH, -n * impulse, PHYS_KNOCK_FIXED);
+                atomic_fetch_or_explicit((device atomic_uint*)(a + PHYS_ACC_HITS), bit, memory_order_relaxed);
+            }
+            x += push * (wn / (wn + wb));
+            if (wb > 0.0f) {
+                float3 impulse = -push / (wn + wb);
+                physAddFixed(a + PHYS_ACC_PUSH, impulse, PHYS_PUSH_FIXED);
+                physAddFixed(a + PHYS_ACC_PUSH_TWIST, cross(lever, impulse), PHYS_PUSH_FIXED);
+                atomic_fetch_add_explicit(a + PHYS_ACC_PUSHES, 1, memory_order_relaxed);
+                if (mine) {
+                    int3 f = int3(round(impulse * PHYS_PUSH_FIXED)), g = int3(round(cross(lever, impulse) * PHYS_PUSH_FIXED));
+                    for (uint e = 0; e < 3; ++e) {
+                        atomic_fetch_add_explicit(mine + e, f[e], memory_order_relaxed);
+                        atomic_fetch_add_explicit(mine + 3 + e, g[e], memory_order_relaxed);
+                    }
+                }
+            }
+        }
     }
     q[i - base].position.xyz = x;
     if (any(slid != float2(0.0f))) wear[i] += slid;
@@ -753,6 +847,8 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
                                   device uint*                   candidates [[buffer(9)]],
                                   device const uint4*            commands   [[buffer(10)]],   // count, then PhysicsFractureCommands
                                   device PhysicsCarClock&        clock      [[buffer(11)]],
+                                  device PhysicsCarPart*         parts      [[buffer(22)]],
+                                  constant uint4&                info       [[buffer(30)]],   // cars, fractured objects (1), bodies
                                   uint car   [[threadgroup_position_in_grid]],
                                   uint t     [[thread_index_in_threadgroup]],
                                   uint width [[threads_per_threadgroup]],
@@ -763,7 +859,8 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
     threadgroup float3 los[32], his[32];
     threadgroup float fastests[32];
     threadgroup uint sums[32];
-    threadgroup bool wakeAll;
+    threadgroup float3 momenta[32];
+    threadgroup bool wakeAll, woken;
     PhysicsCar s = cars[car];
     // Its commands this step (PhysicsWorld.takeCarCommand), in the order they came.
     if (t == 0) {
@@ -786,6 +883,7 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
             s.still = 0.0f;
         }
         wakeAll = (s.flags & PHYS_CAR_AWAKE) != 0 || input;
+        woken = false;
     }
     // Its box (the nodes', grown by how far they may go this step), and its fastest node.
     float3 lo = float3(INFINITY), hi = float3(-INFINITY);
@@ -824,13 +922,88 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
         if (keep && at < PHYS_CAR_CANDIDATES) candidates[base + at] = st | PHYS_STATIC;
         found += total;
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint staticsFound = min(found, PHYS_CAR_CANDIDATES);
+    // Then the bodies near it (its own wheels are kinematic to the world, of no mass, as the other cars' are: passed by,
+    // as on the CPU its own are), and a fractured object's pieces held where they are; while it moves, those near it
+    // woken; asleep, it wakes for one that moves near it.
+    uint nb = info.z;
+    bool active = wakeAll, asleep = (s.flags & PHYS_CAR_ASLEEP) != 0;
+    for (uint first = 0; first < nb; first += width) {
+        uint j = first + t;
+        bool keep = false;
+        if (j < nb) {
+            PhysicsBody o = bodies[j];
+            if ((o.info.y & PHYS_DISABLED) == 0 && (o.position.w > 0.0f || (o.info.y & PHYS_PIECE) != 0)) {
+                float d = distance(o.position.xyz, centre), r = o.invInertia.w;
+                keep = d < r + radius;
+                if (keep && d < r + radius - 0.1f) {
+                    if (asleep && physMoves(o)) woken = true;
+                    if (active) {
+                        // (A body's flags, info.y: its 30th word. Another car may wake it as well.)
+                        atomic_fetch_and_explicit((device atomic_uint*)((device uint*)(bodies + j) + 29), ~PHYS_ASLEEP, memory_order_relaxed);
+                        bodies[j].prevPosition.w = 0.0f;
+                    }
+                }
+            }
+        }
+        uint total;
+        uint at = found + physOrderedPlace(keep, t, lane, group, groups, sums, total);
+        if (keep && at < PHYS_CAR_CANDIDATES) candidates[base + at] = j;
+        found += total;
+    }
+    // Its momentum as the step begins (with fractured objects: what it gets back when they give way), summed in an
+    // order that is always the same.
+    float3 mine = float3(0.0f);
+    if (info.y != 0) {
+        for (int i = s.firstNode + int(t); i < s.firstNode + s.nodeCount; i += int(width)) {
+            if (q[i].prevPosition.w > 0.0f) mine += q[i].velocity.xyz / q[i].prevPosition.w;
+        }
+        if (int(t) < s.wheelCount) {
+            PhysicsCarWheel w = wheels[s.firstWheel + int(t)];
+            float inverse = (w.flags & PHYS_WHEEL_OFF) != 0 ? bodies[w.body].position.w : w.inverseMass;
+            if (inverse > 0.0f) mine += bodies[w.body].velocity.xyz / inverse;
+        }
+        mine = simd_sum(mine);
+        if (lane == 0) momenta[group] = mine;
+    }
+    threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
     if (t == 0) {
         s.lo = float4(lo - reach, s.lo.w);
         s.hi = float4(hi + reach, 0.0f);
         s.candidateCount = int(min(found, PHYS_CAR_CANDIDATES));
+        s.statics = staticsFound;
+        if (info.y != 0) {
+            float3 total = float3(0.0f);
+            for (uint g = 0; g < groups; ++g) total += momenta[g];
+            s.momentum = float4(total, 0.0f);
+        }
+        if (woken) {
+            s.flags = (s.flags & ~PHYS_CAR_ASLEEP) | PHYS_CAR_AWAKE;
+            s.still = 0.0f;
+            wakeAll = true;
+        }
+        // Its parts that came off and froze, woken by a body near them (their nodes' mass back).
+        for (int pi = 0; pi < s.partCount; ++pi) {
+            PhysicsCarPart part = parts[s.firstPart + pi];
+            if ((part.flags & PHYS_PART_FROZEN) == 0) continue;
+            float3 x = q[part.firstNode].position.xyz;
+            bool near = false;
+            for (int k = 0; k < s.candidateCount && !near; ++k) {
+                uint code = candidates[base + uint(k)];
+                if ((code & PHYS_STATIC) != 0) continue;
+                near = distance(bodies[code].position.xyz, x) < bodies[code].invInertia.w + 1.0f;
+            }
+            if (!near) continue;
+            for (int i = part.firstNode; i < part.firstNode + part.nodeCount; ++i) {
+                ((device PhysicsParticle*)q)[i].prevPosition.w = part.inverseMass;
+            }
+            part.flags &= ~PHYS_PART_FROZEN;
+            part.still = 0.0f;
+            parts[s.firstPart + pi] = part;
+        }
         cars[car] = s;
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
     // Its wheels awake while it moves (the world's are another matter: they are kinematic to it).
     if (wakeAll && int(t) < s.wheelCount) {
         PhysicsCarWheel w = wheels[s.firstWheel + int(t)];
@@ -867,6 +1040,8 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
                                      device const SDFScene&         sdf          [[buffer(18)]],
                                      device float2*                 wear         [[buffer(19)]],
                                      constant PhysicsGroup&         run          [[buffer(21)]],
+                                     device atomic_int*             acc          [[buffer(22)]],   // per body (PHYS_BODY_WORDS)
+                                     device const float*            shares       [[buffer(23)]],   // per body
                                      uint car   [[threadgroup_position_in_grid]],
                                      uint t     [[thread_index_in_threadgroup]],
                                      uint width [[threads_per_threadgroup]])
@@ -877,6 +1052,7 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
     threadgroup PhysicsCarBeam* cornerBeams = (threadgroup PhysicsCarBeam*)scratch;
     threadgroup float* cornerLambdas = (threadgroup float*)(cornerBeams + PHYS_CAR_CORNERS);
     threadgroup PhysWheelNow wn[8];
+    threadgroup atomic_int carried[6 * PHYS_CAR_CARRIED];
     threadgroup float3 drag;
     threadgroup float turn;
     PhysicsCar s = cars[car];
@@ -895,6 +1071,7 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
         q[i].velocity = n.velocity;
         q[i].prevPosition = n.prevPosition;
     }
+    for (uint k = t; k < 6 * PHYS_CAR_CARRIED; k += width) atomic_store_explicit(&carried[k], 0, memory_order_relaxed);
     threadgroup_barrier(mem_flags::mem_threadgroup);
     for (uint sub = 0; sub < run.count; ++sub) {
         // Each wheel as it is (its spin and inverse inertia about its axle, what its tyre found the substep before).
@@ -944,7 +1121,7 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
             }
             if (now.brakeDw != 0.0f && now.inverse > 0.0f) physKnuckleCouple(-now.axis * (now.brakeDw / now.inverse), wh, q, base);
             if ((wh.flags & PHYS_WHEEL_OFF) == 0) {
-                physCarTyre(wheels, wk, tune, candidates, firstCandidate, candidateCount, q, base, bodies, statics, bounds, w, h);
+                physCarTyre(wheels, wk, tune, candidates, firstCandidate, candidateCount, q, base, bodies, acc, statics, bounds, w, h);
             }
         }
         threadgroup_barrier(mem_flags::mem_device | mem_flags::mem_threadgroup);
@@ -1023,7 +1200,8 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
         }
         // The nodes against the statics.
         for (int i = base + i0; i < endNode; i += stride) {
-            physCarNode(i, q, base, wear, candidates, firstCandidate, candidateCount, statics, bounds, w, h);
+            physCarNode(i, q, base, wear, candidates, firstCandidate, candidateCount, statics, bounds, bodies, acc, shares, 1u << car, carried,
+                        firstCandidate + s.statics, sub, w, h);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // The hull's middles against the statics: each pushes its two nodes, each node by the mean of its pushes (summed
@@ -1404,6 +1582,125 @@ kernel void physicsCarTelemetryKernel(device const PhysicsCarTelemetry* telemetr
 {
     if (t == 0) out[0] = uint4(clock.counts.x, count, 0, 0);
     if (t < count) ((device PhysicsCarTelemetry*)(out + 1))[t] = telemetry[t];
+}
+
+// After a group of the cars' substeps, before the world's: what they did to each body (physCarNode, physCarTyre) — its
+// pushes' sum as a shove and the speed it stands for (each a substep's, as the CPU shoves it each substep), its tyres'
+// kicks as a speed — and how many pushes a substep it took (the next group's mass splitting). A thread a body.
+kernel void physicsCarBodiesKernel(device PhysicsBody*     bodies [[buffer(13)]],
+                                   constant PhysicsGroup&  run    [[buffer(21)]],
+                                   device atomic_int*      acc    [[buffer(22)]],
+                                   device float*           shares [[buffer(23)]],
+                                   constant PhysicsParams& p      [[buffer(0)]],
+                                   constant uint4&         info   [[buffer(30)]],
+                                   uint j [[thread_position_in_grid]])
+{
+    if (j >= info.z) return;
+    device atomic_int* a = acc + j * PHYS_BODY_WORDS;
+    int pushes = atomic_load_explicit(a + PHYS_ACC_PUSHES, memory_order_relaxed), kicks = atomic_load_explicit(a + PHYS_ACC_KICKS, memory_order_relaxed);
+    float n = float(max(run.count, 1u));
+    shares[j] = float(pushes) / n;
+    if (pushes == 0 && kicks == 0) return;
+    PhysicsBody b = bodies[j];
+    b.info.y &= ~PHYS_ASLEEP;
+    b.prevPosition.w = 0.0f;
+    if (b.position.w > 0.0f) {
+        float h = p.gravity.w;
+        if (pushes > 0) {
+            float3 dx = physFixed3(a + PHYS_ACC_PUSH, PHYS_PUSH_FIXED) * b.position.w;
+            float3 turn = physInvInertia(b.rotation, b.invInertia.xyz, physFixed3(a + PHYS_ACC_PUSH_TWIST, PHYS_PUSH_FIXED));
+            b.position.xyz += dx;
+            b.rotation = physTurn(b.rotation, turn);
+            b.velocity.xyz += dx / h;   // (as the CPU's shove each substep: its velocity the shove over a substep)
+            b.angular.xyz += turn / h;
+        }
+        if (kicks > 0) {
+            b.velocity.xyz += physFixed3(a + PHYS_ACC_KICK, PHYS_KICK_FIXED) * b.position.w;
+            b.angular.xyz += physInvInertia(b.rotation, b.invInertia.xyz, physFixed3(a + PHYS_ACC_KICK_TWIST, PHYS_KICK_FIXED));
+        }
+    }
+    bodies[j] = b;
+    for (uint k = 0; k < PHYS_ACC_KNOCK; ++k) atomic_store_explicit(a + k, 0, memory_order_relaxed);
+}
+
+// Before the fractured objects' verdict: the cars' knocks on each piece this step, into its strain (PhysicsWorld.strike).
+kernel void physicsCarStrikesKernel(device atomic_int*            acc   [[buffer(22)]],
+                                    device PhysicsFractureState*  state [[buffer(24)]],
+                                    constant uint4&               info  [[buffer(30)]],
+                                    uint j [[thread_position_in_grid]])
+{
+    if (j >= info.z) return;
+    device atomic_int* a = acc + j * PHYS_BODY_WORDS;
+    float impulse = float(atomic_load_explicit(a + PHYS_ACC_KNOCK, memory_order_relaxed)) / PHYS_KNOCK_FIXED;
+    if (!(impulse > 0.0f)) return;
+    physStrike(state[j], physFixed3(a + PHYS_ACC_KNOCK_POINT, PHYS_POINT_FIXED) / impulse,
+               physDirection(physFixed3(a + PHYS_ACC_KNOCK_PUSH, PHYS_KNOCK_FIXED)), impulse);
+    for (uint k = PHYS_ACC_KNOCK; k < PHYS_ACC_HITS; ++k) atomic_store_explicit(a + k, 0, memory_order_relaxed);
+}
+
+// After the fractured objects' verdict (PhysicsWorld.carsGiveWay): a car whose knocks broke a piece or freed it gets back
+// what it lost this step, less what breaking them took (their thresholds). A threadgroup a car; its sums in an order
+// that is always the same.
+kernel void physicsCarGiveWayKernel(device PhysicsCar*                  cars   [[buffer(1)]],
+                                    device PhysicsCarWheel*             wheels [[buffer(7)]],
+                                    device PhysicsParticle*             q      [[buffer(12)]],
+                                    device PhysicsBody*                 bodies [[buffer(13)]],
+                                    device atomic_int*                  acc    [[buffer(22)]],
+                                    device const PhysicsFractureState*  state  [[buffer(24)]],
+                                    device const PhysicsFractureNode*   nodes  [[buffer(25)]],
+                                    constant uint4&                     info   [[buffer(30)]],
+                                    uint car   [[threadgroup_position_in_grid]],
+                                    uint t     [[thread_index_in_threadgroup]],
+                                    uint width [[threads_per_threadgroup]],
+                                    uint lane  [[thread_index_in_simdgroup]],
+                                    uint group [[simdgroup_index_in_threadgroup]],
+                                    uint groups [[simdgroups_per_threadgroup]])
+{
+    threadgroup float4 sums[32];
+    PhysicsCar s = cars[car];
+    uint bit = 1u << car;
+    // What it broke or freed this step, and what that took.
+    float spent = 0.0f, gave = 0.0f;
+    for (uint j = t; j < info.z; j += width) {
+        device atomic_uint* hits = (device atomic_uint*)(acc + j * PHYS_BODY_WORDS + PHYS_ACC_HITS);
+        if ((atomic_load_explicit(hits, memory_order_relaxed) & bit) == 0) continue;
+        atomic_fetch_and_explicit(hits, ~bit, memory_order_relaxed);
+        float verdict = state[j].strain.w;
+        if (verdict == 0.0f) continue;
+        gave = 1.0f;
+        spent += verdict == 1.0f ? nodes[j].offset.w : nodes[j].extra.y;
+    }
+    // Its momentum now.
+    float3 now = float3(0.0f);
+    for (int i = s.firstNode + int(t); i < s.firstNode + s.nodeCount; i += int(width)) {
+        if (q[i].prevPosition.w > 0.0f) now += q[i].velocity.xyz / q[i].prevPosition.w;
+    }
+    if (int(t) < s.wheelCount) {
+        PhysicsCarWheel w = wheels[s.firstWheel + int(t)];
+        float inverse = (w.flags & PHYS_WHEEL_OFF) != 0 ? bodies[w.body].position.w : w.inverseMass;
+        if (inverse > 0.0f) now += bodies[w.body].velocity.xyz / inverse;
+    }
+    float4 mine = float4(now, spent);
+    mine = simd_sum(mine);
+    gave = simd_max(gave);
+    if (lane == 0) sums[group] = float4(mine.xyz, mine.w + 1e9f * gave);   // (gave: past any threshold's sum)
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    // (Every thread sums the groups' sums, in their order: the same numbers in each.)
+    float4 total = float4(0.0f);
+    bool any = false;
+    for (uint g = 0; g < groups; ++g) {
+        float4 x = sums[g];
+        if (x.w >= 1e9f) { any = true; x.w -= 1e9f; }
+        total += x;
+    }
+    float3 lost = s.momentum.xyz - total.xyz;
+    float l = length(lost), mass = s.lo.w;
+    if (!(any && l > total.w && mass > 0.0f)) return;
+    float3 d = lost / l * ((l - total.w) / mass);
+    for (int i = s.firstNode + int(t); i < s.firstNode + s.nodeCount; i += int(width)) {
+        if (q[i].prevPosition.w > 0.0f) q[i].velocity.xyz += d;
+    }
+    if (int(t) < s.wheelCount) bodies[wheels[s.firstWheel + int(t)].body].velocity.xyz += d;
 }
 
 // Back to the start (a replay): the cars' state as built (`initial`: their words one after another, as `live`'s), the

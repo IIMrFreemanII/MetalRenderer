@@ -36,6 +36,7 @@ package enum Kernel: Int, CaseIterable {
          physicsTouchCount, physicsTouchStarts, physicsTouchScatter, physicsTouchSort, physicsJacobiKick, physicsJacobiPush, physicsJacobiApply, physicsNarrowList, physicsNarrowArgs, physicsPairsKeep   // destruction (Physics+Fracture.swift)
     // Cars (CarsGPU, Shaders/PhysicsCars.metal): a step's start, a group of substeps, its end and events, the telemetry.
     case physicsCarBegin, physicsCarSubsteps, physicsCarEnd, physicsCarEvents, physicsCarTelemetry, physicsCarReset
+    case physicsCarBodies, physicsCarStrikes, physicsCarGiveWay   // what the cars do to bodies and pieces
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder

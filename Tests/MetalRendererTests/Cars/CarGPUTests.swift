@@ -184,6 +184,47 @@ final class CarGPUTests: XCTestCase {
         }
     }
 
+    // MARK: Bodies
+
+    /// How far each body moved from where it began, and the pieces that came free (a fractured object's, enabled, of
+    /// some mass).
+    private func moved(_ start: [GPUPhysicsBody], _ now: [GPUPhysicsBody], _ which: (GPUPhysicsBody) -> Bool) -> (count: Int, most: Float) {
+        let d = start.indices.filter { which(start[$0]) }.map { simd_distance(PhysicsMath.xyz(now[$0].position), PhysicsMath.xyz(start[$0].position)) }
+        return (d.filter { $0 > 0.1 }.count, d.max() ?? 0)
+    }
+
+    /// Into the crates at 40 km/h (the props demo), then through the brick wall at 50 (the breakables'): on the GPU as
+    /// on the CPU, the crates shoved aside, the wall broken and the car through it (its knocks broke the bricks, and it
+    /// got back what breaking them didn't take).
+    func testBodiesGiveWayAsOnTheCPU() throws {
+        let m = try metal()
+        for (demo, kmh) in [(CarSettings.Demo.props, Float(40)), (.breakables, 50)] {
+            let settings = CarSettings(style: .civic, cars: 1, demo: demo, demoSpeed: kmh)
+            let s = try scene(settings), g = try GPU(s, m), cpu = try scene(settings).physics!
+            let start = s.physics!.initialBodies
+            g.step(seconds(3))
+            cpu.advance(to: 3 + PhysicsWorld.stepLength / 2)
+            let a = g.telemetry[0], b = cpu.carTelemetry(0)
+            let props = { (o: GPUPhysicsBody) in o.info.y & (PhysicsWorld.pieceBit | PhysicsWorld.wheelBit | PhysicsWorld.kinematicBit) == 0 && o.position.w > 0 }
+            let pieces = { (o: GPUPhysicsBody) in o.info.y & PhysicsWorld.pieceBit != 0 }
+            let gpuBodies = g.gpu.readBodies()
+            let gp = moved(start, gpuBodies, props), cp = moved(start, cpu.bodies, props)
+            let gb = moved(start, gpuBodies, pieces), cb = moved(start, cpu.bodies, pieces)
+            for (name, t, p, q) in [("GPU", a, gp, gb), ("CPU", b, cp, cb)] {
+                print(String(format: "%@ %.0f km/h %@: car at z %.2f speed %.2f, front crushed %.2f, bent %d; props moved %d (most %.2f m), pieces moved %d (most %.2f m)",
+                             "\(demo)", kmh, name, t.position.z, t.speed, t.frontCrush, t.bent, p.count, p.most, q.count, q.most))
+            }
+            if demo == .props {
+                XCTAssertGreaterThan(gp.count, 0, "the crates moved")
+                XCTAssertEqual(a.position.z, b.position.z, accuracy: 3, "the car where the CPU's is")
+            } else {
+                XCTAssertGreaterThan(gb.count, 20, "the bricks scattered")
+                XCTAssertGreaterThan(a.position.z, 34.5, "the car through the wall (at z 34)")
+                XCTAssertEqual(a.position.z, b.position.z, accuracy: 4, "the car near where the CPU's is (past breakables it varies)")
+            }
+        }
+    }
+
     /// Each style's beams in colours: how many a pass takes (its barriers), the corners' too.
     func testColourCounts() throws {
         let m = try metal()

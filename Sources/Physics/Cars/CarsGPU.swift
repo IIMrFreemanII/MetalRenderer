@@ -21,7 +21,7 @@ package struct GPUCar {
     package var still: Float = 0, frontCrush: Float = 0, coolant: Float = 1, heat: Float = 0
     package var engineDamage: Float = 0, bent: Int32 = 0, broken: Int32 = 0, partsOff: Int32 = 0
     package var wheelsOff: Int32 = 0, panesBroken: Int32 = 0, sinceSmoke: Int32 = 0, eventCount: Int32 = 0
-    package var hitCount: Int32 = 0, pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
+    package var hitCount: Int32 = 0, statics: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
 
     /// MSL PHYS_CAR_MANUAL...
     package static let manual: UInt32 = 1, autopilot: UInt32 = 2, running: UInt32 = 4, awake: UInt32 = 8, asleep: UInt32 = 16
@@ -99,11 +99,13 @@ package struct GPUCarTelemetry {
 /// kernels move them, the world's bodies meet them as they would a moving wall.
 package final class CarsGPU {
     /// A car's static candidates this step, at most (MSL PHYS_CAR_CANDIDATES).
-    static let maxCandidates = 256
+    static let maxCandidates = 512
+    /// What the cars do to a body over a group, summed (MSL PHYS_BODY_WORDS ints a body).
+    static let bodyWords = 24
     /// Threads a car's threadgroup.
     static let width = 256
     /// The most nodes a car has (its substeps keep them in threadgroup memory: MSL PHYS_CAR_NODES).
-    static let maxNodes = 448
+    static let maxNodes = 432
     /// ...and corners' beams (their passes in threadgroup memory: MSL PHYS_CAR_CORNERS).
     static let maxCorners = 288
 
@@ -114,7 +116,9 @@ package final class CarsGPU {
     /// beams' loads and lambdas, the nodes' wear and pushes, the clock).
     private let state: MTLBuffer, initialState: MTLBuffer, scratch: MTLBuffer
     private let carsAt: Int, beamsAt: Int, limitsAt: Int, wheelsAt: Int, partsAt: Int, panesAt: Int
-    private let loadsAt: Int, lambdasAt: Int, wearAt: Int, pushesAt: Int, clockAt: Int
+    private let loadsAt: Int, lambdasAt: Int, wearAt: Int, pushesAt: Int, clockAt: Int, bodySumsAt: Int, sharesAt: Int
+    /// The world's bodies (the cars' sums on them: physicsCarBodiesKernel).
+    private let bodyCount: Int
     private let tunes: MTLBuffer, reactions: MTLBuffer, colours: MTLBuffer, colourStarts: MTLBuffer, candidates: MTLBuffer
     private let paneFrames: MTLBuffer, radiator: MTLBuffer, reach: MTLBuffer, events: MTLBuffer, telemetry: MTLBuffer
     private let carCount: MTLBuffer
@@ -273,8 +277,11 @@ package final class CarsGPU {
         // The scratch, cleared.
         let beams = system.initialBeams.count, particles = world.particles.count
         at = 0
-        let sums = [put(beams * 4), put(beams * 4), put(particles * 8), put(particles * 16), put(16)]
+        let n = world.bodies.count
+        bodyCount = n
+        let sums = [put(beams * 4), put(beams * 4), put(particles * 8), put(particles * 16), put(16), put(n * CarsGPU.bodyWords * 4), put(n * 4)]
         (loadsAt, lambdasAt, wearAt, pushesAt, clockAt) = (sums[0], sums[1], sums[2], sums[3], sums[4])
+        (bodySumsAt, sharesAt) = (sums[5], sums[6])
         scratch = try buffer([UInt8](), "carsScratch", length: at)
         memset(scratch.contents(), 0, scratch.length)
         tunes = try buffer(system.tunes.map(GPUCarTune.init), "carsTunes")
@@ -287,14 +294,15 @@ package final class CarsGPU {
         reach = try buffer(system.radiatorReach, "carsRadiatorReach")
         events = try buffer([GPUBreakEvent](), "carsEvents", length: count * CarSystem.maxEvents * MemoryLayout<GPUBreakEvent>.stride)
         telemetry = try buffer(system.telemetry.map { _ in GPUCarTelemetry() }, "carsTelemetry")
-        carCount = try buffer([UInt32(count)], "carsCount")
+        // (MSL `info`: the cars, whether the world has fractured objects, its bodies.)
+        carCount = try buffer([SIMD4<UInt32>(UInt32(count), world.fractures ? 1 : 0, UInt32(n), 0)], "carsInfo")
         commands = try (0..<slots).map { try buffer([UInt32](), "carsCommands\($0)", length: 16 + CarsGPU.maxCommands * MemoryLayout<GPUFractureCommand>.stride) }
-        let n = system.cars.count
-        snapshots = try (0..<slots).map { try buffer([UInt32](), "carsTelemetry\($0)", length: 16 + n * MemoryLayout<GPUCarTelemetry>.stride) }
+        let carsCount = system.cars.count
+        snapshots = try (0..<slots).map { try buffer([UInt32](), "carsTelemetry\($0)", length: 16 + carsCount * MemoryLayout<GPUCarTelemetry>.stride) }
         // (Each snapshot as the world starts: what a frame shows before the GPU's first steps are back.)
         for s in snapshots {
-            s.contents().storeBytes(of: SIMD4<UInt32>(0, UInt32(n), 0, 0), as: SIMD4<UInt32>.self)
-            let t = s.contents().advanced(by: 16).bindMemory(to: GPUCarTelemetry.self, capacity: n)
+            s.contents().storeBytes(of: SIMD4<UInt32>(0, UInt32(carsCount), 0, 0), as: SIMD4<UInt32>.self)
+            let t = s.contents().advanced(by: 16).bindMemory(to: GPUCarTelemetry.self, capacity: carsCount)
             for (c, car) in system.telemetry.enumerated() { t[c] = GPUCarTelemetry(car) }
         }
     }
@@ -372,6 +380,7 @@ package final class CarsGPU {
     struct World {
         let params: MTLBuffer, particles: MTLBuffer, bodies: MTLBuffer, statics: MTLBuffer, staticBounds: MTLBuffer
         let shapes: MTLBuffer, samples: MTLBuffer, sdfScene: MTLBuffer, ring: MTLBuffer
+        let fractureState: MTLBuffer, fractureNodes: MTLBuffer
     }
 
     /// The step's start for every car, after the world's broad phase (its commands from slot `slot`'s list).
@@ -398,8 +407,43 @@ package final class CarsGPU {
         let substeps = pipelines[.physicsCarSubsteps]
         enc.setComputePipelineState(substeps)
         enc.setBuffer(runs, offset: groupOffset, index: 21)
+        enc.setBuffer(scratch, offset: bodySumsAt, index: 22)
+        enc.setBuffer(scratch, offset: sharesAt, index: 23)
         barrier()
         groups(enc, substeps)
+        // What they did to the bodies, before the world's substeps move them.
+        let apply = pipelines[.physicsCarBodies]
+        enc.setComputePipelineState(apply)
+        barrier()
+        perBody(enc, apply)
+    }
+
+    private func perBody(_ enc: ComputePass, _ state: MTLComputePipelineState) {
+        let width = min(state.threadExecutionWidth, max(bodyCount, 1))
+        enc.dispatchThreads(MTLSize(width: max(bodyCount, 1), height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
+    }
+
+    /// Before the fractured objects' verdict: the cars' knocks on their pieces into their strain.
+    func encodeStrikes(_ enc: ComputePass, pipelines: Pipelines, world: World, barrier: () -> Void) {
+        let strikes = pipelines[.physicsCarStrikes]
+        enc.setComputePipelineState(strikes)
+        enc.setBuffer(scratch, offset: bodySumsAt, index: 22)
+        enc.setBuffer(world.fractureState, offset: 0, index: 24)
+        enc.setBuffer(carCount, offset: 0, index: 30)
+        barrier()
+        perBody(enc, strikes)
+    }
+
+    /// After the verdict: each car through what its knocks broke or freed (PhysicsWorld.carsGiveWay).
+    func encodeGiveWay(_ enc: ComputePass, pipelines: Pipelines, world: World, barrier: () -> Void) {
+        bind(enc, world)
+        let giveWay = pipelines[.physicsCarGiveWay]
+        enc.setComputePipelineState(giveWay)
+        enc.setBuffer(scratch, offset: bodySumsAt, index: 22)
+        enc.setBuffer(world.fractureState, offset: 0, index: 24)
+        enc.setBuffer(world.fractureNodes, offset: 0, index: 25)
+        barrier()
+        groups(enc, giveWay)
     }
 
     /// The step's end for every car, then its events into the ring (after the fractured objects', if any).
@@ -451,6 +495,7 @@ package final class CarsGPU {
     }
     func readParts(_ n: Int) -> [CarPart] { read(state, at: partsAt, n) }
     func readPanes(_ n: Int) -> [CarPane] { read(state, at: panesAt, n) }
+    func readShares() -> [Float] { read(scratch, at: sharesAt, bodyCount) }
     func readTelemetry() -> [CarTelemetry] { read(telemetry, at: 0, count).map { (t: GPUCarTelemetry) in t.telemetry } }
 
     private func read<T>(_ b: MTLBuffer, at offset: Int, _ n: Int) -> [T] {

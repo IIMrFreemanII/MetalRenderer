@@ -362,7 +362,7 @@ package final class PhysicsGPU {
     /// The buffers of the world's the cars' kernels read and write.
     private var carWorld: CarsGPU.World {
         CarsGPU.World(params: params, particles: particles[0], bodies: bodies, statics: statics, staticBounds: staticBounds, shapes: shapes,
-                      samples: samples, sdfScene: sdfScene, ring: breakRing)
+                      samples: samples, sdfScene: sdfScene, ring: breakRing, fractureState: fractureState, fractureNodes: fractureNodes)
     }
 
     // MARK: - Encoding
@@ -496,10 +496,12 @@ package final class PhysicsGPU {
             }
             encodeHair(enc, pipelines: pipelines)
             part("phys fracture")
+            if fractures, let cars { cars.encodeStrikes(enc, pipelines: pipelines, world: carWorld) { barrier(enc) } }
             if fractures { encodeFractureEnd(enc, pipelines: pipelines) }
             if let cars {
                 part("phys cars")
                 cars.encodeEnd(enc, pipelines: pipelines, world: carWorld) { barrier(enc) }
+                if fractures { cars.encodeGiveWay(enc, pipelines: pipelines, world: carWorld) { barrier(enc) } }
             }
         }
     }
