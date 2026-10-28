@@ -30,9 +30,10 @@ package enum Kernel: Int, CaseIterable {
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
     case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsLooseGather, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow, physicsFractureClear, physicsFractureInsert,
-         physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourCount,
+         physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourPick, physicsColourCommit, physicsColourCount,
          physicsColourStarts, physicsColourScatter, physicsColourExtra,
-         physicsWideStart, physicsWideIntegrate, physicsWideVelocities, physicsWideArgs, physicsWidePush, physicsWideKick, physicsWideJoints, physicsWideTail   // destruction (Physics+Fracture.swift)
+         physicsWideStart, physicsWideIntegrate, physicsWideVelocities, physicsWideArgs, physicsWidePush, physicsWideKick, physicsWideJoints, physicsWideTail,
+         physicsTouchCount, physicsTouchStarts, physicsTouchScatter, physicsTouchSort, physicsJacobiKick, physicsJacobiPush, physicsJacobiApply, physicsNarrowList, physicsNarrowArgs, physicsPairsKeep   // destruction (Physics+Fracture.swift)
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder

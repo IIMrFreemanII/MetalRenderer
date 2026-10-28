@@ -75,13 +75,17 @@ extension Benchmark {
 
     /// Massive (DestructionSettings.massive): the courtyard and a building of fractured walls and floors, 4,000 bodies
     /// and more, at the physics look (no GI or reflections: the physics takes the frame). Paused along the building's
-    /// fall, then its first 8 s moving for timing. Offline: the M1 Max doesn't keep 60 fps here.
+    /// fall (Automatic's steps: the CPU's; and the heap with the GPU's), then its first 8 s moving for timing. Offline:
+    /// the M1 Max doesn't keep 60 fps here.
     private static func destructionMassive() -> [Config] {
         let base = Config("", scale: RenderSettings.physicsScale, upscale: 3, gi: nil, scene: SceneSettings(kind: .destruction)) {
             $0.usePhysicsLook()
             $0.scene.destruction.massive = true
         }
         var out = [Float(1), 3, 5, 8, 14].map { t in base.named(String(format: "massive t%04.1f", t)).still(at: t) }
+        out += [Float(8), 14].map { t in
+            base.named(String(format: "massive gpu t%04.1f", t)).with { $0.scene.physics.backend = .gpu }.still(at: t)
+        }
         out.append(base.named("massive moving"))
         return out
     }
