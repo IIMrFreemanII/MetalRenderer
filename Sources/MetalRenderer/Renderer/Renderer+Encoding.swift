@@ -20,6 +20,9 @@ extension Renderer {
     /// `METALRENDERER_PHYSICS_PARTS=1`: the GPU's physics step in a pass a part (PhysicsGPU.parts), for the
     /// benchmark's per-pass times.
     static let physicsParts = ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_PARTS"] == "1"
+    /// A car world's physics steps beside the frame, on a queue of their own (`encodeSceneUpdate`):
+    /// `METALRENDERER_PHYSICS_BESIDE=0` keeps them in the frame.
+    static let physicsBeside = ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_BESIDE"] != "0"
     private static let stepsPerFrameOverride = ProcessInfo.processInfo.environment["METALRENDERER_STEPS_PER_FRAME"].flatMap { Int($0) }
 
     // MARK: - Frame encoding
@@ -58,8 +61,9 @@ extension Renderer {
         // and Metal's descriptor, where they are now. Ahead of everything that reads the instances.
         // Cloths too: their vertices, from where the physics (or the CPU's) left them.
         var deformed = false
-        if let physicsGPU, let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
-            physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
+        physicsAsideSteps = 0
+        if let physicsGPU {
+            var steps = 0, restart = false
             if physicsGPU.simulates {
                 // With liquids a replay (a still at 5 s: 300 steps) would keep the GPU for seconds in one command
                 // buffer, past the watchdog: it catches up over the next frames instead.
@@ -67,7 +71,7 @@ extension Renderer {
                 // stays under the GPU's watchdog; the rest wait for the next frames. In the app every scene: a jump of
                 // the clock catches up over frames, not in one command buffer.)
                 let limit = physicsGPU.hasFluid || physicsGPU.fractures ? 20 : stepsPerFrame
-                let (steps, restart) = scene.takePhysicsSteps(limit: limit)
+                (steps, restart) = scene.takePhysicsSteps(limit: limit)
                 let behind = scene.physicsPending.steps
                 if behind > 0 && !session.physicsBehind && limit == stepsPerFrame {
                     print("Physics: \(behind) steps behind (\(steps) a frame till caught up): the clock jumped, or a scene stepped to it")
@@ -75,33 +79,65 @@ extension Renderer {
                 session.physicsBehind = behind > 0
                 physicsGPU.sendCommands()
                 if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
-                if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
-                if Renderer.physicsParts {
-                    physicsGPU.parts = { [unowned passes] name in
-                        passes.endCompute()
-                        _ = passes.compute(name, serial: true, concurrent: physicsGPU.hasFluid)
+            }
+            // A car world's steps beside the frame, on the physics' own queue (CarsGPU's kernels are long chains of short
+            // phases, a car on a GPU core, the rest of it idle): the frame poses the bodies and the cars' panels where
+            // the last frame's steps left them, then its steps run while it traces. What it draws is a frame's steps
+            // behind, as the CPU's steps beside the frame are. A replay, a catch-up, the parts timed apart: in the frame.
+            let aside = physicsGPU.simulates && physicsGPU.cars != nil && Renderer.physicsBeside && steps > 0 && !restart
+                && scene.physicsPending.steps == 0 && !Renderer.physicsParts ? physicsAside : nil
+            if let last = physicsAside, physicsAsideQueued > 0 { passes.wait(for: last.done, value: physicsAsideQueued) }
+            if let enc = passes.compute("physics", serial: true, concurrent: physicsGPU.hasFluid) {
+                physicsGPU.concurrent = physicsGPU.hasFluid   // (its own barriers: the liquids' steps side by side)
+                if physicsGPU.simulates {
+                    if aside == nil {
+                        if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
+                        if Renderer.physicsParts {
+                            physicsGPU.parts = { [unowned passes] name in
+                                passes.endCompute()
+                                _ = passes.compute(name, serial: true, concurrent: physicsGPU.hasFluid)
+                            }
+                        }
+                        physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
+                        if let parts = physicsGPU.parts {
+                            parts("physics")   // (the rest: the pose, the meshes)
+                            physicsGPU.parts = nil
+                        }
                     }
+                    let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
+                    physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
+                                          descriptorStride: instanceDescriptorStride)
                 }
-                physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
-                if let parts = physicsGPU.parts {
-                    parts("physics")   // (the rest: the pose, the meshes)
-                    physicsGPU.parts = nil
+                physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
+                physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer, damage: sceneBuffers.damage)
+                physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
+                // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
+                let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
+                if liquids {
+                    physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
+                    physicsGPU.liquidFrames -= 1
                 }
-                let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
-                physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
-                                      descriptorStride: instanceDescriptorStride)
+                deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
+                passes.endCompute()
             }
-            physicsGPU.encodeClothMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer)
-            physicsGPU.encodeSoftMesh(enc, pipelines: pipelines, slot: slot, positions: positionBuffer, normals: normalBuffer, damage: sceneBuffers.damage)
-            physicsGPU.encodeHairCurves(enc, pipelines: pipelines, slot: slot, positions: positionBuffer)
-            // The liquids' surfaces (and their structures), while they move and a few frames after: paused, they stay.
-            let liquids = physicsGPU.hasFluid && physicsGPU.liquidFrames > 0
-            if liquids {
-                physicsGPU.encodeFluidSurfaces(enc, pipelines: pipelines, positions: positionBuffer, normals: normalBuffer, indices: indexBuffer)
-                physicsGPU.liquidFrames -= 1
+            if let aside {
+                // The steps, once this frame has read where the last ones left the bodies (committed now: they wait on
+                // the GPU for the frame's pose, not for the frame).
+                let k = physicsAsideQueued + 1
+                passes.signal(aside.posed, value: k)
+                aside.slots[slot].wait()
+                let frame = aside.frame.begin(slot: slot, split: false, overlap: false)
+                frame.wait(for: aside.posed, value: k)
+                if let enc = frame.compute("physics", serial: true, concurrent: false) {
+                    physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
+                    frame.endCompute()
+                }
+                frame.signal(aside.done, value: k)
+                let free = aside.slots[slot]
+                frame.commit(presenting: nil, wait: false) { _ in free.signal() }
+                physicsAsideQueued = k
+                physicsAsideSteps = steps
             }
-            deformed = physicsGPU.hasCloth || physicsGPU.hasSoftBodies || physicsGPU.hasHair || liquids
-            passes.endCompute()
         }
         // Mesh particles (debris): their instances where the particles are, ahead of the top level. (Their steps run
         // after it, with the billboards': below.)
@@ -208,7 +244,13 @@ extension Renderer {
                 scene.replayParticles()
             }
             // (Fractured objects' dust comes from the physics' steps, 20 a frame at most in a replay: these keep up with them.)
-            let (steps, restart) = scene.takeParticleSteps(limit: particlesGPU.breakRing != nil ? 20 : ParticlesGPU.maxStepsPerFrame)
+            // (With the physics' steps beside the frame, no further than the steps done before them: their breaks are in
+            // the ring.)
+            var limit = particlesGPU.breakRing != nil ? 20 : ParticlesGPU.maxStepsPerFrame
+            if physicsAsideSteps > 0, let physicsGPU {
+                limit = min(limit, max(physicsGPU.stepsEncoded - physicsAsideSteps - particlesGPU.stepIndex, 0))
+            }
+            let (steps, restart) = scene.takeParticleSteps(limit: limit)
             // The camera's footprint widens the billboards (their boxes with them): posed again as it moves, paused too.
             let layerScale: Float = settings.particleScale < 1 ? 0.5 : 1
             let camera = SIMD4(lod.camPos, 1 / max(lod.pixelScale * layerScale, 1e-6))
@@ -570,6 +612,12 @@ extension Renderer {
         let handOver = plan.interpolate && output != nil ? interpolator : nil, presenter = presenter
         let withBetween = between != nil
         let hold = FrameInterpolation.hold(frameMs: smoothedGPUMs, refreshMs: surface?.refreshInterval.map { $0 * 1000 })
+        // A benchmark measures the frame over its physics' steps beside it: its last command buffer waits for them.
+        if benchmark != nil, physicsAsideSteps > 0, let aside = physicsAside {
+            passes.wait(for: aside.done, value: physicsAsideQueued)
+            _ = passes.compute("phys beside", serial: true)
+            passes.endCompute()
+        }
         passes.commit(presenting: output?.drawable, wait: benchmark != nil) { [weak self] frame in
             if let handOver {
                 if let presenter { presenter.present(handOver, slot: slot, withBetween: withBetween, hold: hold) } else { handOver.release(slot) }
@@ -634,3 +682,4 @@ extension Renderer {
         }
     }
 }
+

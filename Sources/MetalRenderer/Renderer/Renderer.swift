@@ -119,6 +119,17 @@ package final class Renderer: NSObject {
     package var crowdSkinner: CrowdSkinner?
     /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
     package var physicsGPU: PhysicsGPU?
+    /// The physics' steps beside the frame, on a queue of their own (`encodeSceneUpdate`): its frames, made the first time,
+    /// and the events that keep it and the frames in step (its frames done; this frame's bodies posed), the last of its
+    /// frames committed, and per frame slot whether its last is done (what its next reuses).
+    package lazy var physicsAside: (frame: Metal4Frame, done: MTLSharedEvent, posed: MTLSharedEvent, slots: [DispatchSemaphore])? = {
+        guard let frame = Metal4Frame(device: device, framesInFlight: Renderer.maxFramesInFlight, layer: nil),
+              let done = device.makeSharedEvent(), let posed = device.makeSharedEvent() else { return nil }
+        return (frame, done, posed, (0..<Renderer.maxFramesInFlight).map { _ in DispatchSemaphore(value: 1) })
+    }()
+    package var physicsAsideQueued: UInt64 = 0
+    /// This frame's steps beside it (0: none): what its particles' steps wait for.
+    package var physicsAsideSteps = 0
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
     package var particlesGPU: ParticlesGPU?

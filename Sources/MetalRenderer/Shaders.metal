@@ -41,6 +41,7 @@ using namespace metal::raytracing;
 #include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its clusters' boxes (vg* kernels)
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
+#include "Shaders/PhysicsCars.metal"       // node-beam cars: a threadgroup a car, its substeps in one dispatch (physicsCar* kernels)
 #include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)
 #include "Shaders/FluidSurface.metal"      // liquids' surfaces: splat, blur, surface nets into the scene's buffers
 #include "Shaders/ParticleSim.metal"       // particle effects: a step's begin, emit and simulate, the pose (particle* kernels)

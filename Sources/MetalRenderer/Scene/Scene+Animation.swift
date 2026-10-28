@@ -242,7 +242,13 @@ extension Scene {
     /// What the GPU draws the CPU's cloths, soft bodies and hair from: the stepper's latest, or the world's.
     package var drawnPhysics: PhysicsStepper.Drawn? {
         if let physicsStepper { return drawnFrame ?? physicsStepper.latest }
-        return physics.map { PhysicsStepper.Drawn($0) }
+        guard let physics else { return nil }
+        var drawn = PhysicsStepper.Drawn(physics)
+        if physicsOnGPU, let gpuCars {   // (the cars as the GPU's steps left them)
+            drawn.cars = gpuCars.cars
+            drawn.stepIndex = gpuCars.step
+        }
+        return drawn
     }
 
     /// ...where the GPU had them (`poses`: position, rotation per body): the CPU's copy, for what reads it here

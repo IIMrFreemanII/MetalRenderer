@@ -101,6 +101,10 @@ package final class PhysicsGPU {
     private let colliderCounts: MTLBuffer
     private let lastParticle: MTLBuffer
     private let particleCount: Int
+    /// The particles the world's own stages step: those before the cars' nodes (the cars' kernels step theirs).
+    private let worldParticles: Int
+    /// The cars (Shaders/PhysicsCars.metal), when the world has cars and this steps it.
+    package let cars: CarsGPU?
     /// The cloths' constraints by colour, and where each colour starts.
     private let constraints: MTLBuffer
     private let colourStarts: MTLBuffer
@@ -162,7 +166,7 @@ package final class PhysicsGPU {
     /// physicsFractureEventsKernel: a header per slot, then its events); the particles read it (ParticlesGPU.breakRing).
     private let broke: MTLBuffer
     package let breakRing: MTLBuffer
-    private var commandsSent = 0
+    private var commandsSent = 0, commandsKept = 0
     package var fractures: Bool { world.fractures }
     /// It steps the world; otherwise it only draws the CPU's cloths and hair.
     package let simulates: Bool
@@ -204,9 +208,19 @@ package final class PhysicsGPU {
         }
         let n = world.bodies.count, k = PhysicsWorld.maxPairs
         count = n
-        params = try buffer([world.params], "physicsParams")
-        initial = try buffer(world.initialBodies, "physicsInitial")
-        bodies = try buffer(world.initialBodies, "physicsBodies")
+        // With cars: their nodes are the world's last particles, which its own stages leave to the cars' kernels, and
+        // their wheels kinematic bodies of no mass to it (CarsGPU).
+        let carNodes = simulates && world.hasCars ? CarsGPU.firstNode(world) : nil
+        precondition(!(simulates && world.hasCars) || carNodes != nil, "a world with cars and particles after their nodes")
+        var startBodies = world.initialBodies, startParams = world.params
+        if let carNodes {
+            CarsGPU.prepare(&startBodies, world.carSystem)
+            startParams.particles.x = UInt32(carNodes)
+        }
+        worldParticles = carNodes ?? world.particles.count
+        params = try buffer([startParams], "physicsParams")
+        initial = try buffer(startBodies, "physicsInitial")
+        bodies = try buffer(startBodies, "physicsBodies")
         statics = try buffer(world.statics, "physicsStatics")
         staticBounds = try buffer(world.staticBounds.flatMap { [SIMD4($0.lo, 0), SIMD4($0.hi, 0)] }, "physicsStaticBounds")
         shapes = try buffer(world.shapes, "physicsShapes")
@@ -238,7 +252,7 @@ package final class PhysicsGPU {
         }
         lastPose = try buffer(poses, "physicsLastPose")
         wide = world.fractures && world.ragdolls.isEmpty
-        wideSteps = wide && world.particles.isEmpty && world.constraints.isEmpty && world.tets.isEmpty
+        wideSteps = wide && worldParticles == 0 && world.constraints.isEmpty && world.tets.isEmpty
         jointRuns = (0..<(world.jointStarts.count - 1)).map { SIMD2(world.jointStarts[$0], world.jointStarts[$0 + 1]) }
         colourWork = try buffer([UInt32](repeating: 0, count: 128), "physicsColourWork")
         colourMarks = try buffer([UInt32](), "physicsColourMarks", length: wide ? 3 * n * 4 : 0)
@@ -332,7 +346,7 @@ package final class PhysicsGPU {
                                     touchList: touchList.gpuAddress)], "physicsTables")
         tableResources = [tets, tetStarts, welds, fractureState, looseLinks, looseMasks, weldStarts, weldList, kicks, strikes, touches, touchList]
         broke = try buffer([UInt32](), "physicsBroke", length: n * 4)
-        breakRing = try buffer([UInt32](), "physicsBreakRing", length: world.fractures
+        breakRing = try buffer([UInt32](), "physicsBreakRing", length: world.fractures || carNodes != nil
             ? PhysicsWorld.ringSlots * (16 + PhysicsWorld.ringEvents * MemoryLayout<GPUBreakEvent>.stride) : 0)
         if simulates, let liquids = world.fluid {
             fluid = try FluidGPU(device: device, fluid: liquids, bodies: n,
@@ -341,7 +355,14 @@ package final class PhysicsGPU {
         } else {
             fluid = nil
         }
+        cars = try carNodes.map { try CarsGPU(device: device, world: world, firstNode: $0, slots: slots) }
         sendCommands()   // (a scene's scripted ones)
+    }
+
+    /// The buffers of the world's the cars' kernels read and write.
+    private var carWorld: CarsGPU.World {
+        CarsGPU.World(params: params, particles: particles[0], bodies: bodies, statics: statics, staticBounds: staticBounds, shapes: shapes,
+                      samples: samples, sdfScene: sdfScene, ring: breakRing)
     }
 
     // MARK: - Encoding
@@ -374,8 +395,12 @@ package final class PhysicsGPU {
     /// Back to the start (a replay).
     private var empty: Bool { count + particleCount == 0 && fluid == nil }
 
+    /// Steps encoded since the last reset (what the particles' dust keeps behind: Renderer.encodeSceneUpdate).
+    package private(set) var stepsEncoded = 0
+
     package func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
         guard !empty else { return }
+        stepsEncoded = 0
         enc.setComputePipelineState(pipelines[.physicsReset])
         enc.setBuffer(params, offset: 0, index: 0)
         enc.setBuffer(initial, offset: 0, index: 1)
@@ -398,6 +423,10 @@ package final class PhysicsGPU {
             dispatch(enc, pipelines[.physicsFractureReset], max(count, world.initialWelds.count, 1))
         }
         fluid?.encodeReset(enc, pipelines: pipelines)
+        if let cars {
+            barrier(enc)
+            cars.encodeReset(enc, pipelines: pipelines)
+        }
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
         enc.setComputePipelineState(pipelines[.physicsHairReset])
@@ -426,6 +455,8 @@ package final class PhysicsGPU {
             return
         }
         enc.useResources(tableResources, usage: [.read, .write])   // (the substeps reach them through `tables`)
+        cars?.sendCommands(world, slot: slot, steps: steps)
+        stepsEncoded += steps
         for _ in 0..<steps {
             part("phys fracture")
             if fractures { encodeFractureCommands(enc, pipelines: pipelines) }
@@ -447,16 +478,29 @@ package final class PhysicsGPU {
             enc.setBuffer(next, offset: 0, index: 11)
             enc.setBuffer(colliders, offset: 0, index: 12)
             enc.setBuffer(colliderCounts, offset: 0, index: 13)
-            dispatch(enc, pipelines[.physicsParticleNeighbours], particleCount)
+            dispatch(enc, pipelines[.physicsParticleNeighbours], worldParticles)
+            if let cars {
+                part("phys cars")
+                cars.encodeBegin(enc, pipelines: pipelines, world: carWorld, slot: slot) { barrier(enc) }
+            }
             for g in 0..<groupCount {
                 fluid?.encodeGroup(enc, pipelines: pipelines)
                 part("phys narrow")
                 encodeNarrow(enc, pipelines: pipelines, group: g, slot: slot)
+                if let cars {
+                    // (The cars' substeps before the world's: its bodies meet the wheels where the group leaves them.)
+                    part("phys cars")
+                    cars.encodeSubsteps(enc, pipelines: pipelines, world: carWorld, groups: groups, groupOffset: g * MemoryLayout<Group>.stride) { barrier(enc) }
+                }
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }
             encodeHair(enc, pipelines: pipelines)
             part("phys fracture")
             if fractures { encodeFractureEnd(enc, pipelines: pipelines) }
+            if let cars {
+                part("phys cars")
+                cars.encodeEnd(enc, pipelines: pipelines, world: carWorld) { barrier(enc) }
+            }
         }
     }
 
@@ -475,7 +519,7 @@ package final class PhysicsGPU {
         enc.setBuffer(particles[0], offset: 0, index: 1)
         enc.setBuffer(particleHeads, offset: 0, index: 2)
         enc.setBuffer(particleNext, offset: 0, index: 3)
-        dispatch(enc, pipelines[.physicsParticleInsert], particleCount)
+        dispatch(enc, pipelines[.physicsParticleInsert], worldParticles)
         if world.fractures {   // (the levelled grid, for the bodies' partners; the particles' colliders use the other)
             enc.setComputePipelineState(pipelines[.physicsFractureClear])
             enc.setBuffer(levelHeads, offset: 0, index: 1)
@@ -581,17 +625,17 @@ package final class PhysicsGPU {
 
     /// The world's commands the GPU hasn't had yet (a shot, a blast: the CPU adds them between frames, stamped with a
     /// step not yet encoded), then their count. A shared buffer: a frame in flight may see them early, before their step.
+    /// (The cars' commands aren't among them: CarsGPU sends each frame's steps' own.)
     package func sendCommands() {
         let all = world.fractureCommands
         guard fractures, all.count > commandsSent else { return }
-        let n = min(all.count, PhysicsWorld.maxCommands)
-        let stride = MemoryLayout<GPUFractureCommand>.stride
-        all.withUnsafeBytes { raw in
-            commands.contents().advanced(by: commandsSent * stride)
-                .copyMemory(from: raw.baseAddress!.advanced(by: commandsSent * stride), byteCount: (n - commandsSent) * stride)
+        let out = commands.contents().bindMemory(to: GPUFractureCommand.self, capacity: PhysicsWorld.maxCommands)
+        for c in all[commandsSent...] where c.info.y != PhysicsWorld.FractureCommand.car.rawValue && commandsKept < PhysicsWorld.maxCommands {
+            out[commandsKept] = c
+            commandsKept += 1
         }
-        commandsSent = n
-        fractureClock.contents().advanced(by: 4).storeBytes(of: UInt32(n), as: UInt32.self)
+        commandsSent = all.count
+        fractureClock.contents().advanced(by: 4).storeBytes(of: UInt32(commandsKept), as: UInt32.self)
     }
 
     /// The step's commands, ahead of its broad phase.
@@ -846,7 +890,7 @@ package final class PhysicsGPU {
             return
         }
         let lanes = substeps.threadExecutionWidth
-        let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, particleCount) + lanes - 1) / lanes * lanes)
+        let width = min(substeps.maxTotalThreadsPerThreadgroup / lanes * lanes, (max(count, worldParticles) + lanes - 1) / lanes * lanes)
         barrier(enc)
         enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: width, height: 1, depth: 1))
     }
@@ -985,15 +1029,19 @@ package final class PhysicsGPU {
         enc.setBuffer(descriptors ?? instances, offset: 0, index: 6)
         enc.setBuffer(fractureState, offset: 0, index: 7)
         dispatch(enc, pose, count)
-        guard particleCount > 0 else { return }
-        var q = PoseParams(bodies: UInt32(particleCount), descriptorStride: p.descriptorStride)
+        if let cars {
+            barrier(enc)
+            cars.encodeTelemetry(enc, pipelines: pipelines, slot: slot) { barrier(enc) }
+        }
+        guard worldParticles > 0 else { return }
+        var q = PoseParams(bodies: UInt32(worldParticles), descriptorStride: p.descriptorStride)
         enc.setComputePipelineState(pipelines[.physicsParticlePose])
         enc.setBytes(&q, length: MemoryLayout<PoseParams>.stride, index: 0)
         enc.setBuffer(particles[0], offset: 0, index: 1)
         enc.setBuffer(lastParticle, offset: 0, index: 2)
         enc.setBuffer(instances, offset: 0, index: 3)
         enc.setBuffer(descriptors ?? instances, offset: 0, index: 4)
-        dispatch(enc, pipelines[.physicsParticlePose], particleCount)
+        dispatch(enc, pipelines[.physicsParticlePose], worldParticles)
     }
 
     /// The CPU's particles for slot `slot`'s frame (when the CPU steps them): what the cloths are drawn from. And which
@@ -1184,6 +1232,10 @@ package final class PhysicsGPU {
     // MARK: - Reading back
 
     /// Slot `slot`'s poses (position, rotation per body), from when its frame was done.
+    /// Slot `slot`'s cars as the GPU's steps left them (its frame must be done): the steps it had run, each car's
+    /// telemetry. Nil without cars on the GPU.
+    package func carTelemetry(slot: Int) -> (step: Int, cars: [CarTelemetry])? { cars?.telemetry(slot: slot) }
+
     package func snapshot(slot: Int) -> UnsafeBufferPointer<SIMD4<Float>> {
         UnsafeBufferPointer(start: snapshots[slot].contents().bindMemory(to: SIMD4<Float>.self, capacity: 2 * count), count: 2 * count)
     }

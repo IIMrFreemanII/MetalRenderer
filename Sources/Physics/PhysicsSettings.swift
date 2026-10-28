@@ -236,9 +236,9 @@ package struct PhysicsSettings: Equatable, Codable {
     /// are the frame's while the CPU's run beside it. On the M1 Max (Benchmark+Destruction.swift's destructioncpu) the
     /// CPU's step took 2.0 ms against the GPU's 4.7 in the courtyard, 13 against 16 for a building settling, and 31
     /// against 30 for three; with the GPU's in the window, a settling building drew at 16 to 23 fps, with the CPU's
-    /// at 120.
-    package func runsOnGPU(bodies: Int, fractures: Bool = false) -> Bool {
-        backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom && !fractures)
+    /// at 120. With cars (Physics+Cars.swift; on the GPU: CarsGPU.swift), automatic is the CPU.
+    package func runsOnGPU(bodies: Int, fractures: Bool = false, cars: Bool = false) -> Bool {
+        backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom && !fractures && !cars)
     }
 
     /// (As the memberwise initializer, for the modules above this one.)

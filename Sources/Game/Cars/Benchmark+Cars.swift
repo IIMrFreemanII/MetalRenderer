@@ -11,10 +11,11 @@ import simd
 import MetalRenderer
 
 /// The car scene's benchmark modes (Scene+CarGround.swift): the wall demo paused before, at and after the hit in the solid
-/// look and in the full one; what the cars' steps cost on autopilot laps (the `cpu` column).
+/// look and in the full one; what the cars' steps cost on autopilot laps (the `cpu` column), on the CPU and on the GPU (the
+/// `physics` pass; `METALRENDERER_PHYSICS_PARTS=1` times the cars' kernels apart as `phys cars`).
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
-        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
+        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
         "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo,
     ]
 
@@ -139,6 +140,11 @@ extension Benchmark {
                 $0.solid = false
             }.from(camera).still(at: 2)
         }
+    }
+
+    /// ...on the GPU (CarsGPU.swift), its rows named as the CPU's (`ab.sh` puts one against the other).
+    private static func carsGPU() -> [Config] {
+        carsCPU().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// The cars' steps moving: 1, 4 and 8 cars on autopilot laps.
