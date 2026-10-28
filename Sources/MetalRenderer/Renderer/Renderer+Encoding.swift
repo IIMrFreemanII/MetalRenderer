@@ -121,6 +121,7 @@ extension Renderer {
             }
             deformed = true
         }
+        if encodeGarment(slot: slot, passes: passes) { deformed = true }
         if deformed, var primitiveRefit {
             // (A parked car's panels stay where they were: their structures too.)
             // (And a car's hidden model's, but for the one just shown.)

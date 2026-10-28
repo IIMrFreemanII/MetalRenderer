@@ -17,6 +17,7 @@ using namespace metal::raytracing;
 #include "Shaders/ParticleTrace.metal"     // particles as rays meet them: billboards, flipbooks, their transmittance
 #include "Shaders/Procedural.metal"        // procedural materials as code (the Material Designer's shader-code mode)
 #include "Shaders/Surface.metal"           // SceneData, sky lookups, the specular BRDF, materials, traceSurface
+#include "Shaders/Fabric.metal"            // fabrics' sheen at grazing angles (applySheen: Surface.metal's hits)
 #include "Shaders/WaterCommon.metal"       // water: its looks, its map, waves, ripples and foam, the sun under it
 #include "Shaders/Lights.metal"            // every light type's evaluation, shadow targets, picks, the light table
 #include "Shaders/Hair.metal"              // strands: the hair BSDF (Chiang et al. 2016) and its lights
@@ -43,6 +44,7 @@ using namespace metal::raytracing;
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
 #include "Shaders/Fluid.metal"             // liquids: PBF and MLS-MPM, their pour and their pushes on bodies (fluid* kernels)
 #include "Shaders/FluidSurface.metal"      // liquids' surfaces: splat, blur, surface nets into the scene's buffers
+#include "Shaders/Garment.metal"           // garments: the designer's cloth, XPBD over panels' meshes (garment* kernels)
 #include "Shaders/ParticleSim.metal"       // particle effects: a step's begin, emit and simulate, the pose (particle* kernels)
 #include "Shaders/ParticleLight.metal"     // ...their light, the camera's layer of them, the heat haze
 #include "Shaders/Gizmo.metal"             // the VFX editor's gizmos: lines over the finished frame

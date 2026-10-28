@@ -70,7 +70,8 @@ extension Scene {
         // Bit 15: MATERIAL_EXTRAS, it has procedural materials. Bit 14: OPACITY, some of them cut holes. Bit 13:
         // PROCEDURAL_CODE, some of them are code the shading runs. Bit 12: TERRAIN, its ground is a terrain whose
         // vertices carry layer weights. Bit 11: WATER, it has water (Scene+Water.swift, Shaders/Water.metal).
-        // Bit 10: LEAF_TRANSMIT, some leaves are two-sided (a leaf sheet's). (Shaders/Types.metal.)
+        // Bit 10: LEAF_TRANSMIT, some leaves are two-sided (a leaf sheet's). Bit 9: SHEEN, some materials are fabrics with
+        // a sheen. (Shaders/Types.metal.)
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
@@ -82,6 +83,7 @@ extension Scene {
             | (terrain == nil ? 0 : 0x1000)           // TERRAIN
             | (hasWater ? 0x0800 : 0)                 // WATER
             | (hasLeafSheets ? 0x0400 : 0)            // LEAF_TRANSMIT
+            | (hasSheen ? 0x0200 : 0)                 // SHEEN
         return lights.reduce((usesLightTable ? 0x8000_0001 : UInt32(1)) | features) { mask, l in   // spheres always: an empty scene needs some type
             let type: Float
             switch l.kind {

@@ -64,6 +64,16 @@ let package = Package(
             path: "Sources/Characters",
             swiftSettings: engineSettings
         ),
+        // The garments: sewing patterns (panels, seams, darts, internal lines), their templates and grading to a body,
+        // fabrics, the panels' meshes and the solver's arrays, binding a drape to a skinned body, the garment files and
+        // their exports (DXF, OBJ, glTF, point caches). The solver's steps are the physics'; the designer's scene the
+        // engine's, its window the editors'.
+        .target(
+            name: "Garments",
+            dependencies: ["EngineCore", "Physics", "Characters"],
+            path: "Sources/Garments",
+            swiftSettings: engineSettings
+        ),
         // The effects: GPU particles (emitters, fields, colliders, their textures) and effects as graphs (the VFX
         // graph, its lowering, interpreter and generated Metal, the library and store). Running them in a scene is the
         // engine's. On the physics: its break events emit particles.
@@ -119,7 +129,7 @@ let package = Package(
         // its network editor the Modeller's.
         .target(
             name: "Procedural",
-            dependencies: ["EngineCore", "Physics", "Modeling"],
+            dependencies: ["EngineCore", "Physics", "Characters", "Modeling", "Garments"],
             path: "Sources/Procedural",
             swiftSettings: engineSettings
         ),
@@ -127,7 +137,7 @@ let package = Package(
         // the core, the editors, the game and the entry point.
         .target(
             name: "MetalRenderer",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "Garments"],
             path: "Sources/MetalRenderer",
             // Shaders are compiled at runtime (so you can hot-reload them with R),
             // so SwiftPM must not try to process them: the entry file and its pieces.
@@ -138,7 +148,7 @@ let package = Package(
         // engine never calls them: they read its reports (RendererController) and send it work.
         .target(
             name: "Editors",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "Garments", "MetalRenderer"],
             path: "Sources/Editors",
             swiftSettings: engineSettings
         ),
@@ -146,7 +156,7 @@ let package = Package(
         // on the engine's `package` API. A change here recompiles this target alone (README, "Source layout").
         .target(
             name: "Game",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "Garments", "MetalRenderer"],
             path: "Sources/Game",
             swiftSettings: engineSettings
         ),
@@ -157,7 +167,7 @@ let package = Package(
         ),
         .testTarget(
             name: "MetalRendererTests",
-            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer", "Editors", "Game"],
+            dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "Garments", "MetalRenderer", "Editors", "Game"],
             path: "Tests/MetalRendererTests"
         )
     ]

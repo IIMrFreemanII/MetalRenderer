@@ -3,6 +3,7 @@ import Buildings
 import Characters
 import Effects
 import EngineCore
+import Garments
 import Landscape
 import Materials
 import MetalKit
@@ -119,6 +120,8 @@ package final class Renderer: NSObject {
     package var crowdSkinner: CrowdSkinner?
     /// The scene's rigid bodies on the GPU (PhysicsSettings.backend), or nil: then `Scene.update` steps them.
     package var physicsGPU: PhysicsGPU?
+    /// The garment workshop's cloth on the GPU (Renderer+Garment.swift).
+    package var garmentGPU: GarmentSolverGPU?
     /// The scene's particle effects on the GPU, if it has any, and per slot the steps its structure was last built at
     /// (a still frame has nothing to pose or build).
     package var particlesGPU: ParticlesGPU?

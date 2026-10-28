@@ -90,7 +90,7 @@ package struct SceneOutline: Codable, Equatable {
 /// scene's own (its mesh 3); otherwise the project's (a species, a model file, a graph), shared among the scenes that use it.
 package struct AssetKey: Codable, Hashable, Comparable {
     package enum Kind: String, Codable, CaseIterable {
-        case mesh, model, material, materialGraph, painterDoc, species, building, buildingStyle, character, vfxGraph, sdfShape
+        case mesh, model, material, materialGraph, painterDoc, species, building, buildingStyle, character, vfxGraph, sdfShape, garment
 
         package var title: String {
             switch self {
@@ -105,11 +105,12 @@ package struct AssetKey: Codable, Hashable, Comparable {
             case .character: return "Character"
             case .vfxGraph: return "VFX graph"
             case .sdfShape: return "SDF shape"
+            case .garment: return "Garment"
             }
         }
         /// Made in an editor of its own (an asset of the project), not by a builder.
         package var isGenerator: Bool { self == .materialGraph || self == .painterDoc || self == .species || self == .buildingStyle
-            || self == .character || self == .vfxGraph }
+            || self == .character || self == .vfxGraph || self == .garment }
     }
     package var kind: Kind
     package var name: String

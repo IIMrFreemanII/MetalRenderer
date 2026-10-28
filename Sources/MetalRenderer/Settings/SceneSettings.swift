@@ -4,6 +4,7 @@ import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
+import Garments
 import Landscape
 import Materials
 import Physics
@@ -117,6 +118,8 @@ package struct SceneSettings: Equatable, Codable {
     package var buildingCatalog = ""
     /// The character workshop: who it shows, and how.
     package var characterWorkshop = CharacterSceneSettings()
+    /// The garment workshop: what is worn, by whom.
+    package var garmentWorkshop = GarmentSceneSettings()
     /// The characters scenes are made with: a key of CharacterCatalog's registry, which the character editor sets as it
     /// edits; "" the saved ones (Assets/CharacterDefs), "builtin" the built-in ones. Session state.
     package var characterCatalog = ""
@@ -163,6 +166,9 @@ package struct SceneSettings: Equatable, Codable {
         if kind == .characters && other.kind == .characters {
             let a = characterWorkshop, b = other.characterWorkshop
             return a.layout == b.layout && a.pose == b.pose && a.clip == b.clip && a.view == b.view
+        }
+        if kind == .garmentStage && other.kind == .garmentStage {
+            return garmentWorkshop.avatar == other.garmentWorkshop.avatar && garmentWorkshop.clip == other.garmentWorkshop.clip
         }
         if kind == .buildings && other.kind == .buildings {
             return buildings.layout == other.buildings.layout && buildings.style == other.buildings.style

@@ -209,6 +209,9 @@ constant bool WATER = (LIGHT_SPEC & 0x00000800u) != 0;
 // leafUnshadowed), with its shadow rays from the side the light is on; elsewhere (GI's hits) a share of them is lit
 // from behind as always (Surface.backlit).
 constant bool LEAF_TRANSMIT = (LIGHT_SPEC & 0x00000400u) != 0;
+// Bit 9 = SHEEN: some materials are fabrics with a sheen (Material.albedo.a <= -1: Fabric.metal), whose fibres light up
+// at grazing angles; without it a hit's material is what it was before fabrics.
+constant bool SHEEN = (LIGHT_SPEC & 0x00000200u) != 0;
 // Bit 29 = ALPHA_TEST: the scene has leaf cards, triangles the ray queries cut out by an alpha mask (rtCutout).
 constant bool ALPHA_TEST = (LIGHT_SPEC & 0x20000000u) != 0;
 // Bit 28 = DEFORMING_MESHES: the scene has meshes whose vertices are rewritten every frame (a crowd's pose slots).

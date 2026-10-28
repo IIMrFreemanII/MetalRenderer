@@ -289,6 +289,7 @@ extension Renderer {
         plantsWritten = [WindFrame.PlantKey?](repeating: nil, count: Renderer.maxFramesInFlight)
         crowdSkinner = nil
         physicsGPU = nil
+        garmentGPU = nil
         particlesGPU = nil
         pendingEffects = nil
         particlesBuilt = [Int?](repeating: nil, count: Renderer.maxFramesInFlight)
@@ -339,6 +340,7 @@ extension Renderer {
                 && (benchmark == nil || ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_ASYNC"] == "1")
             scene.physicsStepLimit = stepsPerFrame
         }
+        try makeGarmentSolver()
         if let particles = scene.particles {
             particlesGPU = try ParticlesGPU(device: device, system: particles, slots: Renderer.maxFramesInFlight)
             particlesGPU?.sdfScene = buffers.sdf.scene

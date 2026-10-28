@@ -41,6 +41,8 @@ package enum Kernel: Int, CaseIterable {
     case fluidMpmClear, fluidMpmKeys, fluidMpmP2G, fluidMpmGrid, fluidMpmG2P
     case fluidSurfaceClear, fluidSurfaceSplat, fluidSurfaceBlur, fluidSurfaceCount, fluidSurfaceVertex, fluidSurfaceQuad, fluidSurfaceTail
     case plantWind              // the plants' variants in the wind (PlantTracing)
+    case garmentLoad, garmentPredict, garmentSolve, garmentCollide, garmentMesh   // garments (GarmentSolverGPU, Shaders/Garment.metal)
+    case garmentHashClear, garmentHashCount, garmentHashScan, garmentHashScatter, garmentSelf   // ...their self-collision
     // Particle effects (ParticlesGPU, Shaders/ParticleSim.metal): a step's begin, emit and simulate, then the frame's
     // records and boxes for the rays.
     case particleReset, particleBegin, particleEmit, particleSimulate, particlePose, particlePoseTail, particleMeshPose, particleOverlay, particleTrailPose

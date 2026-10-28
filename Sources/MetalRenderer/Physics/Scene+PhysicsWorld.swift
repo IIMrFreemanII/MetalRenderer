@@ -289,6 +289,7 @@ extension Scene {
     package func addMaterial(_ material: GPUMaterial) -> Int {
         materials.append(material)
         if material.params.w < 0 { hasSkin = true }
+        if material.albedo.w <= -1 { hasSheen = true }
         return materials.count - 1
     }
 

@@ -2,6 +2,7 @@ import Buildings
 import Darwin
 import EngineCore
 import Foundation
+import Garments
 import Plants
 import QuartzCore
 
@@ -67,6 +68,14 @@ package final class DevReload {
                 BuildingCatalog.setLaunch(saved)
                 renderer.perform { r in
                     if r.scene.settings.buildingCatalog.isEmpty { r.remakeScene(because: "the saved buildings changed") }
+                }
+            case .garment(let path):
+                // A garment saved by hand (not the designer's own save): the workshop wearing it is made again.
+                let url = URL(fileURLWithPath: path)
+                guard FileStamps.changed(url) else { continue }
+                let id = String(url.lastPathComponent.dropLast(GarmentStore.suffix.count))
+                renderer.perform { r in
+                    if r.scene.settings.kind == .garmentStage && r.scene.settings.garmentWorkshop.garment == id { r.remakeScene(because: "its garment changed") }
                 }
             case .procedural:
                 // A scene that places procedural assets is made again (each cooks again only if it changed).

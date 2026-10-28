@@ -20,6 +20,16 @@ package struct SkinnedCharacter: Equatable {
 
         package var loopKeys: Int { max(keyCount - 1, 1) }
         package var duration: Float { Float(loopKeys) / rate }
+
+        /// (As the memberwise initializer, for the modules above this one.)
+        package init(name: String, keyCount: Int, rate: Float, rotations: [SIMD4<Float>], root: [SIMD4<Float>], velocity: SIMD3<Float>) {
+            self.name = name
+            self.keyCount = keyCount
+            self.rate = rate
+            self.rotations = rotations
+            self.root = root
+            self.velocity = velocity
+        }
     }
 
     /// The mesh at one level of detail: bind-pose vertices, triangles, and each vertex's joints and weights.

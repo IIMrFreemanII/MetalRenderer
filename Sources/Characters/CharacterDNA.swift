@@ -28,7 +28,7 @@ package struct CharacterDNA: Codable, Equatable {
 
     package struct Macro: Codable, Equatable {
         /// 0 = male ... 1 = female.
-        var sex: Float = 0
+        package var sex: Float = 0
         /// Years, 18...90.
         package var age: Float = 30
         /// -1 = thin ... 1 = heavy.

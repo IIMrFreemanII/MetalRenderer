@@ -984,8 +984,58 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `Characters/Editor/`) makes pe
   long styles cut, the beard, brows and lashes where they belong and the lashes blinking, caps by style and on every
   level, the workshop's remake time with hair), `CharacterEditorTests` (the parameter table, Randomize, Mutate, undo,
   saving).
-* **Next** (one pull request each): clothes and cloth; NPC archetypes, crowds in the city and generated bodies in the
-  physics scenes. Hair doesn't swing yet (it rides the head and the face).
+* **Next** (one pull request each): NPC archetypes, crowds in the city and generated bodies in the physics scenes. Hair
+  doesn't swing yet (it rides the head and the face). Clothes: the Garment Designer, below.
+
+### The garment designer
+
+Garments made as Marvelous Designer makes them: flat panels drawn on a pattern sheet, sewn edge to edge, placed round a
+body and draped by a cloth solver; worn by the Y Bot and the X Bot, by any generated character, and by crowds. Option-
+Cmd-G (Garment Designer…) opens it in a window of its own; the Character Editor's Dress… opens it on that character.
+
+* **The window**: the 2D pattern on the left (a grid every 10 cm; panels in their fabric's colour, their points and
+  handles, internal lines, grain arrows, edge lengths in cm, seam allowances; each seam's two sides in a colour of its
+  own, red when their lengths differ by more than 3%), the 3D avatar on the right (its own engine renderer, path traced:
+  `GarmentStageRenderer`; drag the cloth to pull it, drag elsewhere to turn round, Option- or right-drag to pan, scroll
+  to come close), the inspector at the right (Garment: templates, their parameters, Fit to the avatar, particle
+  distance, Wear another over it; Panel: fabric, layer, grain, frozen, hidden, where it goes round the body, internal
+  lines; Seam: kind, fold angle, topstitch, flip; Fabric: presets and every stiffness; Body: the wearer, its
+  measurements, a clip to move in and a bake, the trace). Space simulates or holds the cloth; Cmd-Z undoes.
+* **Tools** (keys as Marvelous Designer's where it has them): A select/move (Cmd-drag turns), Z edit points (drag
+  handles, double-click an edge to add one, Delete removes), H polygon, S rectangle, E circle, G internal line, D dart
+  (a V cut in an edge, its legs sewn), N sew (click an edge near the end that meets, then its partner's; Shift-click more
+  for an N:1 seam, Return sews), F freeze, T trace on the avatar (click round a region of the body, Make Panel flattens
+  it into the pattern, arranged where it was drawn). Cmd-D duplicates, Shift-Cmd-D makes a linked mirror (edits of
+  either reach both).
+* **The model** (`Sources/Garments`): `Garment` (panels of Bézier edges, internal lines, seams of edge stretches,
+  buttons, fabrics, a template's parameters, the avatar, the last drape), `PanelTriangulator` (a triangular lattice
+  along the grain inside, the outline's samples kept as edges by keeping every segment Gabriel, Delaunay), `SeamSampling`
+  (both sides of a seam sampled alike), `GarmentBuild` (the solver's arrays: anisotropic triangle strain along the
+  warp and weft, dihedral bending with folds at their angles, seam pairs, elastics, buttons; coloured), `GarmentTemplate`
+  (T-shirt, shirt, trousers, skirt, dress, hoodie, coat, graded to `BodyMeasurements`), `AvatarFrame` (the slots'
+  cylinders round the trunk, arms, legs, neck and head; placing a panel wraps it round its slot), `GarmentMotion`,
+  `DressedCharacter`, the files (`Assets/Garments/<id>.garment.json`, hot-reloaded) and the exports (DXF R12 with
+  allowance, notches and grain; OBJ; GLB; PC2 and `.gcache` point caches).
+* **The solver** (`Sources/Physics/Garment`, `Shaders/Garment.metal`): small-step XPBD, 20 substeps a frame, a
+  dispatch per colour; the body as a signed distance (BodySurface, 1 cm) or, while it moves, its bones as capsules
+  (CharacterRig, posed from the crowd's skinning); self-collision through a hashed grid, an outer layer's cloth pushed
+  out of the body past an inner one's; seams soft while they close, gravity after. `GarmentSim` is the same on the CPU
+  (the tests', the crowds' drapes). About 1.5 ms of an M4 Max's frame (dev build) for a 3,300-particle T-shirt, 3 ms with
+  self-collision for 6,000.
+* **Fabric** (`Shaders/Fabric.metal`, feature bit 9 SHEEN): a fabric's sheen folded into the hit's albedo from the view
+  (fibres that light up at grazing angles), packed in the material's metallic lane.
+* **Crowds**: `METALRENDERER_SCENE=crowd,cast=dressed` — each generated person in a T-shirt and trousers or a dress,
+  draped once on the CPU (cached in the user's caches), bound to the nearest body triangle and worn by every body of
+  the same mesh, skinned with that triangle's bones; the body under the cloth is cut away. 200 dressed people cost the
+  same frame as 200 in skin (`-m garmentcrowd`).
+* **Graphs**: the Procedural graph's Garment node drapes a template on an avatar and puts out its mesh (uv, panel).
+* **Scripts**: the socket's `garments` request drives a designer of its own offscreen (steps: new, avatar, over,
+  select, param, dart, sew, rectangle, fabric, freeze, simulate, clip, fit, reset, save, open, export; captures of
+  the window, the pattern or the rendered stage).
+* **Benchmarks**: `-m garments` (every template on both Bots, front and back, and layered outfits), `-m garmentdrape`
+  (moments of a drape, `METALRENDERER_GARMENT=coat`, `METALRENDERER_AVATAR="X Bot"`), `-m garmentwalk` (recorded,
+  `METALRENDERER_CLIP=Walking`), `-m garmentcrowd`. Tests: `GarmentPatternTests`, `GarmentSolverTests`,
+  `GarmentBindTests`.
 
 ### Generated plants
 

@@ -13,6 +13,7 @@ extension ProcNodeKind {
         case .line: Generators.line(c)
         case .add: Generators.add(c)
         case .file: try Generators.file(c)
+        case .garment: GarmentNodes.garment(c)
         case .transform: try TransformNodes.transform(c)
         case .merge: TransformNodes.merge(c)
         case .copyxform: try TransformNodes.copyTransform(c)

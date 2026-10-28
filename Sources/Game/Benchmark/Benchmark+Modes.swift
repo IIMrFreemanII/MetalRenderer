@@ -36,7 +36,7 @@ extension Benchmark {
         "vfxstage": vfxStage, "vfxstagedemo": vfxStageDemo,
         "outlines": outlines, "script": script, "serve": serve, "materials": materials, "matedit": matEdit, "mireland": mireland, "painter": painterModes, "paintersmart": painterSmart, "painterstrokes": painterStrokes,
     ].merging(terrainModes) { a, _ in a }.merging(waterModes) { a, _ in a }.merging(realismModes) { a, _ in a }
-     .merging(destructionModes) { a, _ in a }.merging(demolitionModes) { a, _ in a }.merging(carModes) { a, _ in a }
+     .merging(destructionModes) { a, _ in a }.merging(demolitionModes) { a, _ in a }.merging(carModes) { a, _ in a }.merging(garmentModes) { a, _ in a }
 
     /// Every scene made once, a frame each: their outlines for the Project Graph (OutlineStore writes them).
     private static func outlines() -> [Config] {

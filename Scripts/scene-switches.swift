@@ -14,8 +14,19 @@ func run(_ run: ScriptRun) {
     if steps.isEmpty { steps = ["tour", "pairs", "midload", "remake", "jump", "stale"] }
     // The app's own settings (switches.py --saved: the window's saved copy), unpaused.
     if let path = value("settings") {
+        // Laid over the defaults, as the app loads them (SettingsStore): a field added since they were saved keeps its default.
+        func merge(_ base: [String: Any], _ saved: [String: Any]) -> [String: Any] {
+            var out = base
+            for (k, v) in saved {
+                if let a = base[k] as? [String: Any], let b = v as? [String: Any] { out[k] = merge(a, b) } else { out[k] = v }
+            }
+            return out
+        }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              var s = try? JSONDecoder().decode(RenderSettings.self, from: data) else { run.fail("can't read settings \(path)"); return }
+              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let base = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(RenderSettings())) as? [String: Any],
+              let merged = try? JSONSerialization.data(withJSONObject: merge(base, saved)),
+              var s = try? JSONDecoder().decode(RenderSettings.self, from: merged) else { run.fail("can't read settings \(path)"); return }
         s.paused = false
         run.render { $0.settings = s }
         run.waitForScene()

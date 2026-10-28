@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var materialEditor: MaterialEditorPanel?
     private var painterPanel: PainterPanel?
     private var modeller: ModelingPanel?
+    private var garmentDesigner: GarmentPanel?
     private var modelingHost: RendererModelingHost?
     private var terrainEditor: TerrainEditorPanel?
     private var buildingEditor: BuildingEditorPanel?
@@ -53,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             renderer.startDevReload()   // (a benchmark's only with METALRENDERER_HOTRELOAD=1)
             ScriptModeller.register(renderer: renderer)   // the socket's `modeller`: a Modeller of its own, offscreen
+        ScriptGarments.register(renderer: renderer)   // the socket's `garments`: a Garment Designer of its own, offscreen
             renderer.startScripts()   // a `script` mode's runner; the socket only for `serve` or METALRENDERER_SCRIPT_SERVER=1
             renderer.startRenderThread()
             return
@@ -148,6 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         renderer.startDevReload()
         ScriptModeller.register(renderer: renderer)   // the socket's `modeller`: offscreen, never the Modeller window
+        ScriptGarments.register(renderer: renderer)   // the socket's `garments`: offscreen, never the designer's window
         renderer.startScripts()   // Tools/script.py and the MCP server reach the app through its socket
         renderer.startRenderThread()
 
@@ -248,6 +251,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.modeller = modeller
         if ModelingPanel.wasVisible { modeller.show(nextTo: window) }
         controller.onToggleModeller = { [weak self] in self?.toggleModeller(nil) }
+        let garments = GarmentPanel(device: renderer.metalDevice)
+        garmentDesigner = garments
+        if GarmentPanel.wasVisible { garments.show(nextTo: window) }
+        NotificationCenter.default.addObserver(forName: GarmentPanel.dressNotification, object: nil, queue: .main) { [weak self] note in
+            guard let self, let id = note.object as? String else { return }
+            self.garmentDesigner?.dress(id, nextTo: self.window)
+        }
         let graph = ProjectGraphPanel(host: controller) { [weak self] target in self?.open(target) }
         projectGraph = graph
         if ProjectGraphPanel.wasVisible { graph.show(nextTo: window) }
@@ -372,6 +382,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildingEditor?.toggle(nextTo: window)
     }
 
+    @objc private func toggleGarments(_ sender: Any?) {
+        garmentDesigner?.toggle(nextTo: window)
+    }
+
     @objc private func toggleCharacters(_ sender: Any?) {
         characterEditor?.toggle(nextTo: window)
     }
@@ -468,6 +482,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         modellerItem.keyEquivalentModifierMask = [.command, .shift]
         modellerItem.target = self
         appMenu.addItem(withTitle: "Edit Mesh in Modeller", action: #selector(editSelectionInModeller(_:)), keyEquivalent: "").target = self
+        let garmentItem = appMenu.addItem(withTitle: "Garment Designer…", action: #selector(toggleGarments(_:)), keyEquivalent: "g")
+        garmentItem.keyEquivalentModifierMask = [.command, .option]
+        garmentItem.target = self
         let inspectorItem = appMenu.addItem(withTitle: "Object Inspector", action: #selector(toggleObjectInspector(_:)), keyEquivalent: "i")
         inspectorItem.keyEquivalentModifierMask = [.command, .option]
         inspectorItem.target = self
