@@ -509,17 +509,18 @@ package final class PhysicsGPU {
             enc.setBuffer(bigBodies, offset: 0, index: 11)
             enc.setBuffer(hotBuckets, offset: 0, index: 12)
             enc.setBuffer(looking, offset: 0, index: 13)
-            // (Only the bodies that look: the rest keep their partners.)
+            // (Only the bodies that look, a SIMD group each: the rest keep their partners.)
             enc.setComputePipelineState(pipelines[.physicsPairsKeep])
             dispatch(enc, pipelines[.physicsPairsKeep], count)
-            encodeArgs(enc, pipelines: pipelines, list: looking, args: lookingArgs, perGroup: 64)
+            encodeArgs(enc, pipelines: pipelines, list: looking, args: lookingArgs, perGroup: simdPerGroup(pairing))
             enc.setComputePipelineState(pairing)
             enc.setBuffer(bodies, offset: 0, index: 1)   // (the args' kernel had 1 to 4)
             enc.setBuffer(statics, offset: 0, index: 2)
             enc.setBuffer(staticBounds, offset: 0, index: 3)
             enc.setBuffer(shapes, offset: 0, index: 4)
             barrier(enc)
-            enc.dispatchThreadgroups(indirectBuffer: lookingArgs, indirectBufferOffset: 0, threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
+            enc.dispatchThreadgroups(indirectBuffer: lookingArgs, indirectBufferOffset: 0,
+                                     threadsPerThreadgroup: MTLSize(width: simdPerGroup(pairing) * pairing.threadExecutionWidth, height: 1, depth: 1))
         } else {
             dispatch(enc, pairing, count)
         }
@@ -541,14 +542,14 @@ package final class PhysicsGPU {
     /// MSL PHYS_NARROW_*: what the fractured objects' narrow phase goes over.
     private static let narrowAll: UInt32 = 0, narrowListed: UInt32 = 1, narrowSolved: UInt32 = 2
 
-    /// Entries a threadgroup of the narrow phase (a SIMD group each).
-    private func narrowPerGroup(_ narrow: MTLComputePipelineState) -> Int {
-        min(narrow.maxTotalThreadsPerThreadgroup / narrow.threadExecutionWidth, 4)
+    /// Items a threadgroup of a kernel with a SIMD group an item (the narrow phase's entries, the pairs' bodies).
+    private func simdPerGroup(_ kernel: MTLComputePipelineState) -> Int {
+        min(kernel.maxTotalThreadsPerThreadgroup / kernel.threadExecutionWidth, 4)
     }
 
     private func encodeNarrowArgs(_ enc: ComputePass, pipelines: Pipelines, which: UInt32) {
         encodeArgs(enc, pipelines: pipelines, list: narrowList, args: narrowArgs, which: which,
-                   perGroup: narrowPerGroup(pipelines[.physicsFractureNarrow]))
+                   perGroup: simdPerGroup(pipelines[.physicsFractureNarrow]))
     }
 
     /// A dispatch of `perGroup`-wide threadgroups over a list (how many, then them: `which` PHYS_NARROW_LISTED, into
@@ -721,7 +722,7 @@ package final class PhysicsGPU {
         enc.setBuffer(weldStarts, offset: 0, index: 10)
         enc.setBuffer(weldList, offset: 0, index: 11)
         enc.setBuffer(welds, offset: 0, index: 12)
-        let width = MTLSize(width: narrowPerGroup(narrow) * simd, height: 1, depth: 1)
+        let width = MTLSize(width: simdPerGroup(narrow) * simd, height: 1, depth: 1)
         if fractures {   // (who wakes this step, who is held: Physics.metal's physicsFractureNarrowKernel)
             enc.setBuffer(wake, offset: 0, index: 13)
             enc.setBuffer(grabs[slot], offset: 0, index: 14)

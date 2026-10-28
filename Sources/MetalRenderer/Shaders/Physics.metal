@@ -770,12 +770,29 @@ inline bool physKeepsPartners(constant PhysicsParams& p, device const PhysicsBod
     return true;
 }
 
+// Into body b's partners, the statics its reach r meets (from `from`, every `step`th): before every body (at -1, or
+// by their boxes' gap at -inf).
+inline void physStaticPartners(constant PhysicsParams& p, device const PhysicsBody* statics, device const float4* bounds,
+                               device const PhysicsShape* shapes, PhysicsBody b, float3 x, float r, bool byGap,
+                               uint from, uint step, thread float* d2s, thread uint* ids, thread uint& count) {
+    if ((b.info.y & PHYS_KINEMATIC) != 0) return;
+    for (uint s = from; s < p.counts.y; s += step) {
+        PhysicsBody st = statics[s];
+        bool touches;
+        if (shapes[st.info.x].info.x == PHYS_PLANE) {
+            touches = dot(x - st.position.xyz, quatRotate(st.rotation, float3(0, 1, 0))) < r;
+        } else {
+            float3 nearest = clamp(x, bounds[2 * s].xyz, bounds[2 * s + 1].xyz);
+            touches = length_squared(x - nearest) < r * r;
+        }
+        if (touches) physKeepNearest(d2s, ids, count, byGap ? -INFINITY : -1.0f, s | PHYS_STATIC);
+    }
+}
+
 inline void physPairs(constant PhysicsParams& p, device const PhysicsBody* bodies, device const PhysicsBody* statics,
                       device const float4* bounds, device const PhysicsShape* shapes, device const uint* heads,
-                      device const uint* next, device PhysicsPair* pairs, device uint* counts, uint i,
-                      device const float4* boxes, device const uint4* levels = nullptr, device const uint* big = nullptr)
+                      device const uint* next, device PhysicsPair* pairs, device uint* counts, uint i)
 {
-    bool byGap = boxes != nullptr;
     if (i >= p.counts.x) return;
     PhysicsBody b = bodies[i];
     if ((b.info.y & PHYS_DISABLED) != 0) { counts[i] = 0; return; }
@@ -785,66 +802,13 @@ inline void physPairs(constant PhysicsParams& p, device const PhysicsBody* bodie
     float d2s[PHYS_PAIRS];
     uint ids[PHYS_PAIRS];
     uint count = 0;
-    for (uint s = 0; s < p.counts.y; ++s) {
-        PhysicsBody st = statics[s];
-        bool touches;
-        if (shapes[st.info.x].info.x == PHYS_PLANE) {
-            touches = dot(x - st.position.xyz, quatRotate(st.rotation, float3(0, 1, 0))) < r;
-        } else {
-            float3 nearest = clamp(x, bounds[2 * s].xyz, bounds[2 * s + 1].xyz);
-            touches = length_squared(x - nearest) < r * r;
-        }
-        if (touches && (b.info.y & PHYS_KINEMATIC) == 0) physKeepNearest(d2s, ids, count, byGap ? -INFINITY : -1.0f, s | PHYS_STATIC);
-    }
-    if (levels != nullptr) {
-        // The levelled grid (PhysicsCPU.partners): each level's cells within reach, and the big bodies; a big body
-        // looks at every body. The same partners as one grid sized by the largest body.
-        uint4 lv = levels[0];
-        float first = as_type<float>(lv.z);
-        if (physLevel(b.invInertia.w, first, p) >= PHYS_LEVELS) {
-            for (uint j = 0; j < p.counts.x; ++j) if ((bodies[j].info.y & PHYS_DISABLED) == 0) physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
-        } else {
-            for (uint used = lv.x; used != 0; used &= used - 1) {
-                uint level = ctz(used);
-                float size = first * float(1u << level), far = (r + size * 0.5f) * 1.0001f + 1e-4f;
-                int3 lo = physCell(x - far, size), hi = physCell(x + far, size);
-                for (int cz = lo.z; cz <= hi.z; ++cz)
-                    for (int cy = lo.y; cy <= hi.y; ++cy)
-                        for (int cx = lo.x; cx <= hi.x; ++cx)
-                            for (uint j = heads[physLevelHash(int3(cx, cy, cz), level, p.counts.w)]; j != PHYS_NONE; j = next[j])
-                                physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
-            }
-            for (uint k = 0; k < lv.y; ++k) physConsider(p, bodies, b, i, x, r, big[k], boxes, d2s, ids, count);
-        }
-        counts[i] = count;
-        for (uint k = 0; k < count; ++k) {
-            PhysicsPair pair = {ids[k], 0, 0, 0};
-            pairs[i * PHYS_PAIRS + k] = pair;
-        }
-        return;
-    }
+    physStaticPartners(p, statics, bounds, shapes, b, x, r, false, 0, 1, d2s, ids, count);
     int3 c = physCell(x, p.grid.x);
-    for (int dz = -1; dz <= 1; ++dz) {
-        for (int dy = -1; dy <= 1; ++dy) {
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (uint j = heads[physHash(c + int3(dx, dy, dz), p.counts.w)]; j != PHYS_NONE; j = next[j]) {
-                    if (j == i) continue;
-                    PhysicsBody o = bodies[j];
-                    if (b.info.w == j + 1 || o.info.w == i + 1) continue;   // joined: PhysicsWorld.joined
-                    if ((b.info.y & o.info.y & PHYS_KINEMATIC) != 0) continue;   // neither gives
-                    if (physHeld(b) && physHeld(o)) continue;                    // two anchored pieces
-                    float reach = r + physReach(o, p);
-                    float d2 = physDistance2(o.position.xyz, x);
-                    if (!(d2 < reach * reach)) continue;
-                    if (!byGap) { physKeepNearest(d2s, ids, count, d2, j); continue; }
-                    uint sa = b.info.x, sb = o.info.x;
-                    float gap = physBoxGap(b, boxes[2 * sa], boxes[2 * sa + 1], r - b.invInertia.w,
-                                           o, boxes[2 * sb], boxes[2 * sb + 1], physReach(o, p) - o.invInertia.w);
-                    if (gap < 0.0f) physKeepNearest(d2s, ids, count, gap, j);
-                }
-            }
-        }
-    }
+    for (int dz = -1; dz <= 1; ++dz)
+        for (int dy = -1; dy <= 1; ++dy)
+            for (int dx = -1; dx <= 1; ++dx)
+                for (uint j = heads[physHash(c + int3(dx, dy, dz), p.counts.w)]; j != PHYS_NONE; j = next[j])
+                    physConsider(p, bodies, b, i, x, r, j, nullptr, d2s, ids, count);
     counts[i] = count;
     for (uint k = 0; k < count; ++k) {
         PhysicsPair pair = {ids[k], 0, 0, 0};
@@ -863,10 +827,14 @@ kernel void physicsPairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                                device uint*              counts   [[buffer(8)]],
                                uint i [[thread_position_in_grid]])
 {
-    physPairs(p, bodies, statics, bounds, shapes, heads, next, pairs, counts, i, nullptr);
+    physPairs(p, bodies, statics, bounds, shapes, heads, next, pairs, counts, i);
 }
 
-// ...with fractured objects: by their boxes.
+// ...with fractured objects: by their boxes, through the levelled grid (PhysicsCPU.partners): each level's cells
+// within reach, and the big bodies; a big body looks at every body. The same partners as one grid sized by the
+// largest body. A SIMD group a body that looks (physicsPairsKeepKernel's list): its lanes split the cells, the big
+// bodies and the statics, each keeping its nearest, and the group takes the nearest PHYS_PAIRS of all of theirs, the
+// same as one thread would find. One thread a body waited on the slowest: a slab under a heap, a big body.
 kernel void physicsFracturePairsKernel(constant PhysicsParams&   p        [[buffer(0)]],
                                        device const PhysicsBody* bodies   [[buffer(1)]],
                                        device const PhysicsBody* statics  [[buffer(2)]],
@@ -880,10 +848,57 @@ kernel void physicsFracturePairsKernel(constant PhysicsParams&   p        [[buff
                                        device const uint4*       levels   [[buffer(10)]],  // the levelled grid (physicsFractureInsertKernel):
                                        device const uint*        big      [[buffer(11)]],  // heads and next are its
                                        device const uint*        list     [[buffer(13)]],  // the bodies that look (physicsPairsKeepKernel)
-                                       uint j [[thread_position_in_grid]])
+                                       uint t [[thread_position_in_grid]],
+                                       ushort lane [[thread_index_in_simdgroup]],
+                                       ushort lanes [[threads_per_simdgroup]])
 {
-    if (j >= list[0]) return;
-    physPairs(p, bodies, statics, bounds, shapes, heads, next, pairs, counts, list[1 + j], boxes, levels, big);
+    if (t / lanes >= list[0]) return;   // (the whole group)
+    uint i = list[1 + t / lanes];
+    PhysicsBody b = bodies[i];
+    float3 x = b.position.xyz;
+    float r = physReach(b, p);
+
+    float d2s[PHYS_PAIRS];
+    uint ids[PHYS_PAIRS];
+    uint count = 0;
+    physStaticPartners(p, statics, bounds, shapes, b, x, r, true, lane, lanes, d2s, ids, count);
+    uint4 lv = levels[0];
+    float first = as_type<float>(lv.z);
+    if (physLevel(b.invInertia.w, first, p) >= PHYS_LEVELS) {
+        for (uint j = lane; j < p.counts.x; j += lanes)
+            if ((bodies[j].info.y & PHYS_DISABLED) == 0) physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
+    } else {
+        uint from = lane;   // (each level's cells, in order across the lanes: from the lane after the last level's)
+        for (uint used = lv.x; used != 0; used &= used - 1) {
+            uint level = ctz(used);
+            float size = first * float(1u << level), far = (r + size * 0.5f) * 1.0001f + 1e-4f;
+            int3 lo = physCell(x - far, size), n = physCell(x + far, size) - lo + 1;
+            uint cells = uint(n.x) * uint(n.y) * uint(n.z), c = from;
+            for (; c < cells; c += lanes) {
+                int3 at = lo + int3(c % uint(n.x), (c / uint(n.x)) % uint(n.y), c / (uint(n.x) * uint(n.y)));
+                for (uint j = heads[physLevelHash(at, level, p.counts.w)]; j != PHYS_NONE; j = next[j])
+                    physConsider(p, bodies, b, i, x, r, j, boxes, d2s, ids, count);
+            }
+            from = c - cells;
+        }
+        for (uint k = lane; k < lv.y; k += lanes) physConsider(p, bodies, b, i, x, r, big[k], boxes, d2s, ids, count);
+    }
+    // The nearest of the lanes' (each sorted, none twice; a body met through two cells of a bucket can be in two
+    // lanes': both drop it), the lower first of equals.
+    uint taken = 0, found = 0;
+    for (; found < PHYS_PAIRS; ++found) {
+        float d2 = taken < count ? d2s[taken] : INFINITY;
+        uint id = taken < count ? ids[taken] : PHYS_NONE;
+        float nearest = simd_min(d2);
+        if (nearest == INFINITY) break;
+        uint lowest = simd_min(d2 == nearest ? id : PHYS_NONE);
+        if (d2 == nearest && id == lowest) ++taken;
+        if (lane == 0) {
+            PhysicsPair pair = {lowest, 0, 0, 0};
+            pairs[i * PHYS_PAIRS + found] = pair;
+        }
+    }
+    if (lane == 0) counts[i] = found;
 }
 
 // Which bodies look for partners this step (the rest keep theirs: physKeepsPartners), into `list` after its count
