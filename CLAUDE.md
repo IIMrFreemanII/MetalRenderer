@@ -33,6 +33,13 @@ Plan and build them with the `data-oriented` skill (`.claude/skills/data-oriente
 things is written in the fast subset of Swift and proven with a profile and `Tools/perf/hotcalls.py`; the rest stays
 plain Swift.
 
+## Shaders
+
+Write, review, debug or port Metal with the `metal-shaders` skill (`.claude/skills/metal-shaders`): where a kernel
+goes, its struct in `GPUTypes.swift` and `Shaders/Types.metal`, its binding and dispatch, and a compile check of every
+shader library without the app (`.claude/skills/metal-shaders/scripts/check_shader.sh --repo`). Speed is the
+`performance` skill's.
+
 ## Scenes and switching
 
 A new scene, a system a scene carries, or anything a scene load builds or resets follows the `scene-switching` skill
