@@ -52,6 +52,9 @@ Every run is offscreen (no window, no focus change); never launch the binary wit
 
 ## Checklist: GPU kernels (details: [references/gpu-metal.md](references/gpu-metal.md))
 
+Writing the kernel itself (where it goes, shared structs, bindings, a compile check without the app, wrong pixels):
+the `metal-shaders` skill.
+
 * **Bytes first.** Per-pixel passes are bandwidth-bound at these resolutions.
   * Use the smallest format that holds the precision: `rgba16Float` is the norm here. Justify any new `rgba32*`.
   * Use `half` for filter math. Read exact texels with `.read`, not `sample`.
