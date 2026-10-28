@@ -143,10 +143,32 @@ final class CarGPUTests: XCTestCase {
         for (k, t) in g.telemetry.enumerated() {
             let r = simd_distance(SIMD2(t.position.x, t.position.z), Scene.carLapCentre)
             print(String(format: "car %d: speed %.2f, radius %.2f (lap %.1f), up %.3f, bent %d", k, t.speed, r,
-                         Scene.carLapRadius + Float(k) * Scene.carLapSpacing, t.up.y, t.bent))
+                         Scene.carLap(k, of: 4), t.up.y, t.bent))
             XCTAssertEqual(t.speed, 15, accuracy: 2)
-            XCTAssertEqual(r, Scene.carLapRadius + Float(k) * Scene.carLapSpacing, accuracy: 3)
+            XCTAssertEqual(r, Scene.carLap(k, of: 4), accuracy: 3)
             XCTAssertGreaterThan(t.up.y, 0.98)
+        }
+    }
+
+    /// Sixteen cars on laps round a field of 24 breakable walls: each on its circle at its speed, upright; the walls
+    /// standing (the cars never reach them).
+    func testManyCarsOnTheGPU() throws {
+        let m = try metal()
+        let s = try scene(CarSettings(style: .civic, cars: 16, demo: .laps, walls: 24))
+        let start = s.physics!.initialBodies
+        let pieces = start.indices.filter { start[$0].info.y & PhysicsWorld.pieceBit != 0 }
+        let g = try GPU(s, m)
+        g.step(seconds(6))
+        let now = g.gpu.readBodies()
+        let moved = pieces.filter { simd_distance(PhysicsMath.xyz(now[$0].position), PhysicsMath.xyz(start[$0].position)) > 0.05 }.count
+        print("\(pieces.count) pieces, \(moved) of them moved more than 5 cm")
+        XCTAssertGreaterThan(pieces.count, 500)
+        XCTAssertEqual(moved, 0, "the walls stand")
+        for (k, t) in g.telemetry.enumerated() {
+            let r = simd_distance(SIMD2(t.position.x, t.position.z), Scene.carLapsCentre(16))
+            XCTAssertEqual(t.speed, 15, accuracy: 2, "car \(k)")
+            XCTAssertEqual(r, Scene.carLap(k, of: 16), accuracy: 3, "car \(k)")
+            XCTAssertGreaterThan(t.up.y, 0.98, "car \(k)")
         }
     }
 }

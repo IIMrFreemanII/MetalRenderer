@@ -130,17 +130,22 @@ package struct CarSettings: Equatable, Codable {
     package var demoSpeed: Float = 50
     /// Traction control and ABS (CarTune.assists).
     package var assists = true
+    /// More breakable walls, brick and concrete in turn, in a field inside the first lap (a benchmark's load:
+    /// Benchmark+Cars.swift's `carsmany*`).
+    package var walls = 0
 
-    package static let carRange = 1...8
+    package static let carRange = 1...32
     package static let speedRange: ClosedRange<Float> = 20...150
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(style: CarStyle = CarStyle.civic, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true) {
+    package init(style: CarStyle = CarStyle.civic, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true,
+                 walls: Int = 0) {
         self.style = style
         self.cars = cars
         self.demo = demo
         self.demoSpeed = demoSpeed
         self.assists = assists
+        self.walls = walls
     }
 }
 

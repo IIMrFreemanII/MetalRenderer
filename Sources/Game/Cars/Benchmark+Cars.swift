@@ -15,7 +15,7 @@ import MetalRenderer
 /// `physics` pass; `METALRENDERER_PHYSICS_PARTS=1` times the cars' kernels apart as `phys cars`).
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
-        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
+        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carsmanycpu": carsManyCPU, "carsmanygpu": carsManyGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
         "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo,
     ]
 
@@ -145,6 +145,24 @@ extension Benchmark {
     /// ...on the GPU (CarsGPU.swift), its rows named as the CPU's (`ab.sh` puts one against the other).
     private static func carsGPU() -> [Config] {
         carsCPU().map { $0.with { $0.scene.physics.backend = .gpu } }
+    }
+
+    /// A load: 8, 16 and 32 cars on laps, alone and round a field of 24 breakable walls (standing: the cars lap round
+    /// them), on the CPU and on the GPU.
+    private static func carsManyCPU() -> [Config] {
+        [0, 24].flatMap { walls in
+            [8, 16, 32].map { n in
+                carBase("\(n) cars\(walls > 0 ? " walls" : "")").with {
+                    $0.scene.cars.demo = .laps
+                    $0.scene.cars.cars = n
+                    $0.scene.cars.walls = walls
+                }
+            }
+        }
+    }
+
+    private static func carsManyGPU() -> [Config] {
+        carsManyCPU().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// The cars' steps moving: 1, 4 and 8 cars on autopilot laps.
