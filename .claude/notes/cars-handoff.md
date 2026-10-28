@@ -306,6 +306,46 @@ same still followed t0.2 and t0.6. Now the built size starts at the car's box as
 `world.initialParticles`: what the scene built them from) and the first frame may already queue a rebuild. Alone
 18.7 ms (picture against before: 59.9 dB PSNR, noise); the sequence unchanged (8.65 / 11.43 / 18.74).
 
+## Cars on the GPU (Oct 28, branch `claude/cars-gpu`)
+
+The user asked for all of the cars' physics on the GPU (beams, wheels, tyres, drivetrain, contacts, parts, damage,
+sleep, events), the CPU path kept as the reference and the backend switch; the goal was faster frames at 4-8 cars;
+behaviour, not numbers, the same. Plan: `/Users/ndiahovets/.claude/plans/pasted-content-id-02a8-accordingly-to-fuzzy-possum.md`.
+Design and numbers: README, "Cars", "On the GPU". Commits: stages 0-1 `fcfe6fda`, the load benchmarks `b4df3ec6`, stage 2
+`6245c2cf`, stage 3 `8a76345d` and `bcba1ce4`, stage 4 `c2b6b757`, stage 5 after it.
+
+- **Where:** `Sources/Physics/Cars/CarsGPU.swift` (buffers, encoding, readers), `Shaders/PhysicsCars.metal` (every
+  kernel), hooks in `PhysicsGPU.encodeSteps` / `encodeReset` / `encodePose`, `Renderer.encodeSceneUpdate` (the queue
+  beside the frame), `Scene.drawnPhysics` / `shownTime` (the frame's time, the telemetry moved on to it).
+- **The gate failed in the frame:** each car's step is ~900 dependent phases on one core (latency, not throughput), so
+  stepped in the frame it cost more GPU than it saved CPU. The fix was the second Metal 4 queue, one frame behind
+  (`Renderer.physicsAside`, shared events `done` and `posed`). `METALRENDERER_PHYSICS_BESIDE=0` turns it off;
+  `METALRENDERER_PHYSICS_PARTS=1` (parts timed apart) and replays/catch-ups step in the frame.
+- **Result (stage 5's A/B):** against the CPU's steps beside the frame as the app runs them (`METALRENDERER_PHYSICS_ASYNC=1`
+  in a benchmark), the GPU's cars cost +0.5-0.9 ms of GPU a frame and save nothing of the frame's own CPU: they only
+  free the worker cores (1.0-4.3 ms a step). Automatic stays on the CPU (`PhysicsSettings.runsOnGPU`). In benchmarks
+  without that variable the CPU's steps are inside the frame, which makes the GPU look like a win (cpu -0.65 to -4.4 ms):
+  compare with it set.
+- **Traps (keep them):**
+  - Threadgroup memory is 32 KB: nodes capped at 432 (448 was 33,168 bytes), corners at 288; the hull middles' pushes
+    alias the scratch.
+  - A body's shove from the cars is a group's sum: its speed (Δx/h) capped at the fastest pushing node's approach plus
+    the push-out speed. Uncapped, bricks under a crumpled car flew 7 m (the CPU's world solve takes a shove into the
+    ground back; the GPU's sum came after it). Δx/(n·h) made crates stop the car dead.
+  - Car against car: equal and opposite pushes with split masses, summed. Averaging a triangle's pushes made momentum.
+  - The carried pushes (a car's own on its first 32 bodies through a group) live in device memory, zeroed at the run's
+    start: a paired car steps a substep a dispatch, and in threadgroup memory they were lost between dispatches.
+  - The world's kernels expect its params bound at index 0 for the whole step: a kernel slipped in between
+    (`encodeKeep`) must bind them back (it changed a crate stack's replay).
+  - The world's reset stops at its own particles (`params.particles.x` is the world's, not the cars' nodes): the cars'
+    reset copies their nodes back.
+  - A Swift struct shared with MSL changed size: rebuild release before timing (the shaders are read at run time, the
+    Swift isn't); `CarsGPU.init`'s preconditions name the sizes.
+- **Not the same as the CPU:** a door off settles lower; after the head-on the cars stay together; a woken car's panels
+  wait up to ~3 frames for the telemetry.
+- **Open:** the window hand test (drive and crash with Physics on: GPU); a cheaper step (the car kernel's barriers, the
+  keep copies of every body each step: +0.05-0.1 ms in stage 4); whether a Mac with a weaker CPU wants the GPU by default.
+
 ## Next phases
 
 - Ideas: rolling resistance, roll on the cameras.

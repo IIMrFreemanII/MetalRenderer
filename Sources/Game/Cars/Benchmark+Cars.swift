@@ -16,7 +16,7 @@ import MetalRenderer
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
         "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carsmanycpu": carsManyCPU, "carsmanygpu": carsManyGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
-        "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo, "carsvideogpu": carsVideoGPU,
+        "carscrash": carsCrash, "carscrashgpu": carsCrashGPU, "carscams": carsCams, "carsvideo": carsVideo, "carsvideogpu": carsVideoGPU,
     ]
 
     /// Each model's cockpit (CarPack.Entry.eye), then each camera (CarCameras.swift: C goes round them) on the
@@ -79,6 +79,11 @@ extension Benchmark {
                 }.from(camera).still(at: t)
             }
         }
+    }
+
+    /// ...on the GPU (CarsGPU.swift): each still a replay from the start on the GPU.
+    private static func carsCrashGPU() -> [Config] {
+        carsCrash().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// The wall demo's damage in the full look, close (CarDamage.swift): at 50 km/h just after the hit (the shards, the

@@ -144,14 +144,14 @@ constant uint  PHYS_EVENT_GLASS = 8, PHYS_EVENT_STEAM = 9, PHYS_EVENT_SMOKE = 10
 // The hull's middles' pushes summed in fixed point (an int's step: 0.1 µm).
 constant float PHYS_CAR_FIXED = 1e7f;
 // What the cars do to a body over a group of substeps, summed in fixed point (CarsGPU.bodyWords ints a body): their
-// nodes' pushes (mass-weighted corrections: kg m) and their turns, how many; their tyres' kicks (N s) and turns, how
-// many; over the step, their knocks on a piece (N s), where (m N s) and which way (N s), and which cars knocked it (a
+// nodes' pushes (mass-weighted corrections: kg m) and their turns, how many, the fastest of the nodes into it (mm/s);
+// their tyres' kicks (N s) and turns, how many; over the step, their knocks on a piece (N s), where (m N s) and which way (N s), and which cars knocked it (a
 // bit a car).
 constant uint PHYS_BODY_WORDS = 24;
 constant uint PHYS_CAR_CARRIED = 32;   // the bodies a car carries its own pushes on through a group (physCarNode)
-constant uint PHYS_ACC_PUSH = 0, PHYS_ACC_PUSH_TWIST = 3, PHYS_ACC_PUSHES = 6, PHYS_ACC_KICK = 8, PHYS_ACC_KICK_TWIST = 11, PHYS_ACC_KICKS = 14;
+constant uint PHYS_ACC_PUSH = 0, PHYS_ACC_PUSH_TWIST = 3, PHYS_ACC_PUSHES = 6, PHYS_ACC_PUSH_SPEED = 7, PHYS_ACC_KICK = 8, PHYS_ACC_KICK_TWIST = 11, PHYS_ACC_KICKS = 14;
 constant uint PHYS_ACC_KNOCK = 16, PHYS_ACC_KNOCK_POINT = 17, PHYS_ACC_KNOCK_PUSH = 20, PHYS_ACC_HITS = 23;
-constant float PHYS_PUSH_FIXED = 1e6f, PHYS_KICK_FIXED = 1e5f, PHYS_KNOCK_FIXED = 1e4f, PHYS_POINT_FIXED = 1e3f;
+constant float PHYS_PUSH_FIXED = 1e6f, PHYS_KICK_FIXED = 1e5f, PHYS_KNOCK_FIXED = 1e4f, PHYS_POINT_FIXED = 1e3f, PHYS_SPEED_FIXED = 1e3f;
 
 inline void physAddFixed(device atomic_int* a, float3 v, float scale) {
     int3 f = int3(round(v * scale));
@@ -732,6 +732,8 @@ inline void physCarNode(int i, threadgroup PhysCarNode* q, int base, device floa
                 physAddFixed(a + PHYS_ACC_PUSH, impulse, PHYS_PUSH_FIXED);
                 physAddFixed(a + PHYS_ACC_PUSH_TWIST, cross(lever, impulse), PHYS_PUSH_FIXED);
                 atomic_fetch_add_explicit(a + PHYS_ACC_PUSHES, 1, memory_order_relaxed);
+                atomic_fetch_max_explicit(a + PHYS_ACC_PUSH_SPEED, int(round(max(-dot(x - prev, n), 0.0f) / h * PHYS_SPEED_FIXED)),
+                                          memory_order_relaxed);
                 if (mine) {
                     int3 f = int3(round(impulse * PHYS_PUSH_FIXED)), g = int3(round(cross(lever, impulse) * PHYS_PUSH_FIXED));
                     for (uint e = 0; e < 3; ++e) {
@@ -1946,7 +1948,10 @@ kernel void physicsCarMeetKernel(constant PhysicsParams&        p          [[buf
 
 // After a group of the cars' substeps, before the world's: what they did to each body (physCarNode, physCarTyre) — its
 // pushes' sum as a shove and the speed it stands for (each a substep's, as the CPU shoves it each substep), its tyres'
-// kicks as a speed — and how many pushes a substep it took (the next group's mass splitting). A thread a body.
+// kicks as a speed — and how many pushes a substep it took (the next group's mass splitting). The speed a shove gives
+// is no more than the fastest node pushing it came into it, and the push-out speed (PHYS_PUSH_SPEED): on the CPU a
+// shove's speed is what the world's substep leaves of it, and a brick caught between a crumpled car and the ground is
+// put back there; summed over a group and given whole, it flew 7 m up from a car at rest. A thread a body.
 kernel void physicsCarBodiesKernel(device PhysicsBody*     bodies [[buffer(13)]],
                                    constant PhysicsGroup&  run    [[buffer(21)]],
                                    device atomic_int*      acc    [[buffer(22)]],
@@ -1971,8 +1976,10 @@ kernel void physicsCarBodiesKernel(device PhysicsBody*     bodies [[buffer(13)]]
             float3 turn = physInvInertia(b.rotation, b.invInertia.xyz, physFixed3(a + PHYS_ACC_PUSH_TWIST, PHYS_PUSH_FIXED));
             b.position.xyz += dx;
             b.rotation = physTurn(b.rotation, turn);
-            b.velocity.xyz += dx / h;   // (as the CPU's shove each substep: its velocity the shove over a substep)
-            b.angular.xyz += turn / h;
+            float cap = float(atomic_load_explicit(a + PHYS_ACC_PUSH_SPEED, memory_order_relaxed)) / PHYS_SPEED_FIXED + PHYS_PUSH_SPEED;
+            float speed = length(dx) / h, scale = speed > cap ? cap / speed : 1.0f;
+            b.velocity.xyz += dx / h * scale;   // (as the CPU's shove each substep: its velocity the shove over a substep)
+            b.angular.xyz += turn / h * scale;
         }
         if (kicks > 0) {
             b.velocity.xyz += physFixed3(a + PHYS_ACC_KICK, PHYS_KICK_FIXED) * b.position.w;
