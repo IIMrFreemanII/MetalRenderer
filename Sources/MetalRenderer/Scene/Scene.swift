@@ -563,8 +563,13 @@ package final class Scene {
     /// With cars: what this frame draws, between the stepper's last two steps (`Scene.drawnBetween`), and how far
     /// behind the frame the latest steps are on average (s).
     package var drawnFrame: PhysicsStepper.Drawn?
-    /// With the cars on the GPU (CarsGPU.swift): their telemetry as a frame done left it, and the steps run then.
-    package var gpuCars: (step: Int, cars: [CarTelemetry])?
+    /// With the cars on the GPU (CarsGPU.swift): their telemetry as a frame done left it, the steps run then, and
+    /// each car's motion (GPUCarTelemetry.velocity: what `drawnPhysics` moves it on by to the frame's time).
+    package var gpuCars: (step: Int, cars: [CarTelemetry], motion: [SIMD4<Float>])?
+    /// ...the time this frame draws them at (in steps; nil: the latest, paused), and the latest step the last frame
+    /// drew (the renderer's: PhysicsGPU.shownStep, stepsEncoded).
+    package var physicsShownStep: Float?
+    package var physicsDrawnLatest = 0
     package var physicsLag: Float = 0
     /// The time that frame drew the steps at, and the frame's own time.
     package var physicsShown: (shown: Float, at: Float)?

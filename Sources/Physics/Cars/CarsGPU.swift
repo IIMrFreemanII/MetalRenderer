@@ -57,11 +57,14 @@ package struct GPUCarTelemetry {
     package var centre = SIMD4<Float>()      // w = rpm
     package var forward = SIMD4<Float>()     // w = throttle
     package var up = SIMD4<Float>()          // w = brake
+    package var velocity = SIMD4<Float>()    // its frame's; w = how fast it turns about its up (rad/s, toward its left)
     package var steer: Float = 0
     package var gear: Int32 = 0, bent: Int32 = 0, broken: Int32 = 0
     package var frontCrush: Float = 0, coolant: Float = 0, heat: Float = 0, engineDamage: Float = 0
     package var flags: UInt32 = 0            // GPUCar.running, asleep
     package var partsOff: Int32 = 0, wheelsOff: Int32 = 0, panesBroken: Int32 = 0
+    package var size: Float = 0              // its nodes' box's volume in its own frame (a frame's snapshot's)
+    package var pad0: UInt32 = 0, pad1: UInt32 = 0, pad2: UInt32 = 0
 
     package var telemetry: CarTelemetry {
         var t = CarTelemetry()
@@ -85,6 +88,19 @@ package struct GPUCarTelemetry {
         t.partsOff = partsOff
         t.wheelsOff = wheelsOff
         t.panesBroken = panesBroken
+        return t
+    }
+}
+
+extension CarTelemetry {
+    /// Where the car will be `dt` seconds on at `motion` (GPUCarTelemetry.velocity: its velocity, how fast it turns):
+    /// what a frame shows of a car the GPU's telemetry reached it late with (Scene.drawnPhysics).
+    package func ahead(_ dt: Float, _ motion: SIMD4<Float>) -> CarTelemetry {
+        var t = self
+        let v = PhysicsMath.xyz(motion), angle = motion.w * dt, left = cross(up, forward)
+        t.position += v * dt
+        t.centre += v * dt
+        t.forward = simd_normalize(forward * cos(angle) + left * sin(angle))
         return t
     }
 }
@@ -200,7 +216,7 @@ package final class CarsGPU {
         precondition(MemoryLayout<CarWheel>.offset(of: \CarWheel.inverseMass) == 92 && MemoryLayout<CarWheel>.stride == 128,
                      "CarWheel: MSL PhysicsCarWheel")
         precondition(MemoryLayout<CarPane>.stride == 32 && MemoryLayout<GPUCar>.stride == 288 && MemoryLayout<GPUCarTune>.stride == 176
-                     && MemoryLayout<GPUCarTelemetry>.stride == 112, "the cars' GPU twins: MSL")
+                     && MemoryLayout<GPUCarTelemetry>.stride == 144, "the cars' GPU twins: MSL")
         count = system.cars.count
         worldParticles = firstNode
         // The beams' colours. On the GPU each car's beams are in their colours' order (a colour's beams one run: its
@@ -359,8 +375,9 @@ package final class CarsGPU {
         stepsEncoded += steps
     }
 
-    /// The cars' state as built (a replay), its sums cleared.
-    func encodeReset(_ enc: ComputePass, pipelines: Pipelines) {
+    /// The cars' state as built (a replay), its sums cleared; and their nodes (the world's `particles` from
+    /// `first` to `end`, from `initial`).
+    func encodeReset(_ enc: ComputePass, pipelines: Pipelines, particles: (initial: MTLBuffer, live: MTLBuffer, first: Int, end: Int)) {
         stepsEncoded = 0
         let reset = pipelines[.physicsCarReset]
         enc.setComputePipelineState(reset)
@@ -368,6 +385,13 @@ package final class CarsGPU {
         enc.setBuffer(state, offset: 0, index: 2)
         enc.setBuffer(scratch, offset: 0, index: 3)
         var counts = SIMD2<UInt32>(UInt32(state.length / 4), UInt32(scratch.length / 4))
+        enc.setBytes(&counts, length: 8, index: 4)
+        enc.dispatchThreads(MTLSize(width: 16384, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
+        // (The same kernel, nothing cleared.)
+        let stride = MemoryLayout<GPUPhysicsParticle>.stride
+        enc.setBuffer(particles.initial, offset: particles.first * stride, index: 1)
+        enc.setBuffer(particles.live, offset: particles.first * stride, index: 2)
+        counts = SIMD2(UInt32((particles.end - particles.first) * stride / 4), 0)
         enc.setBytes(&counts, length: 8, index: 4)
         enc.dispatchThreads(MTLSize(width: 16384, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 256, height: 1, depth: 1))
     }
@@ -525,10 +549,13 @@ package final class CarsGPU {
         enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
     }
 
-    /// The cars' telemetry into slot `slot`'s snapshot (each frame, its steps encoded or not).
-    func encodeTelemetry(_ enc: ComputePass, pipelines: Pipelines, slot: Int, barrier: () -> Void) {
+    /// The cars' telemetry into slot `slot`'s snapshot (each frame, its steps encoded or not), with their boxes' sizes
+    /// from the world's `particles`.
+    func encodeTelemetry(_ enc: ComputePass, pipelines: Pipelines, slot: Int, particles: MTLBuffer, barrier: () -> Void) {
         let copy = pipelines[.physicsCarTelemetry]
         enc.setComputePipelineState(copy)
+        enc.setBuffer(state, offset: carsAt, index: 1)
+        enc.setBuffer(particles, offset: 0, index: 12)
         enc.setBuffer(telemetry, offset: 0, index: 28)
         enc.setBuffer(scratch, offset: clockAt, index: 11)
         enc.setBuffer(snapshots[slot], offset: 0, index: 29)
@@ -539,11 +566,10 @@ package final class CarsGPU {
     }
 
     /// Slot `slot`'s telemetry (its frame must be done): the steps the GPU had run, and each car's.
-    func telemetry(slot: Int) -> (step: Int, cars: [CarTelemetry]) {
+    func telemetry(slot: Int) -> (step: Int, cars: [GPUCarTelemetry]) {
         let raw = snapshots[slot].contents()
         let step = Int(raw.load(as: UInt32.self))
-        let t = raw.advanced(by: 16).bindMemory(to: GPUCarTelemetry.self, capacity: count)
-        return (step, (0..<count).map { t[$0].telemetry })
+        return (step, Array(UnsafeBufferPointer(start: raw.advanced(by: 16).bindMemory(to: GPUCarTelemetry.self, capacity: count), count: count)))
     }
 
     // MARK: - Reading back (tests)

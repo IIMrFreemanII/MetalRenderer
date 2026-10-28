@@ -78,6 +78,11 @@ extension Scene {
             if physicsOnGPU {
                 let claim = physics.claim(to: t)
                 physicsPending = claim.restart ? claim : (physicsPending.steps + claim.steps, physicsPending.restart)
+                // (With cars: the time the frame draws them at, between the GPU's steps; paused, the latest.)
+                let paused = physicsTime == t
+                physicsTime = t
+                physicsShownStep = physics.hasCars && !paused
+                    ? shownTime(at: t, latest: physicsDrawnLatest) / PhysicsWorld.stepLength : nil
             } else if physicsFromInstall {
                 if physicsOrigin.map({ t < $0 }) ?? true { physicsOrigin = t }
                 physics.advance(to: t - (physicsOrigin ?? t), atMost: 8)
@@ -130,15 +135,14 @@ extension Scene {
         }
     }
 
-    /// What a frame at `t` draws of a world with cars (`drawnFrame`): the two of its stepper's recent steps round a
-    /// time that moves with the frames, blended there: it moves on by each frame's length, eased toward half a step
-    /// behind the latest steps on average (`physicsLag`: how far behind the frame they are), so the cars and the
-    /// camera that chases them move every frame by as much as the frame lasted (from that average itself, each frame
-    /// moved by a little more or less), and a frame whose steps came late (or two at once) still has two round it.
-    /// Paused, the latest.
-    func drawnBetween(_ stepper: PhysicsStepper, at t: Float, paused: Bool) -> PhysicsStepper.Drawn {
-        let recent = stepper.recent, latest = recent[recent.count - 1], h = PhysicsWorld.stepLength
-        physicsLag += (min(max(t - Float(latest.stepIndex) * h, 0), 0.25) - physicsLag) * 0.1
+    /// The time (s) a frame at `t` draws a world with cars at, its latest step `latest`: one that moves with the
+    /// frames, by each frame's length, eased toward half a step behind the latest steps on average (`physicsLag`: how
+    /// far behind the frame they are), so the cars and the camera that chases them move every frame by as much as the
+    /// frame lasted (from that average itself, each frame moved by a little more or less), and a frame whose steps came
+    /// late (or two at once) still has two round it.
+    func shownTime(at t: Float, latest: Int) -> Float {
+        let h = PhysicsWorld.stepLength
+        physicsLag += (min(max(t - Float(latest) * h, 0), 0.25) - physicsLag) * 0.1
         let target = t - physicsLag - h / 2
         var shown = target
         if let last = physicsShown, t > last.at, abs(last.shown + (t - last.at) - target) < 0.1 {
@@ -146,6 +150,14 @@ extension Scene {
             shown += (target - shown) * 0.05
         }
         physicsShown = (shown, t)
+        return shown
+    }
+
+    /// What a frame at `t` draws of a world with cars (`drawnFrame`): the two of its stepper's recent steps round its
+    /// time (`shownTime`), blended there. Paused, the latest.
+    func drawnBetween(_ stepper: PhysicsStepper, at t: Float, paused: Bool) -> PhysicsStepper.Drawn {
+        let recent = stepper.recent, latest = recent[recent.count - 1], h = PhysicsWorld.stepLength
+        let shown = shownTime(at: t, latest: latest.stepIndex)
         var drawn = latest
         if !paused, recent.count > 1 {
             var k = recent.count - 2
@@ -244,9 +256,16 @@ extension Scene {
         if let physicsStepper { return drawnFrame ?? physicsStepper.latest }
         guard let physics else { return nil }
         var drawn = PhysicsStepper.Drawn(physics)
-        if physicsOnGPU, let gpuCars {   // (the cars as the GPU's steps left them)
+        if physicsOnGPU, let gpuCars {
+            // The cars as the GPU's steps left them a few frames ago (its telemetry is read once that frame is done),
+            // moved on to the time this frame draws them at, as the GPU draws them (PhysicsGPU.encodeDrawn): the
+            // camera that chases one and the car keep together.
             drawn.cars = gpuCars.cars
             drawn.stepIndex = gpuCars.step
+            if let shown = physicsShownStep {
+                let dt = simd_clamp((shown - Float(gpuCars.step)) * PhysicsWorld.stepLength, -0.25, 0.25)
+                for c in drawn.cars.indices where c < gpuCars.motion.count { drawn.cars[c] = drawn.cars[c].ahead(dt, gpuCars.motion[c]) }
+            }
         }
         return drawn
     }

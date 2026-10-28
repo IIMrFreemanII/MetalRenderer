@@ -28,6 +28,7 @@ package enum Kernel: Int, CaseIterable {
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
+    case physicsKeep, physicsDrawn   // a car world's frames between its steps (PhysicsGPU.encodeDrawn)
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
     case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsLooseGather, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow, physicsFractureClear, physicsFractureInsert,
          physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourPick, physicsColourCommit, physicsColourCount,

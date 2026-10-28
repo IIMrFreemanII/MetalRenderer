@@ -315,4 +315,90 @@ final class CarGPUTests: XCTestCase {
             XCTAssertGreaterThan(t.up.y, 0.98, "car \(k)")
         }
     }
+
+    // MARK: The frame
+
+    /// Back to the start and on again (the timeline, a still): a crash into the wall stepped to 2.5 s, then reset and
+    /// stepped there in steps of another size: the same nodes, bodies and cars, bit for bit.
+    func testTheReplayIsTheSame() throws {
+        let m = try metal()
+        let g = try GPU(try scene(CarSettings(style: .civic, cars: 1, demo: .wall, demoSpeed: 50)), m)
+        func run(reset: Bool, chunk: Int) -> (nodes: [GPUPhysicsParticle], bodies: [GPUPhysicsBody], cars: [GPUCar]) {
+            let total = seconds(2.5)
+            var done = 0
+            while done < total {
+                let k = min(chunk, total - done)
+                g.encode {
+                    if reset && done == 0 { g.gpu.encodeReset($0, pipelines: g.pipelines) }
+                    g.gpu.sendCommands()
+                    g.gpu.encodeSteps($0, pipelines: g.pipelines, steps: k)
+                }
+                done += k
+            }
+            return (g.gpu.readParticles(), g.gpu.readBodies(), g.gpu.cars!.readCars())
+        }
+        func same<T>(_ a: [T], _ b: [T]) -> Int {
+            zip(a, b).filter { x, y in withUnsafeBytes(of: x) { p in withUnsafeBytes(of: y) { q in p.elementsEqual(q) } } }.count
+        }
+        let first = run(reset: false, chunk: 20), again = run(reset: true, chunk: 7)
+        print("GPU car replay at 2.5 s: \(same(first.nodes, again.nodes)) of \(first.nodes.count) nodes, \(same(first.bodies, again.bodies)) of "
+              + "\(first.bodies.count) bodies the same; crushed \(first.cars[0].frontCrush) and \(again.cars[0].frontCrush)")
+        XCTAssertGreaterThan(first.cars[0].frontCrush, 0.1, "it hit the wall")
+        XCTAssertEqual(same(first.nodes, again.nodes), first.nodes.count, "the nodes, bit for bit")
+        XCTAssertEqual(same(first.bodies, again.bodies), first.bodies.count, "the bodies, bit for bit")
+        XCTAssertEqual(same(first.cars, again.cars), first.cars.count, "the cars, bit for bit")
+    }
+
+    /// A car on its lap drawn by frames of uneven lengths (12 to 20 ms, a window's at 60 to 80 fps) as the app draws
+    /// it beside its steps: each frame drawn before its own steps run, at the time Scene.shownTime gives it (between
+    /// the GPU's steps: PhysicsGPU.encodeDrawn), its telemetry read three frames late and moved on to that time
+    /// (Scene.drawnPhysics: what the chase camera follows). Drawn so, it keeps to its speed from frame to frame (as
+    /// testFramesBetweenStepsAreSmooth on the CPU), the latest step's jumping about; the camera's car keeps with it.
+    func testFramesBetweenStepsAreSmoothOnTheGPU() throws {
+        let m = try metal()
+        let s = try scene(CarSettings(style: .civic, cars: 1, demo: .laps))
+        let g = try GPU(s, m)
+        let h = PhysicsWorld.stepLength
+        g.step(seconds(4))   // (up to its speed)
+        let car = g.gpu.cars!.readCars()[0], ring = Int(car.firstNode)..<Int(car.firstNode + car.ringNodes)
+        func centre(_ nodes: [GPUPhysicsParticle]) -> SIMD3<Float> { ring.reduce(SIMD3<Float>()) { $0 + PhysicsMath.xyz(nodes[$1].position) } / Float(ring.count) }
+        let instances = m.device.makeBuffer(length: (s.instances.count + 1) * MemoryLayout<GPUInstanceData>.stride, options: .storageModeShared)!
+        var t = Float(g.gpu.stepsEncoded) * h, seed: UInt32 = 7, latest = g.gpu.stepsEncoded
+        var late: [(step: Int, cars: [CarTelemetry], motion: [SIMD4<Float>])] = []
+        var drawnTrack: [(t: Float, p: SIMD3<Float>)] = [], latestTrack: [(t: Float, p: SIMD3<Float>)] = [], apart: Float = 0
+        for frame in 0..<150 {
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let dt = 0.012 + 0.008 * Float(seed >> 8) / Float(1 << 24)
+            t += dt
+            let shown = s.shownTime(at: t, latest: latest) / h
+            let steps = Int((t / h).rounded(.down)) - g.gpu.stepsEncoded
+            g.encode { enc in
+                g.gpu.shownStep = shown
+                latest = g.gpu.stepsEncoded
+                g.gpu.encodePose(enc, pipelines: g.pipelines, slot: 0, instances: instances, descriptors: nil, descriptorStride: 0)
+                g.gpu.sendCommands()
+                g.gpu.encodeSteps(enc, pipelines: g.pipelines, steps: steps)
+            }
+            let drawn = centre(g.gpu.readDrawnParticles())
+            late.append(g.gpu.carTelemetry(slot: 0)!)
+            guard frame > 30 else { continue }
+            drawnTrack.append((t, drawn))
+            latestTrack.append((t, centre(g.gpu.readParticles())))
+            let old = late[late.count - 4]
+            let camera = old.cars[0].ahead((shown - Float(old.step)) * h, old.motion[0])
+            apart = max(apart, simd_distance(camera.centre, drawn))
+        }
+        // (How much its speed changes from one frame to the next, as a share of it.)
+        func jitter(_ track: [(t: Float, p: SIMD3<Float>)]) -> Float {
+            let speeds = zip(track, track.dropFirst()).map { simd_distance($1.p, $0.p) / ($1.t - $0.t) }
+            let mean = speeds.reduce(0, +) / Float(speeds.count)
+            let changes = zip(speeds, speeds.dropFirst()).map { ($1 - $0) * ($1 - $0) }
+            return (changes.reduce(0, +) / Float(changes.count)).squareRoot() / mean
+        }
+        print(String(format: "GPU: speed's change from frame to frame: latest %.0f%%, drawn between %.1f%%; the camera's car at most %.1f cm off the drawn",
+                     jitter(latestTrack) * 100, jitter(drawnTrack) * 100, apart * 100))
+        XCTAssertLessThan(jitter(drawnTrack), 0.05)
+        XCTAssertLessThan(jitter(drawnTrack), jitter(latestTrack) / 5)
+        XCTAssertLessThan(apart, 0.05, "the camera's car keeps with the drawn")
+    }
 }

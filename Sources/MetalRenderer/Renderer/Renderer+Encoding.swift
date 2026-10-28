@@ -105,6 +105,9 @@ extension Renderer {
                         }
                     }
                     let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
+                    // (A car world drawn between its steps, at the time its cars' camera was placed for.)
+                    physicsGPU.shownStep = scene.physicsShownStep
+                    scene.physicsDrawnLatest = physicsGPU.stepsEncoded
                     physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
                                           descriptorStride: instanceDescriptorStride)
                 }

@@ -99,13 +99,16 @@ struct PhysicsCarTelemetry {   // GPUCarTelemetry (CarTelemetry's)
     float4 centre;             // w = rpm
     float4 forward;            // w = throttle
     float4 up;                 // w = brake
+    float4 velocity;           // its frame's; w = how fast it turns about its up (rad/s, toward its left)
     float steer;
     int   gear, bent, broken;
     float frontCrush, coolant, heat, engineDamage;
     uint  flags;               // PHYS_CAR_RUNNING, PHYS_CAR_ASLEEP
     int   partsOff, wheelsOff, panesBroken;
+    float size;                // the volume of its nodes' box in its own frame (a frame's: physicsCarTelemetryKernel)
+    uint  pad0, pad1, pad2;
 };
-static_assert(sizeof(PhysicsCarTelemetry) == 112, "PhysicsCarTelemetry: GPUCarTelemetry");
+static_assert(sizeof(PhysicsCarTelemetry) == 144, "PhysicsCarTelemetry: GPUCarTelemetry");
 
 // A car's step-wide numbers (CarsGPU.Header): x = the steps run (the clock), y = the commands this frame's steps have.
 struct PhysicsCarClock { uint4 counts; };
@@ -1507,6 +1510,10 @@ kernel void physicsCarEndKernel(constant PhysicsParams&        p          [[buff
         tm.centre = float4(centre, s.engine * 30.0f / M_PI_F);
         tm.forward = float4(frame.forward, s.controls.x);
         tm.up = float4(frame.up, s.controls.y);
+        float3 span = q[s.frame1].position.xyz - q[s.frame0].position.xyz;
+        float yaw = dot(q[s.frame1].velocity.xyz - q[s.frame0].velocity.xyz, frame.left) / max(length(span), 1e-3f);
+        tm.velocity = float4(frame.velocity, yaw);
+        tm.size = 0.0f;
         tm.steer = s.controls.w;
         tm.gear = s.gear;
         tm.bent = s.bent;
@@ -1587,14 +1594,30 @@ kernel void physicsCarEventsKernel(device PhysicsCar*              cars   [[buff
 }
 
 // The cars' telemetry for a frame slot (the CPU reads it once the slot's frame is done): the step, then each car's.
-kernel void physicsCarTelemetryKernel(device const PhysicsCarTelemetry* telemetry [[buffer(28)]],
+kernel void physicsCarTelemetryKernel(device const PhysicsCar*          cars      [[buffer(1)]],
+                                      device const PhysicsParticle*     q         [[buffer(12)]],
+                                      device const PhysicsCarTelemetry* telemetry [[buffer(28)]],
                                       device const PhysicsCarClock&     clock     [[buffer(11)]],
                                       device uint4*                     out       [[buffer(29)]],
                                       constant uint&                    count     [[buffer(30)]],
                                       uint t [[thread_position_in_grid]])
 {
     if (t == 0) out[0] = uint4(clock.counts.x, count, 0, 0);
-    if (t < count) ((device PhysicsCarTelemetry*)(out + 1))[t] = telemetry[t];
+    if (t >= count) return;
+    // Its nodes' box in its own frame (PhysicsGPU.carSize: its turning doesn't count; 0.3 m a side at least), for the
+    // CPU's rebuilds of its structures once it has come apart.
+    PhysicsCar s = cars[t];
+    PhysCarFrame f = physCarFrame(s, q, 0);
+    float3 lo = float3(INFINITY), hi = float3(-INFINITY);
+    for (int i = s.firstNode; i < s.firstNode + s.nodeCount; ++i) {
+        float3 d = q[i].position.xyz - f.centre, r = float3(dot(d, f.left), dot(d, f.up), dot(d, f.forward));
+        lo = min(lo, r);
+        hi = max(hi, r);
+    }
+    float3 e = max(hi - lo, float3(0.3f));
+    PhysicsCarTelemetry tm = telemetry[t];
+    tm.size = e.x * e.y * e.z;
+    ((device PhysicsCarTelemetry*)(out + 1))[t] = tm;
 }
 
 // MARK: - Cars against cars (CarContacts.swift)

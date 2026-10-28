@@ -105,6 +105,11 @@ package final class PhysicsGPU {
     private let worldParticles: Int
     /// The cars (Shaders/PhysicsCars.metal), when the world has cars and this steps it.
     package let cars: CarsGPU?
+    /// A car world's frames drawn between its steps (`encodeDrawn`): the two steps before its latest, kept (each
+    /// particle's place, each body's place and turn: physicsKeepKernel), a step `s` in `kept[s % 2]`; and the particles
+    /// and bodies the frame draws from.
+    private let kept: [(particles: MTLBuffer, bodies: MTLBuffer)]
+    private let drawnParticles: MTLBuffer?, drawnBodies: MTLBuffer?
     /// The cloths' constraints by colour, and where each colour starts.
     private let constraints: MTLBuffer
     private let colourStarts: MTLBuffer
@@ -356,6 +361,13 @@ package final class PhysicsGPU {
             fluid = nil
         }
         cars = try carNodes.map { try CarsGPU(device: device, world: world, firstNode: $0, slots: slots) }
+        let between = carNodes != nil
+        kept = try (0..<(between ? 2 : 0)).map { k in
+            (try buffer(world.initialParticles.map { SIMD4(PhysicsMath.xyz($0.position), 0) }, "physicsKeptParticles\(k)"),
+             try buffer(startBodies.flatMap { [SIMD4(PhysicsMath.xyz($0.position), 0), $0.rotation] }, "physicsKeptBodies\(k)"))
+        }
+        drawnParticles = between ? try buffer(world.initialParticles, "physicsDrawnParticles") : nil
+        drawnBodies = between ? try buffer(startBodies, "physicsDrawnBodies") : nil
         sendCommands()   // (a scene's scripted ones)
     }
 
@@ -425,7 +437,9 @@ package final class PhysicsGPU {
         fluid?.encodeReset(enc, pipelines: pipelines)
         if let cars {
             barrier(enc)
-            cars.encodeReset(enc, pipelines: pipelines)
+            // (The world's reset puts back its own particles: the cars' nodes after them are theirs.)
+            cars.encodeReset(enc, pipelines: pipelines, particles: (initialParticles, particles[0], worldParticles, particleCount))
+            for k in kept.indices { encodeKeep(enc, pipelines: pipelines, into: k) }
         }
         guard strandCount > 0 else { return }
         var vertexCount = UInt32(world.initialHairVertices.count)
@@ -438,6 +452,63 @@ package final class PhysicsGPU {
         enc.setBytes(&vertexCount, length: 4, index: 5)
         dispatch(enc, pipelines[.physicsHairReset], max(Int(vertexCount), strandCount))
     }
+
+    /// The world as it is into `kept[k]`.
+    private func encodeKeep(_ enc: ComputePass, pipelines: Pipelines, into k: Int) {
+        var counts = SIMD2<UInt32>(UInt32(particleCount), UInt32(count))
+        let keep = pipelines[.physicsKeep]
+        enc.setComputePipelineState(keep)
+        enc.setBytes(&counts, length: 8, index: 0)
+        enc.setBuffer(particles[0], offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 2)
+        enc.setBuffer(kept[k].particles, offset: 0, index: 3)
+        enc.setBuffer(kept[k].bodies, offset: 0, index: 4)
+        dispatch(enc, keep, max(particleCount, count))
+        barrier(enc)
+        enc.setBuffer(params, offset: 0, index: 0)   // (the step's kernels find it there)
+    }
+
+    /// MSL PhysicsDrawnParams.
+    struct DrawnParams {
+        var particles: UInt32, bodies: UInt32, t: Float, latest: UInt32
+    }
+
+    /// The time (in steps from the start) this frame draws a car world at (Scene.physicsShownStep: between its steps, a
+    /// little behind the latest), or nil for the latest (paused). The renderer sets it ahead of `encodePose`.
+    package var shownStep: Float?
+    /// This frame draws from `drawnParticles` and `drawnBodies` (`encodeDrawn`), not the world's own.
+    private var blended = false
+
+    /// The particles and bodies where this frame draws them (`shownStep`): between the two of the latest steps round it
+    /// (the latest, or one of the two kept before it), as the CPU's PhysicsStepper.Drawn.between blends them. Each
+    /// frame's pose, panels and cloths then move by as much as the frame lasted, not a step's 1/60 s or nothing.
+    private func encodeDrawn(_ enc: ComputePass, pipelines: Pipelines) {
+        blended = false
+        let latest = stepsEncoded
+        guard let shown = shownStep, let drawnParticles, let drawnBodies, latest > 0 else { return }
+        let k = min(max(Int(shown.rounded(.down)), latest - 2, 0), latest - 1)
+        let t = simd_clamp(shown - Float(k), 0, 1)
+        guard k + 1 < latest || t < 1 else { return }
+        var dp = DrawnParams(particles: UInt32(particleCount), bodies: UInt32(count), t: t, latest: k + 1 == latest ? 1 : 0)
+        let to = kept[(k + 1) % 2], drawn = pipelines[.physicsDrawn]
+        enc.setComputePipelineState(drawn)
+        enc.setBytes(&dp, length: MemoryLayout<DrawnParams>.stride, index: 0)
+        enc.setBuffer(particles[0], offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 2)
+        enc.setBuffer(kept[k % 2].particles, offset: 0, index: 3)
+        enc.setBuffer(kept[k % 2].bodies, offset: 0, index: 4)
+        enc.setBuffer(to.particles, offset: 0, index: 5)
+        enc.setBuffer(to.bodies, offset: 0, index: 6)
+        enc.setBuffer(drawnParticles, offset: 0, index: 7)
+        enc.setBuffer(drawnBodies, offset: 0, index: 8)
+        dispatch(enc, drawn, max(particleCount, count))
+        barrier(enc)
+        blended = true
+    }
+
+    /// The particles and bodies this frame draws (`encodeDrawn`).
+    private var shownParticles: MTLBuffer { blended ? drawnParticles! : particles[0] }
+    private var shownBodies: MTLBuffer { blended ? drawnBodies! : bodies }
 
     /// The body held for slot `slot`'s steps (the world's `grab`), written once the slot's last frame is done.
     package func setGrab(slot: Int, _ grab: GPUPhysicsGrab) {
@@ -456,8 +527,11 @@ package final class PhysicsGPU {
         }
         enc.useResources(tableResources, usage: [.read, .write])   // (the substeps reach them through `tables`)
         cars?.sendCommands(world, slot: slot, steps: steps)
+        let first = stepsEncoded
         stepsEncoded += steps
-        for _ in 0..<steps {
+        for k in 0..<steps {
+            // (The two steps before the batch's last: what a frame draws between.)
+            if !kept.isEmpty && k >= steps - 2 { encodeKeep(enc, pipelines: pipelines, into: (first + k) % 2) }
             part("phys fracture")
             if fractures { encodeFractureCommands(enc, pipelines: pipelines) }
             if loose { encodeLooseGather(enc, pipelines: pipelines) }
@@ -1021,11 +1095,12 @@ package final class PhysicsGPU {
     package func encodePose(_ enc: ComputePass, pipelines: Pipelines, slot: Int, instances: MTLBuffer, descriptors: MTLBuffer?,
                     descriptorStride: Int) {
         guard !empty else { return }
+        encodeDrawn(enc, pipelines: pipelines)
         var p = PoseParams(bodies: UInt32(count), descriptorStride: descriptors == nil ? 0 : UInt32(descriptorStride))
         let pose = pipelines[fractures ? .physicsFracturePose : .physicsPose]
         enc.setComputePipelineState(pose)
         enc.setBytes(&p, length: MemoryLayout<PoseParams>.stride, index: 0)
-        enc.setBuffer(bodies, offset: 0, index: 1)
+        enc.setBuffer(shownBodies, offset: 0, index: 1)
         enc.setBuffer(shapes, offset: 0, index: 2)
         enc.setBuffer(lastPose, offset: 0, index: 3)
         enc.setBuffer(snapshots[slot], offset: 0, index: 4)
@@ -1035,13 +1110,13 @@ package final class PhysicsGPU {
         dispatch(enc, pose, count)
         if let cars {
             barrier(enc)
-            cars.encodeTelemetry(enc, pipelines: pipelines, slot: slot) { barrier(enc) }
+            cars.encodeTelemetry(enc, pipelines: pipelines, slot: slot, particles: particles[0]) { barrier(enc) }
         }
         guard worldParticles > 0 else { return }
         var q = PoseParams(bodies: UInt32(worldParticles), descriptorStride: p.descriptorStride)
         enc.setComputePipelineState(pipelines[.physicsParticlePose])
         enc.setBytes(&q, length: MemoryLayout<PoseParams>.stride, index: 0)
-        enc.setBuffer(particles[0], offset: 0, index: 1)
+        enc.setBuffer(shownParticles, offset: 0, index: 1)
         enc.setBuffer(lastParticle, offset: 0, index: 2)
         enc.setBuffer(instances, offset: 0, index: 3)
         enc.setBuffer(descriptors ?? instances, offset: 0, index: 4)
@@ -1072,7 +1147,7 @@ package final class PhysicsGPU {
         var n = UInt32(particleCount)
         enc.setComputePipelineState(pipelines[.physicsClothMesh])
         enc.setBytes(&n, length: 4, index: 0)
-        enc.setBuffer(simulates ? particles[0] : uploads[slot], offset: 0, index: 1)
+        enc.setBuffer(simulates ? shownParticles : uploads[slot], offset: 0, index: 1)
         enc.setBuffer(clothTable, offset: 0, index: 2)
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(normals, offset: 0, index: 4)
@@ -1098,11 +1173,11 @@ package final class PhysicsGPU {
         if world.softVertices.count > next { ranges.append(SIMD2(UInt32(next), UInt32(world.softVertices.count - next))) }
         guard !ranges.isEmpty else { return }
         enc.setComputePipelineState(pipelines[.physicsSoftMesh])
-        enc.setBuffer(simulates ? particles[0] : uploads[slot], offset: 0, index: 1)
+        enc.setBuffer(simulates ? shownParticles : uploads[slot], offset: 0, index: 1)
         enc.setBuffer(softVertices, offset: 0, index: 2)
         enc.setBuffer(positions, offset: 0, index: 3)
         enc.setBuffer(softEmbeds, offset: 0, index: 4)
-        enc.setBuffer(simulates ? bodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
+        enc.setBuffer(simulates ? shownBodies : bodyUploads.isEmpty ? bodies : bodyUploads[slot], offset: 0, index: 5)
         enc.setBuffer(damage ?? positions, offset: 0, index: 6)   // (no car's vertex writes to it without cars)
         for var r in ranges {
             enc.setBytes(&r, length: 8, index: 0)
@@ -1120,7 +1195,7 @@ package final class PhysicsGPU {
 
     /// The cars whose panels stay as they were drawn this frame (their nodes within `stillReach` of where they were
     /// when their panels were last drawn, their damage and breaks the same, for two frames: the second leaves their
-    /// last-frame positions where they are, for the motion vectors). The CPU's cars only (`simulates`: none).
+    /// last-frame positions where they are, for the motion vectors). The GPU's: asleep (`carTelemetry`).
     package private(set) var stillCars: Set<Int> = []
     /// The cars' panels (soft bodies) not drawn this frame (each car's other model: Scene.updateCarDetail), and those
     /// just shown.
@@ -1157,26 +1232,32 @@ package final class PhysicsGPU {
         return nil
     }
 
+    private func noteCars() {
+        guard carReference.count != carStates.count else { return }
+        carReference = [[SIMD4<Float>]](repeating: [], count: carStates.count)
+        carSettled = [Int](repeating: 0, count: carStates.count)
+        carBuiltSize = carRestSize
+        carSinceBuild = [Int](repeating: PhysicsGPU.rebuildFrames, count: carStates.count)
+    }
+
+    /// Car `c` come apart: its box in its own frame (`size`) grown or shrunk past `rebuildGrowth` since its last build.
+    private func noteSize(_ c: Int, _ size: Float) {
+        carSinceBuild[c] += 1
+        let change = max(size / carBuiltSize[c], carBuiltSize[c] / size)
+        if change > PhysicsGPU.rebuildGrowth && carSinceBuild[c] >= PhysicsGPU.rebuildFrames {
+            for s in carSurfaces where Int(s.x) == c && !rebuildQueue.contains(Int(s.w)) { rebuildQueue.append(Int(s.w)) }
+            carBuiltSize[c] = size
+            carSinceBuild[c] = 0
+        }
+    }
+
     private func noteStillCars(_ particles: [GPUPhysicsParticle]) {
         let cars = carStates
-        if carReference.count != cars.count {
-            carReference = [[SIMD4<Float>]](repeating: [], count: cars.count)
-            carSettled = [Int](repeating: 0, count: cars.count)
-            carBuiltSize = carRestSize
-            carSinceBuild = [Int](repeating: PhysicsGPU.rebuildFrames, count: cars.count)
-        }
+        noteCars()
         stillCars = []
         for (c, car) in cars.enumerated() {
             let first = Int(car.firstNode), n = Int(car.nodeCount)
-            // Come apart: its box in its own frame grown or shrunk past `rebuildGrowth` since its last build.
-            let size = PhysicsGPU.carSize(car, particles)
-            carSinceBuild[c] += 1
-            let change = max(size / carBuiltSize[c], carBuiltSize[c] / size)
-            if change > PhysicsGPU.rebuildGrowth && carSinceBuild[c] >= PhysicsGPU.rebuildFrames {
-                for s in carSurfaces where Int(s.x) == c && !rebuildQueue.contains(Int(s.w)) { rebuildQueue.append(Int(s.w)) }
-                carBuiltSize[c] = size
-                carSinceBuild[c] = 0
-            }
+            noteSize(c, PhysicsGPU.carSize(car, particles))
             var moved = carReference[c].count != n
             if !moved {
                 for k in 0..<n {
@@ -1227,6 +1308,13 @@ package final class PhysicsGPU {
         return Array(UnsafeBufferPointer(start: flesh.contents().bindMemory(to: SIMD4<UInt32>.self, capacity: n), count: n))
     }
 
+    /// The particles as the last frame drew them (`encodeDrawn`; tests).
+    package func readDrawnParticles() -> [GPUPhysicsParticle] {
+        guard blended, let drawnParticles else { return readParticles() }
+        return Array(UnsafeBufferPointer(start: drawnParticles.contents().bindMemory(to: GPUPhysicsParticle.self, capacity: particleCount),
+                                         count: particleCount))
+    }
+
     /// The particles as the GPU has them (tests).
     package func readParticles() -> [GPUPhysicsParticle] {
         Array(UnsafeBufferPointer(start: particles[0].contents().bindMemory(to: GPUPhysicsParticle.self, capacity: particleCount),
@@ -1238,7 +1326,32 @@ package final class PhysicsGPU {
     /// Slot `slot`'s poses (position, rotation per body), from when its frame was done.
     /// Slot `slot`'s cars as the GPU's steps left them (its frame must be done): the steps it had run, each car's
     /// telemetry. Nil without cars on the GPU.
-    package func carTelemetry(slot: Int) -> (step: Int, cars: [CarTelemetry])? { cars?.telemetry(slot: slot) }
+    /// Slot `slot`'s telemetry of the GPU's cars (its frame done: a few frames late), and each car's motion
+    /// (GPUCarTelemetry.velocity); which cars are still, which come apart.
+    package func carTelemetry(slot: Int) -> (step: Int, cars: [CarTelemetry], motion: [SIMD4<Float>])? {
+        guard let cars else { return nil }
+        let (step, t) = cars.telemetry(slot: slot)
+        noteStillCars(t)
+        return (step, t.map(\.telemetry), t.map(\.velocity))
+    }
+
+    /// The GPU's cars still (`telemetry`: a few frames late): asleep in two frames' telemetry, and no car awake coming
+    /// close (its speed a quarter of a second on, 8 m more), which would wake it before the next telemetry says so. A
+    /// car woken otherwise (its input, a body thrown at it) has its panels held for the frames until it does.
+    private func noteStillCars(_ telemetry: [GPUCarTelemetry]) {
+        noteCars()
+        stillCars = []
+        for (c, car) in telemetry.enumerated() where c < carStates.count {
+            noteSize(c, car.size)
+            let centre = PhysicsMath.xyz(car.centre)
+            let near = telemetry.indices.contains { o in
+                o != c && telemetry[o].flags & GPUCar.asleep == 0
+                    && simd_distance(PhysicsMath.xyz(telemetry[o].centre), centre) < 8 + abs(telemetry[o].position.w) * 0.25
+            }
+            carSettled[c] = car.flags & GPUCar.asleep != 0 && !near ? carSettled[c] + 1 : 0
+            if carSettled[c] >= 2 { stillCars.insert(c) }
+        }
+    }
 
     package func snapshot(slot: Int) -> UnsafeBufferPointer<SIMD4<Float>> {
         UnsafeBufferPointer(start: snapshots[slot].contents().bindMemory(to: SIMD4<Float>.self, capacity: 2 * count), count: 2 * count)

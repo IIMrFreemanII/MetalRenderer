@@ -16,7 +16,7 @@ import MetalRenderer
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
         "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carsmanycpu": carsManyCPU, "carsmanygpu": carsManyGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
-        "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo,
+        "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo, "carsvideogpu": carsVideoGPU,
     ]
 
     /// Each model's cockpit (CarPack.Entry.eye), then each camera (CarCameras.swift: C goes round them) on the
@@ -52,6 +52,11 @@ extension Benchmark {
             c.startTime = -1   // (the warm-up's second: the clock at 0 on the first recorded frame)
             return c
         }
+    }
+
+    /// ...on the GPU (CarsGPU.swift: its frames drawn between its steps, PhysicsGPU.encodeDrawn).
+    private static func carsVideoGPU() -> [Config] {
+        carsVideo().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// Phase 3's crashes in the full look, each before, as and after it hits: two cars head on at 50 km/h each, the
