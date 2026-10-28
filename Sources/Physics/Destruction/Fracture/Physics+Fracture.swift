@@ -26,8 +26,8 @@ import simd
 ///
 /// A welded pair is solved as a pair of the contact colouring (its one contact marks the weld: lambda.w = 1), so the
 /// welds need no colours of their own, and solved like a joint fixed in place: its turn about its partner back to rest,
-/// then their anchors together, a force of lambda / h^2 (N). One that gives way may go loose first (the CPU's only,
-/// solved after the colours: Physics+LooseJoints.swift). The GPU's step (Shaders/Physics.metal) does the same in the
+/// then their anchors together, a force of lambda / h^2 (N). One that gives way may go loose first (solved after the
+/// colours: Physics+LooseJoints.swift). The GPU's step (Shaders/Physics.metal) does the same in the
 /// same order: PhysicsCPU.step's `beginFractureStep`, the contacts' and welds' pushes, `endFractureStep`.
 extension PhysicsWorld {
     /// GPUFractureCommand.info.y.

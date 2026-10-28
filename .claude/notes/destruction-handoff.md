@@ -195,8 +195,18 @@ Done (M4 Max):
 - A weld that a load overcomes goes loose (`info.z` = 2); one torn while a piece is shaken by an impact (this step or
   the last 0.5 s) breaks, as before. A link has 10 cm of play plus the hinge's chord, is a spring past it and past a
   1.7 rad bend, and lets go by load, stretch, fatigue or a per-link lifetime (3 s ± 50 %, counted asleep or not).
-- Links are gathered at each step's start and solved serially after the colours (not as their pair's contact: pairs
-  get lost when a piece swings away from a held one).
+- Links are gathered at each step's start into colours of their own (in weld order, the lowest colour neither piece
+  has: `colourLooseLinks`) and solved a colour after another after the contacts' colours (not as their pair's
+  contact: pairs get lost when a piece swings away from a held one).
+- The GPU's steps too (Shaders/Physics.metal): `physicsLooseGatherKernel` after the commands (one threadgroup: the
+  welds aged in runs, gathered in weld order, coloured by thread 0 as the CPU colours them), `physSolveLinks` after
+  the colours in the substeps' kernel and the wide path's tail kernel, the weld rule, `struck`, `linked` and the
+  shaken timer as the CPU's. `testTheGPULinksAsTheCPUDoes`: the ledge hangs and lets go on both; 0.6 mm apart at
+  0.2 s as without links, then welds at their strength go loose a step apart and the swings part (1.4 m at 1.5 s).
+  Cost (M4 Max, release, massive gpu rows): moving +0.63 ms a frame; settling +4.2, but only because the building
+  comes down at 9-10 s instead of 6-7 s (the heap from 10 s has just fallen; at 18 s both take 9.6 ms a step). The
+  gather skips its weld scan while no link is alive or new (`PHYS_LINK_NEW`); with ~80 links, 0.1-0.4 ms a step
+  (the scan of every weld and thread 0's colouring: keep the last step's links and scan only those, if it matters).
 - `LooseJointTests` (a ledge that hangs then falls, a blast and fatigue cutting links, replay and threads alike), and
   the probe `LOOSE_PROBE=1` (`LOOSE_SCENES`, `LOOSE_TUNE="share,floor,limit[,lifetime[,slack]]"`, `LOOSE_STRENGTH`,
   `LOOSE_WHERE=1`), which prints both scenes' weld states each second with and without links.
@@ -216,10 +226,9 @@ Traps found, in order (each one looked like the mechanism didn't work):
   chaotic). With 10 cm of play it comes down at 1x, 0.15x and 0.3x, a second later than without.
 
 Not done / not checked:
-- The GPU's steps (Shaders/Physics.metal): its welds still break at once. Port `looseLink`, the gather and the shaken
-  timer to kernels of their own (keep the old ones' rounding: see "Done" above).
 - The window hand test: shooting a slab's edge in Demolition, how hanging pieces look and feel, the settings toggles.
-- The extra CPU is mostly more awake debris; a hanging piece's links could let it sleep sooner, or the serial link
-  solve could be coloured, if it matters at scale (three buildings, demolition with all its tools).
+- The extra CPU is mostly more awake debris; a hanging piece's links could let it sleep sooner, or the CPU's link
+  colours could go on every core (they share no piece), if it matters at scale (three buildings, demolition with all
+  its tools). The GPU's gather colours on one thread: fine at a few hundred links, slow at thousands.
 - Tuning by eye: play, lifetime and bend were chosen from the probe and two renders, not a video.
 

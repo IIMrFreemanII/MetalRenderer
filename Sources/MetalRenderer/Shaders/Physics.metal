@@ -67,8 +67,8 @@ struct PhysicsFractureWeld {
     float4 anchorA;    // A's body space; w = the force it holds (N)
     float4 anchorB;    // B's body space; w = its lever (m)
     float4 rest;       // B's rotation in A's
-    uint4  info;       // x = A, y = B, z = 1 once broken (2: loose, the CPU's only)
-    float4 loose;      // the CPU's loose joints' fatigue and age (unused here)
+    uint4  info;       // x = A, y = B, z = 1 once broken (2: loose), w = its load lately (a float's bits)
+    float4 loose;      // once loose: x = fatigue, y = time left (s), z = why it let go; w = half its face's width
 };
 static_assert(sizeof(PhysicsFractureWeld) == 80, "PhysicsFractureWeld: GPUFractureWeld");
 
@@ -77,7 +77,7 @@ struct PhysicsFractureState {
     float4 strain;     // x = this step's impacts (N s), y = time lying still, z = taken over from its parent, w = verdict
     float4 impact;     // xyz = impacts' points x impulse, w = impulse
     float4 direction;  // xyz = their push x impulse, w = its drawn scale
-    float4 hold;       // x = how much longer (s) it is held after its parent broke
+    float4 hold;       // x = how much longer (s) it is held after its parent broke, y = how much longer it is shaken
 };
 static_assert(sizeof(PhysicsFractureState) == 64, "PhysicsFractureState: GPUFractureState");
 
@@ -101,17 +101,39 @@ constant uint PHYS_RING_SLOTS = 64, PHYS_RING_EVENTS = 256;   // PhysicsWorld.ri
 struct PhysicsFractureParams {
     uint4  counts;     // bodies, welds, commands
     float4 tuning;     // fade delay, fade length, damage reach, push
+    float4 shaken;     // x = how long an impact shakes a piece (s; 0 without loose joints)
 };
-static_assert(sizeof(PhysicsFractureParams) == 32, "PhysicsFractureParams: GPUFractureParams");
+static_assert(sizeof(PhysicsFractureParams) == 48, "PhysicsFractureParams: GPUFractureParams");
+
+// Loose joints (GPULooseParams, LooseJoints; all 0 without).
+struct PhysicsLoose {
+    float4 play;       // slack, reach (m), bend (rad), give (m)
+    float4 hold;       // bendGive (rad), share, fatigueFloor, fatigueLimit
+    float4 time;       // damping (1/s), massRatio, lifetime (s), lifetimeSpread
+    float4 flags;      // x = 1: on
+};
+static_assert(sizeof(PhysicsLoose) == 64, "PhysicsLoose: GPULooseParams");
+
+// The loose links (PhysicsWorld.looseLinks, looseStarts): PHYS_LINK_HEAD words, where each colour's run starts
+// (PHYS_LINK_COLOURS of them, then those no colour took, then the end), how many colours, how many links, whether a
+// weld went loose since the gather (PHYS_LINK_NEW: 1); then the welds in their colours (physicsLooseGatherKernel).
+constant uint PHYS_LINK_COLOURS = 64, PHYS_LINK_HEAD = PHYS_LINK_COLOURS + 5;   // PhysicsWorld.linkColours, PhysicsGPU.linkHead
+constant uint PHYS_LINK_NEW = PHYS_LINK_COLOURS + 4;
 
 // The substeps' tables bound as one (PhysicsGPU: the kernel's buffer slots are all taken): the soft bodies' tets by
-// colour, where each colour starts, the welds, each body's fracture state.
+// colour, where each colour starts, the welds, each body's fracture state; the loose links, per body the colours its
+// links took, per body its welds (from weldStarts: (partner, weld)); the loose joints.
 struct PhysicsTables {
     device const struct PhysicsTet* tets;
     device const uint*              tetStarts;
     device PhysicsFractureWeld*     welds;
     device PhysicsFractureState*    fracture;
     uint4                           flags;      // x = 1: there are fractured objects
+    device uint*                    links;
+    device ulong*                   masks;
+    device const uint*              weldStarts;
+    device const uint2*             weldList;
+    PhysicsLoose                    loose;
 };
 constant uint PHYS_JOINT_ITERATIONS = 2;   // PhysicsWorld.jointIterations
 
@@ -1231,7 +1253,10 @@ inline void physKick(thread PhysicsBody& b, float3 impulse, float3 r, float3 twi
     b.angular = float4(b.angular.xyz + physInvInertia(b.rotation, b.invInertia.xyz, cross(r, impulse) + twist), b.angular.w);
 }
 
-inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps);
+inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps,
+                          PhysicsLoose loose, bool struck);
+inline bool physStruck(PhysicsFractureState s);
+inline bool physLinked(device const PhysicsTables& t, uint i, PhysicsBody a, uint code, PhysicsBody b);
 
 // PhysicsWorld.strike: an impact's impulse onto a piece's strain.
 inline void physStrike(device PhysicsFractureState& s, float3 point, float3 push, float impulse) {
@@ -1285,13 +1310,17 @@ inline void physPushFracturePair(constant PhysicsParams& p, device PhysicsBody* 
         PhysicsContact contact = contacts[ci];
         if (contact.lambda.w == 1.0f) {   // a weld
             uint w = uint(contact.anchorA.x);
-            physSolveWeld(t.welds[w], a, b, t.welds[w].info.x == i, h, p.softDamping.z);
+            // (Torn by an impact, it breaks: either piece struck this step, or taking over its parent's break.)
+            bool struck = physStruck(t.fracture[i]) || physStruck(t.fracture[code]);
+            physSolveWeld(t.welds[w], a, b, t.welds[w].info.x == i, h, p.softDamping.z, t.loose, struck);
+            if (t.welds[w].info.z == 2) t.links[PHYS_LINK_NEW] = 1;   // (the next gather has links to find)
             continue;
         }
         PhysPush push = physContactPush(contact, a, b, h);
         contacts[ci].lambda = float4(push.lambda, push.speed, 0.0f, 0.0f);
         if (!(push.lambda > 0.0f)) continue;
-        if (((a.info.y | b.info.y) & PHYS_PIECE) != 0 && -push.speed > PHYS_IMPACT_SPEED) {   // an impact, not a rest
+        if (((a.info.y | b.info.y) & PHYS_PIECE) != 0 && -push.speed > PHYS_IMPACT_SPEED   // an impact, not a rest
+            && !physLinked(t, i, a, code, b)) {
             float impulse = push.lambda / h;
             float3 point = physPoints(contact, a, b, false).pa, n = contact.normal.xyz;
             if ((a.info.y & PHYS_PIECE) != 0) physStrike(t.fracture[i], point, n, impulse);
@@ -1410,7 +1439,7 @@ inline void physKickFracturePair(constant PhysicsParams& p, device PhysicsBody* 
         PhysicsContact contact = contacts[e * PHYS_CONTACTS + c];
         PhysKick kick = physContactKick(contact, a, b, p);
         if (!kick.valid) continue;
-        if (contact.lambda.y < -PHYS_IMPACT_SPEED && ((a.info.y | b.info.y) & PHYS_PIECE) != 0) {
+        if (contact.lambda.y < -PHYS_IMPACT_SPEED && ((a.info.y | b.info.y) & PHYS_PIECE) != 0 && !physLinked(t, i, a, code, b)) {
             float3 n = contact.normal.xyz;
             float impulse = max(dot(kick.impulse, n), 0.0f);
             if (impulse > 0.0f) {
@@ -1531,9 +1560,25 @@ inline void physDampJoint(device PhysicsBody* bodies, PhysicsJoint j, float h) {
 
 // MARK: - Welds (Physics+Fracture.swift)
 
+// PhysicsWorld.lifetime: how long the link weld w becomes lasts (s), by a hash of its pieces.
+inline float physLifetime(PhysicsFractureWeld w, PhysicsLoose loose) {
+    uint x = (w.info.x * 0x9E3779B1u) ^ (w.info.y * 0x85EBCA77u);
+    x ^= x >> 15;
+    x *= 0x2C1B3C6Du;
+    x ^= x >> 12;
+    float u = float(x & 0xFFFFu) / 65535.0f;
+    return loose.time.z * (1.0f + loose.time.w * (2.0f * u - 1.0f));
+}
+
+// PhysicsWorld.goesLoose: a weld giving way with its anchors `gap` and its turn `angle` from rest goes loose.
+inline bool physGoesLoose(PhysicsLoose loose, float gap, float angle) {
+    return loose.flags.x != 0.0f && gap < loose.play.x + loose.play.y && angle < loose.play.z;
+}
+
 // PhysicsWorld.weld: y's turn back to x's times the rest, then their anchors together; broken instead when the force
-// and moment that takes pass what it holds.
-inline void physWeld(device PhysicsFractureWeld& w, thread PhysicsBody& x, thread PhysicsBody& y, float h, float substeps) {
+// and moment that takes pass what it holds (or loose, if it gave way under a load and not an impact).
+inline void physWeld(device PhysicsFractureWeld& w, thread PhysicsBody& x, thread PhysicsBody& y, float h, float substeps,
+                     PhysicsLoose loose, bool struck) {
     float4 target = quatMul(x.rotation, w.rest);
     float4 dq = quatMul(y.rotation, physConj(target));
     if (dq.w < 0.0f) dq = -dq;
@@ -1558,7 +1603,13 @@ inline void physWeld(device PhysicsFractureWeld& w, thread PhysicsBody& x, threa
     float k = 1.0f / substeps, average = as_type<float>(w.info.w) * (1.0f - k) + load * k;
     w.info.w = as_type<uint>(average);
     if (average > 1.0f || l > PHYS_WELD_GAP || angle > PHYS_WELD_TWIST) {
-        w.info.z = 1;
+        if (!struck && physGoesLoose(loose, l, angle)) {
+            w.info.z = 2;
+            w.info.w = 0;
+            w.loose = float4(0.0f, physLifetime(w, loose), 0.0f, w.loose.w);
+        } else {
+            w.info.z = 1;
+        }
         return;
     }
     if (angle > 1e-7f) physSwivel(x, y, theta);
@@ -1575,9 +1626,134 @@ inline void physWeld(device PhysicsFractureWeld& w, thread PhysicsBody& x, threa
 }
 
 // PhysicsWorld.solveWeld: a is the pair's owner, b its partner; the weld's A is a if ownerIsA.
-inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps) {
+inline void physSolveWeld(device PhysicsFractureWeld& w, thread PhysicsBody& a, thread PhysicsBody& b, bool ownerIsA, float h, float substeps,
+                          PhysicsLoose loose, bool struck) {
     if (w.info.z != 0 || (!physMoves(a) && !physMoves(b))) return;
-    if (ownerIsA) physWeld(w, a, b, h, substeps); else physWeld(w, b, a, h, substeps);
+    if (ownerIsA) physWeld(w, a, b, h, substeps, loose, struck); else physWeld(w, b, a, h, substeps, loose, struck);
+}
+
+// MARK: - Loose joints (Physics+LooseJoints.swift)
+
+// PhysicsWorld.struck: a piece took an impact this step or lately (or its parent's break).
+inline bool physStruck(PhysicsFractureState s) { return s.strain.x + s.strain.z > 0.0f || s.hold.y > 0.0f; }
+
+// PhysicsWorld.linked: body i (a) and partner `code` (b) are linked by a loose weld (their contacts are its hinge).
+inline bool physLinked(device const PhysicsTables& t, uint i, PhysicsBody a, uint code, PhysicsBody b) {
+    if (t.loose.flags.x == 0.0f || (code & PHYS_STATIC) != 0 || (a.info.y & b.info.y & PHYS_PIECE) == 0) return false;
+    for (uint k = t.weldStarts[i], end = t.weldStarts[i + 1]; k < end; ++k) {
+        if (t.weldList[k].x == code) return t.welds[t.weldList[k].y].info.z == 2;
+    }
+    return false;
+}
+
+// PhysicsWorld.looseLink: loose weld w between its A (x) and B (y), one of which moves: the turn back within the bend,
+// then the anchors within the play (each a spring of the compliance its strength gives; the lighter piece's share
+// capped); its load averaged over about a step, and the fatigue it leaves; let go past its strength, reach or fatigue.
+inline void physLooseLink(device PhysicsFractureWeld& w, thread PhysicsBody& x, thread PhysicsBody& y, PhysicsLoose loose, float h,
+                          float substeps) {
+    float bend = loose.play.z;
+    float4 target = quatMul(x.rotation, w.rest);
+    float4 dq = quatMul(y.rotation, physConj(target));
+    if (dq.w < 0.0f) dq = -dq;
+    float3 theta = 2.0f * dq.xyz;
+    float angle = length(theta);
+    float holds = loose.hold.y * w.anchorA.w, lever = max(w.anchorB.w, 1e-3f);
+    float moment = 0.0f;
+    if (angle > bend) {
+        float3 k = theta / angle;
+        float over = angle - bend, wa = physTurnWeight(x, k) + physTurnWeight(y, k);
+        float alpha = loose.hold.x / (holds * lever) / (h * h);
+        if (wa > 0.0f) {
+            float lambda = over / (wa + alpha);
+            moment = lambda / (h * h);
+            physSwivel(x, y, k * (lambda * wa));
+        }
+    }
+    float3 ra = quatRotate(x.rotation, w.anchorA.xyz), rb = quatRotate(y.rotation, w.anchorB.xyz);
+    float3 gap = (y.position.xyz + rb) - (x.position.xyz + ra);
+    float l = length(gap);
+    float play = loose.play.x + 2.0f * w.loose.w * sin(min(angle, bend) / 2.0f);
+    float force = 0.0f;
+    if (l > play) {
+        float3 n = gap / l;
+        float wx = physWeight(x, ra, n), wy = physWeight(y, rb, n), ratio = loose.time.y;
+        // (The lighter piece moved as if no more than massRatio times lighter.)
+        float sx = 1.0f, sy = 1.0f;
+        if (wx > 0.0f && wy > 0.0f) {
+            if (wx > ratio * wy) sx = ratio * wy / wx; else if (wy > ratio * wx) sy = ratio * wx / wy;
+            wx *= sx;
+            wy *= sy;
+        }
+        float alpha = loose.play.w / holds / (h * h);
+        if (wx + wy > 0.0f) {
+            float lambda = (l - play) / (wx + wy + alpha);
+            force = lambda / (h * h);
+            physShove(x, n * (lambda * sx), ra);
+            physShove(y, -n * (lambda * sy), rb);
+        }
+    }
+    float load = force / holds + moment / (holds * lever);
+    float k = 1.0f / substeps, average = as_type<float>(w.info.w) * (1.0f - k) + load * k;
+    w.info.w = as_type<uint>(average);
+    w.loose.x += max(average - loose.hold.z, 0.0f) * h;
+    // (Why it let go: 1 its load, 2 its stretch, 3 its fatigue; 4 its piece came free, 5 its piece broke, 6 its time.)
+    float why = average > 1.0f ? 1.0f : l > play + loose.play.y ? 2.0f : w.loose.x > loose.hold.w ? 3.0f : 0.0f;
+    if (why > 0.0f) {
+        w.info.z = 1;
+        w.loose.z = why;
+    }
+}
+
+// PhysicsWorld.dampLink: loose weld w's pieces' relative turning fades at the link's rate (as physDampJoint).
+inline void physDampLink(PhysicsFractureWeld w, thread PhysicsBody& x, thread PhysicsBody& y, PhysicsLoose loose, float h) {
+    float3 relative = y.angular.xyz - x.angular.xyz;
+    float speed = length(relative);
+    if (!(speed > 1e-6f)) return;
+    float3 k = relative / speed;
+    float3 ra = quatRotate(x.rotation, w.anchorA.xyz), rb = quatRotate(y.rotation, w.anchorB.xyz);
+    float wa = physAnchorTurnWeight(x, k, ra), wb = physAnchorTurnWeight(y, k, rb);
+    if (!(wa + wb > 0.0f)) return;
+    float impulse = speed * min(loose.time.x * h, 1.0f) / (wa + wb);
+    if (wa > 0.0f) {
+        float3 turn = k * (impulse * wa);
+        x.angular = float4(x.angular.xyz + turn, x.angular.w);
+        x.velocity = float4(x.velocity.xyz - cross(turn, ra), x.velocity.w);
+    }
+    if (wb > 0.0f) {
+        float3 turn = -k * (impulse * wb);
+        y.angular = float4(y.angular.xyz + turn, y.angular.w);
+        y.velocity = float4(y.velocity.xyz - cross(turn, rb), y.velocity.w);
+    }
+}
+
+// Link w's pull (or its damping: `damp`), if it still holds and one of its pieces moves.
+inline void physLinkAt(device PhysicsBody* bodies, device const PhysicsTables& t, uint w, float h, float substeps, bool damp) {
+    device PhysicsFractureWeld& weld = t.welds[w];
+    if (weld.info.z != 2) return;
+    uint ia = weld.info.x, ib = weld.info.y;
+    PhysicsBody x = bodies[ia], y = bodies[ib];
+    if (!physMoves(x) && !physMoves(y)) return;
+    if (damp) physDampLink(weld, x, y, t.loose, h); else physLooseLink(weld, x, y, t.loose, h, substeps);
+    bodies[ia] = x;
+    bodies[ib] = y;
+}
+
+// PhysicsWorld.solveLooseLinks (or dampLooseLinks: `damp`), by one threadgroup: a colour's links on every thread (they
+// share no piece), a colour after another, then those no colour took on one. Every thread calls it (its barriers).
+inline void physSolveLinks(device PhysicsBody* bodies, device const PhysicsTables& t, float h, float substeps, bool damp, uint tid, uint width) {
+    device const uint* links = t.links;
+    device const uint* order = links + PHYS_LINK_HEAD;
+    uint used = links[PHYS_LINK_COLOURS + 2];
+    for (uint c = 0; c < used; ++c) {
+        for (uint k = links[c] + tid; k < links[c + 1]; k += width) physLinkAt(bodies, t, order[k], h, substeps, damp);
+        threadgroup_barrier(mem_flags::mem_device);
+    }
+    if (links[PHYS_LINK_COLOURS] < links[PHYS_LINK_COLOURS + 1]) {
+        if (tid == 0) {
+            for (uint k = links[PHYS_LINK_COLOURS]; k < links[PHYS_LINK_COLOURS + 1]; ++k) physLinkAt(bodies, t, order[k], h, substeps, damp);
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
 }
 
 // MARK: - Colours
@@ -2198,6 +2374,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
     threadgroup atomic_uint tally[2], perColour[PHYS_COLOURS];
     threadgroup uint scratch[1024];   // (physColourPairs: each thread's left-over pairs)
     bool fractured = tables.flags.x != 0, wide = group.wide != 0;
+    bool loose = fractured && tables.loose.flags.x != 0.0f;   // (the loose links after the colours: physSolveLinks)
     if (group.first == 0) {
         // A ragdoll wakes whole (PhysicsCPU.wake): if any of its bodies is awake, woken or held, the rest wake. (Before
         // the colours: with fractured objects, a pair of bodies that wake takes one, PhysicsCPU.idle.)
@@ -2293,6 +2470,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             }
             threadgroup_barrier(mem_flags::mem_device);
         }
+        if (loose) physSolveLinks(bodies, tables, p.gravity.w, p.softDamping.z, false, t, width);
         for (uint i = t; i < n; i += width) physTakeVelocities(p, bodies, i);
         for (uint i = t; i < np; i += width) particles[i] = particlesOut[i];
         threadgroup_barrier(mem_flags::mem_device);
@@ -2321,6 +2499,7 @@ kernel void physicsSubstepsKernel(constant PhysicsParams&   p        [[buffer(0)
             }
             threadgroup_barrier(mem_flags::mem_device);
         }
+        if (loose) physSolveLinks(bodies, tables, p.gravity.w, p.softDamping.z, true, t, width);
         for (uint c = 0; c < p.cloth.z; ++c) {
             for (uint k = jointStarts[c] + t; k < jointStarts[c + 1]; k += width) physDampJoint(bodies, joints[k], p.gravity.w);
             threadgroup_barrier(mem_flags::mem_device);
@@ -2490,8 +2669,8 @@ kernel void physicsWideKickKernel(constant PhysicsParams&     p         [[buffer
 // colour at a time: a dispatch costs a few µs however small, and 128 a substep made a collapse slower than one core.
 constant uint PHYS_WIDE_COLOURS = 10, PHYS_WIDE_EXTRA = 4;
 
-// The colours past those, in order, then what no colour took (their list after the bodies' in `won`), by one
-// threadgroup: `colour` 0 the pushes, 1 the kicks.
+// The colours past those, in order, then what no colour took (their list after the bodies' in `won`), then the loose
+// links, by one threadgroup: `colour` 0 the pushes, 1 the kicks.
 kernel void physicsWideTailKernel(constant PhysicsParams&     p         [[buffer(0)]],
                                   device PhysicsBody*         bodies    [[buffer(1)]],
                                   device const PhysicsBody*   statics   [[buffer(3)]],
@@ -2522,6 +2701,10 @@ kernel void physicsWideTailKernel(constant PhysicsParams&     p         [[buffer
             else physKickFracturePair(p, bodies, statics, pairs, contacts, won[n + r], tables);
         }
     }
+    // Then the loose links' pulls (or their damping), as physicsSubstepsKernel.
+    if (tables.loose.flags.x == 0.0f) return;
+    threadgroup_barrier(mem_flags::mem_device);
+    physSolveLinks(bodies, tables, p.gravity.w, p.softDamping.z, colour != 0, t, width);
 }
 
 // Joint colour `range` (jointStarts[c], jointStarts[c + 1]: the CPU knows them): solved (`colour` 0), or damped (1).
@@ -3192,6 +3375,9 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
             s.hold.x -= PHYS_STEP;
             if (!(s.hold.x > 0.0f)) { physFree(b, node); s.hold.x = 0.0f; }
         }
+        // Shaken for a while by the step's impacts (LooseJoints.shaken: a weld of it that gives way then breaks).
+        float shaken = fp.shaken.x;
+        if (shaken > 0.0f) s.hold.y = s.strain.x + s.strain.z > 0.0f ? shaken : max(s.hold.y - PHYS_STEP, 0.0f);
         float scale = min(max(1.0f - (s.strain.y - tuning.x) / max(tuning.y, 1e-3f), 0.0f), 1.0f);
         if (!(scale > 0.0f)) b.info.y |= PHYS_DISABLED;
         s.strain.x = 0.0f;
@@ -3224,7 +3410,7 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
         s.strain = float4(0, 0, inherited, 0);
         s.impact = float4(0.0f);
         s.direction = float4(0, 0, 0, 1);
-        s.hold = float4(held && !anchored ? PHYS_HOLD_AFTER_BREAK : 0.0f, 0.0f, 0.0f, 0.0f);
+        s.hold = float4(held && !anchored ? PHYS_HOLD_AFTER_BREAK : 0.0f, inherited > 0.0f ? fp.shaken.x : 0.0f, 0.0f, 0.0f);
         if (freed && !held) {
             float3 d = ps.direction.xyz;
             float l = length(d);
@@ -3237,11 +3423,88 @@ kernel void physicsFractureApplyKernel(constant PhysicsFractureParams&   fp     
     }
     bodies[i] = b;
     state[i] = s;
-    if (freed) {
+    if (freed) {   // (its welds broken, loose ones too: PhysicsWorld.breakWelds)
         for (uint k = weldStarts[i], end = weldStarts[i + 1]; k < end; ++k) {
             device uint* words = (device uint*)(welds + weldList[k].y);   // (info.z: its 15th word)
-            atomic_store_explicit((device atomic_uint*)(words + 14), 1u, memory_order_relaxed);
+            uint was = atomic_exchange_explicit((device atomic_uint*)(words + 14), 1u, memory_order_relaxed);
+            if (was == 2) words[18] = as_type<uint>(4.0f);   // (loose.z: why it let go, PhysicsWorld.looseLink's whys)
         }
+    }
+}
+
+// The step's loose links (PhysicsWorld.gatherLooseLinks, colourLooseLinks), by one threadgroup after the commands:
+// each thread a run of welds, its loose ones a step older (let go if a piece broke into its children or their time is
+// up, their pieces woken), the rest in weld order (their counts summed in order); then by one thread their colours,
+// each the lowest neither piece has a link in yet (`masks`, cleared again after), and the links in their colours.
+kernel void physicsLooseGatherKernel(constant PhysicsFractureParams& fp     [[buffer(1)]],
+                                     device PhysicsBody*             bodies [[buffer(2)]],
+                                     device const PhysicsTables&     tables [[buffer(3)]],
+                                     uint t [[thread_index_in_threadgroup]],
+                                     uint width [[threads_per_threadgroup]])
+{
+    threadgroup uint before[1024], at[PHYS_LINK_COLOURS + 1];
+    device PhysicsFractureWeld* welds = tables.welds;
+    device uint* links = tables.links;
+    device ulong* masks = tables.masks;
+    uint nw = fp.counts.y, per = (nw + width - 1) / width, a = min(t * per, nw), b = min(a + per, nw);
+    device uint* order = links + PHYS_LINK_HEAD;
+    device uint* kept = order + nw;
+    device uint* colours = kept + nw;
+    // (No links last step and none since: nothing to scan. The welds are most of a step's start otherwise.)
+    bool none = links[PHYS_LINK_COLOURS + 3] == 0 && links[PHYS_LINK_NEW] == 0;
+    threadgroup_barrier(mem_flags::mem_device);
+    if (none) return;
+    if (t == 0) links[PHYS_LINK_NEW] = 0;
+    uint mine = 0;
+    for (uint w = a; w < b; ++w) {
+        if (welds[w].info.z != 2) continue;
+        uint x = welds[w].info.x, y = welds[w].info.y;
+        float left = welds[w].loose.y - PHYS_STEP;
+        welds[w].loose.y = left;
+        float why = ((bodies[x].info.y | bodies[y].info.y) & PHYS_DISABLED) != 0 ? 5.0f : left <= 0.0f ? 6.0f : 0.0f;
+        if (why == 0.0f) { ++mine; continue; }
+        welds[w].info.z = 1;
+        welds[w].loose.z = why;
+        // (Woken: two threads may wake one piece, each clearing the same flag; nothing else here writes its flags.)
+        if ((bodies[x].info.y & PHYS_DISABLED) == 0) { bodies[x].info.y &= ~PHYS_ASLEEP; bodies[x].prevPosition.w = 0.0f; }
+        if ((bodies[y].info.y & PHYS_DISABLED) == 0) { bodies[y].info.y &= ~PHYS_ASLEEP; bodies[y].prevPosition.w = 0.0f; }
+    }
+    before[t] = mine;
+    threadgroup_barrier(mem_flags::mem_threadgroup | mem_flags::mem_device);
+    if (t == 0) {
+        uint sum = 0;
+        for (uint k = 0; k < width; ++k) { uint c = before[k]; before[k] = sum; sum += c; }
+        links[PHYS_LINK_COLOURS + 3] = sum;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint into = before[t];
+    for (uint w = a; w < b; ++w) if (welds[w].info.z == 2) kept[into++] = w;
+    threadgroup_barrier(mem_flags::mem_device);
+    if (t != 0) return;
+    uint n = links[PHYS_LINK_COLOURS + 3], used = 0;
+    for (uint c = 0; c <= PHYS_LINK_COLOURS; ++c) at[c] = 0;
+    for (uint k = 0; k < n; ++k) {
+        uint w = kept[k], x = welds[w].info.x, y = welds[w].info.y;
+        ulong free = ~(masks[x] | masks[y]);
+        uint lo = uint(free), hi = uint(free >> 32);
+        uint c = lo != 0 ? ctz(lo) : hi != 0 ? 32 + ctz(hi) : PHYS_LINK_COLOURS;
+        if (c < PHYS_LINK_COLOURS) {
+            masks[x] |= ulong(1) << c;
+            masks[y] |= ulong(1) << c;
+            used = max(used, c + 1);
+        }
+        colours[k] = c;
+        at[c] += 1;
+    }
+    uint sum = 0;
+    for (uint c = 0; c <= PHYS_LINK_COLOURS; ++c) { links[c] = sum; uint count = at[c]; at[c] = sum; sum += count; }
+    links[PHYS_LINK_COLOURS + 1] = sum;
+    links[PHYS_LINK_COLOURS + 2] = used;
+    for (uint k = 0; k < n; ++k) {
+        uint w = kept[k];
+        order[at[colours[k]]++] = w;
+        masks[welds[w].info.x] = 0;
+        masks[welds[w].info.y] = 0;
     }
 }
 

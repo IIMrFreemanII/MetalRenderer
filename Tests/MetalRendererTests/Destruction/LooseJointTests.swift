@@ -1,4 +1,5 @@
 import XCTest
+import Metal
 import simd
 @testable import Buildings
 @testable import Characters
@@ -50,14 +51,16 @@ final class LooseJointTests: XCTestCase {
         return (f, bricks)
     }
 
-    /// How many of `bricks` are still linked to a held one through welds holding or loose.
-    private func linked(_ w: PhysicsWorld, _ bricks: [Int]) -> Int {
-        var seen = Set(bricks.filter { w.bodies[$0].info.y & PhysicsWorld.anchoredBit != 0 && w.bodies[$0].position.w == 0 })
+    /// How many of `bricks` are still linked to a held one through welds holding or loose (the CPU's, or `bodies` and
+    /// `welds` as the GPU has them).
+    private func linked(_ w: PhysicsWorld, _ bricks: [Int], bodies: [GPUPhysicsBody]? = nil, welds: [GPUFractureWeld]? = nil) -> Int {
+        let bodies = bodies ?? w.bodies, welds = welds ?? w.welds
+        var seen = Set(bricks.filter { bodies[$0].info.y & PhysicsWorld.anchoredBit != 0 && bodies[$0].position.w == 0 })
         var queue = Array(seen)
         while let i = queue.popLast() {
-            for k in Int(w.weldStarts[i])..<Int(w.weldStarts[i + 1]) where w.welds[Int(w.weldList[k].y)].info.z != 1 {
+            for k in Int(w.weldStarts[i])..<Int(w.weldStarts[i + 1]) where welds[Int(w.weldList[k].y)].info.z != 1 {
                 let j = Int(w.weldList[k].x)
-                if w.bodies[j].info.y & PhysicsWorld.disabledBit == 0, seen.insert(j).inserted { queue.append(j) }
+                if bodies[j].info.y & PhysicsWorld.disabledBit == 0, seen.insert(j).inserted { queue.append(j) }
             }
         }
         return seen.count
@@ -167,6 +170,53 @@ final class LooseJointTests: XCTestCase {
             XCTAssertEqual(a.position, b.position, "one thread and all agree")
             XCTAssertEqual(a.rotation, b.rotation)
         }
+    }
+
+    /// The ledge on the GPU's steps (Physics.metal's physicsLooseGatherKernel, physSolveLinks) beside the CPU's: its
+    /// links go loose, hang it and let go as the CPU's do, the same colours in the same order.
+    func testTheGPULinksAsTheCPUDoes() throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no Metal device") }
+        let pipelines = try Pipelines(device: device, source: SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal"),
+                                      lightTypes: 0x3F, stats: false)
+        let s = scene()
+        let (_, bricks) = row(s, bothEnds: false, strength: 0.2, loose: LooseJoints())
+        let w = s.physics!
+        w.finish()
+        let sdf = try SDFBuffers(device: device, scene: s)
+        let gpu = try PhysicsGPU(device: device, world: w, sdfScene: sdf.scene, sdfResources: sdf.buffers, slots: 1)
+        func steps(_ n: Int) {
+            let cmd = queue.makeCommandBuffer()!
+            let enc = cmd.makeComputeCommandEncoder(dispatchType: .serial)!
+            gpu.encodeSteps(Metal3Pass(enc: enc), pipelines: pipelines, steps: n)
+            enc.endEncoding()
+            cmd.commit()
+            cmd.waitUntilCompleted()
+            XCTAssertNil(cmd.error)
+            for _ in 0..<n { w.step() }
+        }
+        func states(_ welds: [GPUFractureWeld]) -> [Int] { (0...2).map { z in welds.filter { $0.info.z == UInt32(z) }.count } }
+        func compare(_ label: String) -> (worst: Float, linked: Int, loose: Int, nan: Bool) {
+            let bodies = gpu.readBodies(), welds = gpu.readWelds()
+            var worst: Float = 0, nan = false
+            for i in bricks {
+                worst = max(worst, length(PhysicsMath.xyz(bodies[i].position) - PhysicsMath.xyz(w.bodies[i].position)))
+                if !bodies[i].position.y.isFinite { nan = true }
+            }
+            let g = linked(w, bricks, bodies: bodies, welds: welds), c = linked(w, bricks)
+            print("\(label): GPU \(g) linked, welds held/broken/loose \(states(welds)); CPU \(c) linked, \(states(w.welds)); apart by \(worst) m")
+            return (worst, g, states(welds)[2], nan)
+        }
+        steps(12)
+        let early = compare("0.2 s")
+        steps(78)
+        let hung = compare("1.5 s")
+        steps(270)
+        let late = compare("6 s")
+        XCTAssertFalse(early.nan || hung.nan || late.nan)
+        XCTAssertLessThan(early.worst, 0.01, "the same swing at first")
+        XCTAssertEqual(hung.linked, bricks.count, "every brick hangs on, on the GPU too")
+        XCTAssertGreaterThan(hung.loose, 0)
+        XCTAssertEqual(late.linked, 1, "its links' time is up")
     }
 
     /// The demolition demo and the massive building with loose joints and without: each second, the welds holding,

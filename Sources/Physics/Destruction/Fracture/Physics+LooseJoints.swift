@@ -13,11 +13,11 @@ import simd
 /// A loose pair keeps its contacts (the pieces still collide as they hinge, and press without striking each other:
 /// `linked`). The links aren't solved in the contact colouring as a holding weld is: a pair is found by its pieces'
 /// boxes, and a held piece's partner swinging away from it lost its pair, so its link was never solved or let go
-/// again. They are gathered at the step's start (`gatherLooseLinks`: a few, next to the welds) and solved one after
-/// another after the colours, each substep. The CPU's only: the GPU's welds still break at once (Shaders/Physics.metal
-/// reads only info.z == 0).
+/// again. They are gathered at the step's start (`gatherLooseLinks`: a few, next to the welds) in colours of their own
+/// (`colourLooseLinks`), and solved a colour after another after the contacts' colours, each substep. The GPU's step
+/// does the same in the same order (Shaders/Physics.metal's physicsLooseGatherKernel, physSolveLinks, physDampLinks).
 package struct LooseJoints: Equatable, Sendable {
-    /// Whether welds go loose at all (off: they break at once, as on the GPU).
+    /// Whether welds go loose at all (off: they break at once).
     package var on = true
     /// The play (m) between the anchors before the link pulls, and how much further (m) it stretches before it snaps.
     /// Both on top of what the turn opens: pieces that hinge about the edge where they press together open their
@@ -82,7 +82,10 @@ extension PhysicsWorld {
         return s.welds[w].info.z == 2
     }
 
-    /// The step's loose links (`looseLinks`, in weld order), each a step older; one to a piece that broke into its
+    /// The colours the links take (`colourLooseLinks`; one bit each in a body's mask), then the run of those no colour took.
+    package static let linkColours = 64
+
+    /// The step's loose links (`looseLinks`, in their colours), each a step older; one to a piece that broke into its
     /// children (disabled) is let go, and one whose time is up too, its pieces woken (asleep, they would rest on it).
     package func gatherLooseLinks() {
         looseLinks.removeAll(keepingCapacity: true)
@@ -101,14 +104,49 @@ extension PhysicsWorld {
             }
             looseLinks.append(UInt32(w))
         }
+        colourLooseLinks()
     }
 
-    /// The loose links' pulls, one after another (after the contacts' colours, each substep).
+    /// `looseLinks` (in weld order) into colours: each the lowest of `linkColours` neither of its pieces has a link
+    /// in yet, or the run after them if none is left; in weld order within each (`looseStarts`). A colour's links share
+    /// no piece: the GPU solves one on every thread, and the same numbers come out of the CPU's one after another.
+    /// (The GPU's gather colours them the same way: physicsLooseGatherKernel.)
+    func colourLooseLinks() {
+        let n = looseLinks.count, runs = PhysicsWorld.linkColours + 1
+        if looseMasks.count != bodies.count { looseMasks = [UInt64](repeating: 0, count: bodies.count) }
+        looseScratch.removeAll(keepingCapacity: true)
+        for i in looseStarts.indices { looseStarts[i] = 0 }
+        for w in looseLinks {
+            let a = Int(welds[Int(w)].info.x), b = Int(welds[Int(w)].info.y), free = ~(looseMasks[a] | looseMasks[b])
+            let c = free == 0 ? PhysicsWorld.linkColours : free.trailingZeroBitCount
+            if c < PhysicsWorld.linkColours {
+                looseMasks[a] |= 1 << UInt64(c)
+                looseMasks[b] |= 1 << UInt64(c)
+            }
+            looseScratch.append(UInt32(c))
+            looseStarts[c + 1] += 1
+        }
+        for c in 0..<runs { looseStarts[c + 1] += looseStarts[c] }
+        // (Each colour's next place after the colours, in the scratch; then the links there, in their places.)
+        for c in 0..<runs { looseScratch.append(looseStarts[c]) }
+        looseScratch.append(contentsOf: looseLinks)
+        for k in 0..<n {
+            let c = Int(looseScratch[k]), w = looseLinks[k]
+            looseScratch[n + runs + Int(looseScratch[n + c])] = w
+            looseScratch[n + c] += 1
+            looseMasks[Int(welds[Int(w)].info.x)] = 0
+            looseMasks[Int(welds[Int(w)].info.y)] = 0
+        }
+        for k in 0..<n { looseLinks[k] = looseScratch[n + runs + k] }
+    }
+
+    /// The loose links' pulls, a colour after another (after the contacts' colours, each substep); not one that let go
+    /// this step.
     func solveLooseLinks(_ s: StepBuffers, _ loose: LooseJoints, h: Float, substeps: Float) {
         for w in looseLinks {
             let k = Int(w), a = Int(s.welds[k].info.x), b = Int(s.welds[k].info.y)
             var x = s.bodies[a], y = s.bodies[b]
-            guard PhysicsWorld.moves(x) || PhysicsWorld.moves(y) else { continue }
+            guard s.welds[k].info.z == 2, PhysicsWorld.moves(x) || PhysicsWorld.moves(y) else { continue }
             PhysicsWorld.looseLink(&s.welds[k], &x, &y, loose, h: h, substeps: substeps)
             s.bodies[a] = x
             s.bodies[b] = y
@@ -120,7 +158,7 @@ extension PhysicsWorld {
         for w in looseLinks {
             let k = Int(w), a = Int(s.welds[k].info.x), b = Int(s.welds[k].info.y)
             var x = s.bodies[a], y = s.bodies[b]
-            guard PhysicsWorld.moves(x) || PhysicsWorld.moves(y) else { continue }
+            guard s.welds[k].info.z == 2, PhysicsWorld.moves(x) || PhysicsWorld.moves(y) else { continue }
             PhysicsWorld.dampLink(s.welds[k], &x, &y, loose, h: h)
             s.bodies[a] = x
             s.bodies[b] = y

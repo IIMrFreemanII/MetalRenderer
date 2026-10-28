@@ -100,8 +100,8 @@ package struct GPUFractureWeld {
     package var anchorB = SIMD4<Float>()             // B's body space; w = its lever (m), the shared face's radius: the moment it
                                              // holds is the force x this
     package var rest = SIMD4<Float>(0, 0, 0, 1)      // B's rotation in A's at rest (q_b = q_a rest)
-    package var info = SIMD4<UInt32>()               // x = A, y = B, z = 0 holding, 1 broken, 2 loose (the CPU's only:
-                                             // PhysicsWorld.loose), w = its load lately (a float's bits: PhysicsWorld.weld)
+    package var info = SIMD4<UInt32>()               // x = A, y = B, z = 0 holding, 1 broken, 2 loose (LooseJoints),
+                                             // w = its load lately (a float's bits: PhysicsWorld.weld)
     package var loose = SIMD4<Float>()               // once loose: x = its fatigue (load s), y = how long it has left (s),
                                                      // z = why it let go (PhysicsWorld.looseLink); w = half
                                                      // the shared face's width (m: its hinge, from the start)
@@ -147,6 +147,24 @@ package struct GPUFractureParams {
     package var tuning = SIMD4<Float>()              // x = how long a small piece lies still before it fades (s), y = how long it
                                              // fades (s), z = how far a break's damage reaches per unit of its excess
                                              // (m), w = how much of it pushes the freed pieces
+    package var shaken = SIMD4<Float>()              // x = how long an impact shakes a piece (s: LooseJoints.shaken; 0 without)
+}
+
+/// Loose joints as the GPU's substeps read them (LooseJoints; all 0 without). MSL PhysicsLoose.
+package struct GPULooseParams {
+    package var play = SIMD4<Float>()                // x = slack, y = reach (m), z = bend (rad), w = give (m)
+    package var hold = SIMD4<Float>()                // x = bendGive (rad), y = share, z = fatigueFloor, w = fatigueLimit
+    package var time = SIMD4<Float>()                // x = damping (1/s), y = massRatio, z = lifetime (s), w = lifetimeSpread
+    package var flags = SIMD4<Float>()               // x = 1: on
+
+    package init() {}
+    package init(_ l: LooseJoints?) {
+        guard let l, l.on else { return }
+        play = SIMD4(l.slack, l.reach, l.bend, l.give)
+        hold = SIMD4(l.bendGive, l.share, l.fatigueFloor, l.fatigueLimit)
+        time = SIMD4(l.damping, l.massRatio, l.lifetime, l.lifetimeSpread)
+        flags = SIMD4(1, 0, 0, 0)
+    }
 }
 
 /// A guide strand of hair (PhysicsHair.swift): a chain of vertices from a root held by a body (or the world). MSL

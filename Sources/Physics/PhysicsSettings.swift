@@ -29,7 +29,6 @@ package struct DestructionSettings: Equatable, Codable {
     package var dust = true
     package var fade = true
     /// Welds that give way go loose first (pieces hinge and hang on before they fall: Physics+LooseJoints.swift).
-    /// The CPU's step only: on the GPU they break at once.
     package var looseJoints = true
     /// The scripted wrecking ball, weight and cannonballs (off: only what the tools do).
     package var demo = true
