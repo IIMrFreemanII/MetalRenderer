@@ -225,6 +225,35 @@ final class CarGPUTests: XCTestCase {
         }
     }
 
+    // MARK: Cars against cars
+
+    /// Head on at 50 km/h each (the demo): on the GPU as on the CPU, both fronts crushed alike, the cars stopped together,
+    /// neither through the other (the first's front still behind the second's).
+    func testHeadOnAsOnTheCPU() throws {
+        let m = try metal()
+        let settings = CarSettings(style: .civic, cars: 2, demo: .headOn, demoSpeed: 50)
+        let g = try GPU(try scene(settings), m), cpu = try scene(settings).physics!
+        g.step(seconds(3))
+        cpu.advance(to: 3 + PhysicsWorld.stepLength / 2)
+        let a = g.telemetry, b = [cpu.carTelemetry(0), cpu.carTelemetry(1)]
+        for (name, t) in [("GPU", a), ("CPU", b)] {
+            print(String(format: "head on %@: car 0 z %.2f speed %.2f crushed %.2f bent %d parts off %d; car 1 z %.2f speed %.2f crushed %.2f bent %d parts off %d",
+                         name, t[0].position.z, t[0].speed, t[0].frontCrush, t[0].bent, t[0].partsOff, t[1].position.z, t[1].speed, t[1].frontCrush,
+                         t[1].bent, t[1].partsOff))
+        }
+        let s = cpu.carSystem.cars
+        let nodes = g.gpu.readParticles()
+        let front0 = (Int(s[0].firstNode)..<Int(s[0].firstNode + s[0].nodeCount)).map { nodes[$0].position.z }.max()!
+        let front1 = (Int(s[1].firstNode)..<Int(s[1].firstNode + s[1].nodeCount)).map { nodes[$0].position.z }.min()!
+        print(String(format: "GPU: car 0's front at z %.2f, car 1's at %.2f", front0, front1))
+        XCTAssertLessThan(abs(a[0].speed - a[1].speed), 1.5, "they go on together")
+        XCTAssertGreaterThan(a[0].frontCrush, 0.1)
+        XCTAssertGreaterThan(a[1].frontCrush, 0.1)
+        XCTAssertEqual(a[0].frontCrush, b[0].frontCrush, accuracy: max(0.15, 0.3 * b[0].frontCrush))
+        XCTAssertEqual(a[1].frontCrush, b[1].frontCrush, accuracy: max(0.15, 0.3 * b[1].frontCrush))
+        XCTAssertLessThan(front0, front1 + 0.3, "neither through the other")
+    }
+
     /// Each style's beams in colours: how many a pass takes (its barriers), the corners' too.
     func testColourCounts() throws {
         let m = try metal()

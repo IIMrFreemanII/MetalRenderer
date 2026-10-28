@@ -490,7 +490,9 @@ package final class PhysicsGPU {
                 if let cars {
                     // (The cars' substeps before the world's: its bodies meet the wheels where the group leaves them.)
                     part("phys cars")
-                    cars.encodeSubsteps(enc, pipelines: pipelines, world: carWorld, groups: groups, groupOffset: g * MemoryLayout<Group>.stride) { barrier(enc) }
+                    cars.encodeSubsteps(enc, pipelines: pipelines, world: carWorld, group: g, groups: groups, groupOffset: g * MemoryLayout<Group>.stride) {
+                        barrier(enc)
+                    }
                 }
                 encodeSubsteps(enc, pipelines: pipelines, group: g, slot: slot)
             }

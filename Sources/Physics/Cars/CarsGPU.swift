@@ -116,7 +116,17 @@ package final class CarsGPU {
     /// beams' loads and lambdas, the nodes' wear and pushes, the clock).
     private let state: MTLBuffer, initialState: MTLBuffer, scratch: MTLBuffer
     private let carsAt: Int, beamsAt: Int, limitsAt: Int, wheelsAt: Int, partsAt: Int, panesAt: Int
-    private let loadsAt: Int, lambdasAt: Int, wearAt: Int, pushesAt: Int, clockAt: Int, bodySumsAt: Int, sharesAt: Int
+    private let loadsAt: Int, lambdasAt: Int, wearAt: Int, pushesAt: Int, clockAt: Int, bodySumsAt: Int, sharesAt: Int, partWakeAt: Int
+    /// Per car its pushes on its first bodies through a group (MSL PHYS_CAR_CARRIED), per particle its pushes from other
+    /// cars' triangles the meet's pass before (its mass's split).
+    private let carriedAt: Int, splitsAt: Int
+    /// Cars against cars (physicsCarPairsKernel, physicsCarMeetKernel): the hull triangles and each node's part, each car's
+    /// hash (its buckets' starts and fill, its triangles' cells), the step's pairs, islands and their cars, the meet's
+    /// dispatch; a world group's substeps one a run (a paired car takes one a dispatch).
+    private let triangles: MTLBuffer, nodeParts: MTLBuffer, gridStarts: MTLBuffer, gridCursors: MTLBuffer, gridItems: MTLBuffer
+    private let pairs: MTLBuffer, islands: MTLBuffer, islandCars: MTLBuffer, meetArgs: MTLBuffer, substepRuns: MTLBuffer
+    /// Each world group's substeps (MSL PhysicsGroup), and where its first's run is in `substepRuns`.
+    private let groupSubsteps: [(count: Int, at: Int)]
     /// The world's bodies (the cars' sums on them: physicsCarBodiesKernel).
     private let bodyCount: Int
     private let tunes: MTLBuffer, reactions: MTLBuffer, colours: MTLBuffer, colourStarts: MTLBuffer, candidates: MTLBuffer
@@ -279,12 +289,31 @@ package final class CarsGPU {
         at = 0
         let n = world.bodies.count
         bodyCount = n
-        let sums = [put(beams * 4), put(beams * 4), put(particles * 8), put(particles * 16), put(16), put(n * CarsGPU.bodyWords * 4), put(n * 4)]
+        let sums = [put(beams * 4), put(beams * 4), put(particles * 8), put(particles * 16), put(16), put(n * CarsGPU.bodyWords * 4), put(n * 4),
+                    put(system.initialParts.count * 4), put(count * 6 * 32 * 4), put(particles * 4)]
+        (carriedAt, splitsAt) = (sums[8], sums[9])
         (loadsAt, lambdasAt, wearAt, pushesAt, clockAt) = (sums[0], sums[1], sums[2], sums[3], sums[4])
-        (bodySumsAt, sharesAt) = (sums[5], sums[6])
+        (bodySumsAt, sharesAt, partWakeAt) = (sums[5], sums[6], sums[7])
         scratch = try buffer([UInt8](), "carsScratch", length: at)
         memset(scratch.contents(), 0, scratch.length)
         tunes = try buffer(system.tunes.map(GPUCarTune.init), "carsTunes")
+        triangles = try buffer(system.triangles, "carsTriangles")
+        nodeParts = try buffer(system.nodeParts, "carsNodeParts")
+        gridStarts = try buffer([UInt32](), "carsGridStarts", length: count * 1025 * 4)
+        gridCursors = try buffer([UInt32](), "carsGridCursors", length: count * 1024 * 4)
+        gridItems = try buffer([UInt32](), "carsGridItems", length: system.triangles.count * CarSystem.gridCells * 4)
+        pairs = try buffer([UInt32](), "carsPairs", length: 96 * 16)
+        islands = try buffer([UInt32](), "carsIslands", length: 32 * 16)
+        islandCars = try buffer([UInt32](), "carsIslandCars", length: 32 * 4)
+        meetArgs = try buffer([UInt32](repeating: 0, count: 4), "carsMeetArgs")
+        var runs: [PhysicsGPU.Group] = [], groups: [(count: Int, at: Int)] = []
+        for first in stride(from: 0, to: world.substeps, by: PhysicsWorld.contactRefresh) {
+            let n = min(PhysicsWorld.contactRefresh, world.substeps - first)
+            groups.append((n, runs.count))
+            runs += (0..<n).map { PhysicsGPU.Group(first: UInt32(first + $0), count: 1, last: UInt32(n), wide: UInt32($0)) }
+        }
+        groupSubsteps = groups
+        substepRuns = try buffer(runs, "carsSubstepRuns")
         reactions = try buffer(system.reactionNodes, "carsReactions")
         colours = try buffer(colourList, "carsColours")
         colourStarts = try buffer(starts, "carsColourStarts")
@@ -397,20 +426,55 @@ package final class CarsGPU {
         enc.setBuffer(candidates, offset: 0, index: 9)
         enc.setBuffer(commands[slot], offset: 0, index: 10)
         enc.setBuffer(scratch, offset: clockAt, index: 11)
+        enc.setBuffer(scratch, offset: partWakeAt, index: 23)
         barrier()
         groups(enc, begin)
+        // The step's pairs and islands (one thread).
+        bind(enc, world)
+        let pairing = pipelines[.physicsCarPairs]
+        enc.setComputePipelineState(pairing)
+        enc.setBuffer(pairs, offset: 0, index: 24)
+        enc.setBuffer(islands, offset: 0, index: 25)
+        enc.setBuffer(islandCars, offset: 0, index: 26)
+        enc.setBuffer(meetArgs, offset: 0, index: 27)
+        barrier()
+        enc.dispatchThreads(MTLSize(width: 1, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
     }
 
-    /// A group of the step's substeps for every car (`group`: the world's run of them, MSL PhysicsGroup, at its offset).
-    func encodeSubsteps(_ enc: ComputePass, pipelines: Pipelines, world: World, groups runs: MTLBuffer, groupOffset: Int, barrier: () -> Void) {
-        bind(enc, world)
-        let substeps = pipelines[.physicsCarSubsteps]
-        enc.setComputePipelineState(substeps)
+    /// World group `group` of the step's substeps for every car (the world's runs, MSL PhysicsGroup, in `runs`): a dispatch a
+    /// substep (a car alone takes the group at the first; a paired car one at each, its island met after each).
+    func encodeSubsteps(_ enc: ComputePass, pipelines: Pipelines, world: World, group: Int, groups runs: MTLBuffer, groupOffset: Int,
+                        barrier: () -> Void) {
+        let substeps = pipelines[.physicsCarSubsteps], meet = pipelines[.physicsCarMeet]
+        let (n, at) = groupSubsteps[group], stride = MemoryLayout<PhysicsGPU.Group>.stride
+        for k in 0..<n {
+            bind(enc, world)
+            enc.setComputePipelineState(substeps)
+            enc.setBuffer(substepRuns, offset: (at + k) * stride, index: 21)
+            enc.setBuffer(scratch, offset: bodySumsAt, index: 22)
+            enc.setBuffer(scratch, offset: sharesAt, index: 23)
+            enc.setBuffer(scratch, offset: carriedAt, index: 24)
+            barrier()
+            groups(enc, substeps)
+            enc.setComputePipelineState(meet)
+            enc.setBuffer(scratch, offset: splitsAt, index: 27)
+            enc.setBuffer(triangles, offset: 0, index: 2)
+            enc.setBuffer(nodeParts, offset: 0, index: 3)
+            enc.setBuffer(gridStarts, offset: 0, index: 4)
+            enc.setBuffer(gridCursors, offset: 0, index: 5)
+            enc.setBuffer(gridItems, offset: 0, index: 6)
+            enc.setBuffer(scratch, offset: pushesAt, index: 20)
+            enc.setBuffer(scratch, offset: partWakeAt, index: 23)
+            enc.setBuffer(pairs, offset: 0, index: 24)
+            enc.setBuffer(islands, offset: 0, index: 25)
+            enc.setBuffer(islandCars, offset: 0, index: 26)
+            barrier()
+            enc.dispatchThreadgroups(indirectBuffer: meetArgs, indirectBufferOffset: 0,
+                                     threadsPerThreadgroup: MTLSize(width: min(CarsGPU.width, meet.maxTotalThreadsPerThreadgroup), height: 1, depth: 1))
+        }
         enc.setBuffer(runs, offset: groupOffset, index: 21)
         enc.setBuffer(scratch, offset: bodySumsAt, index: 22)
         enc.setBuffer(scratch, offset: sharesAt, index: 23)
-        barrier()
-        groups(enc, substeps)
         // What they did to the bodies, before the world's substeps move them.
         let apply = pipelines[.physicsCarBodies]
         enc.setComputePipelineState(apply)
@@ -496,6 +560,9 @@ package final class CarsGPU {
     func readParts(_ n: Int) -> [CarPart] { read(state, at: partsAt, n) }
     func readPanes(_ n: Int) -> [CarPane] { read(state, at: panesAt, n) }
     func readShares() -> [Float] { read(scratch, at: sharesAt, bodyCount) }
+    func readMeet() -> (args: [UInt32], islands: [SIMD4<UInt32>], pairs: [SIMD4<UInt32>]) {
+        (read(meetArgs, at: 0, 3), read(islands, at: 0, 4), read(pairs, at: 0, 4))
+    }
     func readTelemetry() -> [CarTelemetry] { read(telemetry, at: 0, count).map { (t: GPUCarTelemetry) in t.telemetry } }
 
     private func read<T>(_ b: MTLBuffer, at offset: Int, _ n: Int) -> [T] {

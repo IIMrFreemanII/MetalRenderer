@@ -82,6 +82,7 @@ struct PhysicsCar {            // GPUCar (CarState's)
 };
 static_assert(sizeof(PhysicsCar) == 288, "PhysicsCar: GPUCar");
 constant uint PHYS_CAR_MANUAL = 1u, PHYS_CAR_AUTOPILOT = 2u, PHYS_CAR_RUNNING = 4u, PHYS_CAR_AWAKE = 8u, PHYS_CAR_ASLEEP = 16u;
+constant uint PHYS_CAR_PAIRED = 32u;   // in a pair this step (physicsCarPairsKernel): a substep a dispatch, met after each
 
 struct PhysicsCarTune {        // GPUCarTune (CarTune's)
     float4 rpm[2], torque[2], gears[2];
@@ -659,7 +660,7 @@ inline float2 physCarSliding(float3 moved, float3 n, float h) {
 // before this one), or a car would push on against a crate that hasn't moved, and stop.
 inline void physCarNode(int i, threadgroup PhysCarNode* q, int base, device float2* wear, device const uint* candidates, uint first, uint count,
                         device const PhysicsBody* statics, device const float4* bounds, device const PhysicsBody* bodies,
-                        device atomic_int* acc, device const float* shares, uint bit, threadgroup atomic_int* carried, uint firstBody,
+                        device atomic_int* acc, device const float* shares, uint bit, device atomic_int* carried, uint firstBody,
                         uint done, PhysicsShapes shapes, float h) {
     PhysCarNode p = q[i - base];
     float wn = p.prevPosition.w;
@@ -685,7 +686,7 @@ inline void physCarNode(int i, threadgroup PhysCarNode* q, int base, device floa
         } else {
             PhysicsBody o = bodies[code];
             uint slot = k - firstBody;
-            threadgroup atomic_int* mine = slot < PHYS_CAR_CARRIED ? carried + 6 * slot : nullptr;
+            device atomic_int* mine = slot < PHYS_CAR_CARRIED ? carried + 6 * slot : nullptr;
             if (mine && done > 0 && o.position.w > 0.0f) {
                 float3 push = float3(atomic_load_explicit(mine, memory_order_relaxed), atomic_load_explicit(mine + 1, memory_order_relaxed),
                                      atomic_load_explicit(mine + 2, memory_order_relaxed)) / PHYS_PUSH_FIXED;
@@ -848,6 +849,7 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
                                   device const uint4*            commands   [[buffer(10)]],   // count, then PhysicsFractureCommands
                                   device PhysicsCarClock&        clock      [[buffer(11)]],
                                   device PhysicsCarPart*         parts      [[buffer(22)]],
+                                  device uint*                   partWake   [[buffer(23)]],   // per part: another car's node met it frozen
                                   constant uint4&                info       [[buffer(30)]],   // cars, fractured objects (1), bodies
                                   uint car   [[threadgroup_position_in_grid]],
                                   uint t     [[thread_index_in_threadgroup]],
@@ -987,7 +989,8 @@ kernel void physicsCarBeginKernel(constant PhysicsParams&        p          [[bu
             PhysicsCarPart part = parts[s.firstPart + pi];
             if ((part.flags & PHYS_PART_FROZEN) == 0) continue;
             float3 x = q[part.firstNode].position.xyz;
-            bool near = false;
+            bool near = partWake[s.firstPart + pi] != 0;
+            partWake[s.firstPart + pi] = 0;
             for (int k = 0; k < s.candidateCount && !near; ++k) {
                 uint code = candidates[base + uint(k)];
                 if ((code & PHYS_STATIC) != 0) continue;
@@ -1042,6 +1045,7 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
                                      constant PhysicsGroup&         run          [[buffer(21)]],
                                      device atomic_int*             acc          [[buffer(22)]],   // per body (PHYS_BODY_WORDS)
                                      device const float*            shares       [[buffer(23)]],   // per body
+                                     device atomic_int*             carriedAll   [[buffer(24)]],   // per car, 6 x PHYS_CAR_CARRIED
                                      uint car   [[threadgroup_position_in_grid]],
                                      uint t     [[thread_index_in_threadgroup]],
                                      uint width [[threads_per_threadgroup]])
@@ -1052,11 +1056,15 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
     threadgroup PhysicsCarBeam* cornerBeams = (threadgroup PhysicsCarBeam*)scratch;
     threadgroup float* cornerLambdas = (threadgroup float*)(cornerBeams + PHYS_CAR_CORNERS);
     threadgroup PhysWheelNow wn[8];
-    threadgroup atomic_int carried[6 * PHYS_CAR_CARRIED];
     threadgroup float3 drag;
     threadgroup float turn;
     PhysicsCar s = cars[car];
     if ((s.flags & PHYS_CAR_ASLEEP) != 0) return;
+    // (`run` is one substep of a world group: `wide` its place in it, `last` the group's substeps. A car in a pair takes
+    // that one substep, the others meeting it after (physicsCarMeetKernel); one alone takes the whole group at its first.)
+    bool paired = (s.flags & PHYS_CAR_PAIRED) != 0;
+    if (!paired && run.wide != 0) return;
+    uint substeps = paired ? 1u : run.last;
     PhysicsShapes w = {shapes, samples, sdf};
     PhysicsCarTune tune = tunes[car];
     float h = p.gravity.w;
@@ -1071,9 +1079,14 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
         q[i].velocity = n.velocity;
         q[i].prevPosition = n.prevPosition;
     }
-    for (uint k = t; k < 6 * PHYS_CAR_CARRIED; k += width) atomic_store_explicit(&carried[k], 0, memory_order_relaxed);
+    // (Its pushes carried through the group: in device memory, a paired car's group being a dispatch a substep.)
+    device atomic_int* carried = carriedAll + car * 6 * PHYS_CAR_CARRIED;
+    if (run.wide == 0) {
+        for (uint k = t; k < 6 * PHYS_CAR_CARRIED; k += width) atomic_store_explicit(&carried[k], 0, memory_order_relaxed);
+        threadgroup_barrier(mem_flags::mem_device);
+    }
     threadgroup_barrier(mem_flags::mem_threadgroup);
-    for (uint sub = 0; sub < run.count; ++sub) {
+    for (uint sub = 0; sub < substeps; ++sub) {
         // Each wheel as it is (its spin and inverse inertia about its axle, what its tyre found the substep before).
         if (i0 < wheelCount) {
             PhysicsCarWheel wh = wheels[fw + i0];
@@ -1201,7 +1214,7 @@ kernel void physicsCarSubstepsKernel(constant PhysicsParams&        p           
         // The nodes against the statics.
         for (int i = base + i0; i < endNode; i += stride) {
             physCarNode(i, q, base, wear, candidates, firstCandidate, candidateCount, statics, bounds, bodies, acc, shares, 1u << car, carried,
-                        firstCandidate + s.statics, sub, w, h);
+                        firstCandidate + s.statics, run.wide + sub, w, h);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         // The hull's middles against the statics: each pushes its two nodes, each node by the mean of its pushes (summed
@@ -1582,6 +1595,330 @@ kernel void physicsCarTelemetryKernel(device const PhysicsCarTelemetry* telemetr
 {
     if (t == 0) out[0] = uint4(clock.counts.x, count, 0, 0);
     if (t < count) ((device PhysicsCarTelemetry*)(out + 1))[t] = telemetry[t];
+}
+
+// MARK: - Cars against cars (CarContacts.swift)
+
+// A pair of cars that may meet this step (PhysicsWorld.pairCars; a car with itself while one of its parts is off): its
+// cars and colour. An island: the pairs whose cars meet (firstPair, pairCount, its cars' place in `islandCars`, count).
+struct PhysicsCarPair { uint a, b, colour, pad; };
+
+// The step's pairs (one thread, after the cars' starts): each car with itself while one of its parts is off, each two
+// whose boxes meet; coloured as the CPU colours them (a pair the first colour neither car has yet), in the cars' order;
+// a car asleep that an awake one comes up to woken (with its wheels); the pairs in islands (cars joined by pairs), each
+// island's in colour order; the paired cars marked (a substep a dispatch); the meet's dispatch (an island a threadgroup).
+kernel void physicsCarPairsKernel(device PhysicsCar*             cars       [[buffer(1)]],
+                                  device const PhysicsCarWheel*  wheels     [[buffer(7)]],
+                                  device PhysicsBody*            bodies     [[buffer(13)]],
+                                  device const PhysicsCarPart*   parts      [[buffer(22)]],
+                                  device PhysicsCarPair*         pairs      [[buffer(24)]],
+                                  device uint4*                  islands    [[buffer(25)]],
+                                  device uint*                   islandCars [[buffer(26)]],
+                                  device uint*                   args       [[buffer(27)]],
+                                  constant uint4&                info       [[buffer(30)]],
+                                  uint t [[thread_position_in_grid]])
+{
+    if (t != 0) return;
+    uint n = min(info.x, 32u), found = 0;
+    ulong used[32];
+    uint root[32];
+    for (uint c = 0; c < n; ++c) { used[c] = 0; root[c] = c; cars[c].flags &= ~PHYS_CAR_PAIRED; }
+    thread PhysicsCarPair list[96];
+    for (uint a = 0; a < n; ++a) {
+        PhysicsCar s = cars[a];
+        bool off = false;
+        for (int k = s.firstPart; k < s.firstPart + s.partCount; ++k) off = off || (parts[k].flags & PHYS_PART_OFF) != 0;
+        for (uint b = off ? a : a + 1; b < n && found < 96; ++b) {
+            PhysicsCar o = cars[b];
+            if (b != a && !(all(s.lo.xyz <= o.hi.xyz) && all(o.lo.xyz <= s.hi.xyz))) continue;
+            ulong free = ~(used[a] | used[b]);
+            if (free == 0) continue;
+            uint colour = ctz(free);
+            used[a] |= 1ul << colour;
+            used[b] |= 1ul << colour;
+            list[found++] = {a, b, colour, 0u};
+            uint ra = a, rb = b;
+            while (root[ra] != ra) ra = root[ra];
+            while (root[rb] != rb) rb = root[rb];
+            if (ra != rb) root[max(ra, rb)] = min(ra, rb);
+        }
+    }
+    // An asleep car that an awake one comes up to wakes, with its wheels.
+    for (uint k = 0; k < found; ++k) {
+        uint a = list[k].a, b = list[k].b;
+        if (a == b) continue;
+        bool sa = (cars[a].flags & PHYS_CAR_ASLEEP) != 0, sb = (cars[b].flags & PHYS_CAR_ASLEEP) != 0;
+        if (sa == sb) continue;
+        uint c = sa ? a : b;
+        cars[c].flags = (cars[c].flags & ~PHYS_CAR_ASLEEP) | PHYS_CAR_AWAKE;
+        cars[c].still = 0.0f;
+        for (int w = cars[c].firstWheel; w < cars[c].firstWheel + cars[c].wheelCount; ++w) {
+            if ((wheels[w].flags & PHYS_WHEEL_OFF) != 0) continue;
+            bodies[wheels[w].body].info.y &= ~PHYS_ASLEEP;
+            bodies[wheels[w].body].prevPosition.w = 0.0f;
+        }
+    }
+    // The islands, in the order of their first car; each one's pairs by colour, then cars.
+    uint islandCount = 0, pairsOut = 0, carsOut = 0;
+    for (uint r = 0; r < n; ++r) {
+        uint first = pairsOut;
+        for (uint colour = 0; colour < 64 && pairsOut - first < found; ++colour) {
+            for (uint k = 0; k < found; ++k) {
+                uint ra = list[k].a;
+                while (root[ra] != ra) ra = root[ra];
+                if (ra == r && list[k].colour == colour) pairs[pairsOut++] = list[k];
+            }
+        }
+        if (pairsOut == first) continue;
+        uint firstCar = carsOut;
+        for (uint c = 0; c < n; ++c) {
+            uint rc = c;
+            while (root[rc] != rc) rc = root[rc];
+            bool inPair = false;
+            for (uint k = first; k < pairsOut && !inPair; ++k) inPair = pairs[k].a == c || pairs[k].b == c;
+            if (rc != r || !inPair) continue;
+            islandCars[carsOut++] = c;
+            cars[c].flags |= PHYS_CAR_PAIRED;
+        }
+        islands[islandCount++] = uint4(first, pairsOut - first, firstCar, carsOut - firstCar);
+    }
+    args[0] = islandCount;
+    args[1] = 1;
+    args[2] = 1;
+}
+
+inline int3 physGridKey(float3 x) { return int3(floor(x / 0.5f)); }   // CarSystem.gridCell
+inline uint physGridBucket(int3 c) { return uint((c.x * 73856093) ^ (c.y * 19349663) ^ (c.z * 83492791)) & 1023u; }   // CarSystem.gridBuckets
+constant uint PHYS_GRID_CELLS = 48;       // CarSystem.gridCells
+constant float PHYS_CAR_SKIN = 0.02f, PHYS_CAR_REACH = 0.08f, PHYS_CAR_FRICTION = 0.5f;   // CarSolver.carSkin, carReach, carFriction
+
+// CarSolver.closestWeights (Ericson's closest point on a triangle, its regions' weights).
+inline float3 physClosestWeights(float3 p, float3 a, float3 b, float3 c) {
+    float3 ab = b - a, ac = c - a, ap = p - a;
+    float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f) return float3(1, 0, 0);
+    float3 bp = p - b;
+    float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3) return float3(0, 1, 0);
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f) { float v = d1 / (d1 - d3); return float3(1 - v, v, 0); }
+    float3 cp = p - c;
+    float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6) return float3(0, 0, 1);
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f) { float v = d2 / (d2 - d6); return float3(1 - v, 0, v); }
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f) { float v = (d4 - d3) / ((d4 - d3) + (d5 - d6)); return float3(0, 1 - v, v); }
+    float denom = 1.0f / (va + vb + vc), v = vb * denom, u = vc * denom;
+    return float3(1 - v - u, v, u);
+}
+
+// CarSolver.nodeDepth: how deep node x (prev: where it was) is in triangle tri: 0 when they don't meet.
+inline float physNodeDepth(PhysicsParticle node, uint4 tri, device const PhysicsParticle* q) {
+    float3 x = node.position.xyz, xa = q[tri.x].position.xyz, xb = q[tri.y].position.xyz, xc = q[tri.z].position.xyz;
+    float3 normal = cross(xb - xa, xc - xa);
+    float area = length(normal);
+    if (!(area > 1e-8f)) return 0.0f;
+    float3 w = physClosestWeights(x, xa, xb, xc);
+    float distance = length(x - (xa * w.x + xb * w.y + xc * w.z)), side = dot(x - xa, normal / area);
+    if (side >= 0.0f) return max(PHYS_CAR_SKIN - distance, 0.0f);
+    if (!(distance <= -side + 1e-4f) || !(-side < PHYS_CAR_REACH)) return 0.0f;
+    float3 pa = q[tri.x].prevPosition.xyz, pb = q[tri.y].prevPosition.xyz, pc = q[tri.z].prevPosition.xyz;
+    return dot(node.prevPosition.xyz - pa, cross(pb - pa, pc - pa)) > 0.0f ? PHYS_CAR_SKIN - side : 0.0f;
+}
+
+inline void physAddDelta(device atomic_int* d, uint i, float3 v) {
+    int3 f = int3(round(v * PHYS_CAR_FIXED));
+    atomic_fetch_add_explicit(d + 4 * i, f.x, memory_order_relaxed);
+    atomic_fetch_add_explicit(d + 4 * i + 1, f.y, memory_order_relaxed);
+    atomic_fetch_add_explicit(d + 4 * i + 2, f.z, memory_order_relaxed);
+    atomic_fetch_add_explicit(d + 4 * i + 3, 1, memory_order_relaxed);
+}
+
+// After a paired car's substep (physicsCarSubstepsKernel): its island's cars against each other, and a car's parts off
+// against the rest of it (CarSolver.gridCar, meet, nodesAgainst, nodeTriangle). A threadgroup an island: each of its
+// cars' hull triangles hashed into cells; then its pairs a colour at a time, each pair's cars' nodes against the other's
+// triangles (which first turns about each substep), the deepest each meets pushing the node out and the triangle's
+// nodes back by their masses. The pushes are summed (in fixed point) and each node moved by their mean, its speed with
+// it, after each direction: what the CPU does one node after another, side by side, in no order that changes. Each
+// push is equal and opposite (what the cars carry is kept), its nodes' masses split among the pushes they took the pass
+// before (`splits`: a node many triangles push back counts as that many times as heavy), the pushes on a node summed.
+kernel void physicsCarMeetKernel(constant PhysicsParams&        p          [[buffer(0)]],
+                                 device const PhysicsCar*       cars       [[buffer(1)]],
+                                 device const uint4*            triangles  [[buffer(2)]],
+                                 device const uchar*            nodeParts  [[buffer(3)]],
+                                 device atomic_uint*            starts     [[buffer(4)]],   // per car, its buckets' starts (+1)
+                                 device atomic_uint*            cursors    [[buffer(5)]],   // per car, its buckets' fill
+                                 device uint*                   items      [[buffer(6)]],   // per triangle, its cells' (PHYS_GRID_CELLS)
+                                 device PhysicsParticle*        q          [[buffer(12)]],
+                                 device float2*                 wear       [[buffer(19)]],
+                                 device atomic_int*             deltas     [[buffer(20)]],   // per particle
+                                 constant PhysicsGroup&         run        [[buffer(21)]],
+                                 device const PhysicsCarPart*   parts      [[buffer(22)]],
+                                 device uint*                   partWake   [[buffer(23)]],
+                                 device const PhysicsCarPair*   pairs      [[buffer(24)]],
+                                 device const uint4*            islands    [[buffer(25)]],
+                                 device const uint*             islandCars [[buffer(26)]],
+                                 device float*                  splits     [[buffer(27)]],   // per particle
+                                 uint island [[threadgroup_position_in_grid]],
+                                 uint t      [[thread_index_in_threadgroup]],
+                                 uint width  [[threads_per_threadgroup]])
+{
+    threadgroup uint scan[1025];
+    uint4 is = islands[island];
+    float h = p.gravity.w;
+    // Each car's triangles into its hash (two passes: counted into their buckets, then placed).
+    for (uint ci = is.z; ci < is.z + is.w; ++ci) {
+        uint c = islandCars[ci];
+        PhysicsCar s = cars[c];
+        device atomic_uint* start = starts + c * 1025, *cursor = cursors + c * 1024;
+        device uint* item = items + uint(s.firstTriangle) * PHYS_GRID_CELLS;
+        for (uint k = t; k < 1025; k += width) atomic_store_explicit(&start[k], 0u, memory_order_relaxed);
+        threadgroup_barrier(mem_flags::mem_device);
+        for (uint pass = 0; pass < 2; ++pass) {
+            for (int tri = s.firstTriangle + int(t); tri < s.firstTriangle + s.triangleCount; tri += int(width)) {
+                uint4 tr = triangles[tri];
+                float3 pa = q[tr.x].position.xyz, pb = q[tr.y].position.xyz, pc = q[tr.z].position.xyz;
+                int3 c0 = physGridKey(min(min(pa, pb), pc) - PHYS_CAR_REACH), c1 = physGridKey(max(max(pa, pb), pc) + PHYS_CAR_REACH);
+                uint seen[PHYS_GRID_CELLS];
+                uint m = 0;
+                for (int z = c0.z; z <= c1.z; ++z) for (int y = c0.y; y <= c1.y; ++y) for (int x = c0.x; x <= c1.x && m < PHYS_GRID_CELLS; ++x) {
+                    uint k = physGridBucket(int3(x, y, z));
+                    bool known = false;
+                    for (uint j = 0; j < m; ++j) known = known || seen[j] == k;
+                    if (known) continue;
+                    seen[m++] = k;
+                    if (pass == 0) atomic_fetch_add_explicit(&start[k + 1], 1u, memory_order_relaxed);
+                    else item[atomic_fetch_add_explicit(&cursor[k], 1u, memory_order_relaxed)] = uint(tri);
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_device);
+            if (pass == 0) {
+                // The counts made starts (read side by side, added up by one thread in threadgroup memory), and the fill
+                // cursors at them.
+                for (uint k = t; k < 1024; k += width) scan[k + 1] = atomic_load_explicit(&start[k + 1], memory_order_relaxed);
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                if (t == 0) {
+                    scan[0] = 0;
+                    for (uint k = 1; k <= 1024; ++k) scan[k] += scan[k - 1];
+                }
+                threadgroup_barrier(mem_flags::mem_threadgroup);
+                for (uint k = t; k < 1025; k += width) {
+                    atomic_store_explicit(&start[k], scan[k], memory_order_relaxed);
+                    if (k < 1024) atomic_store_explicit(&cursor[k], scan[k], memory_order_relaxed);
+                }
+                threadgroup_barrier(mem_flags::mem_device);
+            }
+        }
+    }
+    // The pairs, a colour at a time; each pair both ways (a car with itself: its parts off against the rest).
+    uint k = is.x, end = is.x + is.y;
+    while (k < end) {
+        uint colour = pairs[k].colour, last = k;
+        while (last < end && pairs[last].colour == colour) ++last;
+        for (uint way = 0; way < 2; ++way) {
+            for (uint m = k; m < last; ++m) {
+                PhysicsCarPair pr = pairs[m];
+                bool own = pr.a == pr.b;
+                if (own && way == 1) continue;
+                bool flip = ((run.first & 1u) != 0) != (way == 1);
+                uint nc = flip ? pr.b : pr.a, tc = flip ? pr.a : pr.b;
+                PhysicsCar sn = cars[nc], st = cars[tc];
+                device const atomic_uint* start = starts + tc * 1025;
+                device const uint* item = items + uint(st.firstTriangle) * PHYS_GRID_CELLS;
+                for (int i = sn.firstNode + int(t); i < sn.firstNode + sn.nodeCount; i += int(width)) {
+                    PhysicsParticle node = q[i];
+                    float3 x = node.position.xyz;
+                    if (any(x < st.lo.xyz) || any(x > st.hi.xyz)) continue;
+                    int nodePart = 0;
+                    bool nodeOff = false;
+                    if (own) {
+                        nodePart = int(nodeParts[i]);
+                        nodeOff = nodePart > 0 && (parts[sn.firstPart + nodePart - 1].flags & PHYS_PART_OFF) != 0;
+                    }
+                    uint bucket = physGridBucket(physGridKey(x));
+                    uint from = atomic_load_explicit(&start[bucket], memory_order_relaxed), to = atomic_load_explicit(&start[bucket + 1], memory_order_relaxed);
+                    int deepest = -1;
+                    float most = 0.0f;
+                    for (uint e = from; e < to; ++e) {
+                        uint tri = item[e];
+                        uint4 tr = triangles[tri];
+                        if (own) {
+                            int triPart = int(tr.w);
+                            if (triPart == nodePart) continue;
+                            if (!nodeOff && (triPart == 0 || (parts[st.firstPart + triPart - 1].flags & PHYS_PART_OFF) == 0)) continue;
+                        }
+                        float depth = physNodeDepth(node, tr, q);
+                        // (The deepest; of equals, the first triangle: in no order the hash's filling left.)
+                        if (depth > most || (depth == most && depth > 0.0f && int(tri) < deepest)) { deepest = int(tri); most = depth; }
+                    }
+                    if (deepest < 0) continue;
+                    // CarSolver.nodeTriangle.
+                    uint4 tr = triangles[deepest];
+                    PhysicsParticle qa = q[tr.x], qb = q[tr.y], qc = q[tr.z];
+                    float3 xa = qa.position.xyz, xb = qb.position.xyz, xc = qc.position.xyz;
+                    float3 normal = cross(xb - xa, xc - xa);
+                    float area = length(normal);
+                    if (!(area > 1e-8f)) continue;
+                    normal /= area;
+                    float3 wt = physClosestWeights(x, xa, xb, xc);
+                    float3 point = xa * wt.x + xb * wt.y + xc * wt.z, apart = x - point;
+                    float distance = length(apart), side = dot(x - xa, normal);
+                    float3 nrm = normal;
+                    float depth;
+                    if (side >= 0.0f) {
+                        if (!(distance < PHYS_CAR_SKIN)) continue;
+                        if (distance > 1e-6f) nrm = apart / distance;
+                        depth = PHYS_CAR_SKIN - distance;
+                    } else {
+                        if (!(distance <= -side + 1e-4f) || !(-side < PHYS_CAR_REACH)) continue;
+                        float3 pa = qa.prevPosition.xyz, pb = qb.prevPosition.xyz, pc = qc.prevPosition.xyz;
+                        if (!(dot(node.prevPosition.xyz - pa, cross(pb - pa, pc - pa)) > 0.0f)) continue;
+                        depth = PHYS_CAR_SKIN - side;
+                    }
+                    float wn = node.prevPosition.w, wa = qa.prevPosition.w, wb = qb.prevPosition.w, wc = qc.prevPosition.w;
+                    float kn = max(splits[i], 1.0f), ka = max(splits[tr.x], 1.0f), kb = max(splits[tr.y], 1.0f), kc = max(splits[tr.z], 1.0f);
+                    float weight = wn * kn + wt.x * wt.x * wa * ka + wt.y * wt.y * wb * kb + wt.z * wt.z * wc * kc;
+                    if (!(weight > 0.0f)) continue;
+                    float3 before = qa.prevPosition.xyz * wt.x + qb.prevPosition.xyz * wt.y + qc.prevPosition.xyz * wt.z;
+                    float3 moved = (x - node.prevPosition.xyz) - (point - before);
+                    float overlap = min(depth, max(-dot(moved, nrm), 0.0f) + PHYS_PUSH_SPEED * h);
+                    if (!(overlap > 0.0f)) continue;
+                    float3 push = physParticlePush(nrm, overlap, moved, PHYS_CAR_FRICTION) / weight;
+                    physAddDelta(deltas, uint(i), push * wn);
+                    physAddDelta(deltas, tr.x, -push * (wt.x * wa));
+                    physAddDelta(deltas, tr.y, -push * (wt.y * wb));
+                    physAddDelta(deltas, tr.z, -push * (wt.z * wc));
+                    wear[i] += physCarSliding(moved, nrm, h);
+                    // A part frozen where it lies, met: woken next step (physicsCarBeginKernel).
+                    if (wa == 0.0f || wb == 0.0f || wc == 0.0f) {
+                        int part = int(nodeParts[tr.x]);
+                        if (part > 0) partWake[st.firstPart + part - 1] = 1u;
+                    }
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_device);
+            // Each node moved by its pushes' sum, its speed with it; how many it took, its mass's split next pass.
+            for (uint m = k; m < last; ++m) {
+                PhysicsCarPair pr = pairs[m];
+                for (uint e = 0; e < (pr.a == pr.b ? 1u : 2u); ++e) {
+                    PhysicsCar sc = cars[e == 0 ? pr.a : pr.b];
+                    for (int i = sc.firstNode + int(t); i < sc.firstNode + sc.nodeCount; i += int(width)) {
+                        int count = atomic_load_explicit(deltas + 4 * i + 3, memory_order_relaxed);
+                        splits[i] = float(count);
+                        if (count == 0) continue;
+                        float3 d = float3(atomic_load_explicit(deltas + 4 * i, memory_order_relaxed), atomic_load_explicit(deltas + 4 * i + 1, memory_order_relaxed),
+                                          atomic_load_explicit(deltas + 4 * i + 2, memory_order_relaxed)) / PHYS_CAR_FIXED;
+                        for (uint f = 0; f < 4; ++f) atomic_store_explicit(deltas + 4 * i + f, 0, memory_order_relaxed);
+                        q[i].position.xyz += d;
+                        q[i].velocity.xyz += d / h;
+                    }
+                }
+            }
+            threadgroup_barrier(mem_flags::mem_device);
+        }
+        k = last;
+    }
 }
 
 // After a group of the cars' substeps, before the world's: what they did to each body (physCarNode, physCarTyre) — its
