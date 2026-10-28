@@ -242,7 +242,8 @@ keep their partners. `METALRENDERER_PHYSICS_PARTS=1` times the parts; `METALREND
 the colours one after another (with the old rounds).
 
 Where a step goes now (three buildings settling, ms): pushes' 10 wide colours 2.0, kicks by Jacobi with the links
-about 1.0, the tail's pushes 0.8, pairs 2.1, narrow 1.2, rounds 0.3, integrate 0.25.
+about 1.0, the tail's pushes 0.8, narrow 1.2, pairs 0.67 (2.1 before a SIMD group a body), rounds 0.3, integrate
+0.25.
 
 Traps:
 - Jacobi with a plain mean (or a mean by size) under-corrects a support's kick: what the push left of a contact's
@@ -252,10 +253,15 @@ Traps:
 - The settling rows are chaotic: kept partner lists change the pair sets a little, so the collapse moves; compare
   parts within one run, or counts from `testTheBuildingSettles`, not settling totals across changes.
 - Shader edits while a benchmark launches: it may compile the new shader against the old binary's bindings.
+- The box test's early out (`physBoxGap` stopping at a separating axis, as the CPU's does) is exact in the maths but
+  not in the GPU's rounding: the massive building's state parted from main's at 6 s. Keep the full 15 axes.
+- To prove a change leaves the GPU's steps alone: hash the bodies and partners every 2 s over 10 s of the massive
+  building, built with the change and with main's two files, and compare.
 
 Next:
 - The pushes' wide colours are now the biggest part: fewer colours (more pairs into the Jacobi tail) trades
   stiffness for dispatches; try 6 or 8 against the heap tests.
-- Pairs: most of the heap still looks while 30 to 70 % sleeps; the levelled grid's per-body walk is the cost.
+- Pairs: done on `claude/gpu-neighbours-cheaper`, a SIMD group a body that looks (2.24 → 0.67 ms in three buildings
+  settling), the same partners bit for bit. The narrow phase (1.2 ms there) is now the larger of the two.
 - The window hand test of the GPU's steps.
 

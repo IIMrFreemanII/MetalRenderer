@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793179638.544803,
-    "seen": 1793179804.298857,
-    "ast_hash": "6bccd0672db2e3fa635634b9c9827e17",
+    "mtime": 1793182564.4719357,
+    "seen": 1793183095.827241,
+    "ast_hash": "41000e9745dd1c408d16fa17968534cf",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -492,9 +492,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Physics.metal": {
-    "mtime": 1793179646.7851405,
-    "seen": 1793179804.292133,
-    "ast_hash": "f539c26370b092fe20ae9a6cc4030968",
+    "mtime": 1793182544.8336878,
+    "seen": 1793183095.8201752,
+    "ast_hash": "bd6e265567cbf06b07ffe79b2cfb69d4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
@@ -1806,9 +1806,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/destruction-handoff.md": {
-    "mtime": 1793179638.5585978,
-    "seen": 1793179804.297982,
-    "ast_hash": "0e0a3969e09eac5e1182782ffde4fcd4",
+    "mtime": 1793182818.0159686,
+    "seen": 1793183095.826336,
+    "ast_hash": "9acce29a9e5dc409ad154e0097cb59b9",
     "semantic_hash": ""
   },
   "Sources/CPhysicsAtomics/atomics.c": {
@@ -3858,9 +3858,9 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPU.swift": {
-    "mtime": 1793179047.6779268,
-    "seen": 1793179804.2942479,
-    "ast_hash": "b81215524f7ab2f02c1aa30937957ed1",
+    "mtime": 1793182567.9977415,
+    "seen": 1793183095.822352,
+    "ast_hash": "6703b2270123ec06492acf3aa2817926",
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPUTypes.swift": {
