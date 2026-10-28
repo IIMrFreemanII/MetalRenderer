@@ -74,6 +74,10 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
         case metal4(name: String, cmd: MTL4CommandBuffer)
         case metal3(name: String, cmd: MTLCommandBuffer, value: UInt64)
         case mappings(heap: MTLHeap, [(texture: MTLTexture, ops: [MTL4UpdateSparseTextureMappingOperation])])
+        /// Another queue's work through a shared event: what follows waits for it to reach the value; or it is set to
+        /// the value once what came before is done.
+        case wait(MTLSharedEvent, UInt64)
+        case signal(MTLSharedEvent, UInt64)
     }
     private var buffers: [Buffer] = []
     private var cmd: MTL4CommandBuffer?
@@ -224,6 +228,22 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
     }
 
     // MARK: - FrameEncoder
+
+    /// What follows waits on the GPU for `event` to reach `value` (another queue's work: the physics' steps).
+    package func wait(for event: MTLSharedEvent, value: UInt64) {
+        endCompute()
+        cmd?.endCommandBuffer()
+        cmd = nil
+        buffers.append(.wait(event, value))
+    }
+
+    /// `event` is set to `value` once the work encoded so far is done (another queue waits for it).
+    package func signal(_ event: MTLSharedEvent, value: UInt64) {
+        endCompute()
+        cmd?.endCommandBuffer()
+        cmd = nil
+        buffers.append(.signal(event, value))
+    }
 
     package func compute(_ name: String, serial: Bool, concurrent: Bool) -> ComputePass? {
         let wasSerial = self.serial
@@ -390,7 +410,7 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
         }
         let done = wait ? DispatchSemaphore(value: 0) : nil
         let split = split
-        let commandBuffers = buffers.filter { if case .mappings = $0 { return false } else { return true } }.count
+        let commandBuffers = buffers.filter { if case .metal4 = $0 { return true }; if case .metal3 = $0 { return true }; return false }.count
         let collector = FeedbackCollector(count: commandBuffers) { times in
             completed(times)
             done?.signal()
@@ -441,6 +461,10 @@ package final class Metal4Frame: FrameEncoder, ComputePass {
                 queue.waitForEvent(event, value: value + 1)    // what follows runs after it
             case .mappings(let heap, let textures):
                 for (texture, ops) in textures { queue.updateMappings(texture: texture, heap: heap, operations: ops) }
+            case .wait(let other, let value):
+                queue.waitForEvent(other, value: value)
+            case .signal(let other, let value):
+                queue.signalEvent(other, value: value)
             }
         }
         if commandBuffers == 0 { collector.finish() }

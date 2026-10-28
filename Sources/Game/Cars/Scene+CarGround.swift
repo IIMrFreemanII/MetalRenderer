@@ -21,6 +21,11 @@ extension Scene {
     /// The autopilot laps' centre (x, z), and the first lap's radius and the room between laps (m).
     static let carLapCentre = SIMD2<Float>(0, -90), carLapRadius: Float = 24, carLapSpacing: Float = 7
 
+    /// Car `k`'s lap's radius among `cars` cars on laps, and their laps' centre. More than eight: closer together round
+    /// a centre further back, so that 32 laps (the outermost 136 m) stay clear of the run-up and its obstacles.
+    static func carLap(_ k: Int, of cars: Int) -> Float { carLapRadius + Float(k) * (cars > 8 ? 3.6 : carLapSpacing) }
+    static func carLapsCentre(_ cars: Int) -> SIMD2<Float> { cars > 8 ? SIMD2(0, -150) : carLapCentre }
+
     func buildCarGround(_ settings: CarSettings) {
         let kit = Kit(self)
         let world = physicsWorld()
@@ -91,6 +96,25 @@ extension Scene {
         _ = addFractured("Concrete wall", shape: SDFShape(.box(halfExtents: [1.7, 1.25, 0.15])), recipe: slab, transform: translate([22, 1.25, 46]),
                          material: wallConcrete, interior: concreteInside, anchor: .ground(0))
 
+        // A field of more walls inside the first lap (a load: `walls`), brick and concrete in turn, 4 across and as many
+        // deep as it takes, each its own.
+        for k in 0..<settings.walls {
+            let (column, row) = (k % 4, k / 4)
+            let centre = Scene.carLapsCentre(settings.cars)
+            let at = SIMD3<Float>(centre.x - 9 + Float(column) * 6, 0, centre.y - 10 + Float(row) * 4)
+            if k % 2 == 0 {
+                var recipe = bricks
+                recipe.seed = UInt64(100 + k)
+                _ = addFractured("Field wall \(k + 1)", shape: SDFShape(.box(halfExtents: [1.6, 0.88, 0.11])), recipe: recipe,
+                                 transform: translate(at + [0, 0.88, 0]), material: brick, interior: brickInside, anchor: .ground(0))
+            } else {
+                var recipe = slab
+                recipe.seed = UInt64(100 + k)
+                _ = addFractured("Field wall \(k + 1)", shape: SDFShape(.box(halfExtents: [1.7, 1.25, 0.15])), recipe: recipe,
+                                 transform: translate(at + [0, 1.25, 0]), material: wallConcrete, interior: concreteInside, anchor: .ground(0))
+            }
+        }
+
         section("Props")
         // A slalom of cones up the middle, barrels by the run-up's end, a stack of crates on the left.
         let orange = addPBRMaterial(baseColor: [0.9, 0.32, 0.06], metallic: 0, roughness: 0.55)
@@ -153,9 +177,9 @@ extension Scene {
                     velocity = [0, 0, settings.demoSpeed / 3.6]
                 }
             case .laps:
-                let radius = Scene.carLapRadius + Float(k) * Scene.carLapSpacing
+                let radius = Scene.carLap(k, of: settings.cars)
                 let angle = Float(k) * 0.9
-                let at = Scene.carLapCentre + SIMD2(cos(angle), sin(angle)) * radius
+                let at = Scene.carLapsCentre(settings.cars) + SIMD2(cos(angle), sin(angle)) * radius
                 let tangent = SIMD2(-sin(angle), cos(angle))
                 place = translate([at.x, 0, at.y]) * float4x4(simd_quatf(angle: atan2(tangent.x, tangent.y), axis: [0, 1, 0]))
             }
@@ -167,7 +191,8 @@ extension Scene {
             if settings.demo == .laps {
                 var input = CarInput()
                 input.autopilot = true
-                input.lap = SIMD4(Scene.carLapCentre.x, Scene.carLapCentre.y, Scene.carLapRadius + Float(k) * Scene.carLapSpacing, 15)
+                let centre = Scene.carLapsCentre(settings.cars)
+                input.lap = SIMD4(centre.x, centre.y, Scene.carLap(k, of: settings.cars), 15)
                 world.add(PhysicsWorld.carCommand(car.car, input, at: 0))
             }
         }

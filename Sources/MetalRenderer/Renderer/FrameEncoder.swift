@@ -55,6 +55,10 @@ package protocol FrameEncoder: AnyObject {
     func commit(presenting drawable: CAMetalDrawable?, wait: Bool, completed: @escaping (FrameTimes) -> Void)
     /// `resources` are no longer used by any frame: they leave the residency set.
     func release(_ resources: [MTLResource])
+    /// What follows waits on the GPU for `event` to reach `value`; `event` is set to `value` once the work encoded so
+    /// far is done: the frame and another queue's work (the physics' steps, Renderer.encodeSceneUpdate) in step.
+    func wait(for event: MTLSharedEvent, value: UInt64)
+    func signal(_ event: MTLSharedEvent, value: UInt64)
 }
 
 extension FrameEncoder {

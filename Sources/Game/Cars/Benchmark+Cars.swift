@@ -11,11 +11,12 @@ import simd
 import MetalRenderer
 
 /// The car scene's benchmark modes (Scene+CarGround.swift): the wall demo paused before, at and after the hit in the solid
-/// look and in the full one; what the cars' steps cost on autopilot laps (the `cpu` column).
+/// look and in the full one; what the cars' steps cost on autopilot laps (the `cpu` column), on the CPU and on the GPU (the
+/// `physics` pass; `METALRENDERER_PHYSICS_PARTS=1` times the cars' kernels apart as `phys cars`).
 extension Benchmark {
     static let carModes: [String: () -> [Config]] = [
-        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
-        "carscrash": carsCrash, "carscams": carsCams, "carsvideo": carsVideo,
+        "cars": cars, "carsfull": carsFull, "carscpu": carsCPU, "carsgpu": carsGPU, "carsmanycpu": carsManyCPU, "carsmanygpu": carsManyGPU, "carspaint": carsPaint, "carsmodels": carsModels, "carsdamage": carsDamage,
+        "carscrash": carsCrash, "carscrashgpu": carsCrashGPU, "carscams": carsCams, "carsvideo": carsVideo, "carsvideogpu": carsVideoGPU,
     ]
 
     /// Each model's cockpit (CarPack.Entry.eye), then each camera (CarCameras.swift: C goes round them) on the
@@ -53,6 +54,11 @@ extension Benchmark {
         }
     }
 
+    /// ...on the GPU (CarsGPU.swift: its frames drawn between its steps, PhysicsGPU.encodeDrawn).
+    private static func carsVideoGPU() -> [Config] {
+        carsVideo().map { $0.with { $0.scene.physics.backend = .gpu } }
+    }
+
     /// Phase 3's crashes in the full look, each before, as and after it hits: two cars head on at 50 km/h each, the
     /// player's car through the brick wall at 50 and into the crates at 40 (CarContacts.swift, Physics+Cars).
     private static func carsCrash() -> [Config] {
@@ -73,6 +79,11 @@ extension Benchmark {
                 }.from(camera).still(at: t)
             }
         }
+    }
+
+    /// ...on the GPU (CarsGPU.swift): each still a replay from the start on the GPU.
+    private static func carsCrashGPU() -> [Config] {
+        carsCrash().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// The wall demo's damage in the full look, close (CarDamage.swift): at 50 km/h just after the hit (the shards, the
@@ -139,6 +150,29 @@ extension Benchmark {
                 $0.solid = false
             }.from(camera).still(at: 2)
         }
+    }
+
+    /// ...on the GPU (CarsGPU.swift), its rows named as the CPU's (`ab.sh` puts one against the other).
+    private static func carsGPU() -> [Config] {
+        carsCPU().map { $0.with { $0.scene.physics.backend = .gpu } }
+    }
+
+    /// A load: 8, 16 and 32 cars on laps, alone and round a field of 24 breakable walls (standing: the cars lap round
+    /// them), on the CPU and on the GPU.
+    private static func carsManyCPU() -> [Config] {
+        [0, 24].flatMap { walls in
+            [8, 16, 32].map { n in
+                carBase("\(n) cars\(walls > 0 ? " walls" : "")").with {
+                    $0.scene.cars.demo = .laps
+                    $0.scene.cars.cars = n
+                    $0.scene.cars.walls = walls
+                }
+            }
+        }
+    }
+
+    private static func carsManyGPU() -> [Config] {
+        carsManyCPU().map { $0.with { $0.scene.physics.backend = .gpu } }
     }
 
     /// The cars' steps moving: 1, 4 and 8 cars on autopilot laps.

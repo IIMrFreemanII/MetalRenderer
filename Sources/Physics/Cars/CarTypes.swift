@@ -104,6 +104,8 @@ package struct CarWheel {
     /// off, as it does when its knuckle's links break (`links`). And the hardest so far.
     package var axleKnock: Float = 0
     package var knockPeak: Float = 0
+    /// Its body's inverse mass (the GPU's world has none for it: its car moves it, CarsGPU).
+    package var inverseMass: Float = 0
     /// What holds its knuckle (its corner's links: CarBlueprint.Corner.links; beams of CarSystem.beams, -1 none).
     package var links = SIMD8<Int32>(repeating: -1)
 

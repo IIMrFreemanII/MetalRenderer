@@ -327,11 +327,11 @@ extension GameScenes {
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 11, 44], pitch: -0.2)
             },
-            // Node-beam cars to drive and crash (Physics+Cars.swift): the CPU's step's alone; the full look, the solid one too.
+            // Node-beam cars to drive and crash (Physics+Cars.swift; on the GPU with the GPU backend: CarsGPU.swift); the
+            // full look, the solid one too.
             scene(.cars, "Cars", "buildCarGround", build: { $0.buildCarGround($0.settings.cars) }) {
                 $0.simulates = true
                 $0.behaviour = { CarPlayer($0) }
-                $0.cpuPhysics = true
                 $0.sky = courtyard
                 $0.cameraFromScene = true
             },

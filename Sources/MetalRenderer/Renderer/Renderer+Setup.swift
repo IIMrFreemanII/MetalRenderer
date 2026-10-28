@@ -325,7 +325,7 @@ extension Renderer {
             // (The demolition scene's rockets and walker are the CPU's step's alone: Physics+Demolition.swift.)
             let onGPU = scene.settings.kind.simulates && !scene.settings.kind.definition.cpuPhysics
                 && scene.settings.physics.runsOnGPU(bodies: physics.bodies.count + physics.particles.count + physics.hairStrands.count + liquid,
-                                                    fractures: physics.fractures)
+                                                    fractures: physics.fractures, cars: physics.hasCars)
             if onGPU || !physics.cloths.isEmpty || !physics.softVertices.isEmpty || !physics.hairGroups.isEmpty {
                 physicsGPU = try PhysicsGPU(device: device, world: physics, sdfScene: buffers.sdf.scene, sdfResources: buffers.sdf.buffers,
                                             slots: Renderer.maxFramesInFlight, simulates: onGPU,

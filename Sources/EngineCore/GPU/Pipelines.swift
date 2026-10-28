@@ -28,12 +28,17 @@ package enum Kernel: Int, CaseIterable {
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow
     case physicsParticleInsert, physicsParticleNeighbours
     case physicsSubsteps, physicsPose, physicsParticlePose, physicsClothMesh, physicsSoftMesh, physicsSoftNormals
+    case physicsKeep, physicsDrawn   // a car world's frames between its steps (PhysicsGPU.encodeDrawn)
     case physicsHair, physicsHairTick, physicsHairReset, physicsHairCurves   // hair (PhysicsHair.swift)
     case physicsFractureReset, physicsFractureCommand, physicsFractureVerdict, physicsFractureApply, physicsLooseGather, physicsFracturePose, physicsFractureEvents, physicsFracturePairs, physicsFractureLink, physicsFractureNarrow, physicsFractureClear, physicsFractureInsert,
          physicsColourReset, physicsColourStart, physicsColourArgs, physicsColourWin, physicsColourTake, physicsColourPick, physicsColourCommit, physicsColourCount,
          physicsColourStarts, physicsColourScatter, physicsColourExtra,
          physicsWideStart, physicsWideIntegrate, physicsWideVelocities, physicsWideArgs, physicsWidePush, physicsWideKick, physicsWideJoints, physicsWideTail,
          physicsTouchCount, physicsTouchStarts, physicsTouchScatter, physicsTouchSort, physicsJacobiKick, physicsJacobiPush, physicsJacobiApply, physicsNarrowList, physicsNarrowArgs, physicsPairsKeep   // destruction (Physics+Fracture.swift)
+    // Cars (CarsGPU, Shaders/PhysicsCars.metal): a step's start, a group of substeps, its end and events, the telemetry.
+    case physicsCarBegin, physicsCarSubsteps, physicsCarEnd, physicsCarEvents, physicsCarTelemetry, physicsCarReset
+    case physicsCarBodies, physicsCarStrikes, physicsCarGiveWay   // what the cars do to bodies and pieces
+    case physicsCarPairs, physicsCarMeet                          // cars against cars
     // Liquids (PhysicsFluidGPU): a group's start and pour, the scan, PBF's sort and solve, MPM's grid, the bodies' impulses.
     case fluidReset, fluidBegin, fluidPour, fluidApply, fluidScanBlocks, fluidScanTop, fluidScanAdd
     case fluidPredict, fluidCellsClear, fluidCellCount, fluidScatter, fluidCellSort, fluidReorder

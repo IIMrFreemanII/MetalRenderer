@@ -130,17 +130,22 @@ package struct CarSettings: Equatable, Codable {
     package var demoSpeed: Float = 50
     /// Traction control and ABS (CarTune.assists).
     package var assists = true
+    /// More breakable walls, brick and concrete in turn, in a field inside the first lap (a benchmark's load:
+    /// Benchmark+Cars.swift's `carsmany*`).
+    package var walls = 0
 
-    package static let carRange = 1...8
+    package static let carRange = 1...32
     package static let speedRange: ClosedRange<Float> = 20...150
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(style: CarStyle = CarStyle.civic, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true) {
+    package init(style: CarStyle = CarStyle.civic, cars: Int = 4, demo: Demo = Demo.none, demoSpeed: Float = 50, assists: Bool = true,
+                 walls: Int = 0) {
         self.style = style
         self.cars = cars
         self.demo = demo
         self.demoSpeed = demoSpeed
         self.assists = assists
+        self.walls = walls
     }
 }
 
@@ -236,9 +241,13 @@ package struct PhysicsSettings: Equatable, Codable {
     /// are the frame's while the CPU's run beside it. On the M1 Max (Benchmark+Destruction.swift's destructioncpu) the
     /// CPU's step took 2.0 ms against the GPU's 4.7 in the courtyard, 13 against 16 for a building settling, and 31
     /// against 30 for three; with the GPU's in the window, a settling building drew at 16 to 23 fps, with the CPU's
-    /// at 120.
-    package func runsOnGPU(bodies: Int, fractures: Bool = false) -> Bool {
-        backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom && !fractures)
+    /// at 120. With cars (Physics+Cars.swift; on the GPU: CarsGPU.swift), automatic is the CPU: on the M4 Max (release,
+    /// `carscpu`/`carsgpu`, `carsmanycpu`/`carsmanygpu`, the CPU's steps beside the frame as the app runs them) the GPU's
+    /// cars cost the frame 0.5-0.6 ms of GPU at 1 to 8 cars and 0.7-0.9 at 16 to 32 with or without 24 breakable walls,
+    /// and the frame's own CPU no less; the CPU's steps, beside it, kept up even at 32 cars and the walls (4.3 ms a step).
+    /// Chosen, the GPU frees the cores the CPU's steps take (1.3-4.4 ms of them a frame).
+    package func runsOnGPU(bodies: Int, fractures: Bool = false, cars: Bool = false) -> Bool {
+        backend == .gpu || (backend == .auto && bodies >= PhysicsSettings.gpuFrom && !fractures && !cars)
     }
 
     /// (As the memberwise initializer, for the modules above this one.)

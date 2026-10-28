@@ -3450,6 +3450,60 @@ kernel void physicsParticlePoseKernel(constant PhysicsPoseParams&    pp         
     }
 }
 
+// Where the world was after a step (PhysicsGPU.encodeKeep): each particle's place, each body's place and turn. A car
+// world keeps the two before its latest, for the frames drawn between its steps.
+kernel void physicsKeepKernel(constant uint2&               counts    [[buffer(0)]],   // particles, bodies
+                              device const PhysicsParticle* particles [[buffer(1)]],
+                              device const PhysicsBody*     bodies    [[buffer(2)]],
+                              device float4*                keptParticles [[buffer(3)]],
+                              device float4*                keptBodies    [[buffer(4)]],
+                              uint i [[thread_position_in_grid]])
+{
+    if (i < counts.x) keptParticles[i] = float4(particles[i].position.xyz, 0.0f);
+    if (i < counts.y) {
+        keptBodies[2 * i] = float4(bodies[i].position.xyz, 0.0f);
+        keptBodies[2 * i + 1] = bodies[i].rotation;
+    }
+}
+
+// The particles and bodies as a frame between two kept steps draws them (PhysicsGPU.encodeDrawn, as the CPU's
+// PhysicsStepper.Drawn.between): placed `t` of the way from the one to the other (`latest`: the other is the world as it
+// is), turned as far; everything else the world's as it is.
+struct PhysicsDrawnParams {
+    uint  particles, bodies;
+    float t;
+    uint  latest;
+};
+static_assert(sizeof(PhysicsDrawnParams) == 16, "PhysicsDrawnParams: PhysicsGPU.DrawnParams");
+
+kernel void physicsDrawnKernel(constant PhysicsDrawnParams&  dp            [[buffer(0)]],
+                               device const PhysicsParticle* particles     [[buffer(1)]],
+                               device const PhysicsBody*     bodies        [[buffer(2)]],
+                               device const float4*          fromParticles [[buffer(3)]],
+                               device const float4*          fromBodies    [[buffer(4)]],
+                               device const float4*          toParticles   [[buffer(5)]],
+                               device const float4*          toBodies      [[buffer(6)]],
+                               device PhysicsParticle*       drawnParticles [[buffer(7)]],
+                               device PhysicsBody*           drawnBodies    [[buffer(8)]],
+                               uint i [[thread_position_in_grid]])
+{
+    if (i < dp.particles) {
+        PhysicsParticle q = particles[i];
+        float3 to = dp.latest != 0u ? q.position.xyz : toParticles[i].xyz;
+        q.position.xyz = mix(fromParticles[i].xyz, to, dp.t);
+        drawnParticles[i] = q;
+    }
+    if (i < dp.bodies) {
+        PhysicsBody b = bodies[i];
+        float3 to = dp.latest != 0u ? b.position.xyz : toBodies[2 * i].xyz;
+        float4 from = fromBodies[2 * i + 1], turn = dp.latest != 0u ? b.rotation : toBodies[2 * i + 1];
+        if (dot(from, turn) < 0.0f) turn = -turn;
+        b.position.xyz = mix(fromBodies[2 * i].xyz, to, dp.t);
+        b.rotation = normalize(mix(from, turn, dp.t));
+        drawnBodies[i] = b;
+    }
+}
+
 // A cloth's mesh (PhysicsWorld.clothTable): its first particle, its grid, its first vertex, and its last frame's
 // vertices' offset.
 struct PhysicsCloth {
