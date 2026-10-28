@@ -24,6 +24,7 @@ extension Scene {
         let world = physicsWorld()
         world.fractureTuning.x = settings.fade ? 6 : 1e9
         world.idleWelds = true
+        world.looseJoints = settings.looseJoints ? LooseJoints() : nil
         let blueprint = DemolitionBlueprint(settings)
 
         // Materials: each look's outside, then its broken inside (flagged as a cut face for the solid look).
@@ -169,7 +170,7 @@ extension Scene {
                             centre[u] = (lo.x + hi.x) / 2
                             centre[v] = (lo.y + hi.y) / 2
                             world.addWeld(objects[i].firstBody + x.node, objects[j].firstBody + y.node, centre: centre,
-                                          area: (hi.x - lo.x) * (hi.y - lo.y), sigma: sigma)
+                                          area: (hi.x - lo.x) * (hi.y - lo.y), width: min(hi.x - lo.x, hi.y - lo.y), sigma: sigma)
                             made += 1
                         }
                     }

@@ -183,3 +183,52 @@ Done:
 Not done / not checked:
 - The window hand test with Automatic (now the CPU) in the Destruction scene, dust in the window.
 - The M4 Max: whether its GPU changes the picture (more cores, faster dispatch) and the rule should depend on it.
+
+## Loose joints (branch `claude/destruction-physics-loose-joints-40411f`)
+
+After a talk on Battlefield-style destruction: broken pieces stay tied to their neighbours by loose links that hinge,
+swing and sag, so collapses slow down and leave chains, nets and ramps. The design and numbers are in the README,
+"Loose joints"; the code is `Physics+LooseJoints.swift`. On by default in both scenes (`loose`, `demloose`), the CPU's
+steps only.
+
+Done (M4 Max):
+- A weld that a load overcomes goes loose (`info.z` = 2); one torn while a piece is shaken by an impact (this step or
+  the last 0.5 s) breaks, as before. A link has 10 cm of play plus the hinge's chord, is a spring past it and past a
+  1.7 rad bend, and lets go by load, stretch, fatigue or a per-link lifetime (3 s ± 50 %, counted asleep or not).
+- Links are gathered at each step's start into colours of their own (in weld order, the lowest colour neither piece
+  has: `colourLooseLinks`) and solved a colour after another after the contacts' colours (not as their pair's
+  contact: pairs get lost when a piece swings away from a held one).
+- The GPU's steps too (Shaders/Physics.metal): `physicsLooseGatherKernel` after the commands (one threadgroup: the
+  welds aged in runs, gathered in weld order, coloured by thread 0 as the CPU colours them), `physSolveLinks` after
+  the colours in the substeps' kernel and the wide path's tail kernel, the weld rule, `struck`, `linked` and the
+  shaken timer as the CPU's. `testTheGPULinksAsTheCPUDoes`: the ledge hangs and lets go on both; 0.6 mm apart at
+  0.2 s as without links, then welds at their strength go loose a step apart and the swings part (1.4 m at 1.5 s).
+  Cost (M4 Max, release, massive gpu rows): moving +0.63 ms a frame; settling +4.2, but only because the building
+  comes down at 9-10 s instead of 6-7 s (the heap from 10 s has just fallen; at 18 s both take 9.6 ms a step). The
+  gather skips its weld scan while no link is alive or new (`PHYS_LINK_NEW`); with ~80 links, 0.1-0.4 ms a step
+  (the scan of every weld and thread 0's colouring: keep the last step's links and scan only those, if it matters).
+- `LooseJointTests` (a ledge that hangs then falls, a blast and fatigue cutting links, replay and threads alike), and
+  the probe `LOOSE_PROBE=1` (`LOOSE_SCENES`, `LOOSE_TUNE="share,floor,limit[,lifetime[,slack]]"`, `LOOSE_STRENGTH`,
+  `LOOSE_WHERE=1`), which prints both scenes' weld states each second with and without links.
+- `testTheMachineGunChips` counts pieces 15 cm out of the wall (a chip now hangs 20 cm out on its link to the slab).
+
+Traps found, in order (each one looked like the mechanism didn't work):
+- A link carried as its pair's last contact was never solved once its piece swung out of the held piece's box
+  overlap: the pair was gone, and the link stayed "loose" forever while the brick fell 1.6 m.
+- A pull at the face's middle fought the contacts where the pieces hinge (they turn about the edge they press on):
+  snapped in a fraction of a second. Hence the chord in the play, from each weld's face width (`loose.w`).
+- Rigid stiffness: a mm of stretch was 10 kN, and a hard bend stop took a swinging ledge's momentum in a substep.
+  Hence springs scaled by each link's strength (its load is then about stretch / give, whatever the share: the share
+  only changes how hard it pulls).
+- The massive building stood for good with links, for four separate reasons tried in turn: welds torn by the blasts
+  going loose (hence `struck`/`shaken`), links that aged only while moving (its ground floor slept on them), 2 cm of
+  play (cracked walls tied as masonry), and luck (without links it also stands at 0.4x strength: its collapse is
+  chaotic). With 10 cm of play it comes down at 1x, 0.15x and 0.3x, a second later than without.
+
+Not done / not checked:
+- The window hand test: shooting a slab's edge in Demolition, how hanging pieces look and feel, the settings toggles.
+- The extra CPU is mostly more awake debris; a hanging piece's links could let it sleep sooner, or the CPU's link
+  colours could go on every core (they share no piece), if it matters at scale (three buildings, demolition with all
+  its tools). The GPU's gather colours on one thread: fine at a few hundred links, slow at thousands.
+- Tuning by eye: play, lifetime and bend were chosen from the probe and two renders, not a video.
+

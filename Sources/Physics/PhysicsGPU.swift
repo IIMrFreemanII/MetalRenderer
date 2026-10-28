@@ -120,8 +120,8 @@ package final class PhysicsGPU {
     package let fluid: FluidGPU?
     /// Fractured objects (Physics+Fracture.swift): per body its node and its step's state, the welds (and as they
     /// start), per body its welds (from `weldStarts`), the commands and their clock (steps run, commands), what the
-    /// fracture kernels are told; and the substeps' tables (MSL PhysicsTables: the tets', the welds', the states'
-    /// addresses) and what they point at.
+    /// fracture kernels are told; and the substeps' tables (MSL PhysicsTables: the tets', the welds', the states',
+    /// the loose links' addresses, the loose joints) and what they point at.
     private let fractureNodes: MTLBuffer
     private let fractureState: MTLBuffer
     private let shapeBoxes: MTLBuffer
@@ -134,6 +134,12 @@ package final class PhysicsGPU {
     private let fractureParams: MTLBuffer
     private let tables: MTLBuffer
     private let tableResources: [MTLResource]
+    /// The loose links (Physics+LooseJoints.swift; with `loose`): the step's in their colours (MSL PHYS_LINK_HEAD
+    /// words, where each colour's run starts and how many colours, then the welds in their colours, then the gather's
+    /// scratch: physicsLooseGatherKernel), and per body the colours its links took (between steps all 0).
+    private let looseLinks: MTLBuffer
+    private let looseMasks: MTLBuffer
+    private let loose: Bool
     /// Per body whether it broke this step, and the ring of steps' breaks the dust is made from (MSL
     /// physicsFractureEventsKernel: a header per slot, then its events); the particles read it (ParticlesGPU.breakRing).
     private let broke: MTLBuffer
@@ -281,11 +287,18 @@ package final class PhysicsGPU {
         commands = try buffer([GPUFractureCommand](), "physicsCommands",
                               length: world.fractures ? PhysicsWorld.maxCommands * MemoryLayout<GPUFractureCommand>.stride : 0)
         fractureClock = try buffer([SIMD4<UInt32>()], "physicsFractureClock")
+        let looseJoints = world.fractures ? world.looseJoints.flatMap { $0.on ? $0 : nil } : nil
+        loose = looseJoints != nil
         fractureParams = try buffer([GPUFractureParams(counts: SIMD4(UInt32(n), UInt32(world.initialWelds.count), UInt32(PhysicsWorld.maxCommands), 0),
-                                                       tuning: world.fractureTuning)], "physicsFractureParams")
-        tables = try buffer([tets.gpuAddress, tetStarts.gpuAddress, welds.gpuAddress, fractureState.gpuAddress,
-                             world.fractures ? 1 : 0, 0], "physicsTables")   // (MSL PhysicsTables: four addresses, flags)
-        tableResources = [tets, tetStarts, welds, fractureState]
+                                                       tuning: world.fractureTuning, shaken: SIMD4(looseJoints?.shaken ?? 0, 0, 0, 0))],
+                                    "physicsFractureParams")
+        looseLinks = try buffer([UInt32](), "physicsLooseLinks", length: loose ? (PhysicsGPU.linkHead + 3 * world.initialWelds.count) * 4 : 0)
+        looseMasks = try buffer([UInt64](repeating: 0, count: loose ? n : 0), "physicsLooseMasks")
+        tables = try buffer([Tables(tets: tets.gpuAddress, tetStarts: tetStarts.gpuAddress, welds: welds.gpuAddress,
+                                    fracture: fractureState.gpuAddress, flags: SIMD4(world.fractures ? 1 : 0, 0, 0, 0),
+                                    links: looseLinks.gpuAddress, masks: looseMasks.gpuAddress, weldStarts: weldStarts.gpuAddress,
+                                    weldList: weldList.gpuAddress, loose: GPULooseParams(looseJoints))], "physicsTables")
+        tableResources = [tets, tetStarts, welds, fractureState, looseLinks, looseMasks, weldStarts, weldList]
         broke = try buffer([UInt32](), "physicsBroke", length: n * 4)
         breakRing = try buffer([UInt32](), "physicsBreakRing", length: world.fractures
             ? PhysicsWorld.ringSlots * (16 + PhysicsWorld.ringEvents * MemoryLayout<GPUBreakEvent>.stride) : 0)
@@ -376,6 +389,7 @@ package final class PhysicsGPU {
         enc.useResources(tableResources, usage: [.read, .write])   // (the substeps reach them through `tables`)
         for _ in 0..<steps {
             if fractures { encodeFractureCommands(enc, pipelines: pipelines) }
+            if loose { encodeLooseGather(enc, pipelines: pipelines) }
             encodeBroad(enc, pipelines: pipelines)
             // The particles' neighbours and colliders (through the bodies' grid).
             enc.setComputePipelineState(pipelines[.physicsParticleNeighbours])
@@ -460,6 +474,17 @@ package final class PhysicsGPU {
 
     // MARK: - Fracture
 
+    /// MSL PhysicsTables: the substeps' tables' addresses, the flags (x = 1: there are fractured objects), the loose joints.
+    private struct Tables {
+        var tets: UInt64, tetStarts: UInt64, welds: UInt64, fracture: UInt64
+        var flags: SIMD4<UInt32>
+        var links: UInt64, masks: UInt64, weldStarts: UInt64, weldList: UInt64
+        var loose: GPULooseParams
+    }
+    /// MSL PHYS_LINK_HEAD: the loose links' words before their welds (each colour's start, the end, how many colours,
+    /// how many links, whether a weld went loose since).
+    static let linkHead = PhysicsWorld.linkColours + 5
+
     /// The world's commands the GPU hasn't had yet (a shot, a blast: the CPU adds them between frames, stamped with a
     /// step not yet encoded), then their count. A shared buffer: a frame in flight may see them early, before their step.
     package func sendCommands() {
@@ -486,6 +511,18 @@ package final class PhysicsGPU {
         enc.setBuffer(fractureClock, offset: 0, index: 6)
         enc.setBuffer(lastPose, offset: 0, index: 7)
         dispatch(enc, pipelines[.physicsFractureCommand], count)
+    }
+
+    /// The step's loose links, a step older, in their colours (one threadgroup: PhysicsWorld.gatherLooseLinks).
+    private func encodeLooseGather(_ enc: ComputePass, pipelines: Pipelines) {
+        let gather = pipelines[.physicsLooseGather]
+        enc.setComputePipelineState(gather)
+        enc.setBuffer(fractureParams, offset: 0, index: 1)
+        enc.setBuffer(bodies, offset: 0, index: 2)
+        enc.setBuffer(tables, offset: 0, index: 3)
+        barrier(enc)
+        enc.dispatchThreadgroups(MTLSize(width: 1, height: 1, depth: 1),
+                                 threadsPerThreadgroup: MTLSize(width: min(gather.maxTotalThreadsPerThreadgroup, 1024), height: 1, depth: 1))
     }
 
     /// The step's end: what broke, what came free, what faded (two phases: verdicts, then each body's own).

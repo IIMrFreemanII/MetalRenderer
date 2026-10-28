@@ -28,6 +28,8 @@ package struct FractureTree {
         package var area: Float
         package var centre: SIMD3<Float>
         package var normal: SIMD3<Float>
+        /// The widest of the shared faces' widths (m): what the pieces hinge across once their weld goes loose.
+        package var width: Float = 0
     }
 
     package let recipe: FractureRecipe
@@ -119,7 +121,7 @@ package struct FractureTree {
                           x.lo.z <= y.hi.z + pad, y.lo.z <= x.hi.z + pad, !holds(a, b), !holds(b, a) else { continue }
                     let (normal, polygons) = nodes[a].cell.shared(with: nodes[b].cell)
                     guard !polygons.isEmpty else { continue }
-                    var area: Float = 0, centre = SIMD3<Float>()
+                    var area: Float = 0, centre = SIMD3<Float>(), width: Float = 0
                     for poly in polygons {
                         var (pa, pc) = ConvexCell.polygonArea(poly)
                         if let inside {
@@ -137,10 +139,11 @@ package struct FractureTree {
                             if hits > 0 { pc = sum / Float(hits) }
                         }
                         guard pa > 0 else { continue }
+                        width = max(width, ConvexCell.polygonWidth(poly))
                         centre = (centre * area + pc * pa) / (area + pa)
                         area += pa
                     }
-                    if area > 0 { out[a].append(Weld(a: a, b: b, area: area, centre: centre, normal: normal)) }
+                    if area > 0 { out[a].append(Weld(a: a, b: b, area: area, centre: centre, normal: normal, width: width)) }
                 }
             }
         }
