@@ -183,7 +183,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUPhysicsGrab>.stride == 48, "GPUPhysicsGrab layout mismatch")
     precondition(MemoryLayout<GPUPhysicsJoint>.stride == 112, "GPUPhysicsJoint layout mismatch")
     precondition(MemoryLayout<GPUFractureNode>.stride == 64, "GPUFractureNode layout mismatch")
-    precondition(MemoryLayout<GPUFractureWeld>.stride == 64, "GPUFractureWeld layout mismatch")
+    precondition(MemoryLayout<GPUFractureWeld>.stride == 80, "GPUFractureWeld layout mismatch")
     precondition(MemoryLayout<GPUFractureState>.stride == 64, "GPUFractureState layout mismatch")
     precondition(MemoryLayout<GPUFractureCommand>.stride == 48, "GPUFractureCommand layout mismatch")
     precondition(MemoryLayout<GPUFractureParams>.stride == 32, "GPUFractureParams layout mismatch")

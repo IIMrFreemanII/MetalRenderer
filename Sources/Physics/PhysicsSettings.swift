@@ -28,6 +28,9 @@ package struct DestructionSettings: Equatable, Codable {
     /// Dust and debris where pieces part (the scene's particles), and small pieces fading away once still.
     package var dust = true
     package var fade = true
+    /// Welds that give way go loose first (pieces hinge and hang on before they fall: Physics+LooseJoints.swift).
+    /// The CPU's step only: on the GPU they break at once.
+    package var looseJoints = true
     /// The scripted wrecking ball, weight and cannonballs (off: only what the tools do).
     package var demo = true
     /// The courtyard's objects only, or a whole building of pieces too (4,000 and more: offline).
@@ -46,12 +49,13 @@ package struct DestructionSettings: Equatable, Codable {
     package static let toughnessRange: ClosedRange<Float> = 0.1...10
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(pieces: Float = 1, toughness: Float = 1, strength: Float = 1, dust: Bool = true, fade: Bool = true, demo: Bool = true, massive: Bool = false, buildings: Int = 1, statues: Bool = true, recipes: [String: FractureRecipe] = [:], preview: FracturePreview? = nil) {
+    package init(pieces: Float = 1, toughness: Float = 1, strength: Float = 1, dust: Bool = true, fade: Bool = true, looseJoints: Bool = true, demo: Bool = true, massive: Bool = false, buildings: Int = 1, statues: Bool = true, recipes: [String: FractureRecipe] = [:], preview: FracturePreview? = nil) {
         self.pieces = pieces
         self.toughness = toughness
         self.strength = strength
         self.dust = dust
         self.fade = fade
+        self.looseJoints = looseJoints
         self.demo = demo
         self.massive = massive
         self.buildings = buildings
@@ -78,6 +82,8 @@ package struct DemolitionSettings: Equatable, Codable {
     /// Dust and debris where pieces part, and small pieces fading away once still.
     package var dust = true
     package var fade = true
+    /// Welds that give way go loose first (as DestructionSettings.looseJoints).
+    package var looseJoints = true
     /// The scripted demo (a rocket, TNT, a burst, the walker into a hole: the benchmark's and the tests'); off: only
     /// what the player does.
     package var demo = false
@@ -89,7 +95,7 @@ package struct DemolitionSettings: Equatable, Codable {
     package static let toughnessRange: ClosedRange<Float> = 0.1...10
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(floors: Int = 5, seed: Int = 7, width: Float = 24, depth: Float = 16, pieces: Float = 1, toughness: Float = 1, strength: Float = 1, furniture: Bool = true, glass: Bool = true, dust: Bool = true, fade: Bool = true, demo: Bool = false) {
+    package init(floors: Int = 5, seed: Int = 7, width: Float = 24, depth: Float = 16, pieces: Float = 1, toughness: Float = 1, strength: Float = 1, furniture: Bool = true, glass: Bool = true, dust: Bool = true, fade: Bool = true, looseJoints: Bool = true, demo: Bool = false) {
         self.floors = floors
         self.seed = seed
         self.width = width
@@ -101,6 +107,7 @@ package struct DemolitionSettings: Equatable, Codable {
         self.glass = glass
         self.dust = dust
         self.fade = fade
+        self.looseJoints = looseJoints
         self.demo = demo
     }
 }

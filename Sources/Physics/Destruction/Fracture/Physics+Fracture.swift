@@ -26,7 +26,8 @@ import simd
 ///
 /// A welded pair is solved as a pair of the contact colouring (its one contact marks the weld: lambda.w = 1), so the
 /// welds need no colours of their own, and solved like a joint fixed in place: its turn about its partner back to rest,
-/// then their anchors together, a force of lambda / h^2 (N). The GPU's step (Shaders/Physics.metal) does the same in the
+/// then their anchors together, a force of lambda / h^2 (N). One that gives way may go loose first (the CPU's only,
+/// solved after the colours: Physics+LooseJoints.swift). The GPU's step (Shaders/Physics.metal) does the same in the
 /// same order: PhysicsCPU.step's `beginFractureStep`, the contacts' and welds' pushes, `endFractureStep`.
 extension PhysicsWorld {
     /// GPUFractureCommand.info.y.
@@ -85,13 +86,8 @@ extension PhysicsWorld {
     @inline(__always) package static func liveWeld(_ i: Int, _ code: UInt32, bodies: UnsafeBufferPointer<GPUPhysicsBody>,
                                            starts: UnsafeBufferPointer<UInt32>, list: UnsafeBufferPointer<SIMD2<UInt32>>,
                                            welds: UnsafeBufferPointer<GPUFractureWeld>) -> Int? {
-        guard welds.count > 0, code & PhysicsWorld.staticBit == 0, bodies[i].info.y & PhysicsWorld.pieceBit != 0,
-              bodies[Int(code)].info.y & PhysicsWorld.pieceBit != 0 else { return nil }
-        for k in Int(starts[i])..<Int(starts[i + 1]) where list[k].x == code {
-            let w = Int(list[k].y)
-            return welds[w].info.z == 0 ? w : nil
-        }
-        return nil
+        guard let w = weldOf(i, code, bodies: bodies, starts: starts, list: list, welds: welds) else { return nil }
+        return welds[w].info.z == 0 ? w : nil
     }
     package static func liveWeld(_ i: Int, _ code: UInt32, bodies: [GPUPhysicsBody], starts: [UInt32], list: [SIMD2<UInt32>],
                          welds: [GPUFractureWeld]) -> Int? {
@@ -191,19 +187,22 @@ extension PhysicsWorld {
             weld.anchorB = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(b.rotation), centre - PhysicsMath.xyz(b.position)), (w.area / .pi).squareRoot())
             weld.rest = PhysicsMath.qnormalize(PhysicsMath.qmul(PhysicsMath.qconj(a.rotation), b.rotation))
             weld.info = SIMD4(UInt32(first + w.a), UInt32(first + w.b), 0, 0)
+            weld.loose.w = w.width / 2
             welds.append(weld)
         }
     }
 
     /// A weld between bodies `a` and `b` (pieces of two objects that touch: the demolition scene's slab's panels), of
-    /// `area` (m^2) about `centre` (the world), holding `sigma` x that (N), as an object's own welds are. Before `finish`.
-    package func addWeld(_ a: Int, _ b: Int, centre: SIMD3<Float>, area: Float, sigma: Float) {
+    /// `area` (m^2) and `width` (m: the face's narrowest; its disc's if nil) about `centre` (the world), holding `sigma`
+    /// x that (N), as an object's own welds are. Before `finish`.
+    package func addWeld(_ a: Int, _ b: Int, centre: SIMD3<Float>, area: Float, width: Float? = nil, sigma: Float) {
         let x = bodies[a], y = bodies[b]
         var weld = GPUFractureWeld()
         weld.anchorA = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(x.rotation), centre - PhysicsMath.xyz(x.position)), sigma * area)
         weld.anchorB = SIMD4(PhysicsMath.qrot(PhysicsMath.qconj(y.rotation), centre - PhysicsMath.xyz(y.position)), (area / .pi).squareRoot())
         weld.rest = PhysicsMath.qnormalize(PhysicsMath.qmul(PhysicsMath.qconj(x.rotation), y.rotation))
         weld.info = SIMD4(UInt32(a), UInt32(b), 0, 0)
+        weld.loose.w = (width ?? 2 * (area / .pi).squareRoot()) / 2
         welds.append(weld)
     }
 
@@ -293,6 +292,7 @@ extension PhysicsWorld {
         let clock = UInt32(stepIndex)
         runCommands(clock)
         if demolition.active { beginDemolitionStep(clock) }   // the rockets' fuses, the blasts they set off, the walker
+        if looseJoints?.on == true { gatherLooseLinks() }
         for i in bodies.indices where bodies[i].info.y & PhysicsWorld.pieceBit == 0 {
             PhysicsWorld.startProjectile(bodies[i], &fractureState[i])
         }
@@ -383,7 +383,7 @@ extension PhysicsWorld {
 
     /// PhysicsCPU.solvePositions for pair `e` when there are fractured objects: its contacts' pushes, each impact's
     /// impulse onto both pieces' strain; or its weld. (A colour's pairs share no body, piece or weld: on every core.)
-    @inline(__always) package static func pushFracturePair(_ e: Int, _ s: StepBuffers, h: Float, substeps: Float) {
+    @inline(__always) package static func pushFracturePair(_ e: Int, _ s: StepBuffers, h: Float, substeps: Float, loose: LooseJoints) {
         let i = e / PhysicsWorld.maxPairs, code = s.pairs[e].partner, dynamic = code & PhysicsWorld.staticBit == 0
         var a = s.bodies[i], b = s.partner(code)
         if PhysicsWorld.still(a, b) && s.contacts[e * PhysicsWorld.maxContacts].lambda.w != 1 { return }   // (a weld is a pair's one contact)
@@ -392,13 +392,17 @@ extension PhysicsWorld {
             let contact = s.contacts[ci]
             if contact.lambda.w == 1 {
                 let w = Int(contact.anchorA.x)
-                PhysicsWorld.solveWeld(&s.welds[w], &a, &b, ownerIsA: s.welds[w].info.x == UInt32(i), h: h, substeps: substeps)
+                // (Torn by an impact, it breaks: either piece struck this step, or taking over its parent's break.)
+                let struck = PhysicsWorld.struck(s.fractureState[i]) || PhysicsWorld.struck(s.fractureState[Int(code)])
+                PhysicsWorld.solveWeld(&s.welds[w], &a, &b, ownerIsA: s.welds[w].info.x == UInt32(i), h: h, substeps: substeps,
+                                       loose: loose, struck: struck)
                 continue
             }
             let push = PhysicsWorld.contactPush(contact, a, b, h: h)
             s.contacts[ci].lambda = SIMD4(push.lambda, push.speed, 0, 0)
             guard push.lambda > 0 else { continue }
-            if -push.speed > PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0 {   // an impact, not a rest, a slide or the walker's step
+            if -push.speed > PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0   // an impact, not a rest, a slide or the walker's step
+                && !PhysicsWorld.linked(s, i, code) {
                 let impulse = push.lambda / h, point = PhysicsWorld.points(contact, a, b).pa, n = PhysicsMath.xyz(contact.normal)
                 if a.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&s.fractureState[i], point, n, impulse) }
                 if dynamic && b.info.y & PhysicsWorld.pieceBit != 0 { PhysicsWorld.strike(&s.fractureState[Int(code)], point, -n, impulse) }
@@ -422,7 +426,7 @@ extension PhysicsWorld {
             let contact = s.contacts[e * PhysicsWorld.maxContacts + c]
             guard let kick = PhysicsWorld.contactKick(contact, a, b, p) else { continue }
             if contact.lambda.y < -PhysicsWorld.impactSpeed && (a.info.y | b.info.y) & PhysicsWorld.pieceBit != 0
-                && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0 {
+                && (a.info.y | b.info.y) & PhysicsWorld.walkerBit == 0 && !PhysicsWorld.linked(s, i, code) {
                 let n = PhysicsMath.xyz(contact.normal), impulse = max(dot(kick.impulse, n), 0)
                 if impulse > 0 {
                     let point = PhysicsWorld.points(contact, a, b).pa
@@ -464,15 +468,17 @@ extension PhysicsWorld {
     /// their turn about each other back to rest, then their anchors together (a joint fixed in place, of no compliance);
     /// it breaks when the load that takes (its force, lambda / h^2, over what it holds, and its moment's), averaged
     /// over about a step (`info.w`, a float: each substep's a 1 / substeps share), passes 1. (A substep's alone, a jolt
-    /// of a few mm made a force of tens of kN: every weld a falling piece brushed broke.)
+    /// of a few mm made a force of tens of kN: every weld a falling piece brushed broke.) With `loose` it goes loose
+    /// instead, if it gave way under a load and not an impact (`struck`), its pieces still near where it held them
+    /// (`goesLoose`).
     @inline(__always) package static func solveWeld(_ w: inout GPUFractureWeld, _ a: inout GPUPhysicsBody, _ b: inout GPUPhysicsBody,
-                                            ownerIsA: Bool, h: Float, substeps: Float) {
+                                            ownerIsA: Bool, h: Float, substeps: Float, loose: LooseJoints, struck: Bool) {
         guard w.info.z == 0, moves(a) || moves(b) else { return }
-        if ownerIsA { weld(&w, &a, &b, h: h, substeps: substeps) } else { weld(&w, &b, &a, h: h, substeps: substeps) }
+        if ownerIsA { weld(&w, &a, &b, h: h, substeps: substeps, loose: loose, struck: struck) } else { weld(&w, &b, &a, h: h, substeps: substeps, loose: loose, struck: struck) }
     }
 
     @inline(__always) package static func weld(_ w: inout GPUFractureWeld, _ x: inout GPUPhysicsBody, _ y: inout GPUPhysicsBody, h: Float,
-                                       substeps: Float) {
+                                       substeps: Float, loose: LooseJoints, struck: Bool) {
         // The turn: y's rotation should be x's times the rest.
         let target = PhysicsMath.qmul(x.rotation, w.rest)
         var dq = PhysicsMath.qmul(y.rotation, PhysicsMath.qconj(target))
@@ -496,7 +502,13 @@ extension PhysicsWorld {
         let k = 1 / substeps, average = Float(bitPattern: w.info.w) * (1 - k) + load * k
         w.info.w = average.bitPattern
         if average > 1 || l > weldGap || angle > weldTwist {
-            w.info.z = 1
+            if !struck && goesLoose(loose, gap: l, angle: angle) {
+                w.info.z = 2
+                w.info.w = 0
+                w.loose = SIMD4(0, lifetime(w, loose), 0, w.loose.w)
+            } else {
+                w.info.z = 1
+            }
             return
         }
         if angle > 1e-7 { swivel(&x, &y, theta) }
@@ -523,6 +535,7 @@ extension PhysicsWorld {
             return
         }
         let tuning = fractureTuning, h = PhysicsWorld.stepLength, n = bodies.count
+        let shaken = looseJoints.map { $0.on ? $0.shaken : 0 } ?? 0
         let nodes = fractureNodes
         nodes.withUnsafeBufferPointer { nodes in
             // Phase A, each body's verdict...
@@ -547,7 +560,7 @@ extension PhysicsWorld {
                                     }
                                     let node = nodes[i], p = node.info.x == PhysicsWorld.none ? i : Int(node.info.x)
                                     let free = PhysicsWorld.apply(&s.bodies[i], &s.fractureState[i], node, parent: before[p], parentState: states[p],
-                                                                  parentThreshold: nodes[p].offset.w, tuning: tuning)
+                                                                  parentThreshold: nodes[p].offset.w, tuning: tuning, shaken: shaken)
                                     if free { freed[i] = 1 }
                                 }
                             }
@@ -581,7 +594,7 @@ extension PhysicsWorld {
     private func fractureQuiet() -> Bool {
         for i in fractureState.indices {
             let s = fractureState[i]
-            if s.strain.x != 0 || s.strain.z != 0 || s.hold.x > 0 { return false }
+            if s.strain.x != 0 || s.strain.z != 0 || s.hold.x > 0 || s.hold.y > 0 { return false }
             let b = bodies[i]
             if b.info.y & (PhysicsWorld.pieceBit | PhysicsWorld.disabledBit) == PhysicsWorld.pieceBit && b.position.w > 0
                 && fractureNodes[i].extra.z > 0 { return false }
@@ -589,9 +602,13 @@ extension PhysicsWorld {
         return true
     }
 
-    /// Every weld of body `i` broken (it came free).
+    /// Every weld of body `i` broken (it came free), loose ones too.
     package func breakWelds(_ i: Int) {
-        for k in Int(weldStarts[i])..<Int(weldStarts[i + 1]) { welds[Int(weldList[k].y)].info.z = 1 }
+        for k in Int(weldStarts[i])..<Int(weldStarts[i + 1]) {
+            let w = Int(weldList[k].y)
+            if welds[w].info.z == 2 { welds[w].loose.z = 4 }   // (freed: PhysicsWorld.looseLink's whys)
+            welds[w].info.z = 1
+        }
     }
 
     /// Phase B for a projectile b: if its hardest hit this step was on a held piece that broke or came free (`states`,
@@ -615,11 +632,11 @@ extension PhysicsWorld {
     }
 
     /// Phase B for one body (it reads only its parent's state as phase A left it, and writes only its own): disabled
-    /// if it broke; in its parent's place if that broke; freed; let go after its hold; faded. Whether its welds break
-    /// (it came free).
+    /// if it broke; in its parent's place if that broke; freed; let go after its hold; faded; shaken for `shaken` (s)
+    /// by the step's impacts (LooseJoints.shaken; 0 without). Whether its welds break (it came free).
     @inline(__always) package static func apply(_ b: inout GPUPhysicsBody, _ s: inout GPUFractureState, _ node: GPUFractureNode,
                                         parent: GPUPhysicsBody, parentState ps: GPUFractureState, parentThreshold: Float,
-                                        tuning: SIMD4<Float>) -> Bool {
+                                        tuning: SIMD4<Float>, shaken: Float) -> Bool {
         guard b.info.y & pieceBit != 0 else { return false }
         if b.info.y & disabledBit == 0 {
             let verdict = s.strain.w
@@ -638,6 +655,7 @@ extension PhysicsWorld {
                     s.hold.x = 0
                 }
             }
+            if shaken > 0 { s.hold.y = s.strain.x + s.strain.z > 0 ? shaken : max(s.hold.y - stepLength, 0) }
             // Fading: a small piece lying still shrinks away, then is gone.
             let scale = min(max(1 - (s.strain.y - tuning.x) / max(tuning.y, 1e-3), 0), 1)
             if scale <= 0 { b.info.y |= disabledBit }
@@ -671,6 +689,7 @@ extension PhysicsWorld {
         b.info.y &= ~(disabledBit | asleep)
         s = GPUFractureState()
         s.strain.z = inherited
+        s.hold.y = inherited > 0 ? shaken : 0
         s.hold.x = held && !anchored ? holdAfterBreak : 0
         if freed && !held {
             // Pushed on the way the impacts pushed its parent.

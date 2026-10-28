@@ -45,6 +45,7 @@ extension Scene {
         }
         let world = physicsWorld()
         world.fractureTuning.x = settings.fade ? 6 : 1e9
+        world.looseJoints = settings.looseJoints ? LooseJoints() : nil
         let tough = settings.toughness, strong = settings.strength
 
         // Materials, each object's outside then its broken inside (FractureMaterial's looks).

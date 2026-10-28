@@ -71,6 +71,7 @@ extension GameScenes {
                 .env(.scene, "strength").when { $0.scene.kind == .destruction },
             S.check("Dust and debris", \.scene.destruction.dust).env(.scene, "dust").when { $0.scene.kind == .destruction },
             S.check("Small pieces fade", \.scene.destruction.fade).env(.scene, "fade").when { $0.scene.kind == .destruction },
+            S.check("Loose joints (CPU)", \.scene.destruction.looseJoints).env(.scene, "loose").when { $0.scene.kind == .destruction },
             S.check("Scripted demo", \.scene.destruction.demo).env(.scene, "demo").when { $0.scene.kind == .destruction },
             S.check("Statues (cut meshes)", \.scene.destruction.statues).env(.scene, "statues").when { $0.scene.kind == .destruction },
             S.check("Massive (a building, offline)", \.scene.destruction.massive).env(.scene, "massive").when { $0.scene.kind == .destruction },
@@ -100,6 +101,7 @@ extension GameScenes {
             S.check("Window glass", \.scene.demolition.glass).env(.scene, "demglass").when { $0.scene.kind == .demolition },
             S.check("Dust and debris", \.scene.demolition.dust).env(.scene, "demdust").when { $0.scene.kind == .demolition },
             S.check("Small pieces fade", \.scene.demolition.fade).env(.scene, "demfade").when { $0.scene.kind == .demolition },
+            S.check("Loose joints", \.scene.demolition.looseJoints).env(.scene, "demloose").when { $0.scene.kind == .demolition },
             S.check("Scripted demo", \.scene.demolition.demo).env(.scene, "demdemo").when { $0.scene.kind == .demolition },
         ]
     }

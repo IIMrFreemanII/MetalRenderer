@@ -67,9 +67,10 @@ struct PhysicsFractureWeld {
     float4 anchorA;    // A's body space; w = the force it holds (N)
     float4 anchorB;    // B's body space; w = its lever (m)
     float4 rest;       // B's rotation in A's
-    uint4  info;       // x = A, y = B, z = 1 once broken
+    uint4  info;       // x = A, y = B, z = 1 once broken (2: loose, the CPU's only)
+    float4 loose;      // the CPU's loose joints' fatigue and age (unused here)
 };
-static_assert(sizeof(PhysicsFractureWeld) == 64, "PhysicsFractureWeld: GPUFractureWeld");
+static_assert(sizeof(PhysicsFractureWeld) == 80, "PhysicsFractureWeld: GPUFractureWeld");
 
 // A fractured body's step (GPUFractureState).
 struct PhysicsFractureState {

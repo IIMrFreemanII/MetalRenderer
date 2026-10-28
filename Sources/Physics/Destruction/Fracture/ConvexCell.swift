@@ -231,6 +231,26 @@ package struct ConvexCell {
         return (area, area > 0 ? centre / area : poly[0])
     }
 
+    /// A convex planar polygon's width: the narrowest it is between two parallel lines (one of them along an edge).
+    package static func polygonWidth(_ poly: [SIMD3<Float>]) -> Float {
+        guard poly.count >= 3 else { return 0 }
+        let n = cross(poly[1] - poly[0], poly[2] - poly[0])
+        var width = Float.infinity
+        for i in poly.indices {
+            let edge = poly[(i + 1) % poly.count] - poly[i]
+            let across = normalize(cross(n, edge))
+            guard across.x.isFinite else { continue }
+            var lo = Float.infinity, hi = -Float.infinity
+            for p in poly {
+                let d = dot(p - poly[i], across)
+                lo = min(lo, d)
+                hi = max(hi, d)
+            }
+            width = min(width, hi - lo)
+        }
+        return width.isFinite ? width : 0
+    }
+
     /// Whether `p` is inside (within `slack`).
     package func contains(_ p: SIMD3<Float>, slack: Float = 0) -> Bool {
         faces.allSatisfy { dot(SIMD3($0.plane.x, $0.plane.y, $0.plane.z), p) - $0.plane.w <= slack }

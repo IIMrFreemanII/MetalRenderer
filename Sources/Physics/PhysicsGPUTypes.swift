@@ -100,8 +100,11 @@ package struct GPUFractureWeld {
     package var anchorB = SIMD4<Float>()             // B's body space; w = its lever (m), the shared face's radius: the moment it
                                              // holds is the force x this
     package var rest = SIMD4<Float>(0, 0, 0, 1)      // B's rotation in A's at rest (q_b = q_a rest)
-    package var info = SIMD4<UInt32>()               // x = A, y = B, z = 1 once broken, w = its load lately (a float's bits:
-                                             // PhysicsWorld.weld)
+    package var info = SIMD4<UInt32>()               // x = A, y = B, z = 0 holding, 1 broken, 2 loose (the CPU's only:
+                                             // PhysicsWorld.loose), w = its load lately (a float's bits: PhysicsWorld.weld)
+    package var loose = SIMD4<Float>()               // once loose: x = its fatigue (load s), y = how long it has left (s),
+                                                     // z = why it let go (PhysicsWorld.looseLink); w = half
+                                                     // the shared face's width (m: its hinge, from the start)
 }
 
 /// A fractured body's step: what hit it, and what the step's end makes of it. MSL PhysicsFractureState.
@@ -112,7 +115,8 @@ package struct GPUFractureState {
     package var impact = SIMD4<Float>()              // xyz = where the impacts were, times their impulse; w = their impulse
     package var direction = SIMD4<Float>(0, 0, 0, 1) // xyz = which way they pushed it, times their impulse; w = its drawn scale
                                              // (1; less as it fades away)
-    package var hold = SIMD4<Float>()                // x = how much longer (s) it is held where it is after its parent broke
+    package var hold = SIMD4<Float>()                // x = how much longer (s) it is held where it is after its parent broke,
+                                             // y = how much longer it is shaken by its last impact (the CPU's loose joints)
 }
 
 /// Something done to the fractured bodies at a step (a shot, a blast, a release): kept for replays. MSL

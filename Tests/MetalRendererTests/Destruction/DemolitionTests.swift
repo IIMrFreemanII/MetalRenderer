@@ -104,8 +104,9 @@ extension DemolitionTests {
         }
         w.advance(to: 3)
         let pieces = f.firstBody..<(f.firstBody + f.tree.nodes.count)
-        // (Knocked into the building, along the bullets.)
-        let out = pieces.filter { w.bodies[$0].info.y & PhysicsWorld.disabledBit == 0 && abs(w.bodies[$0].position.z - (p.lo.z + p.hi.z) / 2) > 0.3 }.count
+        // (Knocked into the building, along the bullets; or out of the wall and hanging on a loose link: Physics+LooseJoints.
+        // A piece pushed out by the burst hangs 20 cm out on its link to the slab, where without links it fell 5 m away.)
+        let out = pieces.filter { w.bodies[$0].info.y & PhysicsWorld.disabledBit == 0 && abs(w.bodies[$0].position.z - (p.lo.z + p.hi.z) / 2) > 0.15 }.count
         let standing = pieces.filter { w.bodies[$0].info.y & PhysicsWorld.disabledBit == 0 && abs(w.bodies[$0].position.z - (p.lo.z + p.hi.z) / 2) < 0.1 }.count
         print("machine gun: \(w.breakTotal) breaks, \(out) pieces knocked out, \(standing) still in the wall")
         XCTAssertGreaterThan(out, 0)

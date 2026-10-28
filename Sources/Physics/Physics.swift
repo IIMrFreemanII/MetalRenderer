@@ -293,6 +293,10 @@ package final class PhysicsWorld {
     /// scene's office, every block welded to its neighbours and asleep, would otherwise solve 10,000 of them each
     /// substep for nothing. (Off elsewhere: the colours, and so the numbers, stay as they were.)
     package var idleWelds = false
+    /// Welds that give way go loose before they break (Physics+LooseJoints.swift; the CPU's step only): nil, at once.
+    /// And the step's loose ones (`gatherLooseLinks`).
+    package var looseJoints: LooseJoints?
+    package var looseLinks: [UInt32] = []
     /// GPUFractureParams.tuning: fade delay and length (s), damage reach (m), push.
     package var fractureTuning = SIMD4<Float>(6, 1.5, 0.18, 0.15)
     package var fractures: Bool { !fractureNodes.isEmpty }

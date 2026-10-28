@@ -237,7 +237,7 @@ extension PhysicsWorld {
 
     /// The joints, then the contacts' pushes, a colour at a time, then every moving body's velocities from how far it went.
     package func solvePositions(_ p: GPUPhysicsParams) {
-        let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps)
+        let h = p.gravity.w, fractured = fractures, substeps = Float(self.substeps), loose = looseJoints ?? .off
         withStepBuffers { s in
             // The joints first, a colour at a time (twice: PhysicsWorld.jointIterations), then the contacts: static
             // friction undoes what the substep slid a contact, the joints' pushes included. (Joints after the contacts
@@ -246,7 +246,8 @@ extension PhysicsWorld {
                 eachJointColour(s) { j, a, b in PhysicsWorld.solveJoint(j, &a, &b) }
             }
             if fractured {
-                eachColour(s) { e in PhysicsWorld.pushFracturePair(e, s, h: h, substeps: substeps) }
+                eachColour(s) { e in PhysicsWorld.pushFracturePair(e, s, h: h, substeps: substeps, loose: loose) }
+                if loose.on { solveLooseLinks(s, loose, h: h, substeps: substeps) }
             } else {
                 eachColour(s) { e in PhysicsWorld.pushPair(e, s, h: h) }
             }
@@ -323,10 +324,11 @@ extension PhysicsWorld {
 
     /// The contacts' velocity changes, a colour of pairs at a time.
     package func solveVelocities(_ p: GPUPhysicsParams) {
-        let fractured = fractures
+        let fractured = fractures, loose = looseJoints ?? .off
         withStepBuffers { s in
             if fractured {
                 eachColour(s) { e in PhysicsWorld.kickFracturePair(e, s, p) }
+                if loose.on { dampLooseLinks(s, loose, h: p.gravity.w) }
             } else {
                 eachColour(s) { e in PhysicsWorld.kickPair(e, s, p) }
             }
