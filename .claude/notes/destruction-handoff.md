@@ -263,5 +263,12 @@ Next:
   stiffness for dispatches; try 6 or 8 against the heap tests.
 - Pairs: done on `claude/gpu-neighbours-cheaper`, a SIMD group a body that looks (2.24 → 0.67 ms in three buildings
   settling), the same partners bit for bit. The narrow phase (1.2 ms there) is now the larger of the two.
+- The narrow phase, tried and dropped (three buildings settling): the step's first pass 0.35 ms, the three refreshes
+  0.81. Of a pair's work about 60 % is sampling (each sample's SDF, 4 more for a hit's gradient) and 40 % merging the
+  found points (`physAdd`, one after another in lane order): both fixed-order arithmetic, so no exact rewrite (the
+  rounding moves, as the box test's early out did). Skipping a refresh for a pair neither of whose bodies went more
+  than 1 mm (or 0.5 mm) since the step's contacts were found (the pushes set lambda afresh, so only the points and
+  normals go stale) left the massive building's heap trembling: 301 J and 375 J still moving at 20 s against 119 J,
+  71 to 83 % asleep against 80 %. A trembling piece pushes along a stale normal and doesn't settle.
 - The window hand test of the GPU's steps.
 
