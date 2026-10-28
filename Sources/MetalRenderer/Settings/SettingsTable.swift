@@ -4,6 +4,7 @@ import CoreGraphics
 import Effects
 import EngineCore
 import Foundation
+import Garments
 import Landscape
 import Materials
 import Physics
@@ -428,6 +429,13 @@ package enum SettingsTable {
             S.check("Sea", \.scene.terrainWorkshop.sea).env(.scene, "tsea")
                 .when { $0.scene.kind == .terrain && $0.scene.terrainWorkshop.base == .hills },
             S.value(\.scene.terrainWorkshop.document).env(.scene, "tdocument"),
+            S.value(\.scene.garmentWorkshop.garment).env(.scene, "garment"),
+            S.value(\.scene.garmentWorkshop.avatar).env(.scene, "avatar"),
+            S.check("Simulate", \.scene.garmentWorkshop.simulate).env(.scene, "drape").when { $0.scene.kind == .garmentStage },
+            S.slider("Cloth substeps", \.scene.garmentWorkshop.substeps, 4...60, live: false).env(.scene, "gsub")
+                .when { $0.scene.kind == .garmentStage },
+            S.value(\.scene.garmentWorkshop.clip).env(.scene, "gclip"),
+            S.value(\.scene.garmentWorkshop.stopAt).env(.scene, "gstop"),
             S.value(\.scene.characterWorkshop.character).env(.scene, "person"),
             S.popup("Layout", \.scene.characterWorkshop.layout, titled(\.title)).env(.scene, "clayout").when(characters),
             S.popup("Pose", \.scene.characterWorkshop.pose, titled(\.title)).env(.scene, "pose").when(characters),

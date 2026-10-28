@@ -1,11 +1,12 @@
 import Foundation
+import Garments
 import simd
 
 /// Every kind of node, by Houdini's type names where there is one. `spec` says what each is; `cook`
 /// (ProcNodeKind+Cook.swift) makes its geometry.
 package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
     // Generate
-    case box, grid, sphere, tube, torus, circle, line, add, file
+    case box, grid, sphere, tube, torus, circle, line, add, file, garment
     // Transform & combine
     case transform, merge, copyxform, mirror
     // Polygon
@@ -71,6 +72,14 @@ package enum ProcNodeKind: String, Codable, CaseIterable, Identifiable {
             return ProcNodeSpec("Torus", .generate, "torus", symbol: "circle.circle", params: [
                 P.vec2("rad", "Radius", [1, 0.5]), center, P.int("rows", "Rows", 12, 3...100), P.int("cols", "Columns", 24, 3...100),
             ], "A ring of quads round Y.")
+        case .garment:
+            return ProcNodeSpec("Garment", .generate, "garment", symbol: "tshirt", params: [
+                P.menu("template", "Template", GarmentTemplate.Kind.allCases.map(\.rawValue)),
+                P.menu("avatar", "Avatar", GarmentAvatar.mannequins),
+                P.float("ease", "Ease", 0.1, 0...0.4), P.float("spacing", "Particle Distance", 0.02, 0.008...0.05),
+                P.float("seconds", "Drape Seconds", 2.4, 0.5...6),
+            ], "A template's garment (the Garment Designer's) graded to an avatar, sewn and draped on it: its mesh, with "
+               + "the pattern's uv and each polygon's panel.")
         case .circle:
             return ProcNodeSpec("Circle", .generate, "circle", symbol: "circle", params: [
                 P.menu("arc", "Arc Type", ["closed", "open", "sliced"]), orient, P.vec2("rad", "Radius", [1, 1]), center,

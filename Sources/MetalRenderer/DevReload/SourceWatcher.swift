@@ -10,6 +10,7 @@ package enum DevChange: Hashable {
     case plants                     // Assets/Plants
     case buildings                  // Assets/Buildings
     case procedural                 // Assets/Procedural
+    case garment(String)            // Assets/Garments/<id>.garment.json (its path)
 
     /// What saving `path` (under `root`, the package's folder) changes; nil: nothing that reloads.
     package static func of(_ path: String, root: String) -> DevChange? {
@@ -27,6 +28,7 @@ package enum DevChange: Hashable {
         case ("Assets", "Plants") where ext == "json": return .plants
         case ("Assets", "Buildings") where ext == "json": return .buildings
         case ("Assets", "Procedural") where ext == "json": return .procedural
+        case ("Assets", "Garments") where name.hasSuffix(".garment.json"): return .garment(path)
         default: return nil
         }
     }

@@ -3,6 +3,7 @@ import Characters
 import Effects
 import EngineCore
 import Foundation
+import Garments
 import ImageIO
 import Landscape
 import Materials
@@ -736,6 +737,8 @@ package final class Scene {
 
     /// The cloths' meshes, in the physics' order.
     package var clothMeshes: [Int] = []
+    /// The garment workshop's garment, its avatar and its cloth's state (Scene+GarmentStage.swift).
+    package var garment: GarmentStage?
     /// The soft bodies' meshes, in the physics' order.
     package var softMeshes: [Int] = []
     /// The liquids' surfaces: each system's mesh (its system, its mesh), and the meshes whose structures are built
@@ -751,6 +754,8 @@ package final class Scene {
     package var hasWater = false
     /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.
     package var hasSkin = false
+    /// Some materials are fabrics with a sheen (Scene.addFabricMaterial; the shaders' SHEEN).
+    package var hasSheen = false
     /// Some leaves are a scanned leaf sheet's (the realistic look): LEAF_TRANSMIT lights them from both sides.
     package var hasLeafSheets = false
     /// The scans' textures this scene has (albedo, normal, occlusion-roughness-height), by set and roughness floor:

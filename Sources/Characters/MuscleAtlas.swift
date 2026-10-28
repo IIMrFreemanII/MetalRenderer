@@ -165,8 +165,12 @@ package struct BodySurface {
         return a
     }
 
+    /// The grid itself: its first sample's place, its spacing, its samples each way, and the samples (x fastest) — a
+    /// 3D texture's (the garment solver's body).
+    package var grid: (lo: SIMD3<Float>, cell: Float, counts: SIMD3<Int>, values: [Float]) { (lo, cell, counts, values) }
+
     /// The signed distance at `p` (trilinear between the grid's samples; `band` beyond them).
-    func distance(_ p: SIMD3<Float>) -> Float {
+    package func distance(_ p: SIMD3<Float>) -> Float {
         let g = (p - lo) / cell
         let f = g.rounded(.down)
         let i = SIMD3<Int>(f)
@@ -180,7 +184,7 @@ package struct BodySurface {
     }
 
     /// Its gradient at `p` (central differences half a cell apart).
-    func gradient(_ p: SIMD3<Float>) -> SIMD3<Float> {
+    package func gradient(_ p: SIMD3<Float>) -> SIMD3<Float> {
         let h = cell / 2
         return SIMD3(distance(p + [h, 0, 0]) - distance(p - [h, 0, 0]), distance(p + [0, h, 0]) - distance(p - [0, h, 0]),
                      distance(p + [0, 0, h]) - distance(p - [0, 0, h])) / (2 * h)
@@ -199,7 +203,7 @@ package struct BodySurface {
     }
 
     /// Its whole extent.
-    var bounds: AABB { AABB(lo: lo, hi: lo + SIMD3<Float>(counts &- 1) * cell) }
+    package var bounds: AABB { AABB(lo: lo, hi: lo + SIMD3<Float>(counts &- 1) * cell) }
 }
 
 /// Where marks are on a character's body (MuscleAtlas.Mark): its trunk's line (the hips' joint to the neck's, through

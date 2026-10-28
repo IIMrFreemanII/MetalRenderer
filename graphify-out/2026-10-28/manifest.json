@@ -60,15 +60,15 @@
     "semantic_hash": ""
   },
   "CLAUDE.md": {
-    "mtime": 1793168304.7346277,
-    "seen": 1793171284.145631,
-    "ast_hash": "f62a72ac6ae5d37b73a25212624f16dd",
+    "mtime": 1793185280.3131936,
+    "seen": 1793185311.4746728,
+    "ast_hash": "27a6a11fc59140c22629d67ac37246b8",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793182564.4719357,
-    "seen": 1793183095.827241,
-    "ast_hash": "41000e9745dd1c408d16fa17968534cf",
+    "mtime": 1793183100.9593794,
+    "seen": 1793185311.4746728,
+    "ast_hash": "a6a47f32612803a2a4e00d9f1667f74e",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -204,9 +204,9 @@
     "semantic_hash": ""
   },
   ".claude/skills/performance/SKILL.md": {
-    "mtime": 1793168304.7330067,
-    "seen": 1793171284.145619,
-    "ast_hash": "85d2e6287222905d5dd2db2040b3c706",
+    "mtime": 1793185280.3129308,
+    "seen": 1793185311.47418,
+    "ast_hash": "549d2e5df47f12eaa79d216b673fe820",
     "semantic_hash": ""
   },
   ".claude/skills/performance/references/cpu-swift.md": {
@@ -492,8 +492,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Physics.metal": {
-    "mtime": 1793182544.8336878,
-    "seen": 1793183095.8201752,
+    "mtime": 1793185001.8344862,
+    "seen": 1793185311.467911,
     "ast_hash": "bd6e265567cbf06b07ffe79b2cfb69d4",
     "semantic_hash": ""
   },
@@ -1806,9 +1806,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/destruction-handoff.md": {
-    "mtime": 1793182818.0159686,
-    "seen": 1793183095.826336,
-    "ast_hash": "9acce29a9e5dc409ad154e0097cb59b9",
+    "mtime": 1793185001.9183946,
+    "seen": 1793185311.47383,
+    "ast_hash": "a5ccdf91af52d1a0715a9f2b0898c241",
     "semantic_hash": ""
   },
   "Sources/CPhysicsAtomics/atomics.c": {
@@ -3858,8 +3858,8 @@
     "semantic_hash": ""
   },
   "Sources/Physics/PhysicsGPU.swift": {
-    "mtime": 1793182567.9977415,
-    "seen": 1793183095.822352,
+    "mtime": 1793185001.8347735,
+    "seen": 1793185311.4700868,
     "ast_hash": "6703b2270123ec06492acf3aa2817926",
     "semantic_hash": ""
   },
@@ -5889,6 +5889,54 @@
     "mtime": 1793172307.5597255,
     "seen": 1793173227.22601,
     "ast_hash": "b7cc98619c76057daa24ffdfb8ae18d8",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/scripts/check_shader.sh": {
+    "mtime": 1793185280.3126786,
+    "seen": 1793185311.458273,
+    "ast_hash": "cbbb3ffd21accc9c6e14a5fd630e2532",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/SKILL.md": {
+    "mtime": 1793185280.3116379,
+    "seen": 1793185311.4741561,
+    "ast_hash": "25453fc0333fdae1ff0fd35b2291f5bb",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/compute-patterns.md": {
+    "mtime": 1793185280.3119035,
+    "seen": 1793185311.4741561,
+    "ast_hash": "fed67fcd4c5122edacf180464b1f8fa0",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/debugging-and-porting.md": {
+    "mtime": 1793185280.312022,
+    "seen": 1793185311.474157,
+    "ast_hash": "6e2b3f80c10dbffe6744a43883f3df19",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/metal4-and-tensors.md": {
+    "mtime": 1793185280.312131,
+    "seen": 1793185311.474158,
+    "ast_hash": "747f7d9bf39e8a63a86a99fb46012964",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/msl-essentials.md": {
+    "mtime": 1793185280.312237,
+    "seen": 1793185311.474158,
+    "ast_hash": "eddb0a1956784ef8b98e2610c9032944",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/performance.md": {
+    "mtime": 1793185280.3123455,
+    "seen": 1793185311.474159,
+    "ast_hash": "e32652d94e21fefa23a472f36c4585d7",
+    "semantic_hash": ""
+  },
+  ".claude/skills/metal-shaders/references/rendering-patterns.md": {
+    "mtime": 1793185280.312562,
+    "seen": 1793185311.474159,
+    "ast_hash": "25cf7433cd7f4d48611220ca9b2041d9",
     "semantic_hash": ""
   }
 }

@@ -3,6 +3,7 @@ import Characters
 import Effects
 import EngineCore
 import Foundation
+import Garments
 import Landscape
 import Materials
 import Physics
@@ -16,7 +17,7 @@ import MetalRenderer
 /// they are out of step with their neighbours. Seeded: every run builds the same crowd.
 extension Scene {
     /// The character catalog's people (the one `key` names, SceneSettings.characterCatalog), made from their DNA.
-    static func generatedPeople(_ key: String) -> CharacterLibrary {
+    static func generatedPeople(_ key: String, dressed: Bool = false) -> CharacterLibrary {
         guard let kit = CharacterKit.shared() else { return CharacterLibrary() }
         let dna = CharacterCatalog.resolve(key).characters
         var built = [SkinnedCharacter](repeating: kit.base.character, count: dna.count)
@@ -26,7 +27,32 @@ extension Scene {
         // The workshop's still poses aren't motions a crowd plays.
         let still = Set(CharacterKit.poseClips(kit.base.character).map(\.name))
         for i in built.indices { built[i].clips.removeAll { still.contains($0.name) } }
+        if dressed { built = dress(built, dna: dna, kit: kit) }
         return CharacterLibrary(characters: built)
+    }
+
+    /// What a generated person wears in a dressed crowd: a T-shirt and trousers, or a dress (by the body's sex).
+    static func outfit(for dna: CharacterDNA) -> Garment {
+        let m = BodyMeasurements()
+        func make(_ k: GarmentTemplate.Kind, ease: Float = 0.1) -> Garment { GarmentTemplate.make(k, GarmentTemplate.params(k, body: m, ease: ease), body: m) }
+        return dna.macro.sex < 0.5 ? make(.tshirt).adding(make(.pants, ease: 0.12), layer: 1) : make(.dress)
+    }
+
+    /// Each person in their outfit: draped once on the first of each outfit's wearers (all generated bodies share one
+    /// mesh), bound there, and worn by the rest where their own skin is.
+    static func dress(_ people: [SkinnedCharacter], dna: [CharacterDNA], kit: CharacterKit) -> [SkinnedCharacter] {
+        var bindings: [String: GarmentBinding] = [:]
+        let base = CharacterBuilder.materials(CharacterDNA.Look(), skin: .one).count
+        return people.enumerated().map { k, c in
+            guard k < dna.count else { return c }
+            let outfit = outfit(for: dna[k])
+            let key = GarmentCatalog.fingerprint(outfit)
+            if bindings[key] == nil {
+                let drape = GarmentDrapes.drape(outfit, on: c, bodyKey: dna[k].id + "-" + String(CharacterDNA.fingerprint([dna[k]]).prefix(8)))
+                bindings[key] = GarmentBinding(build: drape.build, positions: drape.positions, body: c)
+            }
+            return DressedCharacter.dress(c, in: [bindings[key]!], materialBase: base)
+        }
     }
 
     func buildCrowd(characters count: Int, poses: Int, detail: Int) {
@@ -93,10 +119,11 @@ extension Scene {
         camera.pitch = -0.26
         defaultCamera = camera
 
-        let library = settings.crowdBodies == .generated ? Scene.generatedPeople(settings.characterCatalog) : CharacterLibrary.load()
+        let library = settings.crowdBodies.isGenerated ? Scene.generatedPeople(settings.characterCatalog, dressed: settings.crowdBodies == .dressed)
+            : CharacterLibrary.load()
         guard !library.characters.isEmpty else { return }
         let crowd = Crowd(characters: library.characters, poses: poses, level: detail)
-        if settings.crowdBodies == .generated, let kit = CharacterKit.shared() {
+        if settings.crowdBodies.isGenerated, let kit = CharacterKit.shared() {
             crowd.faces = library.characters.map { Crowd.Face(rig: kit.face, character: $0, expressive: false) }
         }
         adopt(crowd)
@@ -106,14 +133,23 @@ extension Scene {
         // Tints: each character in its own colour and a few others.
         let hues: [SIMD3<Float>] = [[0.75, 0.2, 0.15], [0.85, 0.6, 0.15], [0.2, 0.5, 0.25], [0.2, 0.3, 0.7], [0.55, 0.25, 0.6],
                                     [0.75, 0.75, 0.75], [0.12, 0.12, 0.14]]
-        let people = settings.crowdBodies == .generated ? CharacterCatalog.resolve(settings.characterCatalog).characters : []
+        let people = settings.crowdBodies.isGenerated ? CharacterCatalog.resolve(settings.characterCatalog).characters : []
         let tints: [[Int]] = library.characters.enumerated().map { k, c in
             // Generated people in their own skin (shades of it, until they have clothes) and hair, mannequins in colours.
-            if settings.crowdBodies == .generated {
+            if settings.crowdBodies.isGenerated {
                 let hair = k < people.count ? CharacterHair.colour(people[k].look, age: people[k].macro.age) : SIMD3<Float>(0.08, 0.05, 0.03)
                 return (0...hues.count).map { (n: Int) -> Int in
                     let shade: Float = 0.85 + 0.3 * Float(n) / Float(hues.count)
-                    return addCharacterMaterials(CharacterDNA.Look(), skin: c.color * shade, glossy: false, hair: hair)
+                    let first = addCharacterMaterials(CharacterDNA.Look(), skin: c.color * shade, glossy: false, hair: hair)
+                    // Dressed: the outfit's fabrics right after the body's (DressedCharacter's materials), the top in a hue.
+                    if settings.crowdBodies == .dressed, k < people.count {
+                        for (f, fabric) in Scene.outfit(for: people[k]).fabrics.enumerated() {
+                            var dyed = fabric
+                            if f == 0 && n > 0 { dyed.color = hues[(n + k) % hues.count] }
+                            _ = addFabricMaterial(dyed)
+                        }
+                    }
+                    return first
                 }
             }
             return ([c.color] + hues).map { addMaterial(albedo: $0) }

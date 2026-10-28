@@ -245,6 +245,9 @@ package enum SceneRegistry {
         register(SceneDefinition(.modelingStage, "Modeller stage", builder: "buildModelingStage") { $0.buildModelingStage() }.with {
             $0.sky = studioSky; $0.camera = Scene.camera([0, 1.4, 6.5], pitch: -0.14)
         })
+        register(SceneDefinition(.garmentStage, "Garment workshop", builder: "buildGarmentStage", envName: "garments") {
+            $0.buildGarmentStage()
+        }.with { $0.sky = studioSky })
         register(SceneDefinition(.terrain, "Terrain workshop", builder: "buildTerrainWorkshop") { $0.buildTerrainWorkshop() }.with {
             $0.dayCycle = 180; $0.cameraFromScene = true; $0.realisticLook = true
             // A light haze: the far side of kilometres of ground fades.

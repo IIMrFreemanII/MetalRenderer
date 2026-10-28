@@ -133,3 +133,8 @@ struct MixamoLibrary {
         return String(stem[..<open.lowerBound])
     }
 }
+
+extension SkinnedCharacter {
+    /// The clip named `name`: one of the character's, or one of the library's loaded for it (MixamoLibrary).
+    package func clipIndex(named name: String) -> Int? { clip(named: name) ?? MixamoLibrary.loadedClip(name, in: self) }
+}

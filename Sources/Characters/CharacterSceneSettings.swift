@@ -9,7 +9,10 @@ import simd
 package enum CrowdBodies: Int, CaseIterable, Codable {
     case library        // Assets/Characters: the Mixamo mannequins
     case generated      // the character catalog's people (CharacterCatalog, CharacterBuilder)
-    package var title: String { ["Mannequins", "Generated people"][rawValue] }
+    case dressed        // ...wearing garments (the Garment Designer's templates, draped once and bound: DressedCharacter)
+    package var title: String { ["Mannequins", "Generated people", "Dressed people"][rawValue] }
+    /// Generated people, dressed or not.
+    package var isGenerated: Bool { self != .library }
 }
 
 /// The character workshop (Scene+Characters.swift): who it shows, in what pose, and how.

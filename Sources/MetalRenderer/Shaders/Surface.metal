@@ -148,7 +148,12 @@ struct Surface {
     float  hairH;         // where across the strand the ray met it, -1...1 (Hair.metal's h)
     float  skin;          // skin (Material.params.w < 0): its strength, 0...1, + 2 where it is thin (ears): Hair.metal
     float  leaf;          // LEAF_TRANSMIT: a two-sided leaf's share of light through it, where the camera sees it
+    float2 sheen;         // SHEEN: a fabric's sheen (0...1) and how spread it is (0...1); 0: none (Fabric.metal)
 };
+
+// Fabric.metal's, after this piece.
+inline float2 fabricSheen(float packed);
+inline void applySheen(thread Surface& sf, float3 dir);
 
 // A material's specular weight (Material.params.x): as it is, but 1 for a clear coat's (2 and up: Scene.addPaintMaterial).
 inline float specularWeight(float x) { return x >= 2.0f ? 1.0f : x; }
@@ -761,6 +766,8 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.albedo = mat.albedo.rgb;
     sf.emission = mat.emission.rgb;
     sf.metallic = mat.albedo.a;
+    sf.sheen = 0.0f;
+    if (SHEEN && mat.albedo.a <= -1.0f) { sf.sheen = fabricSheen(mat.albedo.a); sf.metallic = 0.0f; }
     sf.roughness = mat.emission.a;
     sf.specular = specularWeight(mat.params.x);
     sf.coat = mat.params.x >= 2.0f ? mat.params.x - 2.0f : -1.0f;
@@ -1152,6 +1159,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         if (s.procParams[hv.terrain - 1u].w > 15.5f) terrainRealistic(sf, hv, w0, bc, s, footprint, record, r.direction);
         else terrainLayers(sf, hv, w0, bc, s, footprint, record);
     }
+    if (SHEEN && sf.sheen.x > 0.0f) applySheen(sf, r.direction);
     surfaceSpecular(sf);
     return sf;
 }

@@ -115,6 +115,11 @@ struct CharacterEditorView: View {
                 }
             }
             HStack {
+                Text("Make clothes on this character in the Garment Designer.").font(.system(size: 11)).foregroundColor(.secondary)
+                Spacer()
+                Button("Dress…") { NotificationCenter.default.post(name: GarmentPanel.dressNotification, object: model.dna.id) }
+            }
+            HStack {
                 Button { model.undo.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                     .disabled(!model.undo.canUndo).help("Undo (Cmd-Z)")
                 Button { model.undo.redo() } label: { Image(systemName: "arrow.uturn.forward") }
