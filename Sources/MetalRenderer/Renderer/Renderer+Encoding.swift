@@ -17,6 +17,9 @@ extension Renderer {
     /// M4 Max). A benchmark's config replays its still in one frame; a headless app serving scripts is the app.
     /// `METALRENDERER_STEPS_PER_FRAME=<n>` sets it (the switch harness's `slow` step, 500: passes of seconds on purpose).
     package var stepsPerFrame: Int { Renderer.stepsPerFrameOverride ?? benchmark.map { $0.current.serves ? 20 : .max } ?? 20 }
+    /// `METALRENDERER_PHYSICS_PARTS=1`: the GPU's physics step in a pass a part (PhysicsGPU.parts), for the
+    /// benchmark's per-pass times.
+    static let physicsParts = ProcessInfo.processInfo.environment["METALRENDERER_PHYSICS_PARTS"] == "1"
     private static let stepsPerFrameOverride = ProcessInfo.processInfo.environment["METALRENDERER_STEPS_PER_FRAME"].flatMap { Int($0) }
 
     // MARK: - Frame encoding
@@ -73,7 +76,17 @@ extension Renderer {
                 physicsGPU.sendCommands()
                 if steps > 0 || restart { physicsGPU.liquidFrames = Renderer.maxFramesInFlight + 1 }
                 if restart { physicsGPU.encodeReset(enc, pipelines: pipelines) }
+                if Renderer.physicsParts {
+                    physicsGPU.parts = { [unowned passes] name in
+                        passes.endCompute()
+                        _ = passes.compute(name, serial: true, concurrent: physicsGPU.hasFluid)
+                    }
+                }
                 physicsGPU.encodeSteps(enc, pipelines: pipelines, steps: steps, slot: slot)
+                if let parts = physicsGPU.parts {
+                    parts("physics")   // (the rest: the pose, the meshes)
+                    physicsGPU.parts = nil
+                }
                 let descriptors = !sceneBuffers.still ? instanceDescBuffers[slot] : nil
                 physicsGPU.encodePose(enc, pipelines: pipelines, slot: slot, instances: instanceDataBuffers[slot], descriptors: descriptors,
                                       descriptorStride: instanceDescriptorStride)

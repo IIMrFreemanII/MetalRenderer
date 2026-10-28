@@ -232,3 +232,30 @@ Not done / not checked:
   its tools). The GPU's gather colours on one thread: fine at a few hundred links, slow at thousands.
 - Tuning by eye: play, lifetime and bend were chosen from the probe and two renders, not a video.
 
+## Faster GPU steps (branch `claude/gpu-physics-fast`)
+
+The GPU may now differ from the CPU as long as heaps hold and sleep. README, "Faster GPU steps, its own solver".
+
+Done (M4 Max): the physics pass 30 to 41 % faster in every `destructioncpu` gpu row (three buildings settling 13.5 → 8.0
+ms). Kicks by Jacobi, the push tail by Jacobi, greedy colours, the narrow phase over the owned entries, quiet bodies
+keep their partners. `METALRENDERER_PHYSICS_PARTS=1` times the parts; `METALRENDERER_PHYSICS_JACOBI=0` goes back to
+the colours one after another (with the old rounds).
+
+Where a step goes now (three buildings settling, ms): pushes' 10 wide colours 2.0, kicks by Jacobi with the links
+about 1.0, the tail's pushes 0.8, pairs 2.1, narrow 1.2, rounds 0.3, integrate 0.25.
+
+Traps:
+- Jacobi with a plain mean (or a mean by size) under-corrects a support's kick: what the push left of a contact's
+  speed apart stays, heaps bounce, the massive building blew apart. The overlap shares fix it (d · S).
+- The kick and push slots share `kicks`: the push's apply tells its pairs by their colour (`physInTail`), not a stamp.
+- The args kernel binds 1 to 4: rebind the pairs kernel's buffers after it.
+- The settling rows are chaotic: kept partner lists change the pair sets a little, so the collapse moves; compare
+  parts within one run, or counts from `testTheBuildingSettles`, not settling totals across changes.
+- Shader edits while a benchmark launches: it may compile the new shader against the old binary's bindings.
+
+Next:
+- The pushes' wide colours are now the biggest part: fewer colours (more pairs into the Jacobi tail) trades
+  stiffness for dispatches; try 6 or 8 against the heap tests.
+- Pairs: most of the heap still looks while 30 to 70 % sleeps; the levelled grid's per-body walk is the cost.
+- The window hand test of the GPU's steps.
+
