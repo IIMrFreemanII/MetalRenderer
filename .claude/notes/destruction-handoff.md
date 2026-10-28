@@ -259,8 +259,11 @@ Traps:
   building, built with the change and with main's two files, and compare.
 
 Next:
-- The pushes' wide colours are now the biggest part: fewer colours (more pairs into the Jacobi tail) trades
-  stiffness for dispatches; try 6 or 8 against the heap tests.
+- The pushes' wide colours, tried and dropped (`PHYS_WIDE_COLOURS`, `PhysicsWideColours.rounds`): at 6 the loose
+  heap fails (177 of 196 asleep at 8 s). At 8 it passes and the substeps are 0.15 to 0.43 ms faster, but the
+  massive building's heap keeps more going (199 J at 20 s against 119, the deepest overlap 7.4 cm against 4.0), and
+  three buildings settling has more of its heap awake: its narrow phase 1.15 → 1.64 ms, the GPU frame 0.5 ms slower.
+  Ten wide colours stay.
 - Pairs: done on `claude/gpu-neighbours-cheaper`, a SIMD group a body that looks (2.24 → 0.67 ms in three buildings
   settling), the same partners bit for bit. The narrow phase (1.2 ms there) is now the larger of the two.
 - The narrow phase, tried and dropped (three buildings settling): the step's first pass 0.35 ms, the three refreshes
