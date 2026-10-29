@@ -76,7 +76,8 @@ struct Material {
 // the others): its height (parallax) and opacity textures, and how it is sampled.
 struct MaterialExtra {
     uint4  textures;    // x = height, y = opacity; ~0 = none; z = 1: procedural (a mesh without UVs gets planar ones);
-                        // w = its program (PROCEDURAL_CODE: computed in the shading, MatShaderCode), ~0: baked
+                        // w = its program (PROCEDURAL_CODE: computed in the shading, MatShaderCode), ~0: baked;
+                        // z = 2: a scan's, 3 (GRID_KIND): a grid floor, its surface previewGrid's (Surface.metal)
     float4 surface;     // x = parallax depth (UV units), y = UV scale, z = opacity cutoff, w = AO strength (the
                         //   metallic-roughness texture's R darkens the base colour by it; 0: R isn't occlusion)
 };

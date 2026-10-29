@@ -245,9 +245,14 @@ package struct GPUMaterial {
 /// UV scale, and how strongly the metallic-roughness texture's R (ambient occlusion) darkens it.
 package struct GPUMaterialExtra: Equatable {
     package var textures = SIMD4<UInt32>(repeating: .max)   // height, opacity: Scene.textures index, or ~0 = none; z = 1: procedural
-                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift)
+                                                    // (a mesh without UVs gets planar ones), 2: a scan (TextureSets.swift),
+                                                    // 3: a grid floor (gridKind)
     package var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
                                                      // w = AO strength (0: the R channel isn't occlusion)
+
+    /// `textures.z` of a grid floor (Scene.addGridMaterial, Surface.metal previewGrid): no textures, and `surface` its
+    /// subgrid's strength, tile size (m), lines' share of its colour and crosses' strength.
+    package static let gridKind: UInt32 = 3
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(textures: SIMD4<UInt32> = SIMD4<UInt32>(repeating: .max), surface: SIMD4<Float> = SIMD4<Float>(0, 1, 0.5, 0)) {

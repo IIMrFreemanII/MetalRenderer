@@ -56,7 +56,10 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
 - Distant trunks look slightly purple in the default look's forest (seen before the shading milestone).
 
 ## The preview stage (Unreal's tree preview)
-- The workshop's meadow (hills, pond, meadow grass) is gone: `Scene+PlantPreview.swift` makes a grey floor, a sun 40°
+- The workshop's meadow (hills, pond, meadow grass) is gone: `Scene+PlantPreview.swift` makes Unreal's grid floor (`GridLook.previewFloor`, material extra kind 3, drawn by
+  Surface.metal `previewGrid`; Unreal's roughness noise was left out: it showed as waves in the far floor), lit as the vegetation editor's
+  Grey Ambient profile (SPVEditorViewport.cpp picks it, not "Default": a constant grey sky, `Scene.previewSky`, from
+  T_GreyAmbient's thumbnail, whose HDR level is a guess; a white sun of 4; both in `Scene.previewUnits`), a sun 40°
   up on a rig its behaviour (`PlantPreviewPlayer`) turns live from `RenderSettings.previewLightYaw` / `previewSpin`
   (the spin's angle in `SceneSession.previewSpin`, kept across the editor's remakes), the scale figure (the characters'
   base body, T pose) and the size ruler (`maskLights` bars and a stroke font).

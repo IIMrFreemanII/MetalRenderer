@@ -753,9 +753,13 @@ opens the editor.
 * **Curves:** a shoot's two priority ramps (a tip's chance to grow on, a bud's to sprout, by how far up toward the
   target height it is) and a leaf's size along its stem are curves: a line, a taper, or points. Dragging a preset
   turns it into points. Double-click adds a point, Option-click removes one.
-* **The stage** is Unreal's tree preview, made here (`Scene+PlantPreview.swift`): a grey floor to the horizon, a grey
-  backdrop that only camera rays see (`Scene.backdrop`: the clear sky still lights the plant and its reflections), a sun
-  40° up, no air in the distance, a fixed exposure and a mild grade. **Figure** stands a person beside the plant for its
+* **The stage** is Unreal's tree preview, made here (`Scene+PlantPreview.swift`): its grid floor to the horizon
+  (Unreal's M_Grid, computed: metre tiles ruled at their edges, a 20 cm subgrid, crosses every 2 m, filtered over each
+  pixel's footprint so that far off it is an even grey; `Scene.addGridMaterial`, Surface.metal `previewGrid`), a grey
+  backdrop that only camera rays see (`Scene.backdrop`, the viewport's clear colour), lit as the vegetation
+  editor's Grey Ambient profile: a constant grey sky (its studio cubemap's upper half) and a white sun 40° up (4 lux
+  and a sky light of 2, under its fixed exposure and in the units of the ACES fit here: `Scene.previewUnits`), no air
+  in the distance, a mild grade. **Figure** stands a person beside the plant for its
   size (the characters' base body in its T pose, half again the gap of their half-widths away, as Unreal's mannequin;
   boxes without the character library). **Ruler** draws the plant's width (red), depth (green) and height (blue) and
   writes them in metres, in glowing bars only the camera sees. The slider beside them turns the sun and sky about the

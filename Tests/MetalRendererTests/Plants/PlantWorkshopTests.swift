@@ -94,8 +94,8 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertGreaterThan(lit.light.max()!, 0.8)
     }
 
-    /// Unreal's preview stage: a floor and a sun 40° up, no ground or water; camera rays see the grey backdrop, a
-    /// clear sky without air lights the plant, the exposure is fixed.
+    /// Unreal's preview stage: a floor and a sun 40° up, no ground or water; camera rays see the dark grey backdrop, a
+    /// constant grey sky without air lights the plant (Unreal's Grey Ambient profile), the exposure is fixed.
     func testTheStage() throws {
         let scene = workshop()
         XCTAssertNil(scene.terrain)
@@ -106,9 +106,15 @@ final class PlantWorkshopTests: XCTestCase {
         let sun = try XCTUnwrap(suns.first).pose(0).direction
         XCTAssertEqual(asin(sun.y), Scene.degrees(40), accuracy: 1e-4)
         XCTAssertNotNil(scene.previewRig)
+        // The floor is Unreal's preview grid: metre tiles, no textures.
+        let floor = try XCTUnwrap(scene.instances.first { scene.materialExtras[$0.material]?.textures.z == GPUMaterialExtra.gridKind })
+        XCTAssertEqual(scene.materialExtras[floor.material]?.surface.y, 1)
+        XCTAssertEqual(scene.materials[floor.material].textures, SIMD4(repeating: .max))
         var settings = SceneSettings(kind: .plants)
         settings.realism = .on
-        XCTAssertEqual(SkySettings.preset(for: .plants).mode, .atmosphere)
+        XCTAssertEqual(SkySettings.preset(for: .plants).mode, .constant)
+        XCTAssertEqual(scene.skyColor, Scene.previewSky)
+        XCTAssertEqual(try XCTUnwrap(suns.first).color, Scene.previewSun, "the profile's white sun")
         XCTAssertFalse(SkySettings.preset(for: .plants).clouds)
         XCTAssertFalse(FogSettings.preset(for: settings).enabled, "no aerial perspective on the stage")
         XCTAssertFalse(PostSettings.preset(for: settings).autoExposure)

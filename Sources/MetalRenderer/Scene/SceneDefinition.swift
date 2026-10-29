@@ -225,10 +225,11 @@ package enum SceneRegistry {
         var studioSky = SkySettings()
         studioSky.mode = .atmosphere; studioSky.coverage = 0.15; studioSky.cloudBase = 1500; studioSky.cloudThickness = 900
         studioSky.cloudScale = 2500; studioSky.shadows = false
-        // The plant workshop, as Unreal's tree preview: a clear sky lights the plant (its camera sees a grey backdrop,
-        // Scene.backdrop), no air in the distance, a fixed exposure and a mild grade, lights its behaviour turns.
+        // The plant workshop, as Unreal's tree preview (its Grey Ambient profile): a constant grey sky lights the plant
+        // (Scene.previewSky; its camera sees a dark grey backdrop, Scene.backdrop), no air in the distance, a fixed
+        // exposure and a mild grade, lights its behaviour turns.
         var previewSky = SkySettings()
-        previewSky.mode = .atmosphere; previewSky.clouds = false; previewSky.coverage = 0; previewSky.shadows = false
+        previewSky.mode = .constant; previewSky.clouds = false; previewSky.coverage = 0; previewSky.shadows = false
         register(SceneDefinition(.plants, "Plant workshop", builder: "buildPlantWorkshop") { $0.buildPlantWorkshop() }.with {
             $0.hasPlants = true; $0.sky = previewSky; $0.realisticAir = false
             $0.post = { scene in

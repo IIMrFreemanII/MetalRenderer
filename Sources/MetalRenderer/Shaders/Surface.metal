@@ -810,6 +810,45 @@ inline float damageNoise(float2 p) {
     return mix(mix(a, b, f.x), mix(d, e, f.x), f.y) * (1.0f / 65535.0f);
 }
 
+// How much of [x - h/2, x + h/2] lines `w` wide (a share of their period, 1) cover, the lines at the integers.
+inline float gridCoverage(float x, float w, float h) {
+    h = max(h, 1e-4f);
+    float a = x + w * 0.5f - h * 0.5f, b = a + h;
+    float fa = floor(a) * w + min(a - floor(a), w), fb = floor(b) * w + min(b - floor(b), w);
+    return saturate((fb - fa) / h);
+}
+
+// The material kind of Unreal's preview floor (MaterialExtra.textures.z, GPUTypes.swift GPUMaterialExtra.gridKind).
+constant uint GRID_KIND = 3u;
+
+// Unreal's preview floor (its M_Grid, here computed): tiles `ex.surface.y` m square ruled at their edges, a subgrid of
+// five a tile at `ex.surface.x` of the lines' strength, crosses at every other corner at `ex.surface.w`; the lines are
+// `ex.surface.z` of the base colour. World-aligned, on the plane the triangle faces most; filtered over the ray's footprint (`footprint` across it, `stretch` times that along the view),
+// so that far off it is the lines' mean grey and shimmers not.
+inline void previewGrid(thread Surface& sf, MaterialExtra ex, float3 dir, float footprint) {
+    float3 a = abs(sf.geomNormal);
+    float size = max(ex.surface.y, 1e-3f);
+    float2 p = planarUV(sf.position, a) / size;
+    // The footprint on the plane (in tiles): the view's own direction in it is stretched by the grazing.
+    float3 n = normalize(sf.geomNormal);
+    float cosTheta = max(abs(dot(dir, n)), 0.02f);
+    float2 along = planarUV(dir - dot(dir, n) * n, a);
+    along = dot(along, along) > 1e-8f ? normalize(along) : float2(1.0f, 0.0f);
+    float stretch = 1.0f / cosTheta;
+    float2 h = footprint / size * sqrt(1.0f + (stretch * stretch - 1.0f) * along * along);
+    // The tiles' edges (1.2% of a tile), the subgrid (1% of a tile, so 5% of its own fifths).
+    float edge = 1.0f - (1.0f - gridCoverage(p.x, 0.012f, h.x)) * (1.0f - gridCoverage(p.y, 0.012f, h.y));
+    float sub = 1.0f - (1.0f - gridCoverage(p.x * 5.0f, 0.05f, h.x * 5.0f)) * (1.0f - gridCoverage(p.y * 5.0f, 0.05f, h.y * 5.0f));
+    // The crosses: every 2 tiles, arms 3.9% of a tile thick reaching 14.5% from the corner.
+    float2 q = p * 0.5f, hq = h * 0.5f;
+    float thinX = gridCoverage(q.x, 0.0195f, hq.x), thinY = gridCoverage(q.y, 0.0195f, hq.y);
+    float longX = gridCoverage(q.x, 0.145f, hq.x), longY = gridCoverage(q.y, 0.145f, hq.y);
+    float cross = thinX * longY + longX * thinY - thinX * thinY;
+    float lines = edge + ex.surface.x * sub * (1.0f - edge);
+    lines = saturate(lines + ex.surface.w * cross * (1.0f - lines));
+    sf.albedo *= mix(1.0f, ex.surface.z, lines);
+}
+
 // A car's damage at a hit on its panels (SceneBuffers.damage: per vertex, from the nodes it follows,
 // physicsSoftMeshKernel; CarDamage.swift): a broken lamp is dark; the paint (a clear coat) is dulled by its dirt,
 // creased and cracked to its primer where it is crushed, scratched to its primer and scraped to bare metal where it
@@ -1209,6 +1248,10 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
                 sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
             }
         }
+    }
+    if (MATERIAL_EXTRAS && ex.textures.z == GRID_KIND) {
+        float3 dir = normalize(r.direction);
+        previewGrid(sf, ex, dir, res.distance * length(r.direction) * spread);
     }
     if (DEFORMING_MESHES && hv.prevOffset != 0 && s.damage != nullptr) carDamage(sf, hv, w0, bc, s, t0 * w0 + t1 * bc.x + t2 * bc.y);
     if (TERRAIN && hv.terrain != 0u) {
