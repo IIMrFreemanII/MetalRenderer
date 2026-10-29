@@ -73,10 +73,15 @@ package enum Foliage {
         /// Leaves at each place along a twig, fanned round it (a rosette, as a twig's cluster grows); nil or 1: one.
         /// (Optional, so species saved before it still decode.)
         package var cluster: Int?
+        /// An outline leaf's scanned sheet (a TextureSet's name: its leaves' shapes and their texture); nil: "leaves".
+        package var sheet: String?
+
+        /// The sheet its leaves come from.
+        package var sheetName: String { sheet ?? LeafOutline.defaultSheet }
 
         package init(shape: LeafShape = .kite, length: Float = 0.1, width: Float = 0.06, sizeV: Float = 0.25, perMetre: Float = 30,
              start: Float = 0.1, angle: Float = 0.9, angleV: Float = 0.3, phyllotaxis: Phyllotaxis = .spiral, fold: Float = 0.15,
-             tipScale: Float = 1, flutter: Float = 0.4, fromLevel: Int = 0, cluster: Int? = nil) {
+             tipScale: Float = 1, flutter: Float = 0.4, fromLevel: Int = 0, cluster: Int? = nil, sheet: String? = nil) {
             self.shape = shape
             self.length = length
             self.width = width
@@ -91,6 +96,7 @@ package enum Foliage {
             self.flutter = flutter
             self.fromLevel = fromLevel
             self.cluster = cluster
+            self.sheet = sheet
         }
     }
 
@@ -339,7 +345,7 @@ package enum Foliage {
             }
             let anchors = leaves(on: skeleton, leaf, up: up, rng: &rng)
             let mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up,
-                                    allLeaves: def.stemsAreLeaves, bark: bark)
+                                    allLeaves: def.stemsAreLeaves, bark: bark, sheet: leaf.sheetName)
             return Plant(species: species, age: age, meshes: [mesh],
                          parts: [Part(mesh: 0, shared: false, transform: matrix_identity_float4x4, bone: 0)],
                          bones: bones, bounds: mesh.bounds)

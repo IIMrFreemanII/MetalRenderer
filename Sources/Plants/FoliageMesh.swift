@@ -235,8 +235,9 @@ extension Foliage {
     }
 
     /// One leaf. `index`: its place among its mesh's leaves (an outline leaf's pick and number); `tag`: an outline
-    /// leaf's twig health (0...7, the whole part of its U).
-    package static func write(_ a: LeafAnchor, shape: LeafShape, fold: Float, index: Int = 0, tag: Int = 0, into w: inout MeshWriter) {
+    /// leaf's twig health (0...7, the whole part of its U); `outlines`: an outline leaf's sheet (nil: the default one).
+    package static func write(_ a: LeafAnchor, shape: LeafShape, fold: Float, index: Int = 0, tag: Int = 0,
+                              outlines: [LeafOutline]? = nil, into w: inout MeshWriter) {
         let d = a.direction, n = a.normal
         let side = cross(d, n)                          // unit: the direction and the normal are
         let half = side * (a.width * 0.5)
@@ -245,7 +246,7 @@ extension Foliage {
         let p = a.position, tip = p + d * a.length
         switch shape {
         case .outline:
-            writeOutline(a, fold: fold, index: index, tag: tag, into: &w)
+            writeOutline(a, fold: fold, index: index, tag: tag, sheet: outlines ?? LeafOutline.sheet, into: &w)
         case .needle:
             let i = w.vertex(p - half, n, SIMD2(0, 0))
             w.vertex(p + half, n, SIMD2(1, 0))
@@ -276,9 +277,10 @@ extension Foliage {
     }
 
     /// The stems `stems` of a skeleton (nil: all) as tubes, then the leaves. `allLeaves`: the stems count as leaves
-    /// too (a fern's stalks are as green as its fronds).
+    /// too (a fern's stalks are as green as its fronds). `sheet`: outline leaves' (LeafRecipe.sheetName).
     package static func mesh(_ skeleton: Skeleton, stems: [Int]?, leaves: [LeafAnchor], shape: LeafShape, fold: Float,
-                     up: SIMD3<Float>, allLeaves: Bool, bark: Bark? = nil, leafTag: Int = 0) -> Mesh {
+                     up: SIMD3<Float>, allLeaves: Bool, bark: Bark? = nil, leafTag: Int = 0,
+                     sheet: String = LeafOutline.defaultSheet) -> Mesh {
         var wood = MeshSize()
         skeleton.nodes.withUnsafeBufferPointer { nodes in
             if let stems {
@@ -295,7 +297,8 @@ extension Foliage {
                     for s in skeleton.stems { write(s, nodes: nodes.baseAddress!, up: up, bark: bark, into: &w) }
                 }
             }
-            for (k, a) in leaves.enumerated() { write(a, shape: shape, fold: fold, index: k, tag: leafTag, into: &w) }
+            let outlines = shape == .outline ? LeafOutline.sheet(sheet) : nil
+            for (k, a) in leaves.enumerated() { write(a, shape: shape, fold: fold, index: k, tag: leafTag, outlines: outlines, into: &w) }
             return allLeaves ? (0, 0) : (wood.vertices, wood.indices)
         }
     }

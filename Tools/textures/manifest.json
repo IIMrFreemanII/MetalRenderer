@@ -15,6 +15,8 @@
     {"set": "forest-floor", "source": "polyhaven", "id": "forest_leaves_02",     "use": "Forest ground, leaf litter"},
     {"set": "bark-pine",    "source": "polyhaven", "id": "pine_bark",            "use": "conifer bark"},
     {"set": "bark-oak",     "source": "polyhaven", "id": "jolcham_oak_bark_01",  "use": "oak and broadleaf bark"},
-    {"set": "leaves",       "source": "ambientcg", "id": "LeafSet024",           "use": "leaf albedo/normal/translucency (interior crop)"}
+    {"set": "leaves",       "source": "ambientcg", "id": "LeafSet024",           "use": "leaf albedo/normal/translucency (interior crop)"},
+    {"set": "leaves-birch", "source": "ambientcg", "id": "LeafSet014",           "use": "the birch's leaves: pointed, serrated (3 by 2)", "cells": [3, 2], "metres": 0.4},
+    {"set": "leaves-bush",  "source": "ambientcg", "id": "LeafSet009",           "use": "the bush's leaves: round, toothed (3 by 2)", "cells": [3, 2], "metres": 0.4}
   ]
 }

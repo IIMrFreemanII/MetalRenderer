@@ -1,11 +1,13 @@
 import EngineCore
+import Foundation
 import simd
 
 extension Foliage {
-    /// A leaf as its own outline, not a kite or a card: the scanned leaf sheet's leaves (Assets/Textures/leaves, 3 by
-    /// 3), each traced from the sheet's opacity into a polygon whose UVs are where it is on the sheet. The texture then
-    /// fits the shape exactly, with nothing cut out at render time (an alpha test would hand every leaf ray back to
-    /// the shader). Without the sheet, ovate outlines stand in, laid out on the same 3 by 3 cells.
+    /// A leaf as its own outline, not a kite or a card: a scanned leaf sheet's leaves (Assets/Textures/leaves, 3 by 3;
+    /// a species' own, LeafRecipe.sheet, as its info.json's "cells" say), each traced from the sheet's opacity into a
+    /// polygon whose UVs are where it is on the sheet. The texture then fits the shape exactly, with nothing cut out at
+    /// render time (an alpha test would hand every leaf ray back to the shader). Without the sheet, ovate outlines stand
+    /// in, laid out on 3 by 3 cells.
     package struct LeafOutline {
         /// Across the leaf (-0.5...0.5 of its widest) and along it (0 base, 1 tip), and where that is on the sheet.
         package struct Point { package var across: Float; package var along: Float; package var uv: SIMD2<Float> }
@@ -18,24 +20,44 @@ extension Foliage {
         package static let cells = 3
         package static let size = MeshSize(vertices: 2 + 2 * rows, indices: 3 * 2 * rows)
 
-        /// The sheet's leaves, traced once (or the ovate stand-ins).
-        package static let sheet: [LeafOutline] = traced() ?? ovate()
+        /// The sheet the species that don't name theirs share (LeafRecipe.sheet).
+        package static let defaultSheet = "leaves"
 
-        /// Traces each cell of the sheet's opacity: its leaf's lowest and highest rows (the sheet's leaves stand tip up,
+        /// The default sheet's leaves.
+        package static var sheet: [LeafOutline] { sheet(defaultSheet) }
+
+        /// Sheet `name`'s leaves, traced once (or the ovate stand-ins, if it isn't there).
+        package static func sheet(_ name: String) -> [LeafOutline] {
+            lock.lock()
+            defer { lock.unlock() }
+            if let known = traces[name] { return known }
+            let made = traced(name) ?? ovate()
+            traces[name] = made
+            return made
+        }
+        private static var traces: [String: [LeafOutline]] = [:]
+        private static let lock = NSLock()
+
+        /// Sheet `name`'s grid of leaves, columns and rows (3 by 3 if it isn't there).
+        package static func grid(_ name: String) -> SIMD2<Int> { TextureSet.find(name)?.cells ?? SIMD2(cells, cells) }
+
+        /// Traces each cell of a sheet's opacity: its leaf's lowest and highest rows (the sheet's leaves stand tip up,
         /// as Surface.metal's sheet leaves read it), and its edges at `rows` heights between.
-        static func traced() -> [LeafOutline]? {
-            let side = 64 * cells
-            guard let set = TextureSet.find("leaves"), let g = set.gray(.opacity, size: side) else { return nil }
+        static func traced(_ name: String) -> [LeafOutline]? {
+            guard let set = TextureSet.find(name) else { return nil }
+            // (64 pixels to the cell across the sheet's longer way: a 3 by 3 sheet's cells 64 square, a 3 by 2's 64 by 96.)
+            let grid = set.cells, side = 64 * max(grid.x, grid.y), cw2 = side / grid.x, ch2 = side / grid.y
+            guard let g = set.gray(.opacity, size: side) else { return nil }
             var out: [LeafOutline] = []
-            for cy in 0..<cells {
-                for cx in 0..<cells {
-                    let x0 = cx * 64, y0 = cy * 64
+            for cy in 0..<grid.y {
+                for cx in 0..<grid.x {
+                    let x0 = cx * cw2, y0 = cy * ch2
                     func solid(_ x: Int, _ y: Int) -> Bool { g.pixels[(y0 + y) * side + x0 + x] > 127 }
-                    let filled = (0..<64).filter { y in (0..<64).contains { solid($0, y) } }
+                    let filled = (0..<ch2).filter { y in (0..<cw2).contains { solid($0, y) } }
                     guard let top = filled.first, let bottom = filled.last, bottom - top > 8 else { return nil }
                     func edges(_ y: Int) -> (Int, Int) {
-                        let xs = (0..<64).filter { solid($0, y) }
-                        return (xs.first ?? 32, xs.last ?? 32)
+                        let xs = (0..<cw2).filter { solid($0, y) }
+                        return (xs.first ?? cw2 / 2, xs.last ?? cw2 / 2)
                     }
                     func uv(_ x: Float, _ y: Int) -> SIMD2<Float> { SIMD2((Float(x0) + x + 0.5) / Float(side), (Float(y0 + y) + 0.5) / Float(side)) }
                     let length = Float(bottom - top)
@@ -75,12 +97,11 @@ extension Foliage {
         }
     }
 
-    /// An outline leaf at `a`: one of the sheet's leaves (picked by `index`, mirrored or not), its sides folded up
+    /// An outline leaf at `a`: one of `sheet`'s leaves (picked by `index`, mirrored or not), its sides folded up
     /// over the midrib like a kite's. Its V carries its number (1...1023, the whole part) so that the shading tells
     /// one leaf from the next however many triangles it has (the texture wraps: the number doesn't move it).
     /// `tag`: its twig's health, 0...7, carried as the whole part of its U.
-    static func writeOutline(_ a: LeafAnchor, fold: Float, index: Int, tag: Int = 0, into w: inout MeshWriter) {
-        let sheet = LeafOutline.sheet
+    static func writeOutline(_ a: LeafAnchor, fold: Float, index: Int, tag: Int = 0, sheet: [LeafOutline], into w: inout MeshWriter) {
         var h = UInt32(truncatingIfNeeded: index) &* 0x9E3779B1
         h ^= h >> 15
         let outline = sheet[Int(h % UInt32(sheet.count))]
