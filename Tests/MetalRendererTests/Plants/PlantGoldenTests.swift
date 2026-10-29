@@ -77,9 +77,11 @@ final class PlantGoldenTests: XCTestCase {
     /// Growth.twig twigs of outline leaves where Growth's distributor puts them: every hash that holds an oak.)
     /// (Oct 2026: every built-in species but grass grown so, birch, conifer, dead tree, bush and fern re-authored.)
     /// (Oct 2026: twig leaves carry their twig's health in U; grown leaves two-sided with a sheen in either look.)
+    /// (Oct 2026: the oak as Unreal's vegetation editor shows the Mega Plants tree: open, half-flattened sprays, olive
+    /// leaves. Every hash that holds an oak, the leaf cards' too, whose cards follow the twigs.)
     func testTheLibraryIsAsItWas() {
-        XCTAssertEqual(library(Foliage.library(seed: 1)), "1b7b754b78fa")
-        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "3a021b48d049")
+        XCTAssertEqual(library(Foliage.library(seed: 1)), "c525cd849567")
+        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "c116382e6043")
     }
 
     /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
@@ -92,10 +94,10 @@ final class PlantGoldenTests: XCTestCase {
         settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "516476aaf8a3")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "c8d669b488ee")
+        XCTAssertEqual(scene(Scene(settings)), "afd0e271cd66")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "9a3477953490")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "4977b6eb9ea0")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "1a5469d3802a")
     }
 
     /// (Oct 2026: a lake and its stream in place of the pond's slab, no tree in them.)
@@ -103,7 +105,7 @@ final class PlantGoldenTests: XCTestCase {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
         settings.realism = .off
-        XCTAssertEqual(scene(Scene(settings)), "8af603c0b34b")
+        XCTAssertEqual(scene(Scene(settings)), "f08c0aaa6d59")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {

@@ -45,11 +45,16 @@ extension Foliage {
         return p
     }()
 
-    /// Its twigs: sprays of broad leaves traced from the scanned sheet.
+    /// Its twigs: sprays of broad leaves traced from the scanned sheet, open and only half flattened, so that the sun
+    /// gets through the crown in flecks (as the Mega Plants tree's does in Unreal's vegetation editor; flat dense
+    /// sprays facing the sky cast one solid shadow).
     private static let oakTwigs: Growth.Twigs = {
         var t = Growth.Twigs()
         t.scale = 1
-        t.spacing = 0.18
+        t.spacing = 0.34
+        t.leaf.perMetre = 22
+        t.growth.trunk.flatten = 0.25
+        t.growth.branch?.flatten = 0.3
         return t
     }()
 
@@ -58,7 +63,9 @@ extension Foliage {
         growth: oakGrowth,
         twigs: oakTwigs,
         ages: Ages(variants: [2, 2, 3]),
-        look: Look(bark: [0.2, 0.15, 0.11], leaves: [[0.11, 0.22, 0.05], [0.14, 0.25, 0.06], [0.09, 0.19, 0.05], [0.16, 0.24, 0.05]],
+        // Muted olive leaves, as the Mega Plants tree's read in Unreal's vegetation editor (the light the leaves pass
+        // among themselves greens and saturates them: these grey ones come out olive).
+        look: Look(bark: [0.2, 0.15, 0.11], leaves: [[0.2, 0.22, 0.17], [0.22, 0.24, 0.18], [0.17, 0.19, 0.15], [0.23, 0.235, 0.17]],
                    autumn: [0.3, 0.14, 0.035]),
         habitat: Habitat(order: 1, base: 0.9, elevation: .init(gain: -0.7, from: 0, to: 0.7), stand: -1.6))
 
