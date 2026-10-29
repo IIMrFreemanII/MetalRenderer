@@ -32,6 +32,7 @@ package struct Uniforms {
     package var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
     package var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Scene.interiorBox), empty: lo > hi;
     package var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // GI's hits in it see the sun through a shadow ray
+    package var backdrop = SIMD4<Float>()        // xyz = what camera rays that hit nothing see, w = 1 when it is on (Scene.backdrop)
     package static let gradeOn: Float = 1, meterOn: Float = 2
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
@@ -40,7 +41,7 @@ package struct Uniforms {
     package var tracePassFlags: UInt32 { (bounces > 0 ? Uniforms.traceBounces : 0) | (lightGroupEnd.w > 4 ? Uniforms.traceManyLights : 0) }
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(camPos: SIMD4<Float> = SIMD4<Float>(), camRight: SIMD4<Float> = SIMD4<Float>(), camUp: SIMD4<Float> = SIMD4<Float>(), camForward: SIMD4<Float> = SIMD4<Float>(), prevCamPos: SIMD4<Float> = SIMD4<Float>(), prevCamRight: SIMD4<Float> = SIMD4<Float>(), prevCamUp: SIMD4<Float> = SIMD4<Float>(), prevCamForward: SIMD4<Float> = SIMD4<Float>(), skyColor: SIMD4<Float> = SIMD4<Float>(), width: UInt32 = 0, height: UInt32 = 0, frameIndex: UInt32 = 0, lightCount: UInt32 = 0, bounces: UInt32 = 0, flags: UInt32 = 0, viewMode: UInt32 = 0, instanceCount: UInt32 = 0, jitter: SIMD4<Float> = SIMD4<Float>(), denoise: SIMD4<Float> = SIMD4<Float>(), lightGroupEnd: SIMD4<UInt32> = SIMD4<UInt32>(), lightTable: SIMD4<UInt32> = SIMD4<UInt32>(), post: SIMD4<Float> = SIMD4<Float>(1, 0, 0, 0), grade: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 1), interiorLo: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 0), interiorHi: SIMD4<Float> = SIMD4<Float>(-1, -1, -1, 0)) {
+    package init(camPos: SIMD4<Float> = SIMD4<Float>(), camRight: SIMD4<Float> = SIMD4<Float>(), camUp: SIMD4<Float> = SIMD4<Float>(), camForward: SIMD4<Float> = SIMD4<Float>(), prevCamPos: SIMD4<Float> = SIMD4<Float>(), prevCamRight: SIMD4<Float> = SIMD4<Float>(), prevCamUp: SIMD4<Float> = SIMD4<Float>(), prevCamForward: SIMD4<Float> = SIMD4<Float>(), skyColor: SIMD4<Float> = SIMD4<Float>(), width: UInt32 = 0, height: UInt32 = 0, frameIndex: UInt32 = 0, lightCount: UInt32 = 0, bounces: UInt32 = 0, flags: UInt32 = 0, viewMode: UInt32 = 0, instanceCount: UInt32 = 0, jitter: SIMD4<Float> = SIMD4<Float>(), denoise: SIMD4<Float> = SIMD4<Float>(), lightGroupEnd: SIMD4<UInt32> = SIMD4<UInt32>(), lightTable: SIMD4<UInt32> = SIMD4<UInt32>(), post: SIMD4<Float> = SIMD4<Float>(1, 0, 0, 0), grade: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 1), interiorLo: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 0), interiorHi: SIMD4<Float> = SIMD4<Float>(-1, -1, -1, 0), backdrop: SIMD4<Float> = SIMD4<Float>()) {
         self.camPos = camPos
         self.camRight = camRight
         self.camUp = camUp
@@ -66,6 +67,7 @@ package struct Uniforms {
         self.grade = grade
         self.interiorLo = interiorLo
         self.interiorHi = interiorHi
+        self.backdrop = backdrop
     }
 }
 

@@ -29,6 +29,7 @@ struct Uniforms {
     float4 grade;           // the colour grade: red and blue gains (white balance), saturation, contrast
     float4 interiorLo;      // xyz: the walkable interiors' box (Scene.interiorBox; empty: lo > hi), where GI's hits see
     float4 interiorHi;      //   the sun through a shadow ray (giSunVisibility), its light map too coarse for rooms
+    float4 backdrop;        // xyz: what camera rays that hit nothing see in place of the sky, w = 1 when on (Scene.backdrop)
 };
 
 struct MeshData {

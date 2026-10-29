@@ -34,7 +34,18 @@ extension RendererController: PlantEditorHost {
 /// edit, the forest, the valley and the world follow too. Unsaved edits are a draft (PlantStore) until saved or
 /// reverted. One undo step per edit; a drag is one edit.
 final class PlantEditorModel: ObservableObject {
-    enum Tab: String, CaseIterable { case stems = "Stems", leaves = "Leaves", boughs = "Boughs", look = "Look", habitat = "Habitat", ages = "Ages" }
+    /// The tabs: how the plant grows (Unreal's growth simulation, in the order its editor has them), then how it is
+    /// dressed and where it grows.
+    enum Tab: String, CaseIterable {
+        case growth = "Growth", branching = "Branching", light = "Light", twigs = "Twigs", leaves = "Leaves", bark = "Bark"
+        case look = "Look", habitat = "Habitat", ages = "Ages"
+
+        /// The first row's (the plant's shape) and the second's.
+        static let shape: [Tab] = [.growth, .branching, .light, .twigs, .leaves, .bark]
+        static let dressing: [Tab] = [.look, .habitat, .ages]
+    }
+    /// An axis kind of a grown plant (or of its twig): the trunk's, or its branches'.
+    enum ShootKind: String, Codable { case trunk, branches }
 
     let controller: PlantEditorHost
     let undo = UndoManager()
@@ -47,12 +58,14 @@ final class PlantEditorModel: ObservableObject {
     @Published private(set) var catalog: PlantCatalog
     @Published private(set) var saved: PlantCatalog
     @Published var selected: String
-    @Published var tab = Tab.stems
-    @Published var level = 1
+    @Published var tab = Tab.growth
     @Published private(set) var stats: PlantStats?
     /// The renderer's: the scene, the workshop's settings, the wind.
     @Published private(set) var scene: SceneSettings
     @Published private(set) var foliage: FoliageSettings
+    /// The workshop's lights' turn (degrees) and whether they turn by themselves (RenderSettings.previewLightYaw, previewSpin).
+    @Published private(set) var lightYaw: Float
+    @Published private(set) var lightSpin: Bool
     /// The last Mutate's variations (the workshop shows them beside the species).
     @Published private(set) var mutants: [Foliage.SpeciesDef] = []
     @Published private(set) var message: String?
@@ -72,6 +85,8 @@ final class PlantEditorModel: ObservableObject {
         catalog = (draft ? PlantStore.loadDraft() : nil).map { PlantCatalog.builtIn.merging($0.species) } ?? saved
         scene = controller.settings.scene
         foliage = controller.settings.foliage
+        lightYaw = controller.settings.previewLightYaw
+        lightSpin = controller.settings.previewSpin
         selected = controller.settings.scene.plants.species
         if catalog.species(id: selected) == nil { selected = catalog.species[0].id }
         controller.observeSettings { [weak self] s in self?.received(s) }
@@ -180,6 +195,8 @@ final class PlantEditorModel: ObservableObject {
     private func received(_ s: RenderSettings) {
         if s.scene != scene { scene = s.scene }
         if s.foliage != foliage { foliage = s.foliage }
+        if s.previewLightYaw != lightYaw { lightYaw = s.previewLightYaw }
+        if s.previewSpin != lightSpin { lightSpin = s.previewSpin }
         // A scene with plants now: it is to have the edited ones.
         if s.scene.kind.hasPlants && !dragging, s.scene.plantCatalog != key { push(final: true) }
     }
@@ -194,7 +211,6 @@ final class PlantEditorModel: ObservableObject {
 
     func select(_ id: String) {
         selected = id
-        level = min(level, max(def.recipe.levels.count - 1, 0))
         if inWorkshop, scene.plants.species != id {
             workshop { $0.species = id; $0.layout = $0.layout == .mutate ? .single : $0.layout; $0.mutants = "" }
         }
@@ -223,6 +239,14 @@ final class PlantEditorModel: ObservableObject {
     func randomizeSeed() { workshop { $0.seed = Int.random(in: SceneSettings.seedRange) } }
 
     func setWind(_ change: @escaping (inout FoliageSettings) -> Void) { controller.update { change(&$0.foliage) } }
+
+    /// Turns the workshop's lights about the plant, live.
+    func setLights(yaw: Float? = nil, spin: Bool? = nil) {
+        controller.update { s in
+            if let yaw { s.previewLightYaw = yaw }
+            if let spin { s.previewSpin = spin }
+        }
+    }
 
     /// Holding Compare (or C in the workshop): the saved species in place of the edited one.
     func compare(_ on: Bool) {
@@ -351,23 +375,32 @@ final class PlantEditorModel: ObservableObject {
 
     // MARK: - Copy and paste
 
-    enum Clip: String, Codable { case level, leaves, graft, look, habitat }
+    enum Clip: String, Codable { case shoot, light, wood, twigs, leaves, look, habitat }
     private struct Clipboard: Codable {
         var plantClip: Clip
-        var level: Foliage.Level?
+        var shoot: Growth.Shoot?
+        var light: Growth.Light?
+        var senescence: Growth.Senescence?
+        var wood: Growth.Wood?
+        var twigs: Growth.Twigs?
         var leaves: Foliage.LeafRecipe?
-        var graft: Foliage.Graft?
         var look: Foliage.Look?
         var habitat: Foliage.Habitat?
     }
 
-    func copy(_ clip: Clip, bough: Bool = false) {
-        let recipe = bough ? def.bough : def.recipe
+    /// The growth a clip of the plant (`twig`: of its twigs) is of.
+    private func growth(_ d: Foliage.SpeciesDef, twig: Bool) -> Growth.Params? { twig ? d.twigs?.growth : d.growth }
+
+    /// `shoot`: which axes a shoot clip is of (the branches' are the trunk's while they grow as it does).
+    func copy(_ clip: Clip, shoot: ShootKind = .trunk, twig: Bool = false) {
         var c = Clipboard(plantClip: clip)
+        let g = growth(def, twig: twig)
         switch clip {
-        case .level: c.level = recipe?.levels[safe: level]
-        case .leaves: c.leaves = recipe?.leaf
-        case .graft: c.graft = def.recipe.graft
+        case .shoot: c.shoot = shoot == .trunk ? g?.trunk : g.map { $0.branch ?? $0.trunk }
+        case .light: c.light = def.growth?.light; c.senescence = def.growth?.senescence
+        case .wood: c.wood = def.growth?.wood
+        case .twigs: c.twigs = def.twigs
+        case .leaves: c.leaves = twig ? def.twigs?.leaf : def.leaf
         case .look: c.look = def.look
         case .habitat: c.habitat = def.habitat
         }
@@ -384,20 +417,22 @@ final class PlantEditorModel: ObservableObject {
         return try? JSONDecoder().decode(Clipboard.self, from: data)
     }
 
-    func paste(_ clip: Clip, bough: Bool = false) {
+    func paste(_ clip: Clip, shoot: ShootKind = .trunk, twig: Bool = false) {
         guard let c = clipboard(), c.plantClip == clip else { return }
         var d = def
-        func into(_ r: inout Foliage.Recipe) {
-            switch clip {
-            case .level: if let l = c.level, r.levels.indices.contains(level) { r.levels[level] = l }
-            case .leaves: if let l = c.leaves { r.leaf = l }
-            default: break
-            }
+        func into(_ g: inout Growth.Params) {
+            guard let s = c.shoot else { return }
+            if shoot == .trunk { g.trunk = s } else { g.branch = s }
         }
         switch clip {
-        case .level, .leaves:
-            if bough { if var b = d.bough { into(&b); d.bough = b } } else { into(&d.recipe) }
-        case .graft: if let g = c.graft { d.recipe.graft = g }
+        case .shoot:
+            if twig { if var t = d.twigs { into(&t.growth); d.twigs = t } } else if var g = d.growth { into(&g); d.growth = g }
+        case .light:
+            if let l = c.light { d.growth?.light = l; d.growth?.senescence = c.senescence }
+        case .wood: if let w = c.wood { d.growth?.wood = w }
+        case .twigs: if let t = c.twigs, d.growth != nil { d.twigs = t }
+        case .leaves:
+            if let l = c.leaves { if twig { d.twigs?.leaf = l } else { d.leaf = l } }
         case .look: if let l = c.look { d.look = l }
         case .habitat: if let h = c.habitat { d.habitat = h }
         }

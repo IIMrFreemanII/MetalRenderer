@@ -73,8 +73,10 @@ name first, then by its folder (`by_name`, `by_folder`).
 | `Scene+Characters` (the character workshop) | CharacterBaseTests, CharacterHairTests |
 | `FBXReader` | FBXTests |
 | `Foliage*.swift`, `Scene+Forest` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`), PlantGoldenTests, PlantCatalogTests |
+| `Plants/Growth/*` (the growth simulation, its light, the mesher, the traced leaf outlines, the twigs) | GrowerTests, MesherTests, TwigTests, PlantGoldenTests, FoliageTests, PlantEditorTests |
 | `Plant*.swift` (species as data, curves, habitats, the store, the editor's parameters and Mutate), `BuiltInPlants` | PlantGoldenTests, PlantCatalogTests, PlantWorkshopTests, PlantEditorTests, FoliageTests, ForestTests |
-| `Scene+Plants` (the plant workshop) | PlantWorkshopTests, PlantGoldenTests |
+| `Scene+Plants`, `Scene+PlantPreview` (the plant workshop and its stage) | PlantWorkshopTests, PlantGoldenTests, RealismTests |
+| the backdrop (`Scene.backdrop`, `Uniforms.backdrop`, Trace/PathTrace misses), `RenderSettings.firstLaunch` | PlantWorkshopTests, SettingsTableTests |
 | `Editors/Plants/*` (the SwiftUI panel) | PlantEditorTests covers its model; the views: prove with the app |
 | `PlantTracing`, `Shaders/Foliage.metal` (the plants' variants, the wind) | PlantTracingTests, FoliageTests, ForestTests, FoliageRuntimeTests (the shader: + the shader pair) |
 | `VoxelGrids`, `VoxelLOD` | FoliageRuntimeTests, SceneBuffersTests |

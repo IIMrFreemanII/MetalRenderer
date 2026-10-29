@@ -12,8 +12,8 @@ import AppKit
 @testable import Physics
 @testable import Plants
 
-/// What the plant editor is built from without its UI: the parameter table (PlantParams.swift) and Mutate
-/// (PlantMutate.swift).
+/// What the plant editor is built from without its UI: the parameter tables of a grown species (PlantParams.swift),
+/// Mutate (PlantMutate.swift), and its model (undo, the scenes it reaches, copy and paste, saving).
 final class PlantEditorTests: XCTestCase {
     private func check<Root>(_ table: [PlantParam<Root>], _ root: Root, _ what: String) {
         for p in table {
@@ -26,22 +26,39 @@ final class PlantEditorTests: XCTestCase {
         }
     }
 
-    /// Every built-in number is inside its slider's range: the editor shows them where they are.
-    func testTheBuiltInSpeciesFitTheSliders() {
-        for def in PlantCatalog.builtIn.species where def.grass == nil {
-            for recipe in [def.recipe] + (def.bough.map { [$0] } ?? []) {
-                check(PlantParams.trunk, recipe.levels[0], "\(def.id) level 0")
-                for (l, level) in recipe.levels.enumerated().dropFirst() { check(PlantParams.level, level, "\(def.id) level \(l)") }
-                if let leaf = recipe.leaf { check(PlantParams.leaf, leaf, "\(def.id) leaf") }
-            }
-            check(PlantParams.recipe, def.recipe, def.id)
-            if let graft = def.recipe.graft { check(PlantParams.graft, graft, "\(def.id) graft") }
-            check(PlantParams.palette, def.palette, def.id)
-            check(PlantParams.age, def.ages.young, "\(def.id) young")
-            check(PlantParams.age, def.ages.sapling, "\(def.id) sapling")
-            if def.role == .tree { check(PlantParams.tree, def.habitat, def.id) }
+    /// Every number of a grown species (its growth, shoots, light, wood, twigs and leaves) inside its slider's range.
+    private func checkGrown(_ def: Foliage.SpeciesDef, _ what: String) {
+        if let g = def.growth {
+            for table in [PlantParams.growth, PlantParams.hormones, PlantParams.gravity] { check(table, g, what) }
+            check(PlantParams.shoot, g.trunk, "\(what) trunk")
+            if let b = g.branch { check(PlantParams.shoot, b, "\(what) branches") }
+            check(PlantParams.light, g.light, what)
+            if let sen = g.senescence { check(PlantParams.senescence, sen, what) }
+            if let fork = g.bifurcation { check(PlantParams.bifurcation, fork, what) }
+            check(PlantParams.wood, g.wood, what)
+            check(PlantParams.age, g.young, "\(what) young")
+            check(PlantParams.age, g.sapling, "\(what) sapling")
         }
-        for def in PlantCatalog.builtIn.species { if let cover = def.habitat.cover { check(PlantParams.cover, cover, "\(def.id) cover") } }
+        if let t = def.twigs {
+            check(PlantParams.twigs, t, "\(what) twigs")
+            check(PlantParams.leaf, t.leaf, "\(what) twig leaf")
+            for table in [PlantParams.growth, PlantParams.hormones] { check(table, t.growth, "\(what) twig") }
+            check(PlantParams.shoot, t.growth.trunk, "\(what) twig stem")
+            if let b = t.growth.branch { check(PlantParams.shoot, b, "\(what) twig side shoots") }
+        }
+        if let leaf = def.leaf { check(PlantParams.leaf, leaf, "\(what) leaf") }
+        if let grass = def.grass { check(PlantParams.grass, grass, "\(what) grass") }
+    }
+
+    /// Every built-in species but the grass is grown, and every built-in number is inside its slider's range: the
+    /// editor shows them where they are.
+    func testTheBuiltInSpeciesFitTheSliders() {
+        for def in PlantCatalog.builtIn.species {
+            XCTAssertEqual(def.growth != nil, def.grass == nil, def.id)
+            checkGrown(def, def.id)
+            if def.role == .tree { check(PlantParams.tree, def.habitat, def.id) }
+            if let cover = def.habitat.cover { check(PlantParams.cover, cover, "\(def.id) cover") }
+        }
     }
 
     /// Mutate: the same seed, the same variations; each one a little different, sound, and still in its sliders.
@@ -54,10 +71,10 @@ final class PlantEditorTests: XCTestCase {
         XCTAssertEqual(Set(a.map(\.id)).count, 6)
         var catalog = PlantCatalog.builtIn
         for m in a {
-            XCTAssertNotEqual(m.recipe == oak.recipe && m.bough == oak.bough, true, "\(m.id) is the oak")
+            XCTAssertFalse(m.growth == oak.growth && m.twigs == oak.twigs, "\(m.id) is the oak")
             XCTAssertEqual(m.seedIndex, oak.seedIndex)
             XCTAssertEqual(m.look, oak.look)
-            for (l, level) in m.recipe.levels.enumerated().dropFirst() { check(PlantParams.level, level, "\(m.id) level \(l)") }
+            checkGrown(m, m.id)
             catalog.species.append(m)
         }
         // They grow as sound plants, in a catalog of their own after the built-in ones (as the workshop shows them).
@@ -70,8 +87,35 @@ final class PlantEditorTests: XCTestCase {
         // Picking one keeps the species itself.
         let picked = PlantMutate.pick(a[2], into: oak)
         XCTAssertEqual(picked.id, "oak")
-        XCTAssertEqual(picked.recipe, a[2].recipe)
+        XCTAssertEqual(picked.growth, a[2].growth)
+        XCTAssertEqual(picked.twigs, a[2].twigs)
         XCTAssertEqual(picked.habitat, oak.habitat)
+        // The fern (leaves on its own stems) and the grass (blades) mutate too.
+        for id in [Foliage.Species.fern, .grass] {
+            let def = PlantCatalog.builtIn[id]
+            XCTAssertTrue(PlantMutate.mutants(of: def, seed: 7).contains { $0.leaf != def.leaf || $0.grass != def.grass
+                || $0.growth != def.growth }, def.id)
+        }
+    }
+
+    /// The younger ages are their shares of the mature plant's cycles and height.
+    func testAgesAreShares() {
+        var g = PlantCatalog.builtIn[.oak].growth!
+        g.young = Growth.AgeShare(cycles: 0.5, height: 0.25)
+        XCTAssertEqual(Growth.aged(g, .young).cycles, g.cycles / 2)
+        XCTAssertEqual(Growth.aged(g, .young).targetHeight, g.targetHeight / 4, accuracy: 1e-5)
+        XCTAssertEqual(Growth.aged(g, .mature), g)
+        XCTAssertLessThan(Growth.aged(g, .sapling).cycles, Growth.aged(g, .young).cycles)
+    }
+
+    /// A grown species without twigs is its wood (and any leaves of its own): no palette, no shared parts.
+    func testTwigsOff() {
+        var def = PlantCatalog.builtIn[.oak]
+        def.twigs = nil
+        XCTAssertEqual(def.paletteSize, 0)
+        let plant = Foliage.plant(def, .oak, age: .mature, seed: 3, palette: [])
+        XCTAssertFalse(plant.parts.contains(where: \.shared))
+        for mesh in plant.meshes { XCTAssertEqual(Foliage.problems(mesh), []) }
     }
 
     func testSlugs() {
@@ -107,25 +151,26 @@ final class PlantEditorTests: XCTestCase {
     func testUndoStepsAreEdits() {
         let (m, _) = editor()
         m.beginDrag()
-        for count in [15, 16, 17, 18] { m.def.recipe.levels[1].count = count }
+        let cycles = m.def.growth!.cycles
+        for c in 1...4 { m.def.growth?.cycles = cycles + c }
         m.endDrag()
         m.def.look.translucency = 0.5
-        XCTAssertEqual(m.def.recipe.levels[1].count, 18)
+        XCTAssertEqual(m.def.growth?.cycles, cycles + 4)
         m.undo.undo()
-        XCTAssertEqual(m.def.look.translucency, 0.35)
-        XCTAssertEqual(m.def.recipe.levels[1].count, 18)
+        XCTAssertEqual(m.def.look.translucency, PlantCatalog.builtIn[.oak].look.translucency)
+        XCTAssertEqual(m.def.growth?.cycles, cycles + 4)
         m.undo.undo()
-        XCTAssertEqual(m.def.recipe.levels[1].count, 14)
+        XCTAssertEqual(m.def.growth?.cycles, cycles)
         XCTAssertFalse(m.isDirty)
         m.undo.redo()
-        XCTAssertEqual(m.def.recipe.levels[1].count, 18)
+        XCTAssertEqual(m.def.growth?.cycles, cycles + 4)
         m.undo.redo()
         XCTAssertEqual(m.def.look.translucency, 0.5)
         // A click on a slider or a curve that moves nothing is no step at all.
         m.beginDrag()
         m.endDrag()
         m.undo.undo()
-        XCTAssertEqual(m.def.look.translucency, 0.35)
+        XCTAssertEqual(m.def.look.translucency, PlantCatalog.builtIn[.oak].look.translucency)
     }
 
     /// While dragging only the workshop follows (in another scene with plants, nothing until it is let go); an edit
@@ -133,49 +178,58 @@ final class PlantEditorTests: XCTestCase {
     func testEditsReachTheScenes() {
         let (m, host) = editor(in: .forest)
         m.beginDrag()
-        m.def.recipe.levels[1].count = 20
+        m.def.growth?.cycles = 20
         XCTAssertEqual(host.settings.scene.plantCatalog, "", "the forest follows a drag only when it is let go")
         m.endDrag()
         let key = host.settings.scene.plantCatalog
         XCTAssertFalse(key.isEmpty)
-        XCTAssertEqual(PlantCatalog.resolve(key)[.oak].recipe.levels[1].count, 20)
+        XCTAssertEqual(PlantCatalog.resolve(key)[.oak].growth?.cycles, 20)
         m.undo.undo()
         XCTAssertEqual(host.settings.scene.plantCatalog, PlantCatalog.launch == .builtIn ? "" : PlantCatalog.register(.builtIn))
 
         let (w, workshop) = editor(in: .plants)
         w.beginDrag()
-        w.def.recipe.levels[1].count = 9
-        XCTAssertEqual(PlantCatalog.resolve(workshop.settings.scene.plantCatalog)[.oak].recipe.levels[1].count, 9, "the workshop follows the drag")
+        w.def.growth?.cycles = 9
+        XCTAssertEqual(PlantCatalog.resolve(workshop.settings.scene.plantCatalog)[.oak].growth?.cycles, 9, "the workshop follows the drag")
         w.endDrag()
 
         // A scene without plants isn't told (it would be made again for nothing) until it is one with plants.
         let (c, cornell) = editor(in: .cornell)
-        c.def.recipe.levels[1].count = 7
+        c.def.growth?.cycles = 7
         XCTAssertEqual(cornell.settings.scene.plantCatalog, "")
         cornell.update { $0.scene.kind = .valley }
-        XCTAssertEqual(PlantCatalog.resolve(cornell.settings.scene.plantCatalog)[.oak].recipe.levels[1].count, 7)
+        XCTAssertEqual(PlantCatalog.resolve(cornell.settings.scene.plantCatalog)[.oak].growth?.cycles, 7)
     }
 
-    /// Copy and paste between species: a level, the leaves; never another kind of clip.
+    /// Copy and paste between species: a shoot, the twigs' leaves, the wood; never another kind of clip.
     func testCopyAndPaste() {
         let (m, _) = editor()
         m.pasteboard = NSPasteboard(name: NSPasteboard.Name("PlantEditorTests"))
+        let birch = PlantCatalog.builtIn[.birch], conifer = PlantCatalog.builtIn[.conifer]
         m.select("birch")
-        m.level = 2
-        m.copy(.level)
-        XCTAssertTrue(m.canPaste(.level))
+        m.copy(.shoot, shoot: .branches)
+        XCTAssertTrue(m.canPaste(.shoot))
         XCTAssertFalse(m.canPaste(.look))
         m.select("oak")
-        m.level = 2
-        m.paste(.level)
-        XCTAssertEqual(m.def.recipe.levels[2], PlantCatalog.builtIn[.birch].recipe.levels[2])
+        m.paste(.shoot, shoot: .branches)
+        XCTAssertEqual(m.def.growth?.branch, birch.growth?.branch ?? birch.growth?.trunk)
+        XCTAssertEqual(m.def.growth?.trunk, PlantCatalog.builtIn[.oak].growth?.trunk, "only the branches")
         m.paste(.look)   // not what is on the clipboard: nothing
         XCTAssertEqual(m.def.look, PlantCatalog.builtIn[.oak].look)
         m.select("conifer")
-        m.copy(.leaves, bough: true)
+        m.copy(.leaves, twig: true)
         m.select("bush")
-        m.paste(.leaves, bough: true)
-        XCTAssertEqual(m.def.bough?.leaf, PlantCatalog.builtIn[.conifer].bough?.leaf)
+        m.paste(.leaves, twig: true)
+        XCTAssertEqual(m.def.twigs?.leaf, conifer.twigs?.leaf)
+        m.copy(.wood)
+        m.select("birch")
+        m.paste(.wood)
+        XCTAssertEqual(m.def.growth?.wood, PlantCatalog.builtIn[.bush].growth?.wood)
+        m.select("conifer")
+        m.copy(.shoot, twig: true)
+        m.select("oak")
+        m.paste(.shoot, twig: true)
+        XCTAssertEqual(m.def.twigs?.growth.trunk, conifer.twigs?.growth.trunk)
     }
 
     /// New species, renamed, saved as files; a built-in species as it is built in has no file.
@@ -190,14 +244,14 @@ final class PlantEditorTests: XCTestCase {
         m.rename("Weeping Willow")
         XCTAssertEqual(m.selected, "weeping-willow")
         XCTAssertGreaterThanOrEqual(m.def.seedIndex, 100)
-        m.def.recipe.levels[2].tropism = -1.5
+        m.def.growth?.trunk.gravitropism = -0.3
         m.select("oak")
         m.def.look.translucency = 0.2
         m.save()
         XCTAssertFalse(m.isDirty)
         let files = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
         XCTAssertEqual(files, ["oak.json", "weeping-willow.json"])
-        XCTAssertEqual(PlantStore.load(from: folder).species(id: "weeping-willow").map { PlantStore.load(from: folder)[$0].recipe.levels[2].tropism }, -1.5)
+        XCTAssertEqual(PlantStore.load(from: folder).species(id: "weeping-willow").map { PlantStore.load(from: folder)[$0].growth?.trunk.gravitropism }, -0.3)
         // Back to built in: the file goes.
         m.resetToBuiltIn()
         m.save()
@@ -216,7 +270,8 @@ final class PlantEditorTests: XCTestCase {
         XCTAssertEqual(PlantCatalog.registered(host.settings.scene.plants.mutants)?.count, 6)
         let third = m.mutants[2]
         m.pick(2)
-        XCTAssertEqual(m.def.recipe, third.recipe)
+        XCTAssertEqual(m.def.growth, third.growth)
+        XCTAssertEqual(m.def.twigs, third.twigs)
         XCTAssertEqual(host.settings.scene.plants.layout, .single)
         m.undo.undo()
         XCTAssertEqual(m.def, PlantCatalog.builtIn[.oak])

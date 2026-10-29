@@ -130,6 +130,16 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(SettingsEnv.export(defaults, defaults: defaults), "METALRENDERER_SCENE=\"cornell\"")
     }
 
+    /// A first launch (nothing saved) opens the plant workshop with its own look, as a switch to it would; the
+    /// defaults themselves stay the Cornell room.
+    func testAFirstLaunchOpensThePlantWorkshop() {
+        let first = RenderSettings.firstLaunch(defaults)
+        XCTAssertEqual(first.scene.kind, .plants)
+        XCTAssertEqual(first.sky, SkySettings.preset(for: .plants))
+        XCTAssertEqual(defaults.scene.kind, .cornell)
+        XCTAssertEqual(SettingsEnv.export(first, defaults: defaults).hasPrefix("METALRENDERER_SCENE=\"plants"), true)
+    }
+
     /// Each setting on its own: a change shows up in the export and reads back as the same settings. A setting added
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {

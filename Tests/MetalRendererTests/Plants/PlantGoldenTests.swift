@@ -71,23 +71,31 @@ final class PlantGoldenTests: XCTestCase {
         return h.value
     }
 
+    /// (Oct 2026: leaf clusters, LeafRecipe.cluster: the oak's leaves in threes, the birch's, bush's and conifer's in
+    /// twos, fuller crowns as Unreal's Mega Plants have. Leaf cards don't grow leaves: their hashes stay.)
+    /// (Oct 2026: the oak grown bud by bud, Growth, Unreal's way, its wood by Growth.wood, dressed in
+    /// Growth.twig twigs of outline leaves where Growth's distributor puts them: every hash that holds an oak.)
+    /// (Oct 2026: every built-in species but grass grown so, birch, conifer, dead tree, bush and fern re-authored.)
+    /// (Oct 2026: twig leaves carry their twig's health in U; grown leaves two-sided with a sheen in either look.)
     func testTheLibraryIsAsItWas() {
-        XCTAssertEqual(library(Foliage.library(seed: 1)), "ee5b50d98f6b")
-        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "9f62104e307d")
+        XCTAssertEqual(library(Foliage.library(seed: 1)), "1b7b754b78fa")
+        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "3a021b48d049")
     }
 
     /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
     /// pictures the same as main's. Then its stream and pond: no plant in the water.)
+    /// (Oct 2026: Foliage.version 2, the grown species: the same plants, the meshes' and voxels' names "plants v2".
+    /// So the valley's and the world's too.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "d1743c9d79a7")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "812007b38465")
+        XCTAssertEqual(scene(Scene(settings)), "516476aaf8a3")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "c8d669b488ee")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "19469a8d6319")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "4977b6eb9ea0")
     }
 
     /// (Oct 2026: a lake and its stream in place of the pond's slab, no tree in them.)
@@ -95,7 +103,7 @@ final class PlantGoldenTests: XCTestCase {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
         settings.realism = .off
-        XCTAssertEqual(scene(Scene(settings)), "39fb20810e13")
+        XCTAssertEqual(scene(Scene(settings)), "8af603c0b34b")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {
@@ -110,6 +118,6 @@ final class PlantGoldenTests: XCTestCase {
             // which they keep out of.)
             h.add(WorldTile.place(world, x: x, z: z).replacingOccurrences(of: "tile v\(World.version) ", with: "tile v6 "))
         }
-        XCTAssertEqual(h.value, "8a78dc9ef2bf")
+        XCTAssertEqual(h.value, "df78ee29ac26")
     }
 }

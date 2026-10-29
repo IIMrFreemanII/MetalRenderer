@@ -87,9 +87,15 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outAlbedo.write(float4(0.0f), tid);
         // Sky, plus the discs of the suns (camera rays only: GI rays get the sun from next-event estimation). With the
         // sky texture the disc darkens toward its limb and clouds in front of it dim it (the texture's alpha).
-        float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
-        float3 sky = skyHere.rgb;
-        for (uint k = 0; k < sunDiscCount(u); ++k) sky += sunDisc(lights[sunDiscLight(u, k)], dir, u.flags, skyHere.a);
+        // A backdrop in its place: no sky, no sun disc.
+        float3 sky;
+        if (backdropOn(u)) {
+            sky = backdropSample(u, dir);
+        } else {
+            float4 skyHere = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
+            sky = skyHere.rgb;
+            for (uint k = 0; k < sunDiscCount(u); ++k) sky += sunDisc(lights[sunDiscLight(u, k)], dir, u.flags, skyHere.a);
+        }
         outEmission.write(float4(sky, 1.0f), tid);
         outMotion.write(float4(0.0f), tid);
         outDirect.write(float4(0.0f), tid);

@@ -18,28 +18,30 @@ package enum PlantMutate {
         }
     }
 
-    /// The parts of a definition a mutation may change, with their weights.
+    /// The parts of a definition a mutation may change, with their weights: a grown species' growth, shoots, light,
+    /// wood and twigs; the leaves on its own stems; a grass patch's blades.
     private static func mutate(_ m: inout Foliage.SpeciesDef, _ rng: inout SplitMix64) {
         var targets: [(Int, (inout Foliage.SpeciesDef, inout SplitMix64) -> Void)] = []
-        let levels = m.recipe.levels.count
-        targets.append((2, { d, r in move(&d.recipe.levels[0], PlantParams.trunk, &r) }))
-        if levels > 1 {
-            targets.append((5, { d, r in
-                let l = 1 + r.int(d.recipe.levels.count - 1)
-                move(&d.recipe.levels[l], PlantParams.level, &r)
-            }))
+        if let g = m.growth {
+            targets.append((2, { d, r in move(&d.growth!, PlantParams.growth, &r) }))
+            targets.append((2, { d, r in move(&d.growth!, PlantParams.hormones, &r) }))
+            targets.append((3, { d, r in move(&d.growth!.trunk, PlantParams.shoot, &r) }))
+            if g.branch != nil { targets.append((4, { d, r in move(&d.growth!.branch!, PlantParams.shoot, &r) })) }
+            targets.append((1, { d, r in move(&d.growth!.light, PlantParams.light, &r) }))
+            if g.senescence != nil { targets.append((1, { d, r in move(&d.growth!.senescence!, PlantParams.senescence, &r) })) }
+            if g.bifurcation != nil { targets.append((1, { d, r in move(&d.growth!.bifurcation!, PlantParams.bifurcation, &r) })) }
+            if g.gravity > 0 { targets.append((1, { d, r in move(&d.growth!, PlantParams.gravity, &r) })) }
+            targets.append((1, { d, r in move(&d.growth!.wood, PlantParams.wood, &r) }))
         }
-        targets.append((2, { d, r in move(&d.recipe, PlantParams.recipe, &r) }))
-        if m.recipe.leaf != nil { targets.append((3, { d, r in move(&d.recipe.leaf!, PlantParams.leaf, &r) })) }
-        if m.recipe.graft != nil { targets.append((3, { d, r in move(&d.recipe.graft!, PlantParams.graft, &r) })) }
-        if let bough = m.bough {
-            targets.append((3, { d, r in
-                let l = r.int(bough.levels.count)
-                move(&d.bough!.levels[l], l == 0 ? PlantParams.trunk : PlantParams.level, &r)
-            }))
-            if bough.leaf != nil { targets.append((3, { d, r in move(&d.bough!.leaf!, PlantParams.leaf, &r) })) }
+        if m.twigs != nil {
+            targets.append((3, { d, r in move(&d.twigs!, PlantParams.twigs, &r) }))
+            targets.append((3, { d, r in move(&d.twigs!.leaf, PlantParams.leaf, &r) }))
+            targets.append((2, { d, r in move(&d.twigs!.growth.trunk, PlantParams.shoot, &r) }))
         }
+        if m.leaf != nil { targets.append((3, { d, r in move(&d.leaf!, PlantParams.leaf, &r) })) }
+        if m.grass != nil { targets.append((1, { d, r in move(&d.grass!, PlantParams.grass, &r) })) }
         let total = targets.reduce(0) { $0 + $1.0 }
+        guard total > 0 else { return }
         var pick = rng.int(total)
         for (weight, change) in targets {
             if pick < weight { change(&m, &rng); return }
@@ -58,12 +60,13 @@ package enum PlantMutate {
         p.set(&root, p.clamp(p.get(root) + delta))
     }
 
-    /// `def` shaped as `mutant`: its recipes, palette and ages; still itself (its id, name, seeds, look, habitat).
+    /// `def` shaped as `mutant`: its growth, twigs, leaves and ages; still itself (its id, name, seeds, look, habitat).
     package static func pick(_ mutant: Foliage.SpeciesDef, into def: Foliage.SpeciesDef) -> Foliage.SpeciesDef {
         var d = def
-        d.recipe = mutant.recipe
-        d.bough = mutant.bough
-        d.palette = mutant.palette
+        d.growth = mutant.growth
+        d.twigs = mutant.twigs
+        d.leaf = mutant.leaf
+        d.grass = mutant.grass
         d.ages = mutant.ages
         return d
     }

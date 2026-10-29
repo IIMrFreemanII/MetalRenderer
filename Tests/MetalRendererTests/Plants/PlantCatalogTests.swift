@@ -15,8 +15,8 @@ import simd
 /// PlantSpecies.swift, PlantCurve.swift: the species as data give exactly what the code before them did, and come
 /// back from JSON exactly as they went.
 final class PlantCatalogTests: XCTestCase {
-    /// The curves' presets are the formulas the recipes had before, bit for bit.
-    func testCurvePresetsAreTheOldFormulas() {
+    /// The curves' presets are their formulas, bit for bit.
+    func testCurvePresetsAreTheirFormulas() {
         var rng = SplitMix64(seed: 5)
         for _ in 0..<1000 {
             let x = rng.next(), a = rng.range(-2, 2), b = rng.range(-2, 2), t = rng.range(0, 1)
@@ -25,9 +25,6 @@ final class PlantCatalogTests: XCTestCase {
             XCTAssertEqual(Foliage.Curve.linear(a, b).start, a)
             XCTAssertEqual(Foliage.Curve.linear(a, b).end, b)
             XCTAssertEqual(Foliage.Curve.taper(0.5).value(x).bitPattern, (1 - 0.5 * x).bitPattern)
-            for crown in Foliage.Crown.allCases {
-                XCTAssertEqual(Foliage.Curve.crown(crown).value(x).bitPattern, Foliage.crownRatio(crown, 1 - x).bitPattern)
-            }
         }
     }
 
@@ -46,17 +43,9 @@ final class PlantCatalogTests: XCTestCase {
             }
         }
         // A preset made editable is the same curve at its points.
-        let crown = Foliage.Curve.crown(.flame), editable = crown.editable(samples: 11)
-        guard case .points(let ps) = editable else { return XCTFail() }
-        for p in ps { XCTAssertEqual(crown.value(p.x), p.y, accuracy: 1e-6) }
-    }
-
-    /// The age rules' counts are what the integer arithmetic before them gave.
-    func testAgeCountsAreTheIntegerDivisions() {
-        for count in 0...2000 {
-            XCTAssertEqual(Foliage.CountRule(level: 1, factor: 0.75, minimum: 3).apply(count), max(3, count * 3 / 4))
-            XCTAssertEqual(Foliage.CountRule(level: 2, factor: 0.7, minimum: 2).apply(count), max(2, count * 7 / 10))
-            XCTAssertEqual(Foliage.CountRule(level: 1, factor: 0.45, minimum: 3).apply(count), max(3, count * 9 / 20))
+        for preset in [Foliage.Curve.linear(0.3, 0.9), .taper(0.4)] {
+            guard case .points(let ps) = preset.editable() else { return XCTFail() }
+            for p in ps { XCTAssertEqual(preset.value(p.x), p.y, accuracy: 1e-6) }
         }
     }
 
@@ -80,7 +69,7 @@ final class PlantCatalogTests: XCTestCase {
         }
         // The forms read as they are written.
         let text = String(decoding: data, as: UTF8.self)
-        XCTAssertTrue(text.contains("\"crown\" : \"hemispherical\""))
+        XCTAssertTrue(text.contains("\"whorled\" : 5"))
         XCTAssertTrue(text.contains("\"distichous\""))
         XCTAssertTrue(text.contains("\"barkTexture\" : \"birchBark\""))
     }
@@ -138,7 +127,7 @@ final class PlantCatalogTests: XCTestCase {
         willow.name = "Willow"
         willow.seedIndex = 100
         willow.basedOn = "birch"
-        willow.recipe.levels[2].tropism = -1.2
+        willow.growth?.branch?.gravitropism = -0.2
         willow.habitat.order = 50
         willow.habitat.base = 2       // everywhere, and a lot of it
         return PlantCatalog.builtIn.merging([willow])
@@ -169,7 +158,10 @@ final class PlantCatalogTests: XCTestCase {
         XCTAssertEqual(PlantStore.load(from: folder)[.oak], PlantCatalog.builtIn[.oak])
         XCTAssertEqual(PlantStore.load(from: nil), .builtIn)
         let text = String(decoding: try PlantStore.encode(oak), as: UTF8.self)
-        XCTAssertTrue(text.hasPrefix("{\n  \"format\" : 1,"), text)
+        XCTAssertTrue(text.hasPrefix("{\n  \"format\" : 2,"), text)
+        // A file of the level-by-level species before the growth simulation is not read.
+        try Data(text.replacingOccurrences(of: "\"format\" : 2", with: "\"format\" : 1").utf8).write(to: PlantStore.url("oak", in: folder))
+        XCTAssertEqual(PlantStore.load(from: folder)[.oak], PlantCatalog.builtIn[.oak])
     }
 
     /// An edit renames the plants for every cache; a change of colour alone leaves where they stand as it was.
@@ -181,7 +173,7 @@ final class PlantCatalogTests: XCTestCase {
         settings.plantCatalog = "builtin"
         let builtIn = Scene(settings, assemblies: true, voxelBoxes: true)
         var edited = PlantCatalog.builtIn
-        edited.species[0].recipe.levels[1].count = 9
+        edited.species[0].growth?.cycles = 30
         settings.plantCatalog = PlantCatalog.register(edited)
         let other = Scene(settings, assemblies: true, voxelBoxes: true)
         XCTAssertTrue(Set(builtIn.voxelPlants.map(\.key)).isDisjoint(with: other.voxelPlants.map(\.key)))

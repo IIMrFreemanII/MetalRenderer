@@ -233,8 +233,7 @@ final class RealismTests: XCTestCase {
         if TextureSet.find("bark-oak") != nil { XCTAssertTrue(off.isDisjoint(with: names(.high))) }
     }
 
-    /// Realism high reads the ground map on the CPU at every make; the workshop, made again at every edit, takes it
-    /// from the last make's instead of drawing it again.
+    /// The workshop, made again at every edit, stays quick with realism high (its stage has no ground to draw).
     func testHighWorkshopIsMadeAgainQuickly() {
         var settings = SceneSettings(kind: .plants)
         settings.plantCatalog = "builtin"
@@ -245,7 +244,7 @@ final class RealismTests: XCTestCase {
         let again = Scene(settings)
         let seconds = Date().timeIntervalSince(start)
         print("Realism high workshop made again in \(Int(seconds * 1000)) ms")
-        XCTAssertNotNil(again.terrain?.ground)
+        XCTAssertNil(again.terrain)
         XCTAssertLessThan(seconds, 1.2)
     }
 }

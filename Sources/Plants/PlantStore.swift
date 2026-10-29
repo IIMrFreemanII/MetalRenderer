@@ -1,13 +1,14 @@
 import EngineCore
 import Foundation
 
-/// The species saved as JSON: `Assets/Plants/<id>.json`, one species to a file, `{"format": 1, "species": {...}}`.
+/// The species saved as JSON: `Assets/Plants/<id>.json`, one species to a file, `{"format": 2, "species": {...}}`.
 /// A file with a built-in species' id replaces that species everywhere; any other id adds a species. The folder is
 /// `METALRENDERER_PLANTS` if set (`builtin`: none, the built-in species only), or `Plants` in the assets folder.
 ///
 /// The plant editor's unsaved edits are a draft in UserDefaults, kept between launches until saved or reverted.
 package enum PlantStore {
-    package static let format = 1
+    /// 2: grown bud by bud (Growth.Params, twigs); 1 was grown level by level, and is not read.
+    package static let format = 2
 
     package struct File: Codable {
         package var format = PlantStore.format
@@ -38,6 +39,7 @@ package enum PlantStore {
             do {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: folder.appendingPathComponent(name)))
                 guard file.format <= format else { print("Plants: \(name) is of a newer format (\(file.format)), skipped"); continue }
+                guard file.format >= 2 else { print("Plants: \(name) was grown level by level (format 1), skipped"); continue }
                 defs.append(file.species)
             } catch {
                 print("Plants: \(name) doesn't read: \(error)")
@@ -62,7 +64,7 @@ package enum PlantStore {
 
     // MARK: - The editor's draft
 
-    private static let draftKey = "plantDraft"
+    private static let draftKey = "plantDraft2"        // (format 2's: a format 1 draft is let go)
 
     package static func loadDraft() -> PlantCatalog? {
         guard let data = UserDefaults.standard.data(forKey: draftKey),
@@ -101,8 +103,8 @@ extension PlantCatalog {
         return out.sanitized()
     }
 
-    /// Every definition made safe to grow: at least one level and one shade, counts and sizes in reason, custom
-    /// species' seeds their own (from 100) and their ids unique.
+    /// Every definition made safe to grow: growth for every plant but the grass, at least one shade, counts and sizes
+    /// in reason, custom species' seeds their own (from 100) and their ids unique.
     package func sanitized() -> PlantCatalog {
         var out = self
         var seeds = Set<Int>(), ids = Set<String>()
@@ -192,32 +194,43 @@ extension Foliage.SpeciesDef {
     /// Made safe to grow (what a hand-edited file or a slider at its end could give).
     package func sanitized() -> Foliage.SpeciesDef {
         var d = self
-        func clean(_ r: inout Foliage.Recipe) {
-            if r.levels.isEmpty { r.levels = [Foliage.Level()] }
-            if r.levels.count > 6 { r.levels.removeLast(r.levels.count - 6) }
-            for i in r.levels.indices {
-                r.levels[i].count = min(max(r.levels[i].count, 0), 200)
-                r.levels[i].segments = min(max(r.levels[i].segments, 1), 64)
-                r.levels[i].radial = min(max(r.levels[i].radial, 1), 32)
-                r.levels[i].length = max(r.levels[i].length, 0.001)
-            }
-            r.levels[0].count = max(r.levels[0].count, 1)
-            if var leaf = r.leaf {
-                leaf.perMetre = min(max(leaf.perMetre, 0), 1000)
-                leaf.length = max(leaf.length, 0.001)
-                leaf.width = max(leaf.width, 0.0005)
-                if case .whorled(let n) = leaf.phyllotaxis, n < 1 { leaf.phyllotaxis = .whorled(1) }
-                r.leaf = leaf
-            }
-            if var graft = r.graft {
-                graft.spacing = max(graft.spacing, 0.05)
-                if !(graft.scale.lowerBound > 0) { graft.scale = 0.01...max(graft.scale.upperBound, 0.01) }
-                r.graft = graft
+        func clean(_ leaf: inout Foliage.LeafRecipe) {
+            leaf.perMetre = min(max(leaf.perMetre, 0), 1000)
+            leaf.length = max(leaf.length, 0.001)
+            leaf.width = max(leaf.width, 0.0005)
+            if case .whorled(let n) = leaf.phyllotaxis, n < 1 { leaf.phyllotaxis = .whorled(1) }
+        }
+        func clean(_ s: inout Growth.Shoot) {
+            s.segment = max(s.segment, 0.005)
+            s.lengthScale = max(s.lengthScale, 0.05)
+            if case .whorled(let n) = s.phyllotaxis, n < 1 || n > 12 { s.phyllotaxis = .whorled(min(max(n, 1), 12)) }
+        }
+        func clean(_ g: inout Growth.Params, cycles: Int) {
+            g.cycles = min(max(g.cycles, 1), cycles)
+            g.maxGeneration = min(max(g.maxGeneration, 1), 8)
+            g.stems = min(max(g.stems, 1), 40)
+            g.targetHeight = max(g.targetHeight, 0.05)
+            g.seedRadius = max(g.seedRadius, 0.0002)
+            clean(&g.trunk)
+            if var b = g.branch { clean(&b); g.branch = b }
+            if var sen = g.senescence { sen.cycles = max(sen.cycles, 0); g.senescence = sen }
+            if var fork = g.bifurcation { fork.count = min(max(fork.count, 2), 6); g.bifurcation = fork }
+            g.wood.lobes = min(max(g.wood.lobes, 0), 16)
+            for a in [\Growth.Params.young, \.sapling] {
+                g[keyPath: a] = Growth.AgeShare(cycles: min(max(g[keyPath: a].cycles, 0.02), 1), height: min(max(g[keyPath: a].height, 0.02), 1))
             }
         }
-        clean(&d.recipe)
-        if var bough = d.bough { clean(&bough); d.bough = bough }
-        d.palette.count = min(max(d.palette.count, 1), 16)
+        // A plant that isn't grass grows (a file that says nothing of how: as Growth's defaults).
+        if d.grass == nil, d.growth == nil { d.growth = Growth.Params() }
+        if var g = d.growth { clean(&g, cycles: 200); d.growth = g }
+        if var leaf = d.leaf { clean(&leaf); d.leaf = leaf }
+        if var t = d.twigs {
+            clean(&t.growth, cycles: 40)
+            t.palette = min(max(t.palette, 1), 16)
+            t.spacing = max(t.spacing, 0.02)
+            clean(&t.leaf)
+            d.twigs = t
+        }
         while d.ages.variants.count < 3 { d.ages.variants.insert(0, at: 0) }
         d.ages.variants = d.ages.variants.prefix(3).map { min(max($0, 0), 8) }
         d.ages.variants[2] = max(d.ages.variants[2], 1)

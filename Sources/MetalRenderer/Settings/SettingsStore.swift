@@ -20,8 +20,14 @@ package enum SettingsStore {
 
     package static func load(over defaults: RenderSettings) -> RenderSettings? {
         guard ProcessInfo.processInfo.environment["METALRENDERER_SETTINGS"] != "default",
-              let data = UserDefaults.standard.data(forKey: key),
-              let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let data = UserDefaults.standard.data(forKey: key) else { return nil }
+        return decode(saved: data, over: defaults)
+    }
+
+    /// Saved settings' JSON laid over `defaults` as a launch reads them (a script given the window's saved copy, from
+    /// a build with other fields, reads it the same way).
+    package static func decode(saved data: Data, over defaults: RenderSettings) -> RenderSettings? {
+        guard let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let base = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any],
               var s = decode(merge(base, saved), defaults: base) else { return nil }
         // Session state rather than preferences.

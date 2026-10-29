@@ -1,5 +1,8 @@
 # Plant editor: handoff to the M4 Max (2026-10-08)
 
+> Since 2026-10-29 the species grow bud by bud and the editor's tabs are the growth simulation's: see
+> `plant-growth-handoff.md`. What follows is the editor as it was first built (its recipes and boughs are gone).
+
 Merged into `main` (PR #52, merge `9aeb9ad`). Species as data, the plant workshop scene and the SwiftUI Plant Editor
 (K / ⌘E). Built and measured on the **M1 Max (software RT, no Metal 4 ray tracing)** only. The README's "The plant
 editor" section has the design and how to use it.

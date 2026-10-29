@@ -15,7 +15,7 @@ func run(_ run: ScriptRun) {
     // The app's own settings (switches.py --saved: the window's saved copy), unpaused.
     if let path = value("settings") {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
-              var s = try? JSONDecoder().decode(RenderSettings.self, from: data) else { run.fail("can't read settings \(path)"); return }
+              var s = SettingsStore.decode(saved: data, over: RenderSettings()) else { run.fail("can't read settings \(path)"); return }
         s.paused = false
         run.render { $0.settings = s }
         run.waitForScene()
