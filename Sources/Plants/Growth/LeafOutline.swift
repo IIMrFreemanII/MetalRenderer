@@ -16,8 +16,9 @@ extension Foliage {
         package var tip: Point
         package var aspect: Float                           // widest over length
 
-        package static let rows = 4
+        package static let rows = 6     // (6 rows: a smooth edge up close)
         package static let cells = 3
+        package static let inset: Float = 0.75   // tracer pixels the edges keep inside the leaf
         package static let size = MeshSize(vertices: 2 + 3 * rows, indices: 3 * 4 * rows)   // its rows' midribs too
 
         /// The sheet the species that don't name theirs share (LeafRecipe.sheet).
@@ -63,18 +64,21 @@ extension Foliage {
                     let length = Float(bottom - top)
                     let baseEdges = edges(bottom), tipEdges = edges(top)
                     let baseX = Float(baseEdges.0 + baseEdges.1) / 2, tipX = Float(tipEdges.0 + tipEdges.1) / 2
-                    var rows: [(left: Int, right: Int, y: Int, t: Float)] = []
+                    // (Each edge a little inside the leaf's: at 64 pixels a cell, one pixel out is a sliver of the card
+                    // around it on the full sheet.)
+                    var rows: [(left: Float, right: Float, y: Int, t: Float)] = []
                     for k in 1...LeafOutline.rows {
                         let t = Float(k) / Float(LeafOutline.rows + 1)
                         let y = bottom - Int((t * length).rounded())
                         let e = edges(y)
-                        rows.append((e.0, e.1 + 1, y, t))
+                        let inset = min(LeafOutline.inset, Float(e.1 + 1 - e.0) / 4)
+                        rows.append((Float(e.0) + inset, Float(e.1 + 1) - inset, y, t))
                     }
-                    let widest = max(Float(rows.map { $0.right - $0.left }.max() ?? 1), 1)
+                    let widest = max(rows.map { $0.right - $0.left }.max() ?? 1, 1)
                     func axis(_ t: Float) -> Float { baseX + (tipX - baseX) * t }
                     func point(_ x: Float, _ y: Int, _ t: Float) -> Point { Point(across: (x - axis(t)) / widest, along: t, uv: uv(x, y)) }
                     out.append(LeafOutline(base: point(baseX, bottom, 0),
-                                           sides: rows.map { (point(Float($0.left), $0.y, $0.t), point(Float($0.right), $0.y, $0.t)) },
+                                           sides: rows.map { (point($0.left, $0.y, $0.t), point($0.right, $0.y, $0.t)) },
                                            tip: point(tipX, top, 1), aspect: widest / length))
                 }
             }

@@ -148,6 +148,78 @@ package struct TextureSet {
     }
     private static var means: [String: SIMD3<Float>] = [:]
 
+    /// A leaf sheet's albedo made ready to be tinted (sRGB RGBA, its own size; nil without an opacity map): its
+    /// background (white or grey card) filled with the colour of the nearest leaves, so that an outline's edge and the
+    /// far mips read leaf, not card; and each pixel's hue drawn `flatten` of the way toward the leaves' mean at its
+    /// own brightness, so that a tint toward another green (a species' colour over meanColor) keeps the veins, spots
+    /// and the pale midrib as they are and doesn't turn them pink: a lime sheet tinted olive multiplies its blue by
+    /// two or three.
+    package func sheetAlbedo(flatten: Float = 0.65) -> GeneratedImage? {
+        guard url(.opacity) != nil, let url = url(.albedo), let src = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(src, 0, nil) else { return nil }
+        let w = image.width, h = image.height
+        guard let opacity = gray(.opacity, size: w, height: h) else { return nil }
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        let drawn = rgba.withUnsafeMutableBytes { buf -> Bool in
+            guard let ctx = CGContext(data: buf.baseAddress, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard drawn else { return nil }
+        // Linear colours; the card's pixels weigh nothing.
+        let toLinear = (0..<256).map { (v: Int) -> Float in let c = Float(v) / 255; return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        var colour = [SIMD3<Float>](repeating: .zero, count: w * h), weight = [Float](repeating: 0, count: w * h)
+        for i in 0..<(w * h) where opacity.pixels[i] > 127 {
+            colour[i] = SIMD3(toLinear[Int(rgba[4 * i])], toLinear[Int(rgba[4 * i + 1])], toLinear[Int(rgba[4 * i + 2])])
+            weight[i] = 1
+        }
+        let mean = meanColor(), luma = SIMD3<Float>(0.2126, 0.7152, 0.0722), meanLuma = max(simd_dot(mean, luma), 1e-4)
+        for i in 0..<(w * h) where weight[i] > 0 {
+            colour[i] += (mean * (simd_dot(colour[i], luma) / meanLuma) - colour[i]) * flatten
+        }
+        // The card filled by push-pull: halve to the coarsest level (weighted means), then fill each finer level's
+        // empty pixels from the level above.
+        var levels: [(c: [SIMD3<Float>], w: [Float], width: Int, height: Int)] = [(colour, weight, w, h)]
+        while let top = levels.last, top.width > 1 || top.height > 1 {
+            let nw = max(top.width / 2, 1), nh = max(top.height / 2, 1)
+            var c = [SIMD3<Float>](repeating: .zero, count: nw * nh), wt = [Float](repeating: 0, count: nw * nh)
+            for y in 0..<nh {
+                for x in 0..<nw {
+                    var sum = SIMD3<Float>.zero, total: Float = 0
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let sx = min(2 * x + dx, top.width - 1), sy = min(2 * y + dy, top.height - 1), j = sy * top.width + sx
+                        sum += top.c[j] * top.w[j]
+                        total += top.w[j]
+                    }
+                    if total > 0 { c[y * nw + x] = sum / total; wt[y * nw + x] = 1 }
+                }
+            }
+            levels.append((c, wt, nw, nh))
+        }
+        for l in stride(from: levels.count - 2, through: 0, by: -1) {
+            let up = levels[l + 1]
+            for y in 0..<levels[l].height {
+                for x in 0..<levels[l].width where levels[l].w[y * levels[l].width + x] == 0 {
+                    let j = min(y / 2, up.height - 1) * up.width + min(x / 2, up.width - 1)
+                    levels[l].c[y * levels[l].width + x] = up.c[j]
+                    levels[l].w[y * levels[l].width + x] = 1
+                }
+            }
+        }
+        func toSRGB(_ v: Float) -> UInt8 {
+            let c = min(max(v, 0), 1)
+            return UInt8(((c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1 / 2.4) - 0.055) * 255).rounded())
+        }
+        var pixels = [UInt8](repeating: 255, count: w * h * 4)
+        for i in 0..<(w * h) {
+            let c = levels[0].c[i]
+            pixels[4 * i] = toSRGB(c.x); pixels[4 * i + 1] = toSRGB(c.y); pixels[4 * i + 2] = toSRGB(c.z)
+        }
+        return GeneratedImage(width: w, height: h, pixels: pixels)
+    }
+
     /// Its occlusion, roughness and height in one texture (R = AO, G = roughness, B = metallic 0, A = height): what a
     /// material's metallic-roughness slot holds (the height rides along for the terrain's height blend). Missing maps
     /// are white AO, roughness 0.85, height 0.5. The roughness is remapped into `minRoughness`...1 (some scans' maps are

@@ -50,7 +50,7 @@ package enum Foliage {
         case kite              // 2 triangles, folded along the midrib
         case blade             // 4 triangles, rounder
         case needle            // 1 triangle
-        case outline           // 16 triangles, a leaf of the scanned sheet traced (LeafOutline)
+        case outline           // 24 triangles, a leaf of the scanned sheet traced (LeafOutline)
     }
 
     package static let goldenAngle: Float = 2.39996
