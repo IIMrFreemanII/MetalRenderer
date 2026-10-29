@@ -47,23 +47,30 @@ package final class PlantPreviewPlayer: SceneBehaviour {
 }
 
 extension Scene {
-    /// Unreal's preview lighting in this renderer's units: its viewport's fixed exposure (EV100 -0.2, so ×0.957) and the
-    /// 0.6 that the ACES fit here wants on its input to be ACES's curve (Narkowicz 2015), which Unreal's is.
-    package static let previewUnits: Float = 0.957 * 0.6
+    /// Unreal's preview lighting in this renderer's units: its viewport's fixed exposure (EV100 -0.2, so ×0.957), the
+    /// 0.6 that the ACES fit here wants on its input to be ACES's curve (Narkowicz 2015), and 1.17 more, measured
+    /// against the vegetation editor's own picture (its backdrop and floor, lit and in shade, all came out that much
+    /// brighter there: Unreal's filmic curve sits above the fit in the mid-tones).
+    package static let previewUnits: Float = 0.957 * 0.6 * 1.17
     /// The vegetation editor's profile, Unreal's "Grey Ambient" (AssetViewerSettings.h): a white sun of 4 lux...
     package static let previewSun = SIMD3<Float>(repeating: 4 * previewUnits)
     /// ...and a sky light of 2 times its grey studio cubemap (T_GreyAmbient), here its upper half's mean (as a floor
-    /// sees it; slightly warm overhead)...
-    package static let previewSky = SIMD3<Float>(0.6, 0.55, 0.54) * 2 * previewUnits
+    /// sees it), a little cool: the editor's floor is bluer in its picture than a white light makes it...
+    package static let previewSky = SIMD3<Float>(0.55, 0.56, 0.59) * 2 * previewUnits
     /// ...whose picture is hidden: a camera ray sees the viewport's clear colour (its EnvironmentColor, 0.2 grey).
     package static let previewBackdrop = SIMD3<Float>(repeating: 0.2 * previewUnits)
+    /// Unreal's preview floor: its Floor_Mesh (10 m square, 1 m thick) at its profile's scale 4, so 20 m about the
+    /// origin each way; its edge shows against the backdrop.
+    package static let previewFloorReach: Float = 20
 
     /// The plant workshop's stage, as Unreal's tree preview (the vegetation editor, its Grey Ambient profile): its grid
-    /// floor to the horizon under a dark grey backdrop, a grey sky (SceneDefinition's `previewSky`, a constant colour)
-    /// lighting it, a white sun 40° up that its rig turns.
-    package func addPreviewStage(_ kit: Kit) {
+    /// floor, a slab 40 m square (wider if `plants` reach further) under a dark grey backdrop, a grey sky
+    /// (SceneDefinition's `previewSky`, a constant colour) lighting it, a white sun 40° up that its rig turns.
+    package func addPreviewStage(_ kit: Kit, around plants: AABB = AABB()) {
         let floor = addGridMaterial(.previewFloor)
-        object("Floor") { addInstance(kit.quad, floor, scale([2000, 1, 2000])) }
+        var reach = Scene.previewFloorReach
+        if !plants.isEmpty { reach = max(reach, max(-plants.lo.x, plants.hi.x, -plants.lo.z, plants.hi.z) + 5) }
+        object("Floor") { kit.slab([-reach, -1, -reach], [reach, 0, reach], floor) }
         backdrop = Scene.previewBackdrop
         skyColor = Scene.previewSky
         let rig = PlantPreviewRig()

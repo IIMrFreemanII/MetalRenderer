@@ -106,10 +106,13 @@ final class PlantWorkshopTests: XCTestCase {
         let sun = try XCTUnwrap(suns.first).pose(0).direction
         XCTAssertEqual(asin(sun.y), Scene.degrees(40), accuracy: 1e-4)
         XCTAssertNotNil(scene.previewRig)
-        // The floor is Unreal's preview grid: metre tiles, no textures.
+        // The floor is Unreal's preview grid: metre tiles, no textures, on a slab 40 m square whose top is the ground.
         let floor = try XCTUnwrap(scene.instances.first { scene.materialExtras[$0.material]?.textures.z == GPUMaterialExtra.gridKind })
         XCTAssertEqual(scene.materialExtras[floor.material]?.surface.y, 1)
         XCTAssertEqual(scene.materials[floor.material].textures, SIMD4(repeating: .max))
+        XCTAssertEqual(floor.transform.columns.0.x, 2 * Scene.previewFloorReach)
+        XCTAssertEqual(floor.transform.columns.2.z, 2 * Scene.previewFloorReach)
+        XCTAssertEqual(floor.transform.columns.3.y + floor.transform.columns.1.y / 2, 0, accuracy: 1e-6)
         var settings = SceneSettings(kind: .plants)
         settings.realism = .on
         XCTAssertEqual(SkySettings.preset(for: .plants).mode, .constant)
@@ -120,6 +123,15 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertFalse(PostSettings.preset(for: settings).autoExposure)
         // Other scenes have no backdrop.
         XCTAssertNil(Scene(SceneSettings(kind: .cornell)).backdrop)
+    }
+
+    /// A lineup wider than Unreal's floor gets a wider one: every plant stands on it, 5 m in from its edge.
+    func testTheFloorReachesEveryPlant() throws {
+        let scene = workshop { $0.species = "oak"; $0.layout = .lineup }
+        let floor = try XCTUnwrap(scene.instances.first { scene.materialExtras[$0.material]?.textures.z == GPUMaterialExtra.gridKind })
+        let reach = floor.transform.columns.0.x / 2, plants = try XCTUnwrap(scene.focus)
+        XCTAssertGreaterThan(max(-plants.lo.x, plants.hi.x, -plants.lo.z, plants.hi.z), Scene.previewFloorReach - 5, "a lineup wider than the floor")
+        XCTAssertGreaterThanOrEqual(reach, max(-plants.lo.x, plants.hi.x, -plants.lo.z, plants.hi.z) + 5 - 1e-4)
     }
 
     /// The lights turn about the plant: the rig's yaw turns the sun's direction about the vertical, and the spin goes on

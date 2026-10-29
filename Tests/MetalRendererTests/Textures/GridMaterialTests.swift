@@ -27,12 +27,14 @@ final class GridMaterialTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(scene.materialExtras[scene.addGridMaterial(look)]!.surface.x, 0)
     }
 
-    /// Unreal's M_Grid: metre tiles of 0.167, lines half that, a tenth of the usual specular.
+    /// Unreal's M_Grid as the vegetation editor shows it: metre tiles of 0.18, lines half that, no subgrid, a tenth of
+    /// the usual specular.
     func testThePreviewFloorIsUnrealsGrid() {
         let look = GridLook.previewFloor
-        XCTAssertEqual(look.tile, SIMD3(repeating: 0.167))
+        XCTAssertEqual(look.tile, SIMD3(repeating: 0.18))
         XCTAssertEqual(look.size, 1)
         XCTAssertEqual(look.line, 0.5)
+        XCTAssertEqual(look.subgrid, 0)
         XCTAssertEqual(look.specular, 0.1)
     }
 }

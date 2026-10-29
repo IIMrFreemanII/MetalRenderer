@@ -1,7 +1,7 @@
 # Graph Report - foliage-ue-look  (2026-10-29)
 
 ## Corpus Check
-- 877 files · ~19,774,666 words
+- 877 files · ~19,774,882 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 69 file(s) not represented in the graph (top: .exr 25, .glb 15, .fbx 12)
 

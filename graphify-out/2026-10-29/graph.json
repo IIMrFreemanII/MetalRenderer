@@ -85784,7 +85784,7 @@
       "file_type": "code",
       "norm_label": ".addsizeruler()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L97"
+      "source_location": "L107"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_advance",
@@ -85796,7 +85796,7 @@
       "file_type": "code",
       "norm_label": ".advance()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L156"
+      "source_location": "L166"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_bar",
@@ -85808,7 +85808,7 @@
       "file_type": "code",
       "norm_label": ".bar()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L132"
+      "source_location": "L142"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_metres",
@@ -85820,7 +85820,7 @@
       "file_type": "code",
       "norm_label": ".metres()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L129"
+      "source_location": "L139"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_strokes",
@@ -85832,7 +85832,7 @@
       "file_type": "code",
       "norm_label": ".strokes()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L159"
+      "source_location": "L169"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_strokewidth",
@@ -85844,7 +85844,7 @@
       "file_type": "code",
       "norm_label": ".strokewidth()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L169"
+      "source_location": "L179"
     },
     {
       "id": "sources_landscape_terrain_groundlook_groundlook_init",
@@ -112536,7 +112536,7 @@
       "file_type": "code",
       "norm_label": ".testcustomandcompared()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L194"
+      "source_location": "L196"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testremakingisquick",
@@ -112548,7 +112548,7 @@
       "file_type": "code",
       "norm_label": ".testremakingisquick()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L208"
+      "source_location": "L210"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testthefigure",
@@ -112560,7 +112560,7 @@
       "file_type": "code",
       "norm_label": ".testthefigure()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L141"
+      "source_location": "L143"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testthelightsturn",
@@ -112572,7 +112572,7 @@
       "file_type": "code",
       "norm_label": ".testthelightsturn()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L125"
+      "source_location": "L127"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testthelightview",
@@ -112620,7 +112620,7 @@
       "file_type": "code",
       "norm_label": ".testtheruler()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L159"
+      "source_location": "L161"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testtheskeletonhasnoleaves",
@@ -112644,7 +112644,7 @@
       "file_type": "code",
       "norm_label": ".testwhataneditis()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L181"
+      "source_location": "L183"
     },
     {
       "id": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_workshop",
@@ -119722,7 +119722,7 @@
       "file_type": "code",
       "norm_label": ".addplantfigure()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L68"
+      "source_location": "L78"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plantpreview_scene_addpreviewstage",
@@ -119734,7 +119734,7 @@
       "file_type": "code",
       "norm_label": ".addpreviewstage()",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L55"
+      "source_location": "L64"
     },
     {
       "id": "sources_metalrenderer_plants_scene_plants_camera_framing",
@@ -302894,7 +302894,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L72",
+      "source_location": "L82",
       "weight": 1.0
     },
     {
@@ -302906,7 +302906,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L59",
+      "source_location": "L69",
       "weight": 1.0
     },
     {
@@ -302918,7 +302918,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L62",
+      "source_location": "L72",
       "weight": 1.0
     },
     {
@@ -302930,7 +302930,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L117",
+      "source_location": "L127",
       "weight": 1.0
     },
     {
@@ -302942,7 +302942,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L118",
+      "source_location": "L128",
       "weight": 1.0
     },
     {
@@ -302954,7 +302954,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L163",
+      "source_location": "L173",
       "weight": 1.0
     },
     {
@@ -308390,7 +308390,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Scene/SceneDefinition.swift",
-      "source_location": "L232",
+      "source_location": "L233",
       "weight": 1.0
     },
     {
@@ -361454,7 +361454,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L200",
+      "source_location": "L202",
       "weight": 1.0
     },
     {
@@ -361466,7 +361466,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L201",
+      "source_location": "L203",
       "weight": 1.0
     },
     {
@@ -361478,7 +361478,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L217",
+      "source_location": "L219",
       "weight": 1.0
     },
     {
@@ -361490,7 +361490,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L142",
+      "source_location": "L144",
       "weight": 1.0
     },
     {
@@ -361502,7 +361502,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L126",
+      "source_location": "L128",
       "weight": 1.0
     },
     {
@@ -361514,7 +361514,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L133",
+      "source_location": "L135",
       "weight": 1.0
     },
     {
@@ -361526,7 +361526,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L134",
+      "source_location": "L136",
       "weight": 1.0
     },
     {
@@ -361610,7 +361610,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L160",
+      "source_location": "L162",
       "weight": 1.0
     },
     {
@@ -361658,7 +361658,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L117",
+      "source_location": "L119",
       "weight": 1.0
     },
     {
@@ -361670,7 +361670,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L118",
+      "source_location": "L120",
       "weight": 1.0
     },
     {
@@ -423806,7 +423806,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L144",
+      "source_location": "L154",
       "weight": 1.0
     },
     {
@@ -423818,7 +423818,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L144",
+      "source_location": "L154",
       "weight": 1.0
     },
     {
@@ -460382,7 +460382,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L144",
+      "source_location": "L154",
       "weight": 1.0
     },
     {
@@ -460394,7 +460394,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L159",
+      "source_location": "L169",
       "weight": 1.0
     },
     {
@@ -596651,7 +596651,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L68",
+      "source_location": "L78",
       "weight": 1.0
     },
     {
@@ -596663,7 +596663,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L55",
+      "source_location": "L64",
       "weight": 1.0
     },
     {
@@ -596675,7 +596675,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L97",
+      "source_location": "L107",
       "weight": 1.0
     },
     {
@@ -596687,7 +596687,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L156",
+      "source_location": "L166",
       "weight": 1.0
     },
     {
@@ -596699,7 +596699,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L132",
+      "source_location": "L142",
       "weight": 1.0
     },
     {
@@ -596711,7 +596711,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L132",
+      "source_location": "L142",
       "weight": 1.0
     },
     {
@@ -596723,7 +596723,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L129",
+      "source_location": "L139",
       "weight": 1.0
     },
     {
@@ -596735,7 +596735,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L159",
+      "source_location": "L169",
       "weight": 1.0
     },
     {
@@ -596747,7 +596747,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L169",
+      "source_location": "L179",
       "weight": 1.0
     },
     {
@@ -681185,7 +681185,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L68",
+      "source_location": "L78",
       "weight": 1.0
     },
     {
@@ -681200,7 +681200,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L97",
+      "source_location": "L107",
       "weight": 1.0
     },
     {
@@ -681215,7 +681215,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L156",
+      "source_location": "L166",
       "weight": 1.0
     },
     {
@@ -681230,7 +681230,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L132",
+      "source_location": "L142",
       "weight": 1.0
     },
     {
@@ -681245,7 +681245,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L129",
+      "source_location": "L139",
       "weight": 1.0
     },
     {
@@ -681260,7 +681260,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L169",
+      "source_location": "L179",
       "weight": 1.0
     },
     {
@@ -707468,7 +707468,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L159",
+      "source_location": "L169",
       "weight": 1.0
     },
     {
@@ -851619,13 +851619,24 @@
     },
     {
       "source": "sources_metalrenderer_plants_scene_plantpreview_scene",
+      "target": "sources_metalrenderer_plants_scene_plantpreview_scene_addsizeruler",
+      "relation": "method",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
+      "source_location": "L107",
+      "weight": 1.0
+    },
+    {
+      "source": "sources_metalrenderer_plants_scene_plantpreview_scene",
       "target": "sources_metalrenderer_plants_scene_plantpreview_scene_metres",
       "relation": "method",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L129",
+      "source_location": "L139",
       "weight": 1.0
     },
     {
@@ -851636,7 +851647,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L132",
+      "source_location": "L142",
       "weight": 1.0
     },
     {
@@ -851647,7 +851658,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L156",
+      "source_location": "L166",
       "weight": 1.0
     },
     {
@@ -851658,7 +851669,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L159",
+      "source_location": "L169",
       "weight": 1.0
     },
     {
@@ -851669,7 +851680,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L169",
+      "source_location": "L179",
       "weight": 1.0
     },
     {
@@ -851680,7 +851691,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L55",
+      "source_location": "L64",
       "weight": 1.0
     },
     {
@@ -851691,18 +851702,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L68",
-      "weight": 1.0
-    },
-    {
-      "source": "sources_metalrenderer_plants_scene_plantpreview_scene",
-      "target": "sources_metalrenderer_plants_scene_plantpreview_scene_addsizeruler",
-      "relation": "method",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L97",
+      "source_location": "L78",
       "weight": 1.0
     },
     {
@@ -889707,7 +889707,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L125",
+      "source_location": "L127",
       "weight": 1.0
     },
     {
@@ -889718,7 +889718,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L141",
+      "source_location": "L143",
       "weight": 1.0
     },
     {
@@ -889729,7 +889729,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0
     },
     {
@@ -889740,7 +889740,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L181",
+      "source_location": "L183",
       "weight": 1.0
     },
     {
@@ -889751,18 +889751,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L194",
-      "weight": 1.0
-    },
-    {
-      "source": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests",
-      "target": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testremakingisquick",
-      "relation": "method",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L208",
+      "source_location": "L196",
       "weight": 1.0
     },
     {
@@ -889774,6 +889763,17 @@
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
       "source_location": "L21",
+      "weight": 1.0
+    },
+    {
+      "source": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests",
+      "target": "tests_metalrenderertests_plants_plantworkshoptests_plantworkshoptests_testremakingisquick",
+      "relation": "method",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
+      "source_location": "L210",
       "weight": 1.0
     },
     {
@@ -911820,7 +911820,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L73",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -911832,7 +911832,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L83",
+      "source_location": "L93",
       "weight": 1.0
     },
     {
@@ -911844,7 +911844,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L86",
+      "source_location": "L96",
       "weight": 1.0
     },
     {
@@ -927480,7 +927480,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L149",
+      "source_location": "L151",
       "weight": 1.0
     },
     {
@@ -927492,7 +927492,7 @@
       "confidence_score": 0.8,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L186",
+      "source_location": "L188",
       "weight": 1.0
     },
     {
@@ -971004,7 +971004,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L70",
+      "source_location": "L80",
       "weight": 1.0
     },
     {
@@ -971016,7 +971016,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L56",
+      "source_location": "L65",
       "weight": 1.0
     },
     {
@@ -971028,7 +971028,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L61",
+      "source_location": "L71",
       "weight": 1.0
     },
     {
@@ -971040,7 +971040,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift",
-      "source_location": "L62",
+      "source_location": "L72",
       "weight": 1.0
     },
     {
@@ -975516,7 +975516,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Scene/SceneDefinition.swift",
-      "source_location": "L240",
+      "source_location": "L241",
       "weight": 1.0
     },
     {
@@ -1003032,7 +1003032,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L219",
+      "source_location": "L221",
       "weight": 1.0
     },
     {
@@ -1003044,7 +1003044,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L146",
+      "source_location": "L148",
       "weight": 1.0
     },
     {
@@ -1003080,7 +1003080,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L173",
+      "source_location": "L175",
       "weight": 1.0
     },
     {
@@ -1003116,7 +1003116,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift",
-      "source_location": "L182",
+      "source_location": "L184",
       "weight": 1.0
     },
     {
@@ -1010844,7 +1010844,7 @@
       "confidence_score": 0.95,
       "context": "PlantPreviewPlayer",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L61",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
@@ -1011468,7 +1011468,7 @@
       "confidence_score": 0.95,
       "context": "RenderSettings.firstLaunch",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L68",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -1012536,7 +1012536,7 @@
       "confidence_score": 0.95,
       "context": "SceneSettings()",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L68",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -1018572,7 +1018572,7 @@
       "confidence_score": 0.95,
       "context": "validateGPULayouts",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L65",
+      "source_location": "L67",
       "weight": 1.0
     },
     {
