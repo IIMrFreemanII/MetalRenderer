@@ -28,3 +28,9 @@ The rebuilt BLAS is 4.4–5.6 ms of it.
    `PrimitiveRefit` to an `encode4` like `PlantTracing.Refit.encode4`, then time it.
 3. Re-time the table above with hardware RT (the BLAS rebuild should shrink most).
 4. Run `FluidTests` there (GPU against CPU, bit-identical replays).
+
+## Found on the M4 Max (2026-10-29)
+- `FluidTests.testALightBoxFloats`: honey by MPM doesn't hold the light box up (CPU and GPU alike, from the commit that
+  wrote the test): it squeezes the honey out from under it and settles on the floor. MPM's pressure is too weak for
+  buoyancy (J clamped to 0.5...1.5). Marked `XCTExpectFailure` (strict): fixing MPM's pressure turns it into a failure
+  to remove.

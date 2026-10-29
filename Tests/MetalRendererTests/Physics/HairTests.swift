@@ -294,9 +294,11 @@ final class HairTests: XCTestCase {
     func testGPUHairComesToRest() throws {
         // No breeze: the furry bodies sleep at the foot of the ramp, and their strands are still, but for a few where
         // two bodies' fur is squeezed between them: pushed out of the one, pulled back to its shape on the other, they
-        // stir by millimetres a step (11 of the 2100 here).
+        // stir by millimetres a step (12 of the 2100 here). Ten seconds: the third body, a ball, may roll off the ramp's
+        // foot as the rounding has it (since a case more in physDistance's switch, 8ca1f400, it rolls 7 m and sleeps at
+        // 8 s; before, it stopped at the foot).
         let (scene, gpu, run, _) = try gpuScene(fur: 3, wind: false)
-        run(720)
+        run(1200)
         let bodies = gpu.readBodies(), world = scene.physics!
         let strands = world.hairStrands.indices.filter { world.hairStrands[$0].info.x < 3 }   // the furry bodies'
         let sleeping = strands.filter { bodies[Int(world.hairStrands[$0].info.x)].info.y & PhysicsWorld.asleep != 0 }

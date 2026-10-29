@@ -58,9 +58,13 @@ final class ShowcaseTests: XCTestCase {
                 scene.realism = realism
                 let post = PostSettings.preset(for: scene), fog = FogSettings.preset(for: scene)
                 XCTAssertEqual(post.isOn, kind.hasRealisticLook, "\(kind), realism \(realism)")
-                if kind.hasRealisticLook {
+                if kind.hasRealisticLook && kind.definition.realisticAir {
                     XCTAssertTrue(post.autoExposure, "\(kind)")
                     XCTAssertGreaterThan(fog.haze, FogSettings.preset(for: kind).haze, "\(kind)'s aerial perspective")
+                } else if kind.hasRealisticLook {
+                    // A studio's look (the plant workshop's, as Unreal's tree preview): a fixed exposure, no air.
+                    XCTAssertFalse(post.autoExposure, "\(kind)")
+                    XCTAssertEqual(fog, FogSettings.preset(for: kind), "\(kind)")
                 } else {
                     XCTAssertEqual(fog, FogSettings.preset(for: kind), "\(kind)")
                 }
