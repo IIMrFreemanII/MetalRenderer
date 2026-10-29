@@ -83,6 +83,7 @@ extension GameScenes {
             S.slider("Demo speed", \.scene.cars.demoSpeed, CarSettings.speedRange, step: 5, live: false) { String(format: "%.0f km/h", $0) }
                 .env(.scene, "carspeed").when { $0.scene.kind == .cars && $0.scene.cars.demo.crashes },
             S.check("Traction control and ABS", \.scene.cars.assists).env(.scene, "carassists").when { $0.scene.kind == .cars },
+            S.value(\.scene.cars.walls).env(.scene, "carwalls"),   // the field of breakable walls: a benchmark's load
             S.slider("Storeys", \.scene.demolition.floors, DemolitionSettings.floorRange, live: false).env(.scene, "demfloors")
                 .when { $0.scene.kind == .demolition },
             S.slider("Office seed", \.scene.demolition.seed, DemolitionSettings.seedRange, live: false).env(.scene, "demseed")
