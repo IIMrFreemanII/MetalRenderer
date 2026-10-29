@@ -189,6 +189,7 @@ extension Renderer {
                 return []
             }
         }
+        radianceCascades!.skyGaps = scene.settings.kind.definition.cascadeSkyGaps
         return radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
                                         bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
                                         normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)

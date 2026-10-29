@@ -54,6 +54,8 @@ package final class RadianceCascades {
     /// pass's light at its hits off screen in the interiors' box (a room's, where the sky's was).
     private(set) var lastAmbient: MTLBuffer?
     private var historyReady = false    // textures start undefined: no feedback until one frame has been resolved
+    /// The scene's `SceneDefinition.cascadeSkyGaps`: a ray with no next-cascade probe on its surface asks for the sky.
+    var skyGaps = false
 
     /// Forget last frame's indirect light (after a reset or teleport).
     func reset() { historyReady = false }
@@ -99,7 +101,7 @@ package final class RadianceCascades {
     private func params(_ c: Int) -> RCParams {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
-                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), c == cascades.count - 1 ? 1 : 0),
+                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0)),
                         interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 : 0,
                                         historyReady ? 1 : 0))
     }
