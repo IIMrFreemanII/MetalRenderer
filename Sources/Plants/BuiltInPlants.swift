@@ -69,15 +69,18 @@ extension Foliage {
                    autumn: [0.3, 0.14, 0.035]),
         habitat: Habitat(order: 1, base: 0.9, elevation: .init(gain: -0.7, from: 0, to: 0.7), stand: -1.6))
 
-    /// The birch grown: tall and narrow, steep thin branches, white-barked, its twigs hanging.
+    /// The birch grown: tall and narrow, steep thin branches, white-barked, its twigs hanging. Measured against Unreal's
+    /// sample quaking aspen (a 14 m one: a third as wide as tall, a trunk 0.12 m in radius, 26 / 81 / 57 branches of the
+    /// second to fourth generations, 634 twigs): every bud may sprout however shaded (its crown is open), its trunk's
+    /// internodes short enough for that many branches.
     private static let birchGrowth: Growth.Params = {
         var p = Growth.Params()
         p.cycles = 34
         p.targetHeight = 17
-        p.radiusGrowth = 0.006
+        p.radiusGrowth = 0.0034
         p.apicalDominance = 0.45
         p.gravity = 0.15
-        p.trunk.segment = 0.5
+        p.trunk.segment = 0.4
         p.trunk.apicalRamp = .points([[0, 1], [0.7, 0.95], [1, 0]])
         p.trunk.axillaryRamp = .points([[0, 0], [0.25, 0], [0.4, 0.7], [1, 1]])
         p.trunk.axillaryGrowth = 0.9
@@ -102,7 +105,7 @@ extension Foliage {
         p.wood.noise = 0.03
         p.light.shadow = 5
         p.senescence = nil
-        p.light.requirement = 0.05
+        p.light.requirement = 0
         return p
     }()
 
@@ -112,6 +115,7 @@ extension Foliage {
         t.growth.branch?.gravitropism = -0.35
         t.leaf.length = 0.075
         t.leaf.perMetre = 55
+        t.leaf.sheet = "leaves-birch"             // pointed, serrated (ambientCG LeafSet014)
         t.scale = 0.85
         t.spacing = 0.12
         t.lightAim = 0.2
@@ -206,7 +210,8 @@ extension Foliage {
         return p
     }()
 
-    /// The bush grown: six stems from the ground, branching freely into a rounded mass.
+    /// The bush grown: six stems from the ground, branching freely into a rounded mass, its stems a hazel's (Unreal's
+    /// sample hazels: 1.2 to 1.8 cm in radius at 2 to 3 m).
     private static let bushGrowth: Growth.Params = {
         var p = Growth.Params()
         p.stems = 6
@@ -215,7 +220,7 @@ extension Foliage {
         p.targetHeight = 2
         p.maxGeneration = 3
         p.seedRadius = 0.003
-        p.radiusGrowth = 0.0035
+        p.radiusGrowth = 0.0009
         p.apicalDominance = 0.2
         p.gravity = 0.05
         p.trunk.segment = 0.2
@@ -238,6 +243,7 @@ extension Foliage {
     private static let bushTwigs: Growth.Twigs = {
         var t = Growth.Twigs()
         t.leaf.length = 0.1
+        t.leaf.sheet = "leaves-bush"              // round, toothed, a hazel's (ambientCG LeafSet009)
         t.scale = 0.55
         t.spacing = 0.14
         t.fromGeneration = 1

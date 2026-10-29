@@ -498,7 +498,7 @@ package enum Growth {
         // Its health, for the shading (the palette's sparse twigs hang in the shade).
         let health = t.palette > 1 ? Int((7 * Float(variant) / Float(t.palette - 1)).rounded()) : 7
         return Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up, allLeaves: false,
-                            leafTag: health)
+                            leafTag: health, sheet: leaf.sheetName)
     }
 
     /// How a plant's twigs are grown and hung.

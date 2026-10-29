@@ -50,4 +50,29 @@ final class TwigTests: XCTestCase {
             for s in o.sides { XCTAssertLessThan(s.left.across, s.right.across) }
         }
     }
+
+    func testTheBirchAndTheBushHaveLeavesOfTheirOwn() throws {
+        // Their sheets' 3 by 2 leaves (info.json's "cells"), each traced inside its own cell: the birch's pointed ones
+        // narrower than the bush's round ones. (Without the scans, a fresh clone's, both fall back to the ovate leaves.)
+        let def = { (id: String) in Foliage.builtInSpecies.first { $0.id == id }!.twigs!.leaf }
+        XCTAssertEqual(def("birch").sheetName, "leaves-birch")
+        XCTAssertEqual(def("bush").sheetName, "leaves-bush")
+        XCTAssertEqual(def("oak").sheetName, Foliage.LeafOutline.defaultSheet)
+        guard TextureSet.find("leaves-birch") != nil, TextureSet.find("leaves-bush") != nil else { throw XCTSkip("no leaf scans") }
+        for name in ["leaves-birch", "leaves-bush"] {
+            XCTAssertEqual(Foliage.LeafOutline.grid(name), SIMD2(3, 2))
+            let sheet = Foliage.LeafOutline.sheet(name)
+            XCTAssertEqual(sheet.count, 6)
+            for (k, o) in sheet.enumerated() {
+                let cell = SIMD2(Float(k % 3), Float(k / 3))
+                for p in [o.base, o.tip] + o.sides.flatMap({ [$0.left, $0.right] }) {
+                    XCTAssertEqual(floor(p.uv.x * 3), cell.x, "\(name) leaf \(k)")
+                    XCTAssertEqual(floor(p.uv.y * 2), cell.y, "\(name) leaf \(k)")
+                }
+            }
+        }
+        let aspect = { (name: String) in Foliage.LeafOutline.sheet(name).map(\.aspect).reduce(0, +) / 6 }
+        print("leaf width over length: birch", aspect("leaves-birch"), "bush", aspect("leaves-bush"))
+        XCTAssertLessThan(aspect("leaves-birch") + 0.1, aspect("leaves-bush"))
+    }
 }

@@ -1033,12 +1033,34 @@ The plants are made at load time from a seed (`Foliage*.swift`) and their specie
   UVs round the tube in turns of its girth (square texels), with the generation in U's whole part for the shading
   (bark paler on young wood, moss on the trunk's upper side).
 * **Twigs** (the graft palette): each species grows six small twigs with the same simulation, sparse to dense, their
-  leaves the scanned leaf sheet's leaves traced into outlines (`LeafOutline.swift`: the texture fits the shape, no
-  alpha test). The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,
+  leaves a scanned leaf sheet's leaves traced into outlines (`LeafOutline.swift`: the texture fits the shape, no
+  alpha test). The oak's are ambientCG's LeafSet024 (`Assets/Textures/leaves`, beech-like, 3 by 3); the birch has
+  pointed, serrated ones of its own (`leaves-birch`, LeafSet014) and the bush round, toothed ones, a hazel's
+  (`leaves-bush`, LeafSet009), both 3 by 2 (`info.json`'s `"cells"`; `LeafRecipe.sheet` names a species' sheet). The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,
   turned toward the light; denser twigs in the light, sparser ones in the shade, which the shading also tints.
 * **Leaf distributor:** leaves along stems by phyllotaxis, in a shuffled order, so any leading part of them is a
   random sample (leaf fall drops the rest).
 * The same seed gives the same plants, built in parallel or on one thread (`FoliageTests`).
+* **Measured against Unreal's sample trees:** the vegetation editor's plugin ships grown skeletons of a beech, a
+  quaking aspen, a hazel and a Norway maple (`SampleAssets/Tree_*/Instances/*.json`: points with radii, branches with
+  their generation and twigs). The birch and the bush were tuned to their counterparts' measures, nothing of them
+  copied:
+
+  | | height | width / height | trunk radius | branches, generation 2 / 3 / 4 | twigs |
+  |---|---|---|---|---|---|
+  | Unreal's aspen | 13.9 m | 0.29 | 0.115 m | 26 / 81 / 57 | 634 |
+  | the birch, before | 14.9–15.9 m | 0.20–0.37 | 0.208 m | 17–19 / 16–37 / 0–14 | 112–228 |
+  | the birch | 13.2–13.9 m | 0.27–0.33 | 0.120 m | 16–19 / 64–69 / 41–80 | 407–561 |
+  | Unreal's hazels | 1.7–2.9 m | 0.58–0.74 | 0.012–0.018 m | | 82–215 |
+  | the bush, before | 1.9 m | 0.81–0.86 | 0.052 m | | 94–113 |
+  | the bush | 1.9 m | 0.81–0.86 | 0.016 m | | 94–113 |
+
+  The birch's buds sprout however shaded (its `light.requirement` 0: any requirement at all left its inner crown
+  bare), its trunk's internodes 0.4 m and its wood a little over half as thick; the bush's stems are a third as thick.
+  The oak was matched to the vegetation editor's own picture before (see "The plant editor"); the conifer, the dead
+  tree and the fern have no sample to measure. Unreal's sample trees each have a leaf of their own too (their twigs
+  are Quixel meshes, not installed here); so do the birch and the bush now (see "Twigs" above). A species' plants are
+  named by its recipe's hash, the built-in ones' too, so a retuned species makes new cache files (its far voxels).
 
 The whole library (7 species, 29 plants, 30 twigs) takes about 21 ms on one thread of an M4 Max
 (`METALRENDERER_FOLIAGE_TEST=1`).

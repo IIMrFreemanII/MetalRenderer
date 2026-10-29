@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793286204.684467,
-    "seen": 1793286432.507721,
-    "ast_hash": "e2cbf39adc0f19a62b829352d75ba7ee",
+    "mtime": 1793299724.420935,
+    "seen": 1793299776.106845,
+    "ast_hash": "554704c61f8aca04878fbdfdff143906",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -306,8 +306,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Output.metal": {
-    "mtime": 1793283773.1044643,
-    "seen": 1793284733.667723,
+    "mtime": 1793287520.3766577,
+    "seen": 1793296019.403957,
     "ast_hash": "9865a4eb7a9cbb58ca3baaaf7f7287b8",
     "semantic_hash": ""
   },
@@ -540,9 +540,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/fluids-handoff.md": {
-    "mtime": 1793222891.503349,
-    "seen": 1793223730.163371,
-    "ast_hash": "8d126c034d511c9e71f59e89047b4ecf",
+    "mtime": 1793296000.5916216,
+    "seen": 1793296019.410458,
+    "ast_hash": "d8b7dabf41f08c0dbbd053aaea0e48da",
     "semantic_hash": ""
   },
   ".claude/notes/building-editor-handoff.md": {
@@ -2082,8 +2082,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Post/Upscaler.swift": {
-    "mtime": 1793283773.1036098,
-    "seen": 1793284733.666573,
+    "mtime": 1793287520.3760037,
+    "seen": 1793296019.4028,
     "ast_hash": "255ee10ca780ad6071b36784a19efd30",
     "semantic_hash": ""
   },
@@ -2094,8 +2094,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderTargets.swift": {
-    "mtime": 1793283773.1038241,
-    "seen": 1793284733.666593,
+    "mtime": 1793287520.3762076,
+    "seen": 1793296019.402823,
     "ast_hash": "d2bdfe7697373a3baa8781616593ec3a",
     "semantic_hash": ""
   },
@@ -2106,8 +2106,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Encoding.swift": {
-    "mtime": 1793283773.1040428,
-    "seen": 1793284733.666615,
+    "mtime": 1793287520.376441,
+    "seen": 1793296019.402843,
     "ast_hash": "cac5acb785e385a9f0594858c32923d2",
     "semantic_hash": ""
   },
@@ -2118,8 +2118,8 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+FramePlan.swift": {
-    "mtime": 1793222892.9072385,
-    "seen": 1793223730.163169,
+    "mtime": 1793287143.3367035,
+    "seen": 1793296019.402862,
     "ast_hash": "6cf372cf0f931524fa5ca981d2266cce",
     "semantic_hash": ""
   },
@@ -2514,15 +2514,15 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Physics/FluidTests.swift": {
-    "mtime": 1793222892.9356723,
-    "seen": 1793223730.163319,
-    "ast_hash": "f97aff9fe354d15a7375d4f33866d138",
+    "mtime": 1793291370.2747416,
+    "seen": 1793296019.4084811,
+    "ast_hash": "38c870198b7c132ccda1bd078d644767",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Physics/HairTests.swift": {
-    "mtime": 1793222892.935768,
-    "seen": 1793223730.163319,
-    "ast_hash": "af0d7f930814a3147e2dbdec3e9afcf8",
+    "mtime": 1793295778.4993894,
+    "seen": 1793296019.408482,
+    "ast_hash": "b5ffdff5a5b79e1b306e5353454dbed3",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Physics/MuscleTests.swift": {
@@ -2574,9 +2574,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
-    "mtime": 1793280714.9745514,
-    "seen": 1793280818.8441658,
-    "ast_hash": "75b0f07002784c397d973d649e8d26ef",
+    "mtime": 1793299647.6759226,
+    "seen": 1793299776.103814,
+    "ast_hash": "9edb28a7a2c2dfc00d66bb945263190d",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantTracingTests.swift": {
@@ -2658,9 +2658,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Scene/ShowcaseTests.swift": {
-    "mtime": 1793222892.9393187,
-    "seen": 1793223730.163339,
-    "ast_hash": "b3b8c5a7913fc289b8d22dea48719cfe",
+    "mtime": 1793287340.798169,
+    "seen": 1793296019.409264,
+    "ast_hash": "0ab79b74bda6efaab2e8c20fdd7a8963",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Scene/StressSceneTests.swift": {
@@ -2958,9 +2958,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Settings/GameScenes+Rows.swift": {
-    "mtime": 1793222892.8927202,
-    "seen": 1793223730.163094,
-    "ast_hash": "b60dedaafbcc624dbd44ae22a1f77ae3",
+    "mtime": 1793287369.3511508,
+    "seen": 1793296019.4000268,
+    "ast_hash": "028f21c4a8c02b9d1fa307e2fdaca062",
     "semantic_hash": ""
   },
   "Sources/Game/Terrain/Benchmark+Terrain.swift": {
@@ -3636,9 +3636,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/BuiltInPlants.swift": {
-    "mtime": 1793280777.8862262,
-    "seen": 1793280818.842056,
-    "ast_hash": "9f10611ced2a91bfb2166c8a2d5c2b93",
+    "mtime": 1793299677.0919778,
+    "seen": 1793299776.101415,
+    "ast_hash": "e21774d970a5c6af54dd1b86b629d87c",
     "semantic_hash": ""
   },
   "Sources/Plants/Foliage.swift": {
@@ -6000,9 +6000,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/plant-growth-handoff.md": {
-    "mtime": 1793286212.2408266,
-    "seen": 1793286432.506782,
-    "ast_hash": "2288bba0549c406b424cda9590429d45",
+    "mtime": 1793299724.4251575,
+    "seen": 1793299776.105798,
+    "ast_hash": "e3c7509876407ed834e8a60e6b750723",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift": {

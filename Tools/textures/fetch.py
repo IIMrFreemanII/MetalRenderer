@@ -55,7 +55,7 @@ def plan_ambientcg(entry):
     z = next((c for c in zips if c["attribute"] == f"{RES.upper()}-JPG"), None)
     if z is None:
         raise SystemExit(f"{entry['id']}: no {RES.upper()}-JPG zip")
-    metres = (a.get("dimensionX") or 200) / 100.0
+    metres = entry.get("metres") or (a.get("dimensionX") or 200) / 100.0   # (some sets say no size: the manifest does)
     return {"zip": z["downloadLink"], "size": z["size"], "metres": metres, "author": "ambientCG",
             "page": f"https://ambientcg.com/view?id={entry['id']}"}
 
@@ -85,9 +85,12 @@ def fetch(entry, p):
         missing = [m for m in ("albedo", "normal") if not os.path.exists(os.path.join(tmp, m + ".jpg"))]
         if missing:
             raise SystemExit(f"{entry['id']}: missing {missing}")
+        info = {"source": entry["source"], "id": entry["id"], "metres": p["metres"],
+                "author": p["author"], "page": p["page"], "use": entry.get("use", "")}
+        if "cells" in entry:   # a leaf sheet's grid: columns, rows (LeafOutline)
+            info["cells"] = entry["cells"]
         with open(os.path.join(tmp, "info.json"), "w") as f:
-            json.dump({"source": entry["source"], "id": entry["id"], "metres": p["metres"],
-                       "author": p["author"], "page": p["page"], "use": entry.get("use", "")}, f, indent=2)
+            json.dump(info, f, indent=2)
         with open(os.path.join(tmp, "LICENSE.txt"), "w") as f:
             f.write(f"CC0 1.0 Universal (public domain). {p['page']} by {p['author']}.\n")
         if os.path.isdir(dest):

@@ -71,9 +71,10 @@ extension Scene {
                     }
                 }
             }
-            // (Edited species name what they are: no cache then holds plants of other recipes under their names.)
+            // (The species name what they are, the built-in ones too: no cache then holds plants of other recipes under
+            // their names, as the far voxels' would after a built-in species was retuned.)
             library = "plants v\(Foliage.version) seed \(seed) of \(species.map(\.rawValue)) cards \(scene.usesCards)"
-                + (catalog == .builtIn ? "" : " recipes \(catalog.fingerprint)")
+                + " recipes \(catalog.fingerprint)"
                 + (bark.isEmpty ? "" : " bark v2 \(bark.keys.map(\.rawValue).sorted())")
             palettes = [[Int]](repeating: [], count: catalog.count)
             shades = [[Int]](repeating: [], count: catalog.count)
@@ -288,10 +289,12 @@ extension Scene {
                 // A material's colour is the plant's over its texture's mean: the texture is detail on top of it.
                 let gain = 1 / FoliageTextures.mean
                 let bark = texture(look.barkTexture), blade = sheet(species)?.texture ?? texture(look.leafTexture)
-                // The realistic look: scanned bark (not the birch's white), and broad leaves from the scanned leaf sheet.
+                // The realistic look: scanned bark (not the birch's white), and broad leaves from the species' scanned
+                // leaf sheet (its leaves' outlines are traced from it: LeafRecipe.sheet).
                 let realistic = scene.settings.realism != .off
                 let barkScan = realistic && look.barkTexture == .roughBark ? (look.leafTexture == .needle ? "bark-pine" : "bark-oak") : nil
-                let sheetLeaves = realistic && look.leafTexture == .leaf && !scene.usesCards && TextureSet.find("leaves") != nil
+                let leafSheet = (catalog[species].twigs?.leaf ?? catalog[species].leaf)?.sheetName ?? Foliage.LeafOutline.defaultSheet
+                let sheetLeaves = realistic && look.leafTexture == .leaf && !scene.usesCards && TextureSet.find(leafSheet) != nil
                 shades[species.rawValue] = look.leaves.enumerated().map { i, leaf in
                     var wood = -1
                     if let barkScan, let set = TextureSet.find(barkScan) {
@@ -299,9 +302,10 @@ extension Scene {
                     }
                     if wood < 0 { wood = scene.addMaterial(albedo: look.bark * gain, texture: bark) }
                     var leafGain = SIMD3<Float>(repeating: gain), leaves = -1
-                    if sheetLeaves, let set = TextureSet.find("leaves") {
+                    if sheetLeaves, let set = TextureSet.find(leafSheet) {
                         leafGain = 1 / simd_max(set.meanColor(), SIMD3(repeating: 0.01))
-                        leaves = scene.addLeafSheetMaterial(albedo: leaf * leafGain, translucency: look.translucency) ?? -1
+                        leaves = scene.addLeafSheetMaterial(leafSheet, albedo: leaf * leafGain, translucency: look.translucency,
+                                                            cells: set.cells.x) ?? -1
                     }
                     if leaves < 0 {
                         leafGain = SIMD3(repeating: gain)
@@ -309,7 +313,9 @@ extension Scene {
                         // A grown species' leaves are two-sided, flutter and vary in the generated look too, and have a
                         // sheen (no lower than the realistic leaves' roughness: the reflections stay cheap).
                         let grown = catalog[species].growth != nil
-                        if (realistic || grown) && !scene.usesCards { scene.markRealisticLeaf(leaves) }
+                        if (realistic || grown) && !scene.usesCards {
+                            scene.markRealisticLeaf(leaves, grid: Foliage.LeafOutline.grid(leafSheet))
+                        }
                         if grown && !realistic {
                             scene.materials[leaves].params.x = 0.45
                             scene.materials[leaves].emission.w = 0.62

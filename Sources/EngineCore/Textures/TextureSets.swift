@@ -15,6 +15,8 @@ package struct TextureSet {
     package let folder: URL
     /// The side of one repeat, metres (what the scan covers).
     package let metres: Float
+    /// A leaf sheet's grid of leaves, columns and rows (`info.json`'s "cells"; 3 by 3 if it doesn't say).
+    package var cells = SIMD2(3, 3)
 
     /// Scans are used (METALRENDERER_SCANS=0: never, as if none were there).
     package static let enabled = ProcessInfo.processInfo.environment["METALRENDERER_SCANS"] != "0"
@@ -34,12 +36,13 @@ package struct TextureSet {
         let fm = FileManager.default
         if fm.fileExists(atPath: folder.appendingPathComponent("albedo.jpg").path),
            fm.fileExists(atPath: folder.appendingPathComponent("normal.jpg").path) {
-            var metres: Float = 2
+            var metres: Float = 2, cells = SIMD2(3, 3)
             if let data = try? Data(contentsOf: folder.appendingPathComponent("info.json")),
-               let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let m = info["metres"] as? Double {
-                metres = Float(m)
+               let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                if let m = info["metres"] as? Double { metres = Float(m) }
+                if let c = info["cells"] as? [Int], c.count == 2, c[0] > 0, c[1] > 0 { cells = SIMD2(c[0], c[1]) }
             }
-            set = TextureSet(name: name, folder: folder, metres: metres)
+            set = TextureSet(name: name, folder: folder, metres: metres, cells: cells)
         }
         found[name] = set
         return set

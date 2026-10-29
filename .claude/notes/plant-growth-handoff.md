@@ -83,3 +83,22 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
   (fixed exposure, a mild grade). Exposure at EV 0 matched the meadow's auto exposure, so no per-scene exposure field.
 - A first launch (nothing saved) opens the workshop: `RenderSettings.firstLaunch`; `SceneSettings()` stays Cornell.
 - Not done: the overlay labels Unreal draws as text are strokes in the scene here; the solid look's sky is its own.
+
+## Measured against Unreal's sample trees (2026-10-29)
+- `ProceduralVegetationEditor/Content/SampleAssets/Tree_*/Instances/*.json` (UE 5.8): grown skeletons of a beech, a
+  quaking aspen, a hazel and a Norway maple (points: `positions`, `pscale` the radius; primitives: `branchGeneration`,
+  `instancer_name` its twigs). Measured, not used: the README's table. Their twig meshes (Aspen_Twig_*, CH_Branch_*,
+  Maple_*, Leaves_*) are Quixel assets that aren't installed.
+- The birch against the aspen: `light.requirement` 0 (0.01 already left the inner crown bare: the measure is a
+  switch, not a slope), trunk segment 0.4, `radiusGrowth` 0.0034. The bush's stems against the hazels:
+  `radiusGrowth` 0.0009. Forest shot (dev build, one run) 7.08 → 7.31 ms.
+- The leaves: the oak, the birch and the bush shared one sheet, ambientCG's LeafSet024 (ovate, beech-like). Unreal's
+  have a leaf of their own each (the starter tree's narrow lanceolate leaves, darker olive: sRGB about 76/86/46 against
+  the sheet's 115/149/67; the aspen's, hazel's and maple's are in the missing Quixel twigs). Now the birch has
+  `leaves-birch` (LeafSet014, pointed and serrated) and the bush `leaves-bush` (LeafSet009, round and toothed), both
+  3 by 2 (`Tools/textures/manifest.json` "cells", into info.json; `TextureSet.cells`). `LeafRecipe.sheet` names a
+  species' sheet (nil: "leaves"); `LeafOutline.sheet(_:)` traces each once; the forest gives each species its sheet's
+  material; the generated look reads the grid from the leaf material's extra (`surface.z` = 16 × columns + rows,
+  `markRealisticLeaf`). The library's cache name carries the catalog's fingerprint for the built-in species too (it
+  didn't: a retuned built-in species kept its old far voxels on disk). LeafSet009's albedo has autumn blotches and
+  holes (the holes show as leaf: outlines aren't cut out); its bushes read a little darker in the forest.

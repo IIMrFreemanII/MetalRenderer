@@ -37,11 +37,12 @@ extension Scene {
         return index
     }
 
-    /// A leaf sheet's material (TextureSet "leaves": cells × cells leaves): each generated leaf shows one of them
-    /// (Surface.metal, its extras' parallax minus the cells), two-sided where the camera sees it (LEAF_TRANSMIT).
-    /// `albedo`: its colour over the sheet's (the season changes it: LeafMaterial.gain), `translucency` as a leaf's.
-    package func addLeafSheetMaterial(albedo: SIMD3<Float>, translucency: Float, cells: Int = 3) -> Int? {
-        guard let index = addScanMaterial("leaves", tint: albedo, roughness: 1, ao: 0, specular: 0.6, normalScale: 0.7, minRoughness: 0.62)
+    /// A leaf sheet's material (TextureSet `name`, "leaves" the shared one: its leaves `cells` a row): each generated
+    /// leaf shows one of them (Surface.metal, its extras' parallax minus the cells: a kite leaf's pick; an outline
+    /// leaf's UVs are its own place on the sheet), two-sided where the camera sees it (LEAF_TRANSMIT). `albedo`: its
+    /// colour over the sheet's (the season changes it: LeafMaterial.gain), `translucency` as a leaf's.
+    package func addLeafSheetMaterial(_ name: String = "leaves", albedo: SIMD3<Float>, translucency: Float, cells: Int = 3) -> Int? {
+        guard let index = addScanMaterial(name, tint: albedo, roughness: 1, ao: 0, specular: 0.6, normalScale: 0.7, minRoughness: 0.62)
         else { return nil }
         var m = materials[index]
         m.params.w = translucency
@@ -52,10 +53,13 @@ extension Scene {
     }
 
     /// Leaves of the realistic look that aren't a sheet's (grass, needles, fronds): each its own shade, two-sided where
-    /// the camera sees it, fluttering (Surface.metal leafLook).
-    package func markRealisticLeaf(_ index: Int) {
+    /// the camera sees it, fluttering (Surface.metal leafLook). `grid`: the sheet its outline leaves were traced from,
+    /// columns and rows (each leaf's own cell then shows the generated leaf whole), carried in `surface.z` as
+    /// 16 × columns + rows (no opacity map reads it on these).
+    package func markRealisticLeaf(_ index: Int, grid: SIMD2<Int> = SIMD2(3, 3)) {
         var extra = materialExtras[index] ?? GPUMaterialExtra()
         extra.surface.x = -0.25
+        extra.surface.z = Float(16 * grid.x + grid.y)
         materialExtras[index] = extra
         hasLeafSheets = true
     }

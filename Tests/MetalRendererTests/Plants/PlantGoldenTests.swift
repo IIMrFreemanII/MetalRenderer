@@ -79,33 +79,45 @@ final class PlantGoldenTests: XCTestCase {
     /// (Oct 2026: twig leaves carry their twig's health in U; grown leaves two-sided with a sheen in either look.)
     /// (Oct 2026: the oak as Unreal's vegetation editor shows the Mega Plants tree: open, half-flattened sprays, olive
     /// leaves. Every hash that holds an oak, the leaf cards' too, whose cards follow the twigs.)
+    /// (Oct 2026: the birch and the bush measured against Unreal's sample aspen and hazels: the birch's crown open to
+    /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
+    /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
+    /// either; the scenes' all, by the names.)
     func testTheLibraryIsAsItWas() {
-        XCTAssertEqual(library(Foliage.library(seed: 1)), "c525cd849567")
-        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "c116382e6043")
+        XCTAssertEqual(library(Foliage.library(seed: 1)), "d80344403732")
+        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "4e70b286ba9e")
     }
 
     /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
     /// pictures the same as main's. Then its stream and pond: no plant in the water.)
     /// (Oct 2026: Foliage.version 2, the grown species: the same plants, the meshes' and voxels' names "plants v2".
     /// So the valley's and the world's too.)
+    /// (Oct 2026: the birch and the bush measured against Unreal's sample aspen and hazels: the birch's crown open to
+    /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
+    /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
+    /// either; the scenes' all, by the names.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "afd0e271cd66")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "9a3477953490")
+        XCTAssertEqual(scene(Scene(settings)), "975b7bee1496")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "155809edcfce")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "1a5469d3802a")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "33ef1dbc0ff2")
     }
 
     /// (Oct 2026: a lake and its stream in place of the pond's slab, no tree in them.)
+    /// (Oct 2026: the birch and the bush measured against Unreal's sample aspen and hazels: the birch's crown open to
+    /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
+    /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
+    /// either; the scenes' all, by the names.)
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
         settings.realism = .off
-        XCTAssertEqual(scene(Scene(settings)), "f08c0aaa6d59")
+        XCTAssertEqual(scene(Scene(settings)), "fd1b2899d878")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {

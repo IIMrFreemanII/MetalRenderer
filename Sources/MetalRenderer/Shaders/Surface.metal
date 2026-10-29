@@ -1081,8 +1081,11 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     bool onSheet = leafLook && ex.surface.x <= -1.0f;
     bool sheetLeaf = onSheet && !outlineLeaf;
     if (outlineLeaf && !onSheet) {
-        // On a material without the sheet (the generated look's leaf): each its own cell's UVs (the sheet is 3 by 3).
-        t0 = fract(t0 * 3.0f); t1 = fract(t1 * 3.0f); t2 = fract(t2 * 3.0f);
+        // On a material without the sheet (the generated look's leaf): each its own cell's UVs (the sheet its outline
+        // was traced from is 3 by 3, or as the extra's z says: 16 × columns + rows, Scene.markRealisticLeaf).
+        uint g = uint(max(ex.surface.z, 0.0f));
+        float2 grid = g >= 16u ? float2(float(g >> 4), float(max(g & 15u, 1u))) : float2(3.0f);
+        t0 = fract(t0 * grid); t1 = fract(t1 * grid); t2 = fract(t2 * grid);
     }
     if (sheetLeaf) {
         float cells = -ex.surface.x;
