@@ -420,6 +420,34 @@ inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
     atomic_fetch_add_explicit(&histogram[min(uint(t * float(EXPOSURE_BINS)), EXPOSURE_BINS - 1u)], 1u, memory_order_relaxed);
 }
 
+// MetalFX's diffuse guide is the albedo times this: 1 in the sun, SUN_GUIDE_SHADE where its raw shadow falls. MetalFX
+// keeps what its guides show and smooths what they don't, and a shadow is in none of them: a tree's dappled shade came
+// out one soft blob. The sun's visibility is clean (a ray to a point on a disc half a degree across: 0 or 1, 0 to 1 only
+// in a penumbra a few centimetres wide), so it brings the guide no noise. Other lights' would (wide penumbrae, the
+// picks of many lights), and stay out, as does any visibility traceKernel didn't write (many lights, ReSTIR).
+constant float SUN_GUIDE_SHADE = 0.5f;
+
+inline float sunShadowGuide(constant Uniforms& u, device const Light* lights, texture2d<float, access::read> visibility,
+                            texture2d<float, access::read> surfacePos, texture2d<float, access::read> nd,
+                            texture2d<float, access::read> geoNormal, texture2d<float, access::read> albedoTex, uint2 tid) {
+    bool traced = !((passOn(tracePassFlags(u), TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_RESTIR)) && !flagOn(u.flags, FLAG_ALL_LIGHTS));
+    float4 ndc = nd.read(tid);
+    if (!traced || ndc.w <= 0.0f) return 1.0f;
+    float3 sp = surfacePos.read(tid).xyz;
+    float4 g = geoNormal.read(tid);
+    float3 n = ndc.xyz, ng = g.xyz, p = sp + ng * RAY_EPSILON;
+    HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp));
+    float4 vis = visibility.read(tid);
+    float sun = 0.0f, lit = 0.0f;
+    for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+        if (lightType(lights[l]) != LIGHT_SUN) continue;
+        float w = luminance(litUnshadowed(lights[l], p, n, ng, hp));
+        sun += w;
+        lit += w * dot(vis, groupMask(lightGroup(lights[l])));
+    }
+    return sun > 0.0f ? mix(SUN_GUIDE_SHADE, 1.0f, saturate(lit / sun)) : 1.0f;
+}
+
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
                             texture2d<float, access::read>  denoised   [[texture(0)]],
                             texture2d<float, access::read>  direct     [[texture(1)]],
@@ -443,6 +471,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::read>  particles  [[texture(20)]],  // with FLAG_PARTICLES: their layer
                             texture2d<float, access::read>  particleDepth [[texture(21)]], // ...and its surfaces' depths
+                            texture2d<float, access::read>  visibilityTex [[texture(22)]], // with FLAG_HDR_OUTPUT: the lights' raw visibility
+                            texture2d<float, access::write> outDiffuseGuide [[texture(23)]], // ...and MetalFX's diffuse guide
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
@@ -592,6 +622,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
         outRoughness.write(float4(guideRoughness), tid);
+        outDiffuseGuide.write(float4(albedo * sunShadowGuide(u, lights, visibilityTex, surfacePos, nd, geoNormal, albedoTex, tid), 1.0f), tid);
         return;
     }
     if (flagOn(u.flags, FLAG_POST)) {   // the lens effects follow (Post.metal): they want the light as it is

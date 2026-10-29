@@ -396,7 +396,7 @@ extension Renderer {
                               t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
                               plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
                               plan.particles?.color ?? dummy2D,
-                              plan.particles?.depth ?? dummy2D])
+                              plan.particles?.depth ?? dummy2D, t.visibility, t.diffuseGuide])
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)

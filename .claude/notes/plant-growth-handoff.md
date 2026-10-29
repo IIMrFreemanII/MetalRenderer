@@ -66,9 +66,10 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
   4, a 40 m slab (`Scene.previewFloorReach`). The oak was then matched to the same capture (BuiltInPlants
   `oakTwigs`, `oakDef.look`): muted olive leaves (the path tracer's mid-tone leaves 78/82/54 sRGB against Unreal's
   80/83/66) and open, half-flattened sprays (twigs every 0.34 m, 22 leaves a metre), whose shadow has sunflecks in
-  the path tracer. Still different: the realtime path (640×400, MetalFX denoiser ×3) blurs that shadow back into a
-  blob (not the shadow denoiser: off, it is the same), and its leaves come out a little darker than the path
-  tracer's. The stage has a sun 40°
+  the path tracer. The realtime path (640×400, MetalFX denoiser ×3) blurred that shadow back into a blob (MetalFX:
+  with our denoisers off it was the same; with MetalFX off, sharp), until MetalFX's diffuse guide got the sun's raw
+  shadow in it (Output.metal `sunShadowGuide`, `RenderTargets.diffuseGuide`). Still different: the realtime leaves
+  come out a little darker than the path tracer's. The stage has a sun 40°
   up on a rig its behaviour (`PlantPreviewPlayer`) turns live from `RenderSettings.previewLightYaw` / `previewSpin`
   (the spin's angle in `SceneSession.previewSpin`, kept across the editor's remakes), the scale figure (the characters'
   base body, T pose) and the size ruler (`maskLights` bars and a stroke font).
