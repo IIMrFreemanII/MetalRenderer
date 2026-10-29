@@ -179,9 +179,13 @@ inline float3 catmullRomTangent(float3 c0, float3 c1, float3 c2, float3 c3, floa
 // Light through a leaf comes out yellower than what it reflects.
 constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
 // The realistic look's crown normals (traceSurface): how far a tree's leaf normal bends toward its crown's outside, and
-// the crown's middle, on the trunk at this share of the leaf's height.
+// the crown's middle, on the trunk at this share of the leaf's height. All of it where a pixel is this wide or wider
+// (metres: a leaf a few pixels long), none where a pixel is LEAF_CROWN_NEAR wide (a leaf tens of pixels long, which
+// shades as its own curved blade).
 constant float LEAF_CROWN_NORMAL = 0.6f;
 constant float LEAF_CROWN_CENTRE = 0.75f;
+constant float LEAF_CROWN_FAR = 0.015f;
+constant float LEAF_CROWN_NEAR = 0.003f;
 // The mean of a plant's detail texture (FoliageTextures.mean): its material's colour is the plant's over this, and
 // what shades a plant without its texture (its far voxels) multiplies by it instead.
 constant float GENERATED_TEXTURE_MEAN = 0.7f;
@@ -1056,7 +1060,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     MaterialExtra ex = { uint4(NO_TEXTURE), float4(0.0f, 1.0f, 0.5f, 0.0f) };
     if (MATERIAL_EXTRAS) ex = s.extras[materialIndex];
     uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (id * 0x85EBCA6Bu);
-    // An outline leaf (Foliage.LeafOutline: a leaf of the scanned sheet traced, 8 triangles): its number is the whole
+    // An outline leaf (Foliage.LeafOutline: a leaf of the scanned sheet traced, 16 triangles): its number is the whole
     // part of its V (the same at its three vertices), and its UVs are already where it is on the sheet. (Wood's V runs
     // past 1 too, along it: only a leaf's triangles count.)
     float leafNumber = floor(t0.y);
@@ -1100,11 +1104,14 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         // A tree's leaf (an assembly's): its normal bent toward the crown's outside, as Unreal's and SpeedTree's foliage
         // do, so a crown shades as one rounded mass, not as leaves each turned its own way. In plant space (y up from
         // its foot) the crown's middle is on the trunk below the leaf: a leaf at the side faces out, one on top faces
-        // up. Each leaf keeps its side (it is two-sided: orientNormals turns it to the ray).
+        // up. Each leaf keeps its side (it is two-sided: orientNormals turns it to the ray). Up close, less of it: a leaf
+        // there is big enough to show its own shape. (GI's rays are wide: theirs is always the crown's.)
         float3 outward = (inst.normalMatrix * float4(objPos - float3(0.0f, LEAF_CROWN_CENTRE * objPos.y, 0.0f), 0.0f)).xyz;
-        if (dot(outward, outward) > 1e-8f) {
+        float pixel = res.distance * length(r.direction) * spread;
+        float crown = LEAF_CROWN_NORMAL * smoothstep(LEAF_CROWN_NEAR, LEAF_CROWN_FAR, pixel);
+        if (dot(outward, outward) > 1e-8f && crown > 0.0f) {
             outward = normalize(outward);
-            sf.normal = normalize(mix(sf.normal, dot(sf.normal, outward) >= 0.0f ? outward : -outward, LEAF_CROWN_NORMAL));
+            sf.normal = normalize(mix(sf.normal, dot(sf.normal, outward) >= 0.0f ? outward : -outward, crown));
         }
     }
     if (FOLIAGE && leafLook && windOn(accel.wind.z > 0.0f)) {

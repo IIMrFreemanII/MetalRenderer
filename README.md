@@ -1036,7 +1036,11 @@ The plants are made at load time from a seed (`Foliage*.swift`) and their specie
   leaves a scanned leaf sheet's leaves traced into outlines (`LeafOutline.swift`: the texture fits the shape, no
   alpha test). The oak's are ambientCG's LeafSet024 (`Assets/Textures/leaves`, beech-like, 3 by 3); the birch has
   pointed, serrated ones of its own (`leaves-birch`, LeafSet014) and the bush round, toothed ones, a hazel's
-  (`leaves-bush`, LeafSet009), both 3 by 2 (`info.json`'s `"cells"`; `LeafRecipe.sheet` names a species' sheet). The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,
+  (`leaves-bush`, LeafSet009), both 3 by 2 (`info.json`'s `"cells"`; `LeafRecipe.sheet` names a species' sheet).
+  Each leaf is a domed blade, 16 triangles with a midrib: its edges and its tip droop by the recipe's `fold`, with the
+  curved surface's normals, so up close it shades round rather than as flat facets (convex toward the sky: a cup would
+  shadow itself in hard triangles). The crown's normals that a tree's leaves shade with far off fade out under a
+  pixel of 3 mm (Surface.metal's `LEAF_CROWN_NEAR`), where a leaf is tens of pixels long and shows its own shape. The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,
   turned toward the light; denser twigs in the light, sparser ones in the shade, which the shading also tints.
 * **Leaf distributor:** leaves along stems by phyllotaxis, in a shuffled order, so any leading part of them is a
   random sample (leaf fall drops the rest).

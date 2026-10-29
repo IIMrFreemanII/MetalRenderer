@@ -469,7 +469,8 @@ package enum SettingsTable {
             S.check("Size ruler", \.scene.plants.ruler).env(.scene, "ruler").when(workshop),
             S.slider("Light rotation", \.previewLightYaw, -180...180, step: 5, fmt("%.0f°")).env(.scene, "lightyaw").when(workshop),
             S.check("Turn the lights", \.previewSpin).env(.scene, "spin").when(workshop),
-            S.popup("Realistic look", \.scene.realism, titled(\.title)).env(.scene, "realism"),
+            // (No switch: the app is always realistic. Benchmarks and tests still pick off or high.)
+            S.value(\.scene.realism).env(.scene, "realism"),
             S.check("Leaves as cards", \.scene.leafCards).env(.scene, "cards").when { $0.scene.kind.hasPlants }.enabled(assemblies),
             S.check("Plants as plain meshes", \.scene.bakedPlants).env(.scene, "baked").when { $0.scene.kind.hasPlants }.advanced(),
             S.check("Far plants as voxels", \.scene.voxelBoxes).env(.scene, "voxels").when { $0.scene.kind.hasPlants }.advanced(),

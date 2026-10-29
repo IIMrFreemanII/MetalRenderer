@@ -18,7 +18,7 @@ extension Foliage {
 
         package static let rows = 4
         package static let cells = 3
-        package static let size = MeshSize(vertices: 2 + 2 * rows, indices: 3 * 2 * rows)
+        package static let size = MeshSize(vertices: 2 + 3 * rows, indices: 3 * 4 * rows)   // its rows' midribs too
 
         /// The sheet the species that don't name theirs share (LeafRecipe.sheet).
         package static let defaultSheet = "leaves"
@@ -97,9 +97,11 @@ extension Foliage {
         }
     }
 
-    /// An outline leaf at `a`: one of `sheet`'s leaves (picked by `index`, mirrored or not), its sides folded up
-    /// over the midrib like a kite's. Its V carries its number (1...1023, the whole part) so that the shading tells
-    /// one leaf from the next however many triangles it has (the texture wraps: the number doesn't move it).
+    /// An outline leaf at `a`: one of `sheet`'s leaves (picked by `index`, mirrored or not), domed: its edges
+    /// `fold` of its width below the midrib and its tip `fold` of its length below where it points, with the normals
+    /// of that curved blade at every vertex, so that up close it shades round, not as flat facets. (Convex toward its
+    /// normal, as a broadleaf's top is: a cup, its edges up, would cast its own hard triangular shadows.) Its V carries its number (1...1023, the whole part) so that the shading tells one leaf from the next
+    /// however many triangles it has (the texture wraps: the number doesn't move it).
     /// `tag`: its twig's health, 0...7, carried as the whole part of its U.
     static func writeOutline(_ a: LeafAnchor, fold: Float, index: Int, tag: Int = 0, sheet: [LeafOutline], into w: inout MeshWriter) {
         var h = UInt32(truncatingIfNeeded: index) &* 0x9E3779B1
@@ -109,23 +111,35 @@ extension Foliage {
         let number = Float(index % 1023 + 1)
         let d = a.direction, n = a.normal, side = cross(d, n) * mirror
         let width = a.length * outline.aspect
-        let tilt = side * (2 * fold)
         func vertex(_ q: LeafOutline.Point) -> UInt32 {
-            let lift = n * (fold * width * abs(2 * q.across))
-            let normal = q.across == 0 ? n : normalize(n - tilt * (q.across > 0 ? 1 : -1))
+            // Height above the flat leaf: -fold·width·(2·across)² - fold·length·along², and its slopes for the normal.
+            let x = 2 * q.across
+            let lift = n * -(fold * width * x * x + fold * a.length * q.along * q.along)
+            let normal = normalize(n + side * (4 * fold * x) + d * (2 * fold * q.along))
             return w.vertex(a.position + d * (q.along * a.length) + side * (q.across * width) + lift, normal,
                             SIMD2(q.uv.x + Float(min(max(tag, 0), 7)), q.uv.y + number))
         }
-        let base = vertex(outline.base)
-        var rows: [(UInt32, UInt32)] = []
-        for s in outline.sides { rows.append((vertex(s.left), vertex(s.right))) }
-        let tip = vertex(outline.tip)
-        // (Wound as the kite is: base, its right, then on toward the tip.)
-        w.triangle(base, rows[0].1, rows[0].0)
-        for k in 0..<(rows.count - 1) {
-            w.triangle(rows[k].0, rows[k].1, rows[k + 1].1)
-            w.triangle(rows[k].0, rows[k + 1].1, rows[k + 1].0)
+        func midrib(_ s: (left: LeafOutline.Point, right: LeafOutline.Point)) -> LeafOutline.Point {
+            // (Where across is 0 on the row: the sheet's UVs run straight across it.)
+            let f = s.right.across > s.left.across ? -s.left.across / (s.right.across - s.left.across) : 0.5
+            return LeafOutline.Point(across: 0, along: s.left.along, uv: s.left.uv + (s.right.uv - s.left.uv) * f)
         }
-        w.triangle(rows[rows.count - 1].0, rows[rows.count - 1].1, tip)
+        let base = vertex(outline.base)
+        var rows: [(left: UInt32, mid: UInt32, right: UInt32)] = []
+        for s in outline.sides { rows.append((vertex(s.left), vertex(midrib(s)), vertex(s.right))) }
+        let tip = vertex(outline.tip)
+        // (Wound as the kite is: base, its right, then on toward the tip; each half its own strip.)
+        w.triangle(base, rows[0].right, rows[0].mid)
+        w.triangle(base, rows[0].mid, rows[0].left)
+        for k in 0..<(rows.count - 1) {
+            let r = rows[k], s = rows[k + 1]
+            w.triangle(r.left, r.mid, s.mid)
+            w.triangle(r.left, s.mid, s.left)
+            w.triangle(r.mid, r.right, s.right)
+            w.triangle(r.mid, s.right, s.mid)
+        }
+        let last = rows[rows.count - 1]
+        w.triangle(last.left, last.mid, tip)
+        w.triangle(last.mid, last.right, tip)
     }
 }

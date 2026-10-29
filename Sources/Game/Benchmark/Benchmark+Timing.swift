@@ -627,6 +627,8 @@ extension Benchmark {
         return [
             shown("oak"),
             shown("oak to scale") { $0.figure = true; $0.ruler = true },
+            // (Leaves at arm's length, in the crown's lower edge: their shapes and shading.)
+            viewed(shown("oak leaves"), look(from: [3.4, 7.8, 3.6], at: [1.2, 8.4, 1.0])),
             shown("birch lineup") { $0.species = "birch"; $0.layout = .lineup },
             shown("conifer skeleton") { $0.species = "conifer"; $0.view = .skeleton },
             shown("bush") { $0.species = "bush" },

@@ -16,7 +16,8 @@ offscreen on the M1 Max. The user asked for terrain and plants "like in UE".
 `SceneSettings.realism`:
 - values: `Realism` off, on (the default) or high;
 - environment: `METALRENDERER_SCENE=realism=off|on|high`;
-- panel: "Realistic look".
+- no panel switch (removed 2026-10-29): the app is always realistic, and a saved copy's value is ignored
+  (`SettingsStore.decode`). Off and high stay for benchmarks and tests.
 
 The settings export compares against the realistic presets (`SettingsEnv.export`).
 

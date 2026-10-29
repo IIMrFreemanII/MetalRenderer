@@ -149,16 +149,9 @@ package enum ToneMap: Int, CaseIterable, Codable {
 /// How real the outdoor scenes look (SceneSettings.realism): off, the generated textures as they always were; on,
 /// photo-scanned ground, rocks and plants (TextureSet) height-blended into each other, with the lighting's realistic
 /// looks; high, also the costly parts (stochastic tiling, the ground displaced near the camera, denser grass).
+/// The app is always on (it has no switch for it); off and high are for benchmarks and tests.
 package enum Realism: Int, CaseIterable, Codable {
     case off, on, high
-
-    var title: String {
-        switch self {
-        case .off: return "Off"
-        case .on: return "On"
-        case .high: return "High"
-        }
-    }
 }
 
 /// How indirect light (global illumination) is computed.
