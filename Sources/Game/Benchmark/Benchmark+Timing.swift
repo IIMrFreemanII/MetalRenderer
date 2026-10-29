@@ -626,6 +626,7 @@ extension Benchmark {
         let catalog = PlantCatalog.register(willow)
         return [
             shown("oak"),
+            shown("oak to scale") { $0.figure = true; $0.ruler = true },
             shown("birch lineup") { $0.species = "birch"; $0.layout = .lineup },
             shown("conifer skeleton") { $0.species = "conifer"; $0.view = .skeleton },
             shown("bush") { $0.species = "bush" },

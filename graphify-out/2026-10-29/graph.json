@@ -152914,7 +152914,7 @@
       "node_kind": "heading",
       "norm_label": "not done",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L50"
+      "source_location": "L49"
     },
     {
       "id": "claude_notes_plant_growth_handoff_where_things_are",
@@ -742679,7 +742679,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L50",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -1006215,7 +1006215,7 @@
       "confidence_score": 0.95,
       "context": "Foliage.leaves",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L52",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -1006587,7 +1006587,7 @@
       "confidence_score": 0.95,
       "context": "Growth.Plant.cycle()",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L51",
+      "source_location": "L50",
       "weight": 1.0
     },
     {
@@ -1006599,7 +1006599,7 @@
       "confidence_score": 0.95,
       "context": "Growth.tube",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L52",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -1006911,7 +1006911,7 @@
       "confidence_score": 0.95,
       "context": "LightField.measure",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L52",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -1008435,7 +1008435,7 @@
       "confidence_score": 0.95,
       "context": "Plant.sag",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L52",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -1008447,7 +1008447,7 @@
       "confidence_score": 0.95,
       "context": "Plant.twigs",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L52",
+      "source_location": "L51",
       "weight": 1.0
     },
     {

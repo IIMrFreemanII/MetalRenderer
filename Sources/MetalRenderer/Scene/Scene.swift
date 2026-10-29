@@ -457,6 +457,8 @@ package final class Scene {
     /// The plant workshop's: what its camera orbits and frames, and what its plant costs (Scene+Plants.swift).
     package var focus: AABB?
     package var plantStats: PlantStats?
+    /// Its lights' turn about the plant, which its behaviour sets each frame and its sun's pose reads.
+    package var previewRig: PlantPreviewRig?
     /// The building workshop's: what its building is, and its plan (the building editor's Floor Plan window).
     package var buildingStats: BuildingStats?
     package var buildingPlan: BuildingPlan?
@@ -596,6 +598,9 @@ package final class Scene {
     package var lightTrianglesDirty: Range<Int>?
 
     package var skyColor = SIMD3<Float>(0.35, 0.45, 0.65) * 0.8
+    /// What a camera ray that hits nothing sees in place of the sky (the plant workshop's grey, as Unreal's preview
+    /// with its environment hidden): the sky still lights everything, and reflections still see it. nil = the sky.
+    package var backdrop: SIMD3<Float>?
     package var skyAnimation: ((Float) -> SIMD3<Float>)?
     /// Local fog volumes (used while the fog and its volumes are on), at most GPUFogParams.maxVolumes.
     package var fogVolumes: [FogVolume] = []

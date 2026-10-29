@@ -253,6 +253,7 @@ extension Renderer {
         (u.camPos, u.camRight, u.camUp, u.camForward) = pack(camera)
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
+        if let backdrop = scene.backdrop { u.backdrop = SIMD4(backdrop, 1) }
         u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
         let lens = settings.post
         if lens.grades {

@@ -12,6 +12,10 @@ package struct PlantSceneSettings: Equatable, Codable {
     package var seed = 1
     package var layout = Layout.single
     package var view = View.plant
+    /// The preview's scale references, off as in Unreal's: a person standing beside the plant, and its width, depth and
+    /// height drawn and labelled in metres.
+    package var figure = false
+    package var ruler = false
     /// Registry keys (PlantCatalog.register), session state: the editor's variations of the species to show beside it
     /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
     package var mutants = ""
@@ -35,13 +39,15 @@ package struct PlantSceneSettings: Equatable, Codable {
     package static let variantRange = 0...7
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(species: String = "oak", age: Foliage.Age = Foliage.Age.mature, variant: Int = 0, seed: Int = 1, layout: Layout = Layout.single, view: View = View.plant, mutants: String = "", compare: String = "") {
+    package init(species: String = "oak", age: Foliage.Age = Foliage.Age.mature, variant: Int = 0, seed: Int = 1, layout: Layout = Layout.single, view: View = View.plant, figure: Bool = false, ruler: Bool = false, mutants: String = "", compare: String = "") {
         self.species = species
         self.age = age
         self.variant = variant
         self.seed = seed
         self.layout = layout
         self.view = view
+        self.figure = figure
+        self.ruler = ruler
         self.mutants = mutants
         self.compare = compare
     }

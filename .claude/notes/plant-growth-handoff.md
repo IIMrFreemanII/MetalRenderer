@@ -54,3 +54,15 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
 - Side-by-side with the Unreal capture (`/tmp/claude-501/megaplants_leaves.png`) in a `megaplants` benchmark setting.
 - The plant editor's panel itself was not opened in the app: its model is tested, its views only built.
 - Distant trunks look slightly purple in the default look's forest (seen before the shading milestone).
+
+## The preview stage (Unreal's tree preview)
+- The workshop's meadow (hills, pond, meadow grass) is gone: `Scene+PlantPreview.swift` makes a grey floor, a sun 40°
+  up on a rig its behaviour (`PlantPreviewPlayer`) turns live from `RenderSettings.previewLightYaw` / `previewSpin`
+  (the spin's angle in `SceneSession.previewSpin`, kept across the editor's remakes), the scale figure (the characters'
+  base body, T pose) and the size ruler (`maskLights` bars and a stroke font).
+- `Scene.backdrop` → `Uniforms.backdrop`: camera rays that miss see grey in the G-buffer pass and the path tracer
+  (`cameraRay`); every lighting miss keeps the sky. `Uniforms` is 320 bytes now (`validateGPULayouts`).
+- The plants definition: `previewSky` (atmosphere, no clouds), `realisticAir = false` (no aerial fog), its own `post`
+  (fixed exposure, a mild grade). Exposure at EV 0 matched the meadow's auto exposure, so no per-scene exposure field.
+- A first launch (nothing saved) opens the workshop: `RenderSettings.firstLaunch`; `SceneSettings()` stays Cornell.
+- Not done: the overlay labels Unreal draws as text are strokes in the scene here; the solid look's sky is its own.

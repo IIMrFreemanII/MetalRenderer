@@ -45,10 +45,7 @@ extension Benchmark {
         }
         // The terrain workshop as it starts: hills with a sea round them, from its own camera.
         out.append(Config("workshop sea", gi: .pathTraced, scene: SceneSettings(kind: .terrain)).still(at: 2))
-        // The plant and building workshops on their ground (the plants' pond behind them), from their own cameras.
-        out.append(Config("plant workshop", gi: .radianceCascades, scene: SceneSettings(kind: .plants)).still().frames(60))
-        out.append(Config("plant workshop pond", gi: .radianceCascades, scene: SceneSettings(kind: .plants)).still().frames(60)
-            .from(lookAt([-10, 6, -4], [5, -0.5, -30])))
+        // The building workshop on its ground, from its own camera.
         out.append(Config("building workshop", gi: .radianceCascades, scene: SceneSettings(kind: .buildings)).still().frames(60))
         out.append(Config("building workshop ground", gi: .radianceCascades, scene: SceneSettings(kind: .buildings)).still().frames(60)
             .from(lookAt([-90, 30, 120], [0, 0, 0])))

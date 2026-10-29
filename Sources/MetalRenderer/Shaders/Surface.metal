@@ -109,6 +109,13 @@ inline float4 skySample(uint flags, float3 skyColor, thread const SceneData& s, 
 }
 #define skyRadiance(u, s, dir, lod) (skySample((u).flags, (u).skyColor.rgb, (s), (dir), (lod)).rgb)
 
+// What a camera ray that hits nothing sees in place of the sky when the scene has a backdrop (Scene.backdrop, the
+// plant workshop's grey): a touch lighter toward the horizon. The sky still lights everything else.
+inline bool backdropOn(constant Uniforms& u) { return u.backdrop.w > 0.0f; }
+inline float3 backdropSample(constant Uniforms& u, float3 dir) {
+    return u.backdrop.rgb * (1.06f - 0.12f * saturate(abs(dir.y)));
+}
+
 // The sky's mean radiance over the whole sphere (the fog's ambient light): the textures' smallest mips.
 inline float3 skyAmbient(constant Uniforms& u, thread const SceneData& s) {
     if (!flagOn(u.flags, FLAG_SKY_MAP)) return u.skyColor.rgb;

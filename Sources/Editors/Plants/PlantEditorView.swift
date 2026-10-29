@@ -166,6 +166,19 @@ struct PlantEditorView: View {
                 }
             }
             HStack {
+                // Unreal's preview: a person beside the plant, its size written out, the lights turned about it.
+                Toggle("Figure", isOn: Binding(get: { model.scene.plants.figure }, set: { f in model.workshop { $0.figure = f } }))
+                    .help("A person standing beside the plant, for its size")
+                Toggle("Ruler", isOn: Binding(get: { model.scene.plants.ruler }, set: { r in model.workshop { $0.ruler = r } }))
+                    .help("The plant's width, depth and height, in metres")
+                Slider(value: Binding(get: { model.lightYaw }, set: { y in model.setLights(yaw: y.rounded()) }), in: -180...180)
+                    .frame(width: 110).help("Turn the sun and sky about the plant")
+                Toggle(isOn: Binding(get: { model.lightSpin }, set: { s in model.setLights(spin: s) })) {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .toggleStyle(.button).help("The lights turn by themselves")
+            }
+            HStack {
                 Button { model.randomizeSeed() } label: { Label("Seed \(model.scene.plants.seed)", systemImage: "dice") }
                     .help("Other plants of the same species")
                 Button { model.mutate() } label: { Label("Mutate", systemImage: "wand.and.stars") }

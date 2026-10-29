@@ -888,6 +888,11 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 continue;
             }
             if (kind == 0u) {
+                // A camera ray sees the backdrop in place of the sky (Scene.backdrop), without the suns' discs.
+                if (cameraRay && backdropOn(u)) {
+                    L_ += throughput * backdropSample(u, dir);
+                    break;
+                }
                 // The sky, and the suns' discs (the sky texture's alpha: the clouds in front of them).
                 float4 sky = skySample(u.flags, u.skyColor.rgb, s, dir, 0.0f);
                 L_ += throughput * sky.rgb;

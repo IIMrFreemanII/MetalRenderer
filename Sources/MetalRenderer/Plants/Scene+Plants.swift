@@ -42,9 +42,9 @@ extension Camera {
 }
 
 extension Scene {
-    /// The plant workshop: one species' plants on a lawn under a still sun, as `settings.plants` says. The plant
-    /// editor rebuilds it at every edit (its species from `settings.plantCatalog`), so it is small: one species'
-    /// library, a ground and a sun.
+    /// The plant workshop: one species' plants on Unreal's preview stage (Scene+PlantPreview.swift), as
+    /// `settings.plants` says. The plant editor rebuilds it at every edit (its species from `settings.plantCatalog`),
+    /// so it is small: one species' library, a floor, a sun, and the scale figure and size ruler when asked.
     package func buildPlantWorkshop() {
         let start = CACurrentMediaTime()
         remadeOften = true
@@ -148,41 +148,21 @@ extension Scene {
             }
         }
         if focus.isEmpty { focus = AABB(lo: [-1, 0, -1], hi: [1, 2, 1]) }
-        self.focus = focus
 
-        section("Lawn and sun")
-        // The lawn: gentle ground (its own terrain, half a kilometre), level round the plants (out to their reach in
-        // steps of 8 m, which the terrain's name says: an edit that keeps the plants within it keeps the ground), a pond
-        // behind them; beyond it a plain to the horizon. A still sun from the camera's left, a little above the plants.
-        let kit = Kit(self), lawn = addMaterial(albedo: [0.2, 0.22, 0.16])
-        let reach = max((max(abs(focus.lo.x), abs(focus.hi.x), abs(focus.lo.z), abs(focus.hi.z)) / 8).rounded(.up) * 8, 8)
-        let hills = NoiseTerrainBase(size: 512, cells: 256, seed: 0x9A7D, relief: 4, featureSize: 90)
-        let pond = (-3...3).map { k in SIMD2<Float>(Float(k) * 12, -(reach + 24)) }
-            .map { Scene.pond(on: hills, center: $0, radii: [12, 8], depth: 1.6) }
-            .min { $0.body.level < $1.body.level }!
-        let ground = ShapedTerrainBase(hills, shapes: TerrainShapes(flats: [TerrainShapes.Flat(lo: [-reach, -reach], hi: [reach, reach], corner: reach,
-                                                                                               level: 0, blend: 16)],
-                                                                    bowls: [pond.bowl]))
-        addGroundTerrain("plant-workshop-\(Int(reach))", base: ground, material: lawn, water: [pond.body])
-        addGroundLook(GroundLook.meadow(lo: [-256, -256], size: [512, 512], texels: 1024, key: "plant-workshop-\(Int(reach))", seed: 0x9A7D,
-                                        water: water?.field) { x, z in
-            // Bare earth round the plants' feet.
-            (1 - GroundLook.smooth(0, 6, simd_length(SIMD2(x, z)) - 0.4 * reach + 2 * Terrain.noise(SIMD2(x, z) / 2, seed: 0x9A7E))) * 0.8
-        })
-        // The realistic look's grass round the bare patch, not in the pond: "high" only (the workshop is remade at every
-        // edit, and the grass took its frame from 8.5 to 24 ms on the M1 Max).
-        let pondField = water?.field
-        if settings.realism == .high { addMeadowGrass(center: .zero, reach: 36, seed: 0x9A7F) { x, z in
-            if pondField?.wet(Double(x), Double(z), margin: 1) == true { return 0 }
-            return GroundLook.smooth(0.4 * reach + 1, 0.4 * reach + 5, simd_length(SIMD2(x, z)))
-                * (0.75 + 0.25 * GroundLook.smooth(-0.3, 0.4, Terrain.noise(SIMD2(x, z) / 13, seed: 0x9A80)))
-        } }
-        addInstance(kit.quad, lawn, translate([0, -9, 0]) * scale([20_000, 1, 20_000]))
-        addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { _ in
-            let e = Scene.degrees(38), a = Scene.degrees(235)
-            return LightPose(position: .zero, direction: [cos(e) * cos(a), sin(e), -cos(e) * sin(a)])
+        section("Stage")
+        // Unreal's tree preview: a grey floor under a grey backdrop, the clear sky lighting it, a sun 40° up; a person
+        // beside the plant and its size written out when asked.
+        let kit = Kit(self)
+        addPreviewStage(kit)
+        var framed = focus
+        let edited = chosen(species).flatMap { index in entries.first { $0.species == species && $0.plant == index } }
+        if let e = edited, let set = flora.set(e.species) {
+            let measured = set.plants[e.plant].bounds.transformed(translate([e.x, 0, e.z]))
+            if p.figure { let figure = addPlantFigure(beside: measured, kit); focus.grow(figure); framed.grow(figure) }
+            if p.ruler { framed.grow(addSizeRuler(measured, kit)) }
         }
-        defaultCamera = Camera.framing(focus, fovY: Camera().fovY).camera
+        self.focus = focus
+        defaultCamera = Camera.framing(framed, fovY: Camera().fovY).camera
 
         // What the chosen plant costs (its age and variant, whatever the layout shows besides).
         if let index = chosen(species), let set = flora.set(species) {

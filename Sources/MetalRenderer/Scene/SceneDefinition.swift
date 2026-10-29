@@ -134,7 +134,9 @@ package final class SceneDefinition {
     package var tuneFog: ((SceneSettings, inout FogSettings) -> Void)? = nil
     /// Its own lens and finish (the showcase model's, the city's exposure); nil: off, or the realistic look's.
     package var post: ((SceneSettings) -> PostSettings)? = nil
-    /// With the realistic look: how much haze the distance has, how warm the grade is.
+    /// With the realistic look: whether the distance fades (aerial perspective: the fog's), how much haze it has, how
+    /// warm the grade is.
+    package var realisticAir = true
     package var realisticHaze: Float = 0.55
     package var realisticWarmth: Float = 0.06
     /// Its default camera, unless the scene says (`cameraFromScene`).
@@ -223,8 +225,19 @@ package enum SceneRegistry {
         var studioSky = SkySettings()
         studioSky.mode = .atmosphere; studioSky.coverage = 0.15; studioSky.cloudBase = 1500; studioSky.cloudThickness = 900
         studioSky.cloudScale = 2500; studioSky.shadows = false
+        // The plant workshop, as Unreal's tree preview: a clear sky lights the plant (its camera sees a grey backdrop,
+        // Scene.backdrop), no air in the distance, a fixed exposure and a mild grade, lights its behaviour turns.
+        var previewSky = SkySettings()
+        previewSky.mode = .atmosphere; previewSky.clouds = false; previewSky.coverage = 0; previewSky.shadows = false
         register(SceneDefinition(.plants, "Plant workshop", builder: "buildPlantWorkshop") { $0.buildPlantWorkshop() }.with {
-            $0.hasPlants = true; $0.sky = studioSky
+            $0.hasPlants = true; $0.sky = previewSky; $0.realisticAir = false
+            $0.post = { scene in
+                var p = PostSettings()
+                guard scene.realism != .off else { return p }
+                p.saturation = 1.03; p.contrast = 1.05; p.bloom = 0.02; p.bloomThreshold = 1.6; p.vignette = 0.16
+                return p
+            }
+            $0.behaviour = { PlantPreviewPlayer($0) }
         })
         register(SceneDefinition(.buildings, "Building workshop", builder: "buildBuildingWorkshop") { $0.buildBuildingWorkshop() }.with {
             $0.realisticLook = true; $0.sky = studioSky

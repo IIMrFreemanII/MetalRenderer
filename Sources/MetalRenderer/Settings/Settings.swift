@@ -345,7 +345,7 @@ package struct FogSettings: Equatable, Codable {
     package static func preset(for scene: SceneSettings) -> FogSettings {
         var f = preset(for: scene.kind)
         scene.kind.definition.tuneFog?(scene, &f)
-        if scene.realism != .off && scene.kind.hasRealisticLook {
+        if scene.realism != .off && scene.kind.hasRealisticLook && scene.kind.definition.realisticAir {
             // Air: the distance fades blue-grey (aerial perspective), a light haze in the forest's shade.
             if !f.enabled {
                 f.enabled = true
@@ -620,6 +620,10 @@ package struct RenderSettings: Equatable, Codable {
     /// The day is held where `timeOfDay` puts it (the day bar, DayClock): `timeOfDay` is then the time of the day
     /// itself, as a fraction of the cycle, and the rest of the scene goes on moving.
     package var dayHeld = false
+    /// The plant workshop's lights (its sun and sky) turned about the plant by this many degrees, and turning by
+    /// themselves (PlantPreviewRig): live, the workshop isn't made again.
+    package var previewLightYaw: Float = 0
+    package var previewSpin = false
     /// The particles' layer's size, as a share of the traced frame's (1 or 0.5): upsampled by depth over the picture.
     package var particleScale: Float = 1
 
@@ -634,6 +638,15 @@ package struct RenderSettings: Equatable, Codable {
         giEnabled = false
         specular = false
         renderScale = RenderSettings.physicsScale
+    }
+
+    /// What a first launch opens (nothing saved, or METALRENDERER_SETTINGS=default): the plant workshop, its look
+    /// set as a switch to it would. (`SceneSettings()` stays the Cornell room, which the benchmarks and tests start from.)
+    package static func firstLaunch(_ defaults: RenderSettings) -> RenderSettings {
+        var s = defaults
+        s.scene.kind = .plants
+        s.applySceneDefaults(from: defaults)
+        return s
     }
 
     /// Applies the defaults that suit `scene.kind` (the settings panel calls this when the scene changes and on

@@ -753,6 +753,15 @@ opens the editor.
 * **Curves:** a shoot's two priority ramps (a tip's chance to grow on, a bud's to sprout, by how far up toward the
   target height it is) and a leaf's size along its stem are curves: a line, a taper, or points. Dragging a preset
   turns it into points. Double-click adds a point, Option-click removes one.
+* **The stage** is Unreal's tree preview, made here (`Scene+PlantPreview.swift`): a grey floor to the horizon, a grey
+  backdrop that only camera rays see (`Scene.backdrop`: the clear sky still lights the plant and its reflections), a sun
+  40° up, no air in the distance, a fixed exposure and a mild grade. **Figure** stands a person beside the plant for its
+  size (the characters' base body in its T pose, half again the gap of their half-widths away, as Unreal's mannequin;
+  boxes without the character library). **Ruler** draws the plant's width (red), depth (green) and height (blue) and
+  writes them in metres, in glowing bars only the camera sees. The slider beside them turns the sun and sky about the
+  plant, live (*Light rotation*, `RenderSettings.previewLightYaw`), and the button next to it turns them by themselves,
+  10° a second (`previewSpin`; the scene's behaviour, `PlantPreviewPlayer`). A first launch, with nothing saved, opens
+  the workshop.
 * **The workshop** shows one plant (its age and variant), every age and variant (*Ages and variants*), or the plant and
   six **Mutate** variations of it (*Use 1–6* takes one). The *Skeleton* view shows the stems alone, a colour to a
   generation, and the twigs' stems; the *Light* view colours each stem by the light it got as it grew (dark blue in deep
@@ -775,12 +784,12 @@ opens the editor.
 * **Caches:** an edited catalog's fingerprint is in the plants' names (meshes, voxel grids, the open world's tile
   groups), so nothing built for other definitions is reused; the built-in species' names carry `Foliage.version`. A change of
   where plants grow (habitat, variant counts, species) is in the open world's tiles' names too: they are made again.
-* `METALRENDERER_SCENE=plants,species=birch,age=young,variant=1,plantseed=7,layout=lineup,view=skeleton|light`;
-  `METALRENDERER_BENCH=plants` renders an oak, a birch's lineup, a conifer's skeleton, a bush, ferns, grass and a
+* `METALRENDERER_SCENE=plants,species=birch,age=young,variant=1,plantseed=7,layout=lineup,view=skeleton|light,figure=1,ruler=1,lightyaw=90,spin=1`;
+  `METALRENDERER_BENCH=plants` renders an oak, the oak with its figure and ruler, a birch's lineup, a conifer's skeleton, a bush, ferns, grass and a
   catalog's own species (a weeping birch).
 * **Tests:** `PlantGoldenTests` holds hashes of the built-in plants, the forest, the valley and the open world's
   placement (each change of them noted there); `PlantCatalogTests` (curves, JSON, habitats, files, keys),
-  `PlantWorkshopTests` (the views, among them the light view), `PlantEditorTests` (the parameter tables, Mutate, ages,
+  `PlantWorkshopTests` (the views, among them the light view; the stage, its figure, ruler and turning lights), `PlantEditorTests` (the parameter tables, Mutate, ages,
   the editor's model); `GrowerTests`, `MesherTests`, `TwigTests` for the growth simulation, its wood and its twigs.
 
 ### The building editor

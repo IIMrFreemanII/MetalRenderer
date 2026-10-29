@@ -63,6 +63,9 @@ final class PlantEditorModel: ObservableObject {
     /// The renderer's: the scene, the workshop's settings, the wind.
     @Published private(set) var scene: SceneSettings
     @Published private(set) var foliage: FoliageSettings
+    /// The workshop's lights' turn (degrees) and whether they turn by themselves (RenderSettings.previewLightYaw, previewSpin).
+    @Published private(set) var lightYaw: Float
+    @Published private(set) var lightSpin: Bool
     /// The last Mutate's variations (the workshop shows them beside the species).
     @Published private(set) var mutants: [Foliage.SpeciesDef] = []
     @Published private(set) var message: String?
@@ -82,6 +85,8 @@ final class PlantEditorModel: ObservableObject {
         catalog = (draft ? PlantStore.loadDraft() : nil).map { PlantCatalog.builtIn.merging($0.species) } ?? saved
         scene = controller.settings.scene
         foliage = controller.settings.foliage
+        lightYaw = controller.settings.previewLightYaw
+        lightSpin = controller.settings.previewSpin
         selected = controller.settings.scene.plants.species
         if catalog.species(id: selected) == nil { selected = catalog.species[0].id }
         controller.observeSettings { [weak self] s in self?.received(s) }
@@ -190,6 +195,8 @@ final class PlantEditorModel: ObservableObject {
     private func received(_ s: RenderSettings) {
         if s.scene != scene { scene = s.scene }
         if s.foliage != foliage { foliage = s.foliage }
+        if s.previewLightYaw != lightYaw { lightYaw = s.previewLightYaw }
+        if s.previewSpin != lightSpin { lightSpin = s.previewSpin }
         // A scene with plants now: it is to have the edited ones.
         if s.scene.kind.hasPlants && !dragging, s.scene.plantCatalog != key { push(final: true) }
     }
@@ -232,6 +239,14 @@ final class PlantEditorModel: ObservableObject {
     func randomizeSeed() { workshop { $0.seed = Int.random(in: SceneSettings.seedRange) } }
 
     func setWind(_ change: @escaping (inout FoliageSettings) -> Void) { controller.update { change(&$0.foliage) } }
+
+    /// Turns the workshop's lights about the plant, live.
+    func setLights(yaw: Float? = nil, spin: Bool? = nil) {
+        controller.update { s in
+            if let yaw { s.previewLightYaw = yaw }
+            if let spin { s.previewSpin = spin }
+        }
+    }
 
     /// Holding Compare (or C in the workshop): the saved species in place of the edited one.
     func compare(_ on: Bool) {

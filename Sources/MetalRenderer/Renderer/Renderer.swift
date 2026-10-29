@@ -513,9 +513,9 @@ package final class Renderer: NSObject {
         if let benchmark {
             applyBenchmarkConfig(benchmark.current)
         } else {
-            // Last session's settings, then the METALRENDERER_* overrides. A different scene loads in the background
-            // like a switch in the panel.
-            var s = SettingsStore.load(over: defaultSettings) ?? settings
+            // Last session's settings (none: the first launch's, the plant workshop), then the METALRENDERER_*
+            // overrides. A different scene loads in the background like a switch in the panel.
+            var s = SettingsStore.load(over: defaultSettings) ?? RenderSettings.firstLaunch(settings)
             if !upscaleSteps.contains(s.upscaleFactor) { s.upscaleFactor = defaultSettings.upscaleFactor }
             SettingsEnv.applyAll(to: &s, defaults: defaultSettings)
             let (supported, notes) = s.clamped(to: Capabilities.current)

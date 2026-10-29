@@ -24,6 +24,9 @@ package struct SceneSession {
     package var physicsBehind = false
     /// The interior the camera asks for in the city and since when (Renderer+Interiors), kept while the city is.
     package var interiorWanted: (key: String?, since: Double)?
+    /// How far the plant workshop's lights have turned by themselves (degrees, RenderSettings.previewSpin): kept while
+    /// the editor makes the workshop again.
+    package var previewSpin: Float = 0
     /// The scripts' per-frame closures (ScriptRun.onFrame): another scene drops them (they name its objects); the same
     /// one made again keeps them (a script that edits the scene file makes it again). A script sets them again after
     /// `waitForScene()`.
