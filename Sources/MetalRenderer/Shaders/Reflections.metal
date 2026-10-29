@@ -4,7 +4,8 @@
 //     Hits are lit by one light sample (one shadow ray) plus this frame's diffuse GI where the hit is on screen
 //     (elsewhere a dim sky ambient, or indoors the radiance cascades' mean probe light); references (FLAG_REFERENCE) follow full paths instead. Without the shadow
 //     denoiser, which otherwise adds direct specular analytically, one sampled light's direct specular is added.
-//     Rougher than REFLECTION_MAX_ROUGHNESS: no ray, the composite uses the diffuse GI.
+//     Rougher than REFLECTION_MAX_ROUGHNESS: no ray, the composite uses the diffuse GI. A leaf: no ray either, the GI
+//     here instead (it is glossy for its highlights only).
 // ---------------------------------------------------------------------------------------------
 
 // Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
@@ -156,7 +157,13 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
         }
     }
 
-    if (roughness < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE)) {
+    // A leaf the camera sees (its geometric normal's w minus its leaf code, 4 or more: Trace.metal) traces none however
+    // glossy: its sheen is the lights' highlight above, and the diffuse GI stands in for the rest, as for a rough
+    // surface (a forest's crowns traced 1.4 ms of reflections that showed only more leaves).
+    bool leafPixel = LEAF_TRANSMIT && geoNormal.read(tid).w <= -3.5f;
+    if (leafPixel && roughness < REFLECTION_MAX_ROUGHNESS && !flagOn(u.flags, FLAG_REFERENCE)) {
+        result += albedo * indirect.read(tid).rgb;
+    } else if (roughness < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE)) {
         float3 t, b;
         tangentFrame(n, t, b);
         float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), NoV), a, rng.next2());

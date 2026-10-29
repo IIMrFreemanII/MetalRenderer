@@ -497,9 +497,16 @@ package enum Growth {
         let anchors = Foliage.leaves(on: skeleton, leaf, up: up, rng: &rng)
         // Its health, for the shading (the palette's sparse twigs hang in the shade).
         let health = t.palette > 1 ? Int((7 * Float(variant) / Float(t.palette - 1)).rounded()) : 7
-        return Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up, allLeaves: false,
-                            leafTag: health, sheet: leaf.sheetName)
+        var mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up, allLeaves: false,
+                                leafTag: health, sheet: leaf.sheetName)
+        // Its wood (written before its leaves) told from the tree's: its generations carried past twigWood in U.
+        let firstLeafVertex = mesh.indices[mesh.leafIndex...].min().map(Int.init) ?? mesh.uvs.count
+        for v in 0..<firstLeafVertex { mesh.uvs[v].x += twigWood }
+        return mesh
     }
+
+    /// What a twig's wood adds to its generation in U (Surface.metal TWIG_WOOD): its young stems shade yellow-green.
+    package static let twigWood: Float = 8
 
     /// How a plant's twigs are grown and hung.
     package struct Twigs: Codable, Equatable {

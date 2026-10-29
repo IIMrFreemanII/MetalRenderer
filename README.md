@@ -1034,10 +1034,18 @@ The plants are made at load time from a seed (`Foliage*.swift`) and their specie
   (bark paler on young wood, moss on the trunk's upper side).
 * **Twigs** (the graft palette): each species grows six small twigs with the same simulation, sparse to dense, their
   leaves a scanned leaf sheet's leaves traced into outlines (`LeafOutline.swift`: the texture fits the shape, no
-  alpha test). The oak's are ambientCG's LeafSet024 (`Assets/Textures/leaves`, beech-like, 3 by 3); the birch has
-  pointed, serrated ones of its own (`leaves-birch`, LeafSet014) and the bush round, toothed ones, a hazel's
-  (`leaves-bush`, LeafSet009), both 3 by 2 (`info.json`'s `"cells"`; `LeafRecipe.sheet` names a species' sheet).
-  Each leaf is a domed blade, 16 triangles with a midrib: its edges and its tip droop by the recipe's `fold`, with the
+  alpha test). The oak's are elliptic and smooth-edged, 15 cm, as the Mega Plants tree's in Unreal's vegetation editor
+  (`leaves-oak`, ambientCG's LeafSet022); the birch has pointed, serrated ones (`leaves-birch`, LeafSet014) and the
+  bush round, toothed ones, a hazel's (`leaves-bush`, LeafSet009), all 3 by 2 (`info.json`'s `"cells"`;
+  `LeafRecipe.sheet` names a species' sheet; LeafSet024's beech leaves, `Assets/Textures/leaves`, 3 by 3, are the
+  default). A sheet's albedo is made ready for its species' tint (`TextureSet.sheetAlbedo`): the card around the
+  leaves filled with leaf colour, so edges and far mips don't read grey, and each pixel's hue drawn most of the way
+  to the leaves' mean, so a lime sheet tinted olive keeps its pale midrib and spots instead of turning them pink. The
+  leaves are glossy (roughness 0.35 to 1 from the scan, about 0.6: the sun's highlight), but the camera's leaves trace
+  no reflection rays (Reflections.metal: the diffuse GI stands in; a forest's crowns cost 1.4 ms of them). One leaf in
+  seven turns olive-brown and undersides are greyer (Surface.metal `LEAF_BROWN_SHARE`); a twig's wood carries its
+  generation past `Growth.twigWood` in U and shades as young yellow-green stems (`TWIG_WOOD_TINT`).
+  Each leaf is a domed blade, 4 triangles a row with a midrib (6 rows, 24 triangles): its edges and its tip droop by the recipe's `fold`, with the
   curved surface's normals, so up close it shades round rather than as flat facets (convex toward the sky: a cup would
   shadow itself in hard triangles). The crown's normals that a tree's leaves shade with far off fade out under a
   pixel of 3 mm (Surface.metal's `LEAF_CROWN_NEAR`), where a leaf is tens of pixels long and shows its own shape. The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,

@@ -186,6 +186,11 @@ constant float LEAF_CROWN_NORMAL = 0.6f;
 constant float LEAF_CROWN_CENTRE = 0.75f;
 constant float LEAF_CROWN_FAR = 0.015f;
 constant float LEAF_CROWN_NEAR = 0.003f;
+// A tree's leaves that turn olive-brown (each leaf's pick), as Unreal's foliage material's health overlay does.
+constant float LEAF_BROWN_SHARE = 0.14f;
+// A twig's wood: its generations carried past this in U (Growth.twigWood), and its young stems' tint over the bark.
+constant float TWIG_WOOD = 8.0f;
+constant float3 TWIG_WOOD_TINT = float3(1.3f, 1.55f, 0.55f);
 // The mean of a plant's detail texture (FoliageTextures.mean): its material's colour is the plant's over this, and
 // what shades a plant without its texture (its far voxels) multiplies by it instead.
 constant float GENERATED_TEXTURE_MEAN = 0.7f;
@@ -1060,7 +1065,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     MaterialExtra ex = { uint4(NO_TEXTURE), float4(0.0f, 1.0f, 0.5f, 0.0f) };
     if (MATERIAL_EXTRAS) ex = s.extras[materialIndex];
     uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (id * 0x85EBCA6Bu);
-    // An outline leaf (Foliage.LeafOutline: a leaf of the scanned sheet traced, 16 triangles): its number is the whole
+    // An outline leaf (Foliage.LeafOutline: a leaf of the scanned sheet traced, 24 triangles): its number is the whole
     // part of its V (the same at its three vertices), and its UVs are already where it is on the sheet. (Wood's V runs
     // past 1 too, along it: only a leaf's triangles count.)
     float leafNumber = floor(t0.y);
@@ -1221,8 +1226,16 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             sf.albedo *= (0.9f + 0.2f * pa) * float3(1.0f + 0.1f * (pb - 0.5f), 1.0f, 1.0f - 0.24f * (pb - 0.5f));
             // A shaded twig's leaves duller and yellower than a lit one's (Unreal's health mask).
             sf.albedo *= mix(float3(0.9f, 0.85f, 0.6f), float3(1.0f), leafHealth);
+            // One leaf in seven turning olive-brown, some more than others (Unreal's health colour overlay).
+            float c = float((h >> 16) & 0xFFu) / 255.0f, d = float((h >> 24) & 0xFFu) / 255.0f;
+            if (c < LEAF_BROWN_SHARE) sf.albedo *= mix(float3(1.0f), float3(1.08f, 0.8f, 0.42f), 0.45f + 0.55f * d);
+            // Its underside (the side its normal turns from) greyer, as a leaf's is.
+            if (dot(r.direction, sf.normal) > 0.0f) sf.albedo = mix(sf.albedo, float3(dot(sf.albedo, float3(0.3f, 0.59f, 0.11f))), 0.2f);
         }
-        if (plantWood) {
+        if (plantWood && woodGeneration >= TWIG_WOOD - 0.5f) {
+            // A twig's wood (Growth.twig): young, yellow-green stems, as the Mega Plants tree's in Unreal.
+            sf.albedo *= TWIG_WOOD_TINT;
+        } else if (plantWood) {
             // Bark by generation: the younger wood of the branches a little paler and greener than the trunk's...
             sf.albedo *= mix(float3(1.0f), float3(1.12f, 1.1f, 0.96f), saturate(woodGeneration / 3.0f));
             if (woodGeneration < 0.5f) {

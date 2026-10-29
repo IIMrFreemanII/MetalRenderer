@@ -116,3 +116,32 @@ Now:
 - **Cost:** the forest shot is the same as before (A/B 7.6–7.9 ms both, trace 1.58 ms). Twigs are shared palette meshes.
 - **New shot:** `-m plants` gains "plants oak leaves", a camera in the crown's lower edge.
 - **Realism switch removed:** the "Realistic look" switch is gone from the panel. The app is always realistic, and a saved copy's value is ignored. The env key `realism=` stays for benchmarks and tests.
+
+## The oak's leaves as the Mega Plants tree's (2026-10-29)
+
+The vegetation editor's tree (PVE_MyMegaTree) is dressed in `DeciduousTree_01/Instances/Leaf_Twig_01..05`.
+- **Twigs:** 30–56 cm long, about 1,100 triangles each, with around 13 alternate leaves.
+- **Leaves:** elliptic, smooth-edged, pointed, 10–15 cm.
+- **Material:** `MI_LeafTree_01_Foliage`.
+  - Roughness about 0.5, with a rougher backside; specular 0.3–0.55.
+  - Backside tinted 0.82 and desaturated.
+  - Translucency tint 0.5/0.5/0.13.
+  - Health and season overlays turn some leaves brown.
+- **Texture:** its colour texture's mean is 0.10/0.12/0.04 linear.
+
+Ours, up close, were broad beech leaves with polygonal edges, matte, all one green, on brown twigs.
+
+Now:
+- **Leaves:**
+  - **Oak's own sheet:** `leaves-oak` (LeafSet022, CC0, 3 by 2, 0.25 m); leaf length 0.15 m.
+  - **Outline rows:** 4 → 6 (24 triangles a leaf), and edges 0.75 tracer px inside the leaf.
+- **Prepared sheets:** `TextureSet.sheetAlbedo` (all sheets with an opacity map) fills the card by push-pull and flattens hue 65% toward the mean.
+  - Without it, the lime sheet tinted to the oak's olive turned midribs and edges purple. The tint is per-channel: target/mean.
+- **Gloss:** `addLeafSheetMaterial` minimum roughness 0.62 → 0.35. Leaves now average about 0.6 roughness, under REFLECTION_MAX_ROUGHNESS, so they get a sun highlight.
+  - The reflection kernel skips rays on leaf pixels: `geoNormal.w <= -3.5` is a leaf code. It adds the diffuse GI instead.
+  - Without that skip, the forest's reflections took 0.38 → 1.75 ms. With it, 0.32.
+- **Colour:**
+  - `LEAF_BROWN_SHARE` 0.14 of leaves turn olive-brown, and undersides are 20% greyer.
+  - Oak look colours are about a third darker and toward UE's hue. Workshop crown mid-tones: 80/83/57 sRGB, against UE's 80/83/66 (before: 77/79/55).
+- **Twig wood:** `Growth.twigWood` = 8 is added to a twig's wood U (`TWIG_WOOD` in Surface.metal). It shades as yellow-green young stems, `TWIG_WOOD_TINT`, without the trunk's moss.
+- **Forest shot:** 7.9–8.0 ms against 7.6–7.9 before (trace +0.05 ms from the extra leaf triangles).
