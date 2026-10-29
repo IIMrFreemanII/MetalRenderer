@@ -169,7 +169,7 @@ extension Renderer {
                 enc.setBytes(&none, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 10)
             }
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
-                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D])
+                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D, t.specularHitDistance])
             dispatch(enc, .reflection, width: size.width, height: size.height)
         }]
         guard plan.svgf else { return (trace, []) }

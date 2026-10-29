@@ -114582,7 +114582,7 @@
       "file_type": "code",
       "norm_label": ".testtheforestisasitwas()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L89"
+      "source_location": "L91"
     },
     {
       "id": "tests_metalrenderertests_plants_plantgoldentests_plantgoldentests_testthelibraryisasitwas",
@@ -114594,7 +114594,7 @@
       "file_type": "code",
       "norm_label": ".testthelibraryisasitwas()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L80"
+      "source_location": "L82"
     },
     {
       "id": "tests_metalrenderertests_plants_plantgoldentests_plantgoldentests_testthevalleyisasitwas",
@@ -114606,7 +114606,7 @@
       "file_type": "code",
       "norm_label": ".testthevalleyisasitwas()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L102"
+      "source_location": "L104"
     },
     {
       "id": "tests_metalrenderertests_plants_plantgoldentests_plantgoldentests_testtheworldsplantsareastheywere",
@@ -114618,7 +114618,7 @@
       "file_type": "code",
       "norm_label": ".testtheworldsplantsareastheywere()",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L109"
+      "source_location": "L111"
     },
     {
       "id": "sources_buildings_city_cityplan_splitmix64_mix",
@@ -361250,7 +361250,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L95",
+      "source_location": "L97",
       "weight": 1.0
     },
     {
@@ -361262,7 +361262,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L81",
+      "source_location": "L83",
       "weight": 1.0
     },
     {
@@ -361274,7 +361274,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L106",
+      "source_location": "L108",
       "weight": 1.0
     },
     {
@@ -361286,7 +361286,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L111",
+      "source_location": "L113",
       "weight": 1.0
     },
     {
@@ -361298,7 +361298,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L112",
+      "source_location": "L114",
       "weight": 1.0
     },
     {
@@ -361310,7 +361310,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L115",
+      "source_location": "L117",
       "weight": 1.0
     },
     {
@@ -361322,7 +361322,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L119",
+      "source_location": "L121",
       "weight": 1.0
     },
     {
@@ -443702,7 +443702,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/Plants/BuiltInPlants.swift",
-      "source_location": "L242",
+      "source_location": "L249",
       "weight": 1.0
     },
     {
@@ -889589,7 +889589,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L102",
+      "source_location": "L104",
       "weight": 1.0
     },
     {
@@ -889600,7 +889600,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L109",
+      "source_location": "L111",
       "weight": 1.0
     },
     {
@@ -889633,7 +889633,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L80",
+      "source_location": "L82",
       "weight": 1.0
     },
     {
@@ -889644,7 +889644,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L89",
+      "source_location": "L91",
       "weight": 1.0
     },
     {
@@ -1002935,7 +1002935,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L90",
+      "source_location": "L92",
       "weight": 1.0
     },
     {
@@ -1002947,7 +1002947,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift",
-      "source_location": "L103",
+      "source_location": "L105",
       "weight": 1.0
     },
     {
@@ -1010903,7 +1010903,7 @@
       "confidence_score": 0.95,
       "context": "PlantPreviewPlayer",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L68",
+      "source_location": "L72",
       "weight": 1.0
     },
     {
@@ -1011527,7 +1011527,7 @@
       "confidence_score": 0.95,
       "context": "RenderSettings.firstLaunch",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L75",
+      "source_location": "L79",
       "weight": 1.0
     },
     {
@@ -1012595,7 +1012595,7 @@
       "confidence_score": 0.95,
       "context": "SceneSettings()",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L75",
+      "source_location": "L79",
       "weight": 1.0
     },
     {
@@ -1018631,7 +1018631,7 @@
       "confidence_score": 0.95,
       "context": "validateGPULayouts",
       "source_file": ".claude/notes/plant-growth-handoff.md",
-      "source_location": "L72",
+      "source_location": "L76",
       "weight": 1.0
     },
     {
@@ -1020877,5 +1020877,5 @@
       "source_file": "Tools/eval/refs/gi/ref8-0.5x.png"
     }
   ],
-  "built_at_commit": "d083500ebd9ba7da266fe5391db9637adc07bf2a"
+  "built_at_commit": "4306d03de8bcf46f38000e91eb13608e7bf5903d"
 }

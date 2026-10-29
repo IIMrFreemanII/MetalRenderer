@@ -40,6 +40,7 @@ package final class RenderTargets {
     static let upscaleMotionFormat = MTLPixelFormat.rg16Float
     static let gBufferFormat = MTLPixelFormat.rgba16Float      // albedo, normalDepth, specularAlbedo
     static let roughnessFormat = MTLPixelFormat.r16Float
+    static let hitDistanceFormat = MTLPixelFormat.r16Float
     let upscaleColor: MTLTexture    // tonemapped linear color at render resolution
     let deviceDepth: MTLTexture     // reversed-Z depth (near / viewDepth)
     let pixelMotion: MTLTexture     // previous pixel position - this pixel position, unjittered
@@ -47,6 +48,7 @@ package final class RenderTargets {
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
     let diffuseGuide: MTLTexture    // the albedo, darkened where the sun's raw shadow falls (Output.metal sunShadowGuide)
     let roughness: MTLTexture
+    let specularHitDistance: MTLTexture   // how far each pixel's reflection ray went (Reflections.metal), 0 without one
 
     package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
@@ -83,6 +85,7 @@ package final class RenderTargets {
         specularAlbedo = try make(RenderTargets.gBufferFormat, "specularAlbedo")
         diffuseGuide = try make(RenderTargets.gBufferFormat, "diffuseGuide")
         roughness = try make(RenderTargets.roughnessFormat, "roughness")
+        specularHitDistance = try make(RenderTargets.hitDistanceFormat, "specularHitDistance")
     }
 }
 

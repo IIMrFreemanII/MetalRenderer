@@ -2574,9 +2574,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
-    "mtime": 1793230355.815449,
-    "seen": 1793231380.274252,
-    "ast_hash": "cb917303b2cf7cb2c1a205b1e66599fa",
+    "mtime": 1793280714.9745514,
+    "seen": 1793280818.8441658,
+    "ast_hash": "75b0f07002784c397d973d649e8d26ef",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantTracingTests.swift": {
@@ -3636,9 +3636,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/BuiltInPlants.swift": {
-    "mtime": 1793230129.0553837,
-    "seen": 1793231380.272321,
-    "ast_hash": "b7127f6c91da4943f92b3a606034087d",
+    "mtime": 1793280777.8862262,
+    "seen": 1793280818.842056,
+    "ast_hash": "9f10611ced2a91bfb2166c8a2d5c2b93",
     "semantic_hash": ""
   },
   "Sources/Plants/Foliage.swift": {
@@ -6000,9 +6000,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/plant-growth-handoff.md": {
-    "mtime": 1793279808.5341084,
-    "seen": 1793279835.467871,
-    "ast_hash": "9a20d934c708845b56d187cf3e5bea00",
+    "mtime": 1793280496.1298764,
+    "seen": 1793280818.846035,
+    "ast_hash": "14e63db7b954a7e57815924a5d6d0388",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift": {

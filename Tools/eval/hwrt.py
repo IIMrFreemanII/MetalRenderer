@@ -1,16 +1,17 @@
 """usage: hwrt.py <run-dir> ... — scores METALRENDERER_BENCH=hwrtq against the supersampled 1920x1200 references in refs/hwrt/.
 
-MetalFX's denoising scaler in the Cornell room and the stress hall: PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
+MetalFX's denoising scaler in the Cornell room, the stress hall and the gallery (its glTF models reflect): PSNR of a still frame, its flicker against the frame before, and PSNR with the animation running and
 during the camera move."""
 import os, sys
 from evalcommon import *
 
 runs = sys.argv[1:]
-scenes = ("cornell", "stress")
+scenes = ("cornell", "stress", "gallery")
 pick_up_refs("hwrt", runs, [f"{s}-ref-final" for s in scenes])
 print(f"{'run:scene:output':34s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'camera':>9s}")
 for d in runs:
     for s in scenes:
+        if not os.path.exists(f"{refs_dir('hwrt')}/{s}-ref-final.png"): continue
         r = ref("hwrt", f"{s}-ref-final")
         for k in ("denoiser",):
             st = capture(d, f"{s}-final-static-{k}")

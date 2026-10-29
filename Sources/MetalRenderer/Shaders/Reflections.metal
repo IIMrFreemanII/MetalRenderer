@@ -56,6 +56,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
 }
 
 constant uint REFLECT_FOG = 1;   // reflectionKernel's own flag: the reflection rays are fogged (FOG_ENABLED and FOG_REFLECTIONS)
+constant float REFLECTION_SKY_DISTANCE = 10000.0f;   // a reflection ray that missed, as MetalFX's hit distance (half fits it)
 
 kernel void reflectionKernel(constant Uniforms&               u          [[buffer(0)]],
                              SCENE_ACCEL                      accel      [[buffer(1)]],
@@ -77,13 +78,22 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              texture2d<float, access::write>  outSpecular [[texture(6)]],
                              texture3d<float>                 fogNoiseTex [[texture(7)]],   // with FOG_REFLECTIONS
                              texture2d<float, access::read>   restirSpecular [[texture(8)]],  // with FLAG_RESTIR
+                             texture2d<float, access::write>  outHitDistance [[texture(9)]],  // MetalFX's guide (see below)
                              constant FogParams&              fog        [[buffer(9)]],
                              constant uint*                   roomAmbient [[buffer(10)]],   // the cascades' mean probe light (rgb x1024, count)
                              uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
     float4 sp = surfacePos.read(tid), m = material.read(tid);
-    if (sp.w <= 0.0f || all(m.rgb <= 0.0f)) { outSpecular.write(float4(0.0f), tid); return; }
+    // How far the reflection ray went, for MetalFX's denoising scaler: it moves and sharpens the reflection by it, as
+    // the reflected point's own parallax. 0 where no ray is traced (nothing specular, or rough: the composite's diffuse
+    // GI, which stays on the surface); far past anything for the sky.
+    if (sp.w <= 0.0f || all(m.rgb <= 0.0f)) {
+        outSpecular.write(float4(0.0f), tid);
+        outHitDistance.write(float4(0.0f), tid);
+        return;
+    }
+    float hitDistance = 0.0f;
 
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
@@ -163,6 +173,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // No texture feedback from reflections: their footprint ignores curvature, so self-reflections at close
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
+            hitDistance = hit.hit ? length(hit.position - p) : REFLECTION_SKY_DISTANCE;
             float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient);
             if (PARTICLES && (accel.particleFlags & PARTICLES_REFLECTED) != 0u) {   // the particles in front of what it reflects
                 float meanT;
@@ -184,4 +195,5 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     // the highlights.
     result *= fireflyScale(u, luminance(result / max(albedo, float3(1e-3f))));
     outSpecular.write(roundToHalf(float4((result + direct) / max(albedo, float3(1e-3f)), 1.0f)), tid);
+    outHitDistance.write(float4(hitDistance), tid);
 }
