@@ -59,7 +59,12 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
 - The workshop's meadow (hills, pond, meadow grass) is gone: `Scene+PlantPreview.swift` makes Unreal's grid floor (`GridLook.previewFloor`, material extra kind 3, drawn by
   Surface.metal `previewGrid`; Unreal's roughness noise was left out: it showed as waves in the far floor), lit as the vegetation editor's
   Grey Ambient profile (SPVEditorViewport.cpp picks it, not "Default": a constant grey sky, `Scene.previewSky`, from
-  T_GreyAmbient's thumbnail, whose HDR level is a guess; a white sun of 4; both in `Scene.previewUnits`), a sun 40°
+  T_GreyAmbient's thumbnail; a white sun of 4; both in `Scene.previewUnits`). Calibrated 2026-10-29 against a capture
+  of the editor's viewport (PVE_MyMegaTree, SlateInspector `Screenshot` with an empty ref; CaptureEditorImage and
+  `screencapture` both failed): everything there was 1.17× brighter than the fit predicts (the units carry it), the
+  floor 8% more (tile 0.18), the sky cool rather than warm, no subgrid visible, and the floor is Floor_Mesh at scale
+  4, a 40 m slab (`Scene.previewFloorReach`). Still different: our oak's crown casts a solid shadow where Unreal's
+  tree lets sunflecks through, and its leaves are more saturated than the Mega Plants textures. The stage has a sun 40°
   up on a rig its behaviour (`PlantPreviewPlayer`) turns live from `RenderSettings.previewLightYaw` / `previewSpin`
   (the spin's angle in `SceneSession.previewSpin`, kept across the editor's remakes), the scale figure (the characters'
   base body, T pose) and the size ruler (`maskLights` bars and a stroke font).

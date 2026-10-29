@@ -150,10 +150,10 @@ extension Scene {
         if focus.isEmpty { focus = AABB(lo: [-1, 0, -1], hi: [1, 2, 1]) }
 
         section("Stage")
-        // Unreal's tree preview: its grid floor under a dark grey backdrop, a grey sky lighting it, a white sun 40° up; a person
+        // Unreal's tree preview: its grid floor (under every plant) before a dark grey backdrop, a grey sky lighting it, a white sun 40° up; a person
         // beside the plant and its size written out when asked.
         let kit = Kit(self)
-        addPreviewStage(kit)
+        addPreviewStage(kit, around: focus)
         var framed = focus
         let edited = chosen(species).flatMap { index in entries.first { $0.species == species && $0.plant == index } }
         if let e = edited, let set = flora.set(e.species) {

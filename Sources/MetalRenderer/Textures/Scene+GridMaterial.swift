@@ -25,11 +25,11 @@ package struct GridLook: Equatable {
         self.specular = specular
     }
 
-    /// Unreal's asset preview floor (its M_Grid): metre tiles of 0.5 grey under its base texture's 0.33 (so 0.167
-    /// linear), lines half that, the subgrid at half strength, crosses every 2 m; specular 0.05 (a tenth of Unreal's
-    /// 0.5); roughness 0.7, about the mean of Unreal's 0.4...0.8 (its noise over 5 m shows as waves in the far floor's
-    /// reflections here).
-    package static let previewFloor = GridLook(tile: SIMD3(repeating: 0.167))
+    /// Unreal's asset preview floor (its M_Grid): metre tiles of 0.5 grey under its base texture's 0.33 (0.167 linear;
+    /// 0.18 matches the vegetation editor's picture), lines half that, crosses every 2 m, no subgrid (its texture has
+    /// one, but the editor's picture shows none); specular 0.05 (a tenth of Unreal's 0.5); roughness 0.7, about the mean
+    /// of Unreal's 0.4...0.8 (its noise over 5 m shows as waves in the far floor's reflections here).
+    package static let previewFloor = GridLook(tile: SIMD3(repeating: 0.18), subgrid: 0)
 }
 
 extension Scene {
