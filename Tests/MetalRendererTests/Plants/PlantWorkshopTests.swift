@@ -106,6 +106,9 @@ final class PlantWorkshopTests: XCTestCase {
         let sun = try XCTUnwrap(suns.first).pose(0).direction
         XCTAssertEqual(asin(sun.y), Scene.degrees(40), accuracy: 1e-4)
         XCTAssertNotNil(scene.previewRig)
+        // Its radiance cascades ask for the sky through the crown's gaps; no other scene pays for that.
+        XCTAssertTrue(SceneKind.plants.definition.cascadeSkyGaps)
+        XCTAssertEqual(SceneKind.allCases.filter { $0.definition.cascadeSkyGaps }, [.plants])
         // The floor is Unreal's preview grid: metre tiles, no textures, on a slab 40 m square whose top is the ground.
         let floor = try XCTUnwrap(scene.instances.first { scene.materialExtras[$0.material]?.textures.z == GPUMaterialExtra.gridKind })
         XCTAssertEqual(scene.materialExtras[floor.material]?.surface.y, 1)

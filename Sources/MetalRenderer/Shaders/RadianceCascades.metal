@@ -16,7 +16,8 @@
 
 struct RCParams {
     uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
-    uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = 1 if last cascade
+    uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = bit 0: last cascade,
+                       // bit 1: open sky through the gaps (RC_SKY_GAPS)
     float4 interval;   // x = start, y = end (meters), z = 1 to use last frame's indirect light at hits, w = 1 if there
                        // is a last frame (the resolve's history in the interiors' box)
 };
@@ -25,6 +26,9 @@ constant uint RC_MAX_CASCADES = 5;
 constant float RC_INTERIOR_START = 0.1f;   // the farthest an interval starts in the interiors' box: under a partition (0.12 m)
 constant float RC_INTERIOR_BLEND = 0.1f;   // this frame's least share of the indirect light in the interiors' box
 constant float RC_CONFIDENT = 0.1f;        // a pixel's matching probes' share of its probes' weight that is trusted whole
+constant uint RC_SKY_GAPS = 2u;            // layout.w: a ray that missed, with no next-cascade probe on its surface, asks
+                                           // whether it reaches the sky (SceneDefinition.cascadeSkyGaps)
+constant float RC_PARENT_TRUST = 0.1f;     // ...past this share of matching parents' weight their light is taken whole
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -140,7 +144,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
 
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
-    bool last = p.layout.w != 0;
+    bool last = (p.layout.w & 1u) != 0;
     // In the walkable interiors' box an interval starts halfway into the one below, and no further out than
     // RC_INTERIOR_START: a coarse probe a little off this one's place would otherwise start its rays past a wall this
     // probe's own rays missed, and bring the sunlit outside in (light leaking through walls and ceilings); halfway
@@ -193,6 +197,16 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
             sumPlain += avg * bil; wPlain += bil;
         }
         radiance = wsum > 1e-4f ? sum / wsum : (wPlain > 0.0f ? sumPlain / wPlain : float3(0.0f));
+        // Where none of those probes lie on this probe's surface their light is another place's: a lone tree's
+        // crown, whose coarse probes sit on other leaves deeper in, saw the sky through its gaps as those leaves do,
+        // mostly hidden, and its leaves came out a third darker than path traced. With RC_SKY_GAPS such a ray asks
+        // whether it goes on to the sky (a visibility query, no shading): if so, the sky's light, blended out as the
+        // probes match. Only where a scene asks: a forest's crowns already matched the path tracer, and the queries
+        // cost it ~0.8 ms.
+        float trust = wPlain > 0.0f ? saturate(wsum / (RC_PARENT_TRUST * wPlain)) : 0.0f;
+        if ((p.layout.w & RC_SKY_GAPS) != 0 && trust < 1.0f
+            && isVisible(pos.xyz + ng * RAY_EPSILON + dir * p.interval.y, pos.xyz + dir * 1.0e4f, accel, RAY_GI))
+            radiance = mix(skyRadiance(u, s, dir, 2.0f), radiance, trust);
     }
     merged.write(float4(radiance, below ? 1.0f : 0.0f), texel);
 }
