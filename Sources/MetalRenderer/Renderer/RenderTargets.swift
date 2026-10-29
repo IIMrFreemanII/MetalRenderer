@@ -45,6 +45,7 @@ package final class RenderTargets {
     let pixelMotion: MTLTexture     // previous pixel position - this pixel position, unjittered
     // More guides for MetalFX's denoising scaler (written by the composite while it is the upscaler)
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
+    let diffuseGuide: MTLTexture    // the albedo, darkened where the sun's raw shadow falls (Output.metal sunShadowGuide)
     let roughness: MTLTexture
 
     package init(device: MTLDevice, width: Int, height: Int) throws {
@@ -80,6 +81,7 @@ package final class RenderTargets {
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
         specularAlbedo = try make(RenderTargets.gBufferFormat, "specularAlbedo")
+        diffuseGuide = try make(RenderTargets.gBufferFormat, "diffuseGuide")
         roughness = try make(RenderTargets.roughnessFormat, "roughness")
     }
 }

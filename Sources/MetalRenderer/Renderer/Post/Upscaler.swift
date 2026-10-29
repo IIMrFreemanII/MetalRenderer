@@ -10,8 +10,9 @@ import Physics
 import Plants
 
 /// MetalFX's denoising scaler (macOS 26): the frame is traced at a lower resolution with a different sub-pixel jitter
-/// every frame, and MetalFX takes the raw 1-spp light, still linear and unbounded, with the surface's albedo, normal
-/// and roughness to guide it, and returns it denoised at the output resolution. It stands in for SVGF, the shadow
+/// every frame, and MetalFX takes the raw 1-spp light, still linear and unbounded, with the surface's albedo (the sun's
+/// shadow in it, so that it keeps a dappled shade: Output.metal sunShadowGuide), normal and roughness to guide it, and
+/// returns it denoised at the output resolution. It stands in for SVGF, the shadow
 /// denoiser and an upscaler; `tonemapKernel` then writes the drawable.
 package final class Upscaler {
     let inputWidth: Int
@@ -112,7 +113,7 @@ package final class Upscaler {
     /// What MetalFX reads and writes, for a Metal 4 frame's residency set.
     func resources(_ inputs: UpscaleInputs) -> [MTLTexture] {
         let t = inputs.targets
-        return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.albedo, t.specularAlbedo, inputs.normalDepth, t.roughness, hdrOutput]
+        return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.diffuseGuide, t.specularAlbedo, inputs.normalDepth, t.roughness, hdrOutput]
     }
 
     private func set(_ scaler: MTLFXTemporalDenoisedScalerBase, _ inputs: UpscaleInputs) {
@@ -120,7 +121,7 @@ package final class Upscaler {
         scaler.colorTexture = t.upscaleColor
         scaler.depthTexture = t.deviceDepth
         scaler.motionTexture = t.pixelMotion
-        scaler.diffuseAlbedoTexture = t.albedo
+        scaler.diffuseAlbedoTexture = t.diffuseGuide   // the albedo with the sun's shadow in it (Output.metal sunShadowGuide)
         scaler.specularAlbedoTexture = t.specularAlbedo
         scaler.normalTexture = inputs.normalDepth      // xyz = world-space shading normal
         scaler.roughnessTexture = t.roughness
