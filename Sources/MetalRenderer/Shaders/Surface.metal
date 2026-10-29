@@ -171,6 +171,10 @@ inline float3 catmullRomTangent(float3 c0, float3 c1, float3 c2, float3 c3, floa
 
 // Light through a leaf comes out yellower than what it reflects.
 constant float3 LEAF_TRANSMIT_TINT = float3(1.1f, 1.2f, 0.55f);
+// The realistic look's crown normals (traceSurface): how far a tree's leaf normal bends toward its crown's outside, and
+// the crown's middle, on the trunk at this share of the leaf's height.
+constant float LEAF_CROWN_NORMAL = 0.6f;
+constant float LEAF_CROWN_CENTRE = 0.75f;
 // The mean of a plant's detail texture (FoliageTextures.mean): its material's colour is the plant's over this, and
 // what shades a plant without its texture (its far voxels) multiplies by it instead.
 constant float GENERATED_TEXTURE_MEAN = 0.7f;
@@ -1006,11 +1010,34 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     MaterialExtra ex = { uint4(NO_TEXTURE), float4(0.0f, 1.0f, 0.5f, 0.0f) };
     if (MATERIAL_EXTRAS) ex = s.extras[materialIndex];
     uint leafId = (res.primitive >> 1) ^ (res.part * 0x9E3779B9u) ^ (id * 0x85EBCA6Bu);
+    // An outline leaf (Foliage.LeafOutline: a leaf of the scanned sheet traced, 8 triangles): its number is the whole
+    // part of its V (the same at its three vertices), and its UVs are already where it is on the sheet. (Wood's V runs
+    // past 1 too, along it: only a leaf's triangles count.)
+    float leafNumber = floor(t0.y);
+    bool outlineLeaf = FOLIAGE && (hv.leaf || mat.params.w > 0.0f) && leafNumber >= 1.0f && floor(t1.y) == leafNumber
+                    && floor(t2.y) == leafNumber;
+    // Its U's whole part is its twig's health (Growth.twig: 0 a shaded twig's, 7 one in full light).
+    float leafHealth = 1.0f;
+    if (outlineLeaf) {
+        t0.y -= leafNumber; t1.y -= leafNumber; t2.y -= leafNumber;
+        float tag = floor(t0.x);
+        t0.x -= tag; t1.x -= tag; t2.x -= tag;
+        leafHealth = saturate(tag / 7.0f);
+        leafId = pcgHash(uint(leafNumber)) ^ (res.part * 0x9E3779B9u) ^ (id * 0x85EBCA6Bu);
+    }
+    // A grown plant's wood (Growth.wood): its generation is the whole part of its U (0 the trunk).
+    bool plantWood = FOLIAGE && res.part != HIT_NO_PART && !hv.leaf && accel.parts[res.part].pad != RT_PART_RIGID;
+    float woodGeneration = plantWood ? floor(min(t0.x, min(t1.x, t2.x)) + 1e-3f) : 0.0f;
     // The realistic look's leaves (their extras' parallax negative: Scene.markRealisticLeaf): each its own shade,
     // two-sided where the camera sees it, fluttering. A leaf sheet's (parallax minus its cells a side): each leaf shows
     // one of the sheet's leaves, picked and mirrored by the leaf, its UVs (across, base to tip) inside that leaf's outline.
     bool leafLook = MATERIAL_EXTRAS && ex.surface.x < 0.0f;
-    bool sheetLeaf = leafLook && ex.surface.x <= -1.0f;
+    bool onSheet = leafLook && ex.surface.x <= -1.0f;
+    bool sheetLeaf = onSheet && !outlineLeaf;
+    if (outlineLeaf && !onSheet) {
+        // On a material without the sheet (the generated look's leaf): each its own cell's UVs (the sheet is 3 by 3).
+        t0 = fract(t0 * 3.0f); t1 = fract(t1 * 3.0f); t2 = fract(t2 * 3.0f);
+    }
     if (sheetLeaf) {
         float cells = -ex.surface.x;
         uint h = pcgHash(leafId * 7u + 3u), n = uint(cells);
@@ -1019,6 +1046,17 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         t0 = (cell + float2(0.5f + flip * (t0.x - 0.5f) * 0.62f, 0.93f - t0.y * 0.85f)) / cells;
         t1 = (cell + float2(0.5f + flip * (t1.x - 0.5f) * 0.62f, 0.93f - t1.y * 0.85f)) / cells;
         t2 = (cell + float2(0.5f + flip * (t2.x - 0.5f) * 0.62f, 0.93f - t2.y * 0.85f)) / cells;
+    }
+    if (FOLIAGE && leafLook && res.part != HIT_NO_PART) {
+        // A tree's leaf (an assembly's): its normal bent toward the crown's outside, as Unreal's and SpeedTree's foliage
+        // do, so a crown shades as one rounded mass, not as leaves each turned its own way. In plant space (y up from
+        // its foot) the crown's middle is on the trunk below the leaf: a leaf at the side faces out, one on top faces
+        // up. Each leaf keeps its side (it is two-sided: orientNormals turns it to the ray).
+        float3 outward = (inst.normalMatrix * float4(objPos - float3(0.0f, LEAF_CROWN_CENTRE * objPos.y, 0.0f), 0.0f)).xyz;
+        if (dot(outward, outward) > 1e-8f) {
+            outward = normalize(outward);
+            sf.normal = normalize(mix(sf.normal, dot(sf.normal, outward) >= 0.0f ? outward : -outward, LEAF_CROWN_NORMAL));
+        }
     }
     if (FOLIAGE && leafLook && windOn(accel.wind.z > 0.0f)) {
         // Flutter: each leaf's normal tips to and fro on its own (the shading's only: nothing moves).
@@ -1035,7 +1073,10 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
         // as a whole reflects and transmits in the material's proportion. A sheet's leaf seen by the camera is two-
         // sided instead (LEAF_TRANSMIT): lit from both sides at once.
         // (Its share still faces away for the light that reaches it some other way: GI's, gathered about its normal.)
-        sf.backlit = float(pcgHash(leafId) & 0xFFFFu) * (1.0f / 65536.0f) < mat.params.w;
+        // A realistic leaf met by a GI ray picks its side by the ray instead: every leaf reflects and transmits, as
+        // many rays see it, where the leaf's own pick lit each from one side only.
+        uint side = LEAF_TRANSMIT && leafLook && spread >= 0.02f ? leafId ^ pcgHash(as_type<uint>(res.distance)) : leafId;
+        sf.backlit = float(pcgHash(side) & 0xFFFFu) * (1.0f / 65536.0f) < mat.params.w;
         if (sf.backlit) sf.albedo *= LEAF_TRANSMIT_TINT;
         if (LEAF_TRANSMIT && leafLook && spread < 0.02f) sf.leaf = mat.params.w;
     }
@@ -1118,6 +1159,23 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
             uint h = pcgHash(leafId ^ 0x5bd1e995u);
             float a = float(h & 0xFFu) / 255.0f, b = float((h >> 8) & 0xFFu) / 255.0f;
             sf.albedo *= (0.86f + 0.28f * a) * float3(1.0f + 0.14f * (b - 0.5f), 1.0f, 1.0f - 0.3f * (b - 0.5f));
+            // And each plant its own, on top: a crown a little lighter or darker, yellower or bluer than its neighbours'.
+            uint ph = pcgHash(id ^ 0x68bc21ebu);
+            float pa = float(ph & 0xFFu) / 255.0f, pb = float((ph >> 8) & 0xFFu) / 255.0f;
+            sf.albedo *= (0.9f + 0.2f * pa) * float3(1.0f + 0.1f * (pb - 0.5f), 1.0f, 1.0f - 0.24f * (pb - 0.5f));
+            // A shaded twig's leaves duller and yellower than a lit one's (Unreal's health mask).
+            sf.albedo *= mix(float3(0.9f, 0.85f, 0.6f), float3(1.0f), leafHealth);
+        }
+        if (plantWood) {
+            // Bark by generation: the younger wood of the branches a little paler and greener than the trunk's...
+            sf.albedo *= mix(float3(1.0f), float3(1.12f, 1.1f, 0.96f), saturate(woodGeneration / 3.0f));
+            if (woodGeneration < 0.5f) {
+                // ...and moss on the trunk where it faces the sky, more of it low down.
+                float up = smoothstep(0.3f, 0.85f, sf.normal.y) * saturate(1.0f - objPos.y / 6.0f);
+                uint mh = pcgHash(uint(floor(objPos.y * 3.0f)) ^ (id * 0x2545F491u));
+                float patchy = 0.6f + 0.4f * float(mh & 0xFFu) / 255.0f;
+                sf.albedo = mix(sf.albedo, float3(0.075f, 0.11f, 0.035f), up * 0.7f * patchy);
+            }
         }
         // (A scan's GI hit, a leaf's or bark's: its colour alone; its maps are for what the camera sees.)
         bool coarse = MATERIAL_EXTRAS && ex.textures.z == 2u && spread >= 0.02f;   // (2: a scan's, Scene.addScanMaterial)

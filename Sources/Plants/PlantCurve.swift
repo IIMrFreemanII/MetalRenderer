@@ -3,14 +3,12 @@ import Foundation
 import simd
 
 extension Foliage {
-    /// A value along something, x from 0 (its start) to 1 (its end): a stem's radius along it, the angle children
-    /// leave it at, how long they are by where they grow, a leaf's size along its twig. The forms other than
-    /// `points` are the formulas the recipes had before they had curves, and give exactly what those did; dragging
-    /// one in the editor turns it into points (`editable`).
+    /// A value along something, x from 0 (its start) to 1 (its end): a shoot's priority ramps by how far up toward
+    /// its target height a bud is, a leaf's size along its stem. A line or a taper is a preset; dragging one in the
+    /// editor turns it into points (`editable`).
     package enum Curve: Equatable {
         case linear(Float, Float)       // a + (b - a) x
         case taper(Float)               // 1 - t x
-        case crown(Crown)               // crownRatio(crown, 1 - x): a limb's length by where it grows on the trunk
         case points([SIMD2<Float>])     // through these (x ascending, from 0 to 1), monotone between them
 
         /// At x (0...1).
@@ -18,12 +16,11 @@ extension Foliage {
             switch self {
             case .linear(let a, let b): return a + (b - a) * x
             case .taper(let t): return 1 - t * x
-            case .crown(let c): return Foliage.crownRatio(c, 1 - x)
             case .points(let p): return Curve.interpolate(p, x)
             }
         }
 
-        /// At the start: `a` itself for a line (what level 0's single angle was).
+        /// At the start: `a` itself for a line.
         package var start: Float {
             switch self {
             case .linear(let a, _): return a
@@ -31,7 +28,7 @@ extension Foliage {
             }
         }
 
-        /// At the end: `b` itself for a line (what a twig's tip leaf was scaled by).
+        /// At the end: `b` itself for a line (what a stem's tip leaf is scaled by).
         package var end: Float {
             switch self {
             case .linear(_, let b): return b
@@ -42,14 +39,11 @@ extension Foliage {
 
         package var isPoints: Bool { if case .points = self { return true }; return false }
 
-        /// The same curve as points, to drag: `samples` of it, evenly along x (a line or a taper: its two ends).
-        package func editable(samples: Int = 7) -> Curve {
+        /// The same curve as points, to drag (a line or a taper: its two ends).
+        package func editable() -> Curve {
             switch self {
             case .points: return self
             case .linear, .taper: return .points([SIMD2(0, value(0)), SIMD2(1, value(1))])
-            case .crown:
-                let n = max(samples, 2)
-                return .points((0..<n).map { i in let x = Float(i) / Float(n - 1); return SIMD2(x, value(x)) })
             }
         }
 
@@ -81,9 +75,9 @@ extension Foliage {
     }
 }
 
-/// As JSON: `{"linear": [a, b]}`, `{"taper": t}`, `{"crown": "conical"}` or `{"points": [[x, y], ...]}`.
+/// As JSON: `{"linear": [a, b]}`, `{"taper": t}` or `{"points": [[x, y], ...]}`.
 extension Foliage.Curve: Codable {
-    private enum Key: String, CodingKey { case linear, taper, crown, points }
+    private enum Key: String, CodingKey { case linear, taper, points }
 
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
@@ -91,8 +85,6 @@ extension Foliage.Curve: Codable {
             self = .linear(ab[0], ab[1])
         } else if let t = try c.decodeIfPresent(Float.self, forKey: .taper) {
             self = .taper(t)
-        } else if let crown = try c.decodeIfPresent(Foliage.Crown.self, forKey: .crown) {
-            self = .crown(crown)
         } else if let p = try c.decodeIfPresent([SIMD2<Float>].self, forKey: .points) {
             self = .points(p)
         } else {
@@ -105,7 +97,6 @@ extension Foliage.Curve: Codable {
         switch self {
         case .linear(let a, let b): try c.encode([a, b], forKey: .linear)
         case .taper(let t): try c.encode(t, forKey: .taper)
-        case .crown(let crown): try c.encode(crown, forKey: .crown)
         case .points(let p): try c.encode(p, forKey: .points)
         }
     }

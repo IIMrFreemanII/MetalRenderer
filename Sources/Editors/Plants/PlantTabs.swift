@@ -10,8 +10,8 @@ import Plants
 import SwiftUI
 import simd
 
-/// Bindings SwiftUI may still read after an edit took away what they point at (a level removed, the boughs or a
-/// cover turned off, an undo): they read a stand-in then, and write nothing.
+/// Bindings SwiftUI may still read after an edit took away what they point at (the twigs, forks or a cover turned
+/// off, an undo): they read a stand-in then, and write nothing.
 extension Binding {
     /// Element `i` of `array`, or `stand` once the array is shorter.
     package init<E>(_ array: Binding<[E]>, _ i: Int, or stand: E) where Value == E {
@@ -24,126 +24,179 @@ extension Binding {
     }
 }
 
-/// A recipe's stem levels: a picker of levels (with + and −), the level's numbers and curves, and the recipe's own
-/// numbers. For a plant's recipe or its boughs'.
-struct LevelEditor: View {
-    @Binding var recipe: Foliage.Recipe
-    var bough = false
-    @EnvironmentObject var model: PlantEditorModel
+/// How buds (or leaves) are set round an axis: a spiral, alternate sides, or whorls of n.
+struct PhyllotaxisPicker: View {
+    var title = "Buds"
+    @Binding var phyllotaxis: Foliage.Phyllotaxis
 
     var body: some View {
-        let count = recipe.levels.count, l = min(model.level, count - 1)
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Picker("", selection: Binding(get: { l }, set: { model.level = $0 })) {
-                    ForEach(0..<count, id: \.self) { i in Text(i == 0 ? (bough ? "Twig" : "Trunk") : "Level \(i)").tag(i) }
-                }
-                .pickerStyle(.segmented).labelsHidden()
-                Button { addLevel() } label: { Image(systemName: "plus") }.disabled(count >= 6).help("Add a level of stems")
-                Button { removeLevel() } label: { Image(systemName: "minus") }.disabled(count <= 1).help("Remove the last level")
-            }
-            EditorGroup(title: l == 0 ? (bough ? "Twig" : "Stems from the ground") : "Level \(l)", copy: { model.copy(.level, bough: bough) }, paste: { model.paste(.level, bough: bough) }) {
-                ParamRows(table: l == 0 ? PlantParams.trunk : PlantParams.level, root: level(l))
-                if l == 0 {
-                    ValueRow(title: "Lean (several stems)", value: Binding(get: { recipe.levels[0].down.start },
-                                                                          set: { recipe.levels[0].down = .linear($0, $0) }),
-                             range: 0...Double.pi / 2)
-                }
-            }
-            if l > 0 {
-                EditorGroup(title: "Curves") {
-                    CurveEditor(title: l == 1 && !bough ? "Crown profile: limb length up the trunk" : "Length along the parent",
-                                curve: level(l).along, range: 0...1.4, crowns: l == 1, lineRange: 0...1.4,
-                                xLabel: "parent's foot → tip")
-                    CurveEditor(title: "Angle from the parent", curve: level(l).down, range: 0...Float.pi,
-                                lineRange: 0...Double.pi, xLabel: "parent's foot → tip")
-                    CurveEditor(title: "Radius along the stem", curve: level(l).radius, range: 0...1.4, lineRange: 0...1.4)
-                }
-            } else {
-                EditorGroup(title: "Curves") {
-                    CurveEditor(title: "Radius along the stem", curve: level(0).radius, range: 0...1.4, lineRange: 0...1.4)
-                }
-            }
-            if !bough {
-                EditorGroup(title: "Thickness and shape") {
-                    ParamRows(table: PlantParams.recipe, root: $recipe)
-                    Toggle("Prune to an ellipsoid", isOn: Binding(get: { recipe.carve != nil }, set: { on in
-                        recipe.carve = on ? Foliage.Carve(center: [0, recipe.levels[0].length * 0.6, 0],
-                                                          radii: SIMD3(repeating: max(recipe.levels[0].length * 0.6, 0.3)), fromLevel: 0) : nil
-                    })).font(.system(size: 11))
-                    if recipe.carve != nil {
-                        ValueRow(title: "Centre height", value: carve(\.center.y), range: 0...20)
-                        ValueRow(title: "Half width", value: Binding(get: { recipe.carve?.radii.x ?? 1 },
-                                                                     set: { recipe.carve?.radii.x = $0; recipe.carve?.radii.z = $0 }), range: 0.1...15)
-                        ValueRow(title: "Half height", value: carve(\.radii.y), range: 0.1...15)
-                    }
-                }
-            }
-        }
-    }
-
-    private func level(_ l: Int) -> Binding<Foliage.Level> { Binding($recipe.levels, l, or: Foliage.Level()) }
-
-    private func carve(_ path: WritableKeyPath<Foliage.Carve, Float>) -> Binding<Float> {
-        Binding(get: { recipe.carve?[keyPath: path] ?? 0 }, set: { recipe.carve?[keyPath: path] = $0 })
-    }
-
-    private func addLevel() {
-        var r = recipe
-        var next = r.levels.count > 1 ? r.levels[r.levels.count - 1] : Foliage.Level(count: 5, length: 0.5)
-        next.count = max(2, next.count / 2)
-        next.along = .taper(0.5)
-        r.levels.append(next)
-        recipe = r
-        model.level = r.levels.count - 1
-    }
-
-    private func removeLevel() {
-        var r = recipe
-        r.levels.removeLast()
-        recipe = r
-        model.level = min(model.level, r.levels.count - 1)
-    }
-}
-
-struct StemsTab: View {
-    @EnvironmentObject var model: PlantEditorModel
-
-    var body: some View {
-        if model.def.grass != nil {
-            Text("Grass is patches of blades, not grown stems: see Leaves.").font(.system(size: 11)).foregroundColor(.secondary)
-        } else {
-            LevelEditor(recipe: $model.def.recipe)
-        }
-    }
-}
-
-/// A leaf recipe: its shape, arrangement, numbers and size along the twig.
-struct LeafEditor: View {
-    @Binding var leaf: Foliage.LeafRecipe
-
-    var body: some View {
-        Picker("Shape", selection: $leaf.shape) {
-            ForEach(Foliage.LeafShape.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
-        }
-        .pickerStyle(.segmented).font(.system(size: 11))
         HStack {
-            Picker("Arrangement", selection: Binding(get: { arrangement }, set: { a in
-                leaf.phyllotaxis = a == 0 ? .spiral : a == 1 ? .distichous : .whorled(3)
+            Picker(title, selection: Binding(get: { kind }, set: { k in
+                phyllotaxis = k == 0 ? .spiral : k == 1 ? .distichous : .whorled(3)
             })) {
-                Text("Spiral").tag(0); Text("Opposite sides").tag(1); Text("Whorls").tag(2)
+                Text("Spiral").tag(0); Text("Alternate").tag(1); Text("Whorls").tag(2)
             }
-            if case .whorled(let n) = leaf.phyllotaxis {
-                Stepper("of \(n)", value: Binding(get: { n }, set: { leaf.phyllotaxis = .whorled(min(max($0, 2), 8)) }), in: 2...8)
+            if case .whorled(let n) = phyllotaxis {
+                Stepper("of \(n)", value: Binding(get: { n }, set: { phyllotaxis = .whorled(min(max($0, 2), 8)) }), in: 2...8)
             }
         }
         .font(.system(size: 11))
-        ParamRows(table: PlantParams.leaf, root: $leaf)
-        CurveEditor(title: "Size along the twig", curve: $leaf.size, range: 0...1.6, lineRange: 0...2)
     }
 
-    private var arrangement: Int {
-        switch leaf.phyllotaxis { case .spiral: return 0; case .distichous: return 1; case .whorled: return 2 }
+    private var kind: Int {
+        switch phyllotaxis { case .spiral: return 0; case .distichous: return 1; case .whorled: return 2 }
+    }
+}
+
+/// One kind of axis (the trunk's, the branches', a twig's): its numbers, how its buds are set, and its two ramps by
+/// how far up toward the target height a bud is (Unreal's apical and axillary priority ramps).
+struct ShootEditor: View {
+    @Binding var shoot: Growth.Shoot
+
+    var body: some View {
+        ParamRows(table: PlantParams.shoot, root: $shoot)
+        PhyllotaxisPicker(phyllotaxis: $shoot.phyllotaxis)
+        CurveEditor(title: "Tip growth (1: grows on)", curve: $shoot.apicalRamp, range: 0...1.2, lineRange: 0...1,
+                    xLabel: "foot → target height")
+        CurveEditor(title: "Buds sprouting", curve: $shoot.axillaryRamp, range: 0...1.2, lineRange: 0...1,
+                    xLabel: "foot → target height")
+    }
+}
+
+/// What the growth tabs show for the grass: it isn't grown.
+struct NotGrown: View {
+    var body: some View {
+        Text("Grass is patches of blades, not grown: see Leaves.").font(.system(size: 11)).foregroundColor(.secondary)
+    }
+}
+
+/// How long the plant grows, toward what height, and its trunk's shoot.
+struct GrowthTab: View {
+    @EnvironmentObject var model: PlantEditorModel
+
+    var body: some View {
+        if model.def.growth != nil {
+            let g = Binding($model.def.growth, or: Growth.Params())
+            VStack(alignment: .leading, spacing: 8) {
+                EditorGroup(title: "The plant") {
+                    ParamRows(table: PlantParams.growth, root: g)
+                    Text("Each cycle every live bud grows an internode or stays dormant; the plant stops at its height.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                EditorGroup(title: "The trunk", copy: { model.copy(.shoot) }, paste: { model.paste(.shoot) }) {
+                    ShootEditor(shoot: g.trunk)
+                }
+            }
+        } else {
+            NotGrown()
+        }
+    }
+}
+
+/// The branches: their own shoot (or the trunk's), the hormones that hold buds back, forks and gravity.
+struct BranchingTab: View {
+    @EnvironmentObject var model: PlantEditorModel
+
+    var body: some View {
+        if model.def.growth != nil {
+            let g = Binding($model.def.growth, or: Growth.Params())
+            VStack(alignment: .leading, spacing: 8) {
+                EditorGroup(title: "The branches", copy: { model.copy(.shoot, shoot: .branches) },
+                            paste: { model.paste(.shoot, shoot: .branches) }) {
+                    Toggle("Grow as the trunk does", isOn: Binding(get: { g.wrappedValue.branch == nil },
+                                                                   set: { g.wrappedValue.branch = $0 ? nil : g.wrappedValue.trunk }))
+                        .font(.system(size: 11))
+                    if g.wrappedValue.branch != nil { ShootEditor(shoot: Binding(g.branch, or: Growth.Shoot())) }
+                }
+                EditorGroup(title: "Hormones") {
+                    ParamRows(table: PlantParams.hormones, root: g)
+                    Text("Dominance: buds near a growing tip stay dormant. Ethylene: old wood, bare of twigs.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                EditorGroup(title: "Forks") {
+                    Toggle("Tips fork", isOn: Binding(get: { g.wrappedValue.bifurcation != nil },
+                                                      set: { g.wrappedValue.bifurcation = $0 ? Growth.Bifurcation() : nil }))
+                        .font(.system(size: 11))
+                    if g.wrappedValue.bifurcation != nil {
+                        ParamRows(table: PlantParams.bifurcation, root: Binding(g.bifurcation, or: Growth.Bifurcation()))
+                    }
+                }
+                EditorGroup(title: "Gravity") {
+                    ParamRows(table: PlantParams.gravity, root: g)
+                    Text("The branches sag under their own weight, as beams.").font(.system(size: 10)).foregroundColor(.secondary)
+                }
+            }
+        } else {
+            NotGrown()
+        }
+    }
+}
+
+/// The light the buds get (shadows cast down through the crown) and the shedding of shaded branches.
+struct LightTab: View {
+    @EnvironmentObject var model: PlantEditorModel
+
+    var body: some View {
+        if model.def.growth != nil {
+            let g = Binding($model.def.growth, or: Growth.Params())
+            VStack(alignment: .leading, spacing: 8) {
+                EditorGroup(title: "Light", copy: { model.copy(.light) }, paste: { model.paste(.light) }) {
+                    ParamRows(table: PlantParams.light, root: g.light)
+                    Text("Shade from the wood and leaves above: buds without enough light stay dormant, and shaded internodes grow shorter.")
+                        .font(.system(size: 10)).foregroundColor(.secondary)
+                }
+                EditorGroup(title: "Senescence") {
+                    Toggle("Sheds shaded branches", isOn: Binding(get: { g.wrappedValue.senescence != nil },
+                                                                  set: { g.wrappedValue.senescence = $0 ? Growth.Senescence() : nil }))
+                        .font(.system(size: 11))
+                    if g.wrappedValue.senescence != nil {
+                        ParamRows(table: PlantParams.senescence, root: Binding(g.senescence, or: Growth.Senescence()))
+                    }
+                }
+            }
+        } else {
+            NotGrown()
+        }
+    }
+}
+
+/// The twigs (Unreal's graft palette and foliage distributor): where they hang, and the twig itself, grown as a
+/// small plant of its own.
+struct TwigsTab: View {
+    @EnvironmentObject var model: PlantEditorModel
+
+    var body: some View {
+        if model.def.growth != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle("Twigs (leafy sprays hung on the young wood)", isOn: Binding(get: { model.def.twigs != nil },
+                                                                                   set: { model.def.twigs = $0 ? Growth.Twigs() : nil }))
+                    .font(.system(size: 11))
+                if model.def.twigs != nil {
+                    let t = Binding($model.def.twigs, or: Growth.Twigs())
+                    EditorGroup(title: "Where they hang", copy: { model.copy(.twigs) }, paste: { model.paste(.twigs) }) {
+                        ParamRows(table: PlantParams.twigs, root: t)
+                        Text("Kinds run from sparse (in the shade) to dense (in the light).")
+                            .font(.system(size: 10)).foregroundColor(.secondary)
+                    }
+                    EditorGroup(title: "The twig") {
+                        ParamRows(table: Array(PlantParams.growth.prefix(2)), root: t.growth)
+                        ParamRows(table: Array(PlantParams.hormones.prefix(1)), root: t.growth)
+                    }
+                    EditorGroup(title: "Its stem", copy: { model.copy(.shoot, twig: true) }, paste: { model.paste(.shoot, twig: true) }) {
+                        ShootEditor(shoot: t.growth.trunk)
+                    }
+                    EditorGroup(title: "Its side shoots", copy: { model.copy(.shoot, shoot: .branches, twig: true) },
+                                paste: { model.paste(.shoot, shoot: .branches, twig: true) }) {
+                        Toggle("Grow as its stem does", isOn: Binding(get: { t.wrappedValue.growth.branch == nil },
+                                                                      set: { t.wrappedValue.growth.branch = $0 ? nil : t.wrappedValue.growth.trunk }))
+                            .font(.system(size: 11))
+                        if t.wrappedValue.growth.branch != nil { ShootEditor(shoot: Binding(t.growth.branch, or: Growth.Shoot())) }
+                    }
+                }
+            }
+        } else {
+            NotGrown()
+        }
     }
 }
 
@@ -152,29 +205,23 @@ struct LeavesTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let grass = model.def.grass {
+            if model.def.grass != nil {
                 EditorGroup(title: "Grass patch") {
-                    ValueRow(title: "Size", value: Binding(get: { grass.size }, set: { model.def.grass?.size = $0 }), range: 0.5...6, digits: 1)
-                    ValueRow(title: "Blades", value: Binding(get: { Float(grass.blades) }, set: { model.def.grass?.blades = Int($0) }),
-                             range: 50...3000, digits: 0)
+                    ParamRows(table: PlantParams.grass, root: Binding($model.def.grass, or: Foliage.GrassPatch()))
                 }
             } else {
-                if model.def.bough != nil {
-                    EditorGroup(title: "On the boughs", copy: { model.copy(.leaves, bough: true) }, paste: { model.paste(.leaves, bough: true) }) {
-                        if model.def.bough?.leaf != nil {
-                            LeafEditor(leaf: Binding(get: { model.def.bough?.leaf ?? Foliage.LeafRecipe() },
-                                                     set: { l in if model.def.bough?.leaf != nil { model.def.bough?.leaf = l } }))
-                        } else {
-                            Button("Add leaves to the boughs") { model.def.bough?.leaf = Foliage.LeafRecipe() }
-                        }
+                if model.def.twigs != nil {
+                    EditorGroup(title: "On the twigs", copy: { model.copy(.leaves, twig: true) }, paste: { model.paste(.leaves, twig: true) }) {
+                        LeafEditor(leaf: Binding(get: { model.def.twigs?.leaf ?? Foliage.LeafRecipe() },
+                                                 set: { l in if model.def.twigs != nil { model.def.twigs?.leaf = l } }))
                     }
                 }
                 EditorGroup(title: "On the plant's own stems", copy: { model.copy(.leaves) }, paste: { model.paste(.leaves) }) {
-                    Toggle("Leaves on its stems", isOn: Binding(get: { model.def.recipe.leaf != nil }, set: { on in
-                        model.def.recipe.leaf = on ? Foliage.LeafRecipe(fromLevel: max(model.def.recipe.levels.count - 1, 0)) : nil
+                    Toggle("Leaves on its stems (a fern's pinnae)", isOn: Binding(get: { model.def.leaf != nil }, set: { on in
+                        model.def.leaf = on ? Foliage.LeafRecipe() : nil
                     })).font(.system(size: 11))
-                    if model.def.recipe.leaf != nil {
-                        LeafEditor(leaf: Binding($model.def.recipe.leaf, or: Foliage.LeafRecipe()))
+                    if model.def.leaf != nil {
+                        LeafEditor(leaf: Binding($model.def.leaf, or: Foliage.LeafRecipe()))
                     }
                 }
             }
@@ -182,35 +229,44 @@ struct LeavesTab: View {
     }
 }
 
-struct BoughsTab: View {
+/// The wood: its colour and texture, how branches thin, how the axes wander, and the trunk's flared, buttressed foot.
+struct BarkTab: View {
     @EnvironmentObject var model: PlantEditorModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Toggle("Boughs (leafy twigs hung on the limbs)", isOn: Binding(get: { model.def.bough != nil && model.def.recipe.graft != nil },
-                                                                           set: { on in setBoughs(on) }))
-                .font(.system(size: 11)).disabled(model.def.grass != nil)
-            if model.def.bough != nil, model.def.recipe.graft != nil {
-                EditorGroup(title: "Where they hang", copy: { model.copy(.graft) }, paste: { model.paste(.graft) }) {
-                    ParamRows(table: PlantParams.graft, root: Binding($model.def.recipe.graft, or: Foliage.Graft()))
-                    ParamRows(table: PlantParams.palette, root: $model.def.palette)
+            EditorGroup(title: "Bark") {
+                LinearColorPicker(title: "Colour", color: $model.def.look.bark)
+                Picker("Texture", selection: $model.def.look.barkTexture) {
+                    Text("Rough").tag(FoliageTextures.Kind.roughBark); Text("Birch").tag(FoliageTextures.Kind.birchBark)
                 }
-                Text("The bough").font(.system(size: 11, weight: .semibold)).foregroundColor(.secondary)
-                LevelEditor(recipe: Binding($model.def.bough, or: Foliage.Recipe(levels: [Foliage.Level()])), bough: true)
+                .font(.system(size: 11))
+                Text("Younger branches are paler; moss grows on the trunk's upper side, low down.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            }
+            if model.def.growth != nil {
+                let g = Binding($model.def.growth, or: Growth.Params())
+                EditorGroup(title: "Wood", copy: { model.copy(.wood) }, paste: { model.paste(.wood) }) {
+                    ParamRows(table: PlantParams.wood, root: g.wood)
+                    Toggle("Flat stems (ribbons, a fern's fronds)", isOn: g.wood.ribbon).font(.system(size: 11))
+                }
             }
         }
     }
+}
 
-    private func setBoughs(_ on: Bool) {
-        var d = model.def
-        if on {
-            d.bough = d.bough ?? PlantCatalog.builtIn[.oak].bough
-            d.recipe.graft = d.recipe.graft ?? Foliage.Graft()
-        } else {
-            d.bough = nil
-            d.recipe.graft = nil
+/// A leaf recipe: its shape, arrangement, numbers and size along the stem it grows on.
+struct LeafEditor: View {
+    @Binding var leaf: Foliage.LeafRecipe
+
+    var body: some View {
+        Picker("Shape", selection: $leaf.shape) {
+            ForEach(Foliage.LeafShape.allCases, id: \.self) { Text($0 == .outline ? "Scanned" : $0.rawValue.capitalized).tag($0) }
         }
-        model.def = d
+        .pickerStyle(.segmented).font(.system(size: 11))
+        PhyllotaxisPicker(title: "Arrangement", phyllotaxis: $leaf.phyllotaxis)
+        ParamRows(table: PlantParams.leaf, root: $leaf)
+        CurveEditor(title: "Size along the stem", curve: $leaf.size, range: 0...1.6, lineRange: 0...2)
     }
 }
 
@@ -220,7 +276,6 @@ struct LookTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             EditorGroup(title: "Colours", copy: { model.copy(.look) }, paste: { model.paste(.look) }) {
-                LinearColorPicker(title: "Bark", color: $model.def.look.bark)
                 ForEach(model.def.look.leaves.indices, id: \.self) { i in
                     HStack {
                         LinearColorPicker(title: "Leaf shade \(i + 1)", color: Binding($model.def.look.leaves, i, or: .zero))
@@ -239,9 +294,6 @@ struct LookTab: View {
             }
             EditorGroup(title: "Surface") {
                 ParamRows(table: PlantParams.look, root: $model.def.look)
-                Picker("Bark texture", selection: $model.def.look.barkTexture) {
-                    Text("Rough").tag(FoliageTextures.Kind.roughBark); Text("Birch").tag(FoliageTextures.Kind.birchBark)
-                }
                 Picker("Leaf texture", selection: $model.def.look.leafTexture) {
                     Text("Leaf").tag(FoliageTextures.Kind.leaf); Text("Needle").tag(FoliageTextures.Kind.needle)
                     Text("Grass").tag(FoliageTextures.Kind.grass)
@@ -314,35 +366,13 @@ struct AgesTab: View {
                     .font(.system(size: 11))
                 }
             }
-            rule("Young", $model.def.ages.young)
-            rule("Sapling", $model.def.ages.sapling)
-        }
-    }
-
-    private func rule(_ title: String, _ rule: Binding<Foliage.AgeRule>) -> some View {
-        EditorGroup(title: "\(title): of the mature plant") {
-            ParamRows(table: PlantParams.age, root: rule)
-            Stepper("Levels kept: \(rule.wrappedValue.maxLevels.map(String.init) ?? "all")", value: Binding(
-                get: { rule.wrappedValue.maxLevels ?? 7 }, set: { rule.wrappedValue.maxLevels = $0 >= 7 ? nil : $0 }), in: 1...7)
-                .font(.system(size: 11))
-            ForEach(rule.wrappedValue.counts.indices, id: \.self) { i in
-                HStack {
-                    Text("Level \(rule.wrappedValue.counts[safe: i]?.level ?? 0) children").font(.system(size: 11)).frame(width: 100, alignment: .leading)
-                    let count = Binding(rule.counts, i, or: Foliage.CountRule(level: 1, factor: 1, minimum: 0))
-                    Slider(value: count.factor, in: 0...1) { editing in editing ? model.beginDrag() : model.endDrag() }
-                        .controlSize(.small)
-                    Text(String(format: "×%.2f", count.wrappedValue.factor)).monospacedDigit().foregroundColor(.secondary)
-                        .font(.system(size: 11)).frame(width: 40, alignment: .trailing)
-                    Stepper("≥ \(count.wrappedValue.minimum)", value: count.minimum, in: 0...20).font(.system(size: 11))
-                    Button { if rule.wrappedValue.counts.indices.contains(i) { rule.wrappedValue.counts.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
-                }
+            if model.def.growth != nil {
+                let g = Binding($model.def.growth, or: Growth.Params())
+                EditorGroup(title: "Young: of the mature plant") { ParamRows(table: PlantParams.age, root: g.young) }
+                EditorGroup(title: "Sapling: of the mature plant") { ParamRows(table: PlantParams.age, root: g.sapling) }
+                Text("A younger plant is the same seed grown fewer cycles toward a lower height.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
             }
-            Button("Fewer children on a level") {
-                let used = Set(rule.wrappedValue.counts.map(\.level))
-                let free = (1..<max(model.def.recipe.levels.count, 2)).first { !used.contains($0) } ?? 1
-                rule.wrappedValue.counts.append(Foliage.CountRule(level: free, factor: 0.75, minimum: 2))
-            }
-            .buttonStyle(.borderless).font(.system(size: 11))
         }
     }
 }

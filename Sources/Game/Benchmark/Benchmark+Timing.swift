@@ -614,9 +614,14 @@ extension Benchmark {
         def.id = "willow"
         def.name = "Willow"
         def.seedIndex = 100
-        def.recipe.levels[2].tropism = -1.4
-        def.recipe.levels[2].curve = -1.6
-        def.bough?.levels[0].tropism = -1.2
+        // (A weeping birch: branches that turn to the ground and sag, twigs that hang straight down.)
+        def.growth?.branch?.gravitropism = -0.35
+        def.growth?.branch?.phototropism = 0
+        def.growth?.branch?.axilAngle = 0.6
+        def.growth?.gravity = 1.2
+        def.twigs?.growth.trunk.gravitropism = -0.7
+        def.twigs?.growth.branch?.gravitropism = -0.7
+        def.twigs?.angle = 0.35
         willow = willow.merging([def])
         let catalog = PlantCatalog.register(willow)
         return [

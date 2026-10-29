@@ -142,7 +142,7 @@ extension Scene {
         /// The species' card sheet, if its leaves are cards here: made on first use.
         private func sheet(_ species: Foliage.Species) -> (texture: UInt32, layer: Int)? {
             let def = catalog[species]
-            guard scene.usesCards, def.paletteSize > 0, let leaf = def.boughRecipe(variant: 0)?.leaf else { return nil }
+            guard scene.usesCards, def.paletteSize > 0, let leaf = def.twigs?.leaf else { return nil }
             if let made = sheets[species.rawValue] { return made }
             let sheet = FoliageTextures.cardSheet(leaf, twig: Foliage.cardTwig, seed: 0xCA2D &+ UInt64(def.seedIndex))
             let made = (scene.addGeneratedTexture(sheet.image, name: "cards-\(def.id)"), scene.addCutout(alpha: sheet.alpha, coverage: sheet.coverage))
@@ -306,7 +306,14 @@ extension Scene {
                     if leaves < 0 {
                         leafGain = SIMD3(repeating: gain)
                         leaves = scene.addMaterial(albedo: leaf * gain, translucency: look.translucency, texture: blade)
-                        if realistic && !scene.usesCards { scene.markRealisticLeaf(leaves) }
+                        // A grown species' leaves are two-sided, flutter and vary in the generated look too, and have a
+                        // sheen (no lower than the realistic leaves' roughness: the reflections stay cheap).
+                        let grown = catalog[species].growth != nil
+                        if (realistic || grown) && !scene.usesCards { scene.markRealisticLeaf(leaves) }
+                        if grown && !realistic {
+                            scene.materials[leaves].params.x = 0.45
+                            scene.materials[leaves].emission.w = 0.62
+                        }
                     }
                     // Each shade turns at its own time, and to its own shade of autumn.
                     scene.addLeafMaterial(LeafMaterial(material: leaves, summer: leaf, autumn: look.autumn.map { $0 * (0.8 + 0.2 * Float(i)) },

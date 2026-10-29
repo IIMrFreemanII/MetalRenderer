@@ -57,9 +57,9 @@ final class FoliageTests: XCTestCase {
         for set in Foliage.library(seed: 11) {
             XCTAssertEqual(set.palette.count, Foliage.paletteSize(set.species))
             for (i, m) in set.palette.enumerated() {
-                XCTAssertEqual(Foliage.problems(m), [], "\(set.species) bough \(i)")
-                XCTAssertGreaterThan(m.leafTriangles, 0, "\(set.species) bough \(i) has no leaves")
-                XCTAssertGreaterThan(m.leafIndex, 0, "\(set.species) bough \(i) has no wood")
+                XCTAssertEqual(Foliage.problems(m), [], "\(set.species) twig \(i)")
+                XCTAssertGreaterThan(m.leafTriangles, 0, "\(set.species) twig \(i) has no leaves")
+                XCTAssertGreaterThan(m.leafIndex, 0, "\(set.species) twig \(i) has no wood")
             }
             for age in Foliage.Age.allCases {
                 XCTAssertEqual(set.plants(of: age).count, Foliage.variants(set.species, age), "\(set.species) \(age)")
@@ -107,21 +107,6 @@ final class FoliageTests: XCTestCase {
             func tallest(_ age: Foliage.Age) -> Float { set.plants(of: age).map { set.plants[$0].height }.max() ?? 0 }
             XCTAssertLessThan(tallest(.sapling), tallest(.young), "\(species)")
             XCTAssertLessThan(tallest(.young), tallest(.mature), "\(species)")
-        }
-    }
-
-    /// Carving prunes: no stem of a carved recipe runs on past the envelope by more than one segment.
-    func testCarvingKeepsStemsInside() {
-        let recipe = Foliage.recipe(.bush, age: .mature)
-        let carve = recipe.carve!
-        let skeleton = Foliage.grow(recipe, seed: 9)
-        for s in skeleton.stems {
-            let step = s.length / Float(s.count - 1)
-            for i in 0..<Int(s.count) {
-                let node = skeleton.nodes[Int(s.first) + i]
-                let q = (SIMD3(node.x, node.y, node.z) - carve.center) / (carve.radii + SIMD3(repeating: step + 1e-3))
-                XCTAssertLessThanOrEqual(dot(q, q), 1.0 + 1e-3, "a stem of level \(s.level) leaves the carve")
-            }
         }
     }
 
@@ -477,13 +462,14 @@ final class FoliageRuntimeTests: XCTestCase {
     /// the shader reads them back, and a scene that says it has them.
     func testLeafCards() throws {
         for species in Foliage.Species.allCases where species.hasBoughs {
-            let leaves = Foliage.bough(species, variant: 0, seed: 9), cards = Foliage.bough(species, variant: 0, seed: 9, cards: true)
+            let twigs = try XCTUnwrap(PlantCatalog.builtIn[species].twigs)
+            let leaves = Growth.twig(twigs, variant: 0, seed: 9), cards = Growth.twig(twigs, variant: 0, seed: 9, cards: true)
             XCTAssertEqual(Foliage.problems(cards), [], "\(species)")
             XCTAssertTrue(cards.cutout && !leaves.cutout)
             XCTAssertEqual(cards.leafIndex, leaves.leafIndex)                 // the same wood
             XCTAssertLessThan(cards.leafTriangles * 4, leaves.leafTriangles)
             XCTAssertEqual(cards.leafTriangles % 2, 0)
-            let leaf = try XCTUnwrap(Foliage.boughRecipe(species, variant: 0).leaf)
+            let leaf = twigs.leaf
             let sheet = FoliageTextures.cardSheet(leaf, twig: Foliage.cardTwig, seed: 1)
             XCTAssertEqual(sheet.alpha.count, FoliageTextures.cardSheetSize * FoliageTextures.cardSheetSize)
             XCTAssertTrue(sheet.coverage > 0.08 && sheet.coverage < 0.7, "\(species): \(sheet.coverage)")

@@ -37,7 +37,7 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertEqual(stats.traced, flat.wood.triangles + flat.leaves.triangles)
         XCTAssertEqual(stats.leafTriangles, flat.leaves.triangles)
         XCTAssertEqual(stats.parts, plant.parts.count)
-        XCTAssertGreaterThan(stats.boughs, 50)
+        XCTAssertGreaterThan(stats.twigs, 50)
         XCTAssertEqual(stats.height, plant.height)
         let ground = scene.terrain?.parts.count ?? 0
         XCTAssertGreaterThan(ground, 0)
@@ -77,6 +77,26 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertTrue(plain.instances.contains { plain.materials[$0.material].params.w > 0 })
     }
 
+    /// The light view: a grown plant's stems in bands of the light they get, shaded inside the crown and lit at its
+    /// top; no leaf, no twig.
+    func testTheLightView() {
+        let scene = workshop { $0.view = .light }
+        func banded(_ m: Int) -> Bool {
+            let albedo = scene.materials[m].albedo
+            return Scene.lightColors.contains { simd_length(SIMD3(albedo.x, albedo.y, albedo.z) - $0 * 0.6) < 1e-5 }
+        }
+        let ground = Set(scene.terrain?.parts.map(\.instance) ?? [])
+        let stems = scene.instances.indices.filter { banded(scene.instances[$0].material) }
+        XCTAssertGreaterThanOrEqual(Set(stems.map { scene.instances[$0].material }).count, 3, "a few bands of light")
+        XCTAssertEqual(stems.count + ground.count + 1, scene.instances.count, "nothing but the stems, the ground and the plain")
+        for inst in scene.instances { XCTAssertEqual(scene.materials[inst.material].params.w, 0) }
+        // The trunk's foot is in the crown's shade, the leader's tip in the sun.
+        let lit = Growth.lit(PlantCatalog.builtIn[.oak].growth!, seed: 9)
+        XCTAssertEqual(lit.light.count, lit.skeleton.stems.count)
+        XCTAssertLessThan(lit.light.min()!, 0.5)
+        XCTAssertGreaterThan(lit.light.max()!, 0.8)
+    }
+
     /// What the editor sends while it edits keeps the scene the same workshop (its fast reload); what it shows doesn't.
     func testWhatAnEditIs() {
         var a = SceneSettings(kind: .plants), b = a
@@ -94,7 +114,8 @@ final class PlantWorkshopTests: XCTestCase {
     func testCustomAndCompared() {
         var catalog = PlantCatalog.builtIn
         var tall = catalog[.oak]
-        tall.recipe.levels[0].length = 20
+        tall.growth?.targetHeight = 20
+        tall.growth?.cycles = 60
         catalog.species[0] = tall
         let key = PlantCatalog.register(catalog)
         let edited = workshop(catalog: key)

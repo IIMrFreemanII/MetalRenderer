@@ -90,7 +90,7 @@ struct EditorGroup<Content: View>: View {
     }
 }
 
-/// A curve over 0...1: drawn, with its preset (a line, a taper, a crown's shape) or its points. A preset shows its
+/// A curve over 0...1: drawn, with its preset (a line, a taper) or its points. A preset shows its
 /// parameters as sliders; dragging the curve itself turns it into points. Double-click adds a point, Option-click
 /// removes one.
 struct CurveEditor: View {
@@ -98,8 +98,6 @@ struct CurveEditor: View {
     @Binding var curve: Foliage.Curve
     /// The values' range shown (and a point's).
     var range: ClosedRange<Float> = 0...1.2
-    /// The presets offered: a crown's shapes, a line's ends, a taper.
-    var crowns = false
     var lineRange: ClosedRange<Double> = 0...Double.pi
     var xLabel = "base → tip"
     @Environment(\.editorDrag) private var editorDrag
@@ -118,12 +116,9 @@ struct CurveEditor: View {
                 Text(title).font(.system(size: 11))
                 Spacer()
                 Menu(presetTitle) {
-                    if crowns {
-                        ForEach(Foliage.Crown.allCases, id: \.self) { c in Button(c.rawValue.capitalized) { set(.crown(c)) } }
-                    }
                     Button("Line") { set(.linear(curve.start, curve.end)) }
                     Button("Taper") { set(.taper(min(max(1 - curve.end, 0), 1))) }
-                    Button("Points") { set(curve.editable(samples: 5)) }
+                    Button("Points") { set(curve.editable()) }
                 }
                 .menuStyle(.borderlessButton).frame(width: 120).font(.system(size: 11))
             }
@@ -135,7 +130,7 @@ struct CurveEditor: View {
                 ValueRow(title: "At tip", value: Binding(get: { b }, set: { curve = .linear(a, $0) }), range: lineRange)
             case .taper(let t):
                 ValueRow(title: "Taper", value: Binding(get: { t }, set: { curve = .taper($0) }), range: 0...1)
-            case .crown, .points:
+            case .points:
                 EmptyView()
             }
         }
@@ -145,7 +140,6 @@ struct CurveEditor: View {
         switch curve {
         case .linear: return "Line"
         case .taper: return "Taper"
-        case .crown(let c): return c.rawValue.capitalized
         case .points: return "Points"
         }
     }
@@ -204,7 +198,7 @@ struct CurveEditor: View {
     private func drag(_ g: DragGesture.Value, _ size: CGSize) {
         var p = points
         if p.isEmpty {   // a preset dragged: its points from now on
-            guard case .points(let made) = curve.editable(samples: 5) else { return }
+            guard case .points(let made) = curve.editable() else { return }
             p = made
         }
         if dragged == nil {
@@ -243,7 +237,7 @@ struct CurveEditor: View {
 
     private func addPoint(_ location: CGPoint, _ size: CGSize) {
         var p = points
-        if p.isEmpty, case .points(let made) = curve.editable(samples: 5) { p = made }
+        if p.isEmpty, case .points(let made) = curve.editable() { p = made }
         let q = fromView(location, size)
         guard q.x > 0.01, q.x < 0.99, !p.contains(where: { abs($0.x - q.x) < 0.02 }) else { return }
         p.append(q)

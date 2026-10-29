@@ -73,6 +73,7 @@ name first, then by its folder (`by_name`, `by_folder`).
 | `Scene+Characters` (the character workshop) | CharacterBaseTests, CharacterHairTests |
 | `FBXReader` | FBXTests |
 | `Foliage*.swift`, `Scene+Forest` | FoliageTests, ForestTests, FoliageRuntimeTests (all three in `FoliageTests.swift`), PlantGoldenTests, PlantCatalogTests |
+| `Plants/Growth/*` (the growth simulation, its light, the mesher, the traced leaf outlines, the twigs) | GrowerTests, MesherTests, TwigTests, PlantGoldenTests, FoliageTests, PlantEditorTests |
 | `Plant*.swift` (species as data, curves, habitats, the store, the editor's parameters and Mutate), `BuiltInPlants` | PlantGoldenTests, PlantCatalogTests, PlantWorkshopTests, PlantEditorTests, FoliageTests, ForestTests |
 | `Scene+Plants` (the plant workshop) | PlantWorkshopTests, PlantGoldenTests |
 | `Editors/Plants/*` (the SwiftUI panel) | PlantEditorTests covers its model; the views: prove with the app |

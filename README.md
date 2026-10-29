@@ -33,8 +33,8 @@ below were measured on an M1 Max, which it ran on until October 2026; they say s
   * In front of either sky there are volumetric clouds, and their shadows drift over the scene.
   * The sky lights everything: camera view, GI, reflections, fog.
   * Cost: 0.2–1 ms per frame, whatever the resolution.
-* **Generated plants:** oaks, birches, conifers, dead trees, bushes, ferns and grass, grown from a seed in about 2 ms.
-  * A tree is an **assembly**: a trunk, limbs and a few hundred placed copies of six shared boughs, traced through Metal's multi-level instancing. The forest's 2,500 trees are 29 plants of 3,500 parts.
+* **Generated plants:** oaks, birches, conifers, dead trees, bushes, ferns and grass, grown bud by bud from a seed as Unreal's Mega Plants grow them (a growth simulation in the light of their own shadow), the whole library in about 21 ms.
+  * A tree is an **assembly**: a trunk, limbs and a few hundred to a thousand placed copies of six shared twigs, traced through Metal's multi-level instancing. The forest's 2,500 trees are 29 plants.
   * **Wind** turns every limb and bough about its bone, leans each plant on its own, and leans the grass: each assembly has a posed variant per phase of the wind, refitted every frame.
   * A **season** setting turns the leaves and drops them; leaves let light through. Far plants can be traced as **voxels** (off by default: slower wherever it was measured).
 * **Volumetric fog and light:** height fog with drifting noise, plus soft-edged local fog volumes (ground mist, a stage haze, a glow around a lamp).
@@ -741,25 +741,31 @@ The Plant Editor (K or ⌘E, a SwiftUI panel: `Plants/Editor/`) shapes every spe
 **Plant workshop** scene (`METALRENDERER_SCENE=plants`, `Scene+Plants.swift`) shows what it edits. Entering the workshop
 opens the editor.
 
-* **Species** are data (`PlantSpecies.swift`): a `SpeciesDef` holds the mature recipe, the boughs' recipe, how the young
-  and the saplings differ from it, colours and textures, and where it grows. The seven built-in ones are
-  `BuiltInPlants.swift`. The tabs: **Stems** (each level of stems: counts, lengths, angles, bends, segments; + and − add
-  and remove levels), **Leaves**, **Boughs** (where they hang, and the bough itself), **Look**, **Habitat**, **Ages**.
-* **Curves:** the crown's profile (limb length up the trunk), each level's angle and length along its parent, a stem's
-  radius along it and a leaf's size along its twig are curves. The old shapes are presets (Conical, Flame, a line, a
-  taper) that give exactly what the numbers gave; dragging one turns it into points. Double-click adds a point,
-  Option-click removes one.
+* **Species** are data (`PlantSpecies.swift`): a `SpeciesDef` holds how it grows (`Growth.Params`: the growth
+  simulation's parameters, its wood and how its younger ages grow), its twigs (`Growth.Twigs`: the palette's own small
+  plant, its leaves and where they hang), any leaves on its own stems (a fern's pinnae), colours and textures, and where
+  it grows. The seven built-in ones are `BuiltInPlants.swift`. The tabs, in two rows: **Growth** (cycles, height,
+  generations, stems, the trunk's shoot), **Branching** (the branches' own shoot or the trunk's, apical dominance, auxin
+  and ethylene, forks, gravity), **Light** (what a bud needs, how shade shortens growth, senescence), **Twigs** (where
+  they hang, and the twig's own growth), **Leaves**, **Bark** (colour, texture, thinning, wander, the flared and
+  buttressed foot); then **Look**, **Habitat**, **Ages** (variants, and the younger ages' shares of the cycles and
+  height). Copy and Paste carry a shoot, the light, the wood, the twigs, leaves, the look or the habitat.
+* **Curves:** a shoot's two priority ramps (a tip's chance to grow on, a bud's to sprout, by how far up toward the
+  target height it is) and a leaf's size along its stem are curves: a line, a taper, or points. Dragging a preset
+  turns it into points. Double-click adds a point, Option-click removes one.
 * **The workshop** shows one plant (its age and variant), every age and variant (*Ages and variants*), or the plant and
-  six **Mutate** variations of it (*Use 1–6* takes one); the *Skeleton* view shows the stems alone, a colour to a
-  level. Drag orbits, scroll zooms, F frames. *Seed* tries other plants of the same recipe; holding *Compare* (or C)
-  shows the saved one. The wind sliders are the Foliage settings'. The line above them is the plant's cost: triangles
-  stored and traced, leaves, parts, boughs, and the build time.
+  six **Mutate** variations of it (*Use 1–6* takes one). The *Skeleton* view shows the stems alone, a colour to a
+  generation, and the twigs' stems; the *Light* view colours each stem by the light it got as it grew (dark blue in deep
+  shade to yellow in full sun). Drag orbits, scroll zooms, F frames. *Seed* tries other plants of the same species;
+  holding *Compare* (or C) shows the saved one. The wind sliders are the Foliage settings'. The line above them is the
+  plant's cost: triangles stored and traced, leaves, parts, twigs, and the build time.
 * **Edits are live:** the workshop is made again while a slider is dragged (about 20 ms for a tree on an M1 Max: its
   structures are built for speed, uncompacted, with no leaf-fall variants), and the Forest, the valley and the open
   world take the edits when it is let go (*Forest* goes there). An edit is one undo step; a drag is one.
 * **Saving:** *Save* writes every changed species to `Assets/Plants/<id>.json` (`PlantStore.swift`); a file with a
-  built-in species' id replaces it, any other is a species of its own. A built-in species reset to as it is built in
-  has no file. Unsaved edits are a draft, kept between launches until saved or reverted. `METALRENDERER_PLANTS=builtin`
+  built-in species' id replaces it, any other is a species of its own (format 2; a format 1 file, of the species grown
+  level by level before the growth simulation, is not read). A built-in species reset to as it is built in has no
+  file. Unsaved edits are a draft, kept between launches until saved or reverted. `METALRENDERER_PLANTS=builtin`
   ignores the files (benchmarks comparing builds), `METALRENDERER_PLANTS=<folder>` reads and saves another folder.
 * **New species** (the + menu) start as a copy of the selected one, with seeds and patches of their own. Their
   **Habitat** says where they grow: a tree's weight against the others (base, height on the hills, slope, the stand
@@ -767,14 +773,15 @@ opens the editor.
   by these for the built-in species too, with the numbers their formulas had, so their plants stand where they stood.
   New species grow in the Forest and the open world; the valley keeps its own oaks, birches and conifers.
 * **Caches:** an edited catalog's fingerprint is in the plants' names (meshes, voxel grids, the open world's tile
-  groups), so nothing built for other recipes is reused; the built-in species' names are what they were. A change of
+  groups), so nothing built for other definitions is reused; the built-in species' names carry `Foliage.version`. A change of
   where plants grow (habitat, variant counts, species) is in the open world's tiles' names too: they are made again.
-* `METALRENDERER_SCENE=plants,species=birch,age=young,variant=1,plantseed=7,layout=lineup,view=skeleton`;
+* `METALRENDERER_SCENE=plants,species=birch,age=young,variant=1,plantseed=7,layout=lineup,view=skeleton|light`;
   `METALRENDERER_BENCH=plants` renders an oak, a birch's lineup, a conifer's skeleton, a bush, ferns, grass and a
-  catalog's own species.
+  catalog's own species (a weeping birch).
 * **Tests:** `PlantGoldenTests` holds hashes of the built-in plants, the forest, the valley and the open world's
-  placement as they were before the editor; `PlantCatalogTests` (curves, ages, JSON, habitats, files, keys),
-  `PlantWorkshopTests`, `PlantEditorTests` (the parameter table, Mutate, the editor's model).
+  placement (each change of them noted there); `PlantCatalogTests` (curves, JSON, habitats, files, keys),
+  `PlantWorkshopTests` (the views, among them the light view), `PlantEditorTests` (the parameter tables, Mutate, ages,
+  the editor's model); `GrowerTests`, `MesherTests`, `TwigTests` for the growth simulation, its wood and its twigs.
 
 ### The building editor
 
@@ -990,17 +997,35 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `Characters/Editor/`) makes pe
 ### Generated plants
 
 The plants are made at load time from a seed (`Foliage*.swift`) and their species' definitions (the built-in ones, or
-`Assets/Plants`: see "The plant editor" above). The design follows Unreal Engine 5.7's Megaplants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
+`Assets/Plants`: see "The plant editor" above). The design follows Unreal Engine's Mega Plants (the Procedural Vegetation Editor, Nanite Assemblies, skinning and voxels), adapted to a renderer that only traces rays.
 
-**The generator** is a chain of plain functions over a `Recipe`:
-* **Grower:** recursive, parametric growth by levels (trunk, limbs, twigs), in the manner of Weber and Penn, inside a crown shape. A plant's age (sapling, young, mature) scales its levels, lengths and counts.
-* **Modifiers:** curvature, gravity and light (a pull up or down per level), and carving against an ellipsoid (bushes).
-* **Mesher:** stems as tubes with fewer sides per level and one vertex at the tip; ribbons for fern stalks and grass. A mesh's size is counted first and filled by index, in parallel, one slot per plant.
-* **Leaf distributor:** leaves along the twigs by phyllotaxis (spiral, two rows, whorls), in a shuffled order, so any leading part of them is a random sample.
-* **Graft distributor:** each species has six **boughs** (a twig with side twigs and leaves, 330–850 triangles). A tree hangs them on its limbs, turned and scaled, a few hundred times.
+**The generator** follows Unreal's Mega Plants (PVE) the way it grows plants, in original code (`Plants/Growth/`):
+* **Growth simulation** (`Grower.swift`): a plant grows bud by bud over a number of cycles. Each cycle every live tip
+  may grow an internode (its *apical ramp*, by how far up toward the target height it is), leaving a dormant bud
+  behind it, set round the axis by its phyllotaxis (spiral, alternate, whorls); a dormant bud may sprout a branch (its
+  bearing axis's *axillary ramp*), unless a growing tip above holds it back (apical dominance: auxin that falls off
+  down the axis), it lacks light, or the plant has its generations. Internodes turn toward the light (phototropism)
+  and the sky or the ground (gravitropism); branches flatten toward the horizontal. Wood thickens below new growth
+  each cycle (a pipe model), ages (ethylene: twigs only on young wood) and sags under its load as a beam, a little each
+  cycle. Branches that stay in deep shade are shed (senescence); ripe tips may fork. A younger plant is the same seed
+  grown fewer cycles toward a lower height.
+* **Light** (`LightField.swift`): instead of Unreal's rays from every bud, a voxel grid of the shadow the plant casts
+  on itself: each point of wood and young leaf darkens a cone of cells below it, and a bud's light is its cell's, its
+  way to the light the least shadowed side.
+* **Mesher** (`Mesher.swift`): each branch a tube along a twist-free frame, thinner by generation, its axis wandering
+  in smooth noise; the trunk's foot flared and lobed into buttresses that fade with height; more sides on thick wood;
+  UVs round the tube in turns of its girth (square texels), with the generation in U's whole part for the shading
+  (bark paler on young wood, moss on the trunk's upper side).
+* **Twigs** (the graft palette): each species grows six small twigs with the same simulation, sparse to dense, their
+  leaves the scanned leaf sheet's leaves traced into outlines (`LeafOutline.swift`: the texture fits the shape, no
+  alpha test). The distributor hangs a few hundred to about a thousand on each tree's young wood, from the tips back,
+  turned toward the light; denser twigs in the light, sparser ones in the shade, which the shading also tints.
+* **Leaf distributor:** leaves along stems by phyllotaxis, in a shuffled order, so any leading part of them is a
+  random sample (leaf fall drops the rest).
 * The same seed gives the same plants, built in parallel or on one thread (`FoliageTests`).
 
-The whole library (7 species, 29 plants, 24 boughs) takes 1–2 ms on an M4 Max.
+The whole library (7 species, 29 plants, 30 twigs) takes about 21 ms on one thread of an M4 Max
+(`METALRENDERER_FOLIAGE_TEST=1`).
 
 **The Forest** is 320 m of rolling ground (a heightfield, 205k triangles) with a level clearing around the camera and a trail leading out. Trees stand on a jittered grid, thinned by slope and a noise; conifers take the hills, oaks the low ground, birches the clearing's edge and the trail. Bushes and ferns grow under them, and grass in 2 m patches of 800 blades around the clearing. The valley's trees are the same plants.
 
@@ -2964,8 +2989,9 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `WorldTile.swift` | A tile of the world at a level of detail: its meshes, its trees, its lights, its file |
 | `Scene+World.swift` | The Open world scene: the tiles around the camera's, which tile that is, and by night the nearer tiles' lights |
 | `SceneBuffers.swift` | A scene on the GPU: its geometry's buffers, its instances' records, Metal's acceleration structures; made off the main thread. `MeshBlock`: a borrowed mesh's buffer, which scenes share. `InstanceBlock`: a group of instances, likewise |
-| `Foliage.swift` | The plant generator: recipes, the grower, leaf, card and bough distributors, the plant library |
-| `FoliageSpecies.swift` | Each species' recipes, by age, and its boughs' |
+| `Foliage.swift` | The plant generator: skeletons, the leaf and card distributors, a plant from its species (its wood and twigs as an assembly), the plant library |
+| `Growth/Grower.swift`, `Growth/LightField.swift`, `Growth/Mesher.swift`, `Growth/LeafOutline.swift` | The growth simulation (buds, hormones, light, senescence, gravity; ages; the twigs and their distributor); the shadow grid it grows in; branches as tubes with flared, buttressed feet; the scanned leaves traced into outlines |
+| `FoliageSpecies.swift` | The built-in species' palette sizes and variants, for the tests |
 | `FoliageMesh.swift` | Stems, leaves, cards and grass as meshes; a plant baked into plain meshes; the mesh checks |
 | `FoliageTextures.swift` | Generated textures: bark, leaves, grass, and the leaf cards' pictures and alpha masks |
 | `FoliageVoxels.swift` | The plants' voxel grids for the distance level of detail, made from the library's plants |

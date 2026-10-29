@@ -10,15 +10,15 @@ import Plants
 import QuartzCore
 import simd
 
-/// What one plant costs, for the plant editor: its triangles as stored (its own meshes and its species' boughs) and as
-/// traced (baked flat), its leaves', parts and boughs, and how long the workshop took to grow and place it.
+/// What one plant costs, for the plant editor: its triangles as stored (its own meshes and its species' twigs) and as
+/// traced (baked flat), its leaves', parts and twigs, and how long the workshop took to grow and place it.
 package struct PlantStats: Equatable {
     package var species = ""
     package var triangles = 0
     package var traced = 0
     package var leafTriangles = 0
     package var parts = 0
-    package var boughs = 0
+    package var twigs = 0
     package var height: Float = 0
     package var buildMs = 0.0
 }
@@ -97,9 +97,10 @@ extension Scene {
         }
 
         var focus = AABB()
-        let skeleton = p.view == .skeleton
+        let skeleton = p.view != .plant
         let levelMaterials = skeleton ? Scene.skeletonColors.map { addMaterial(albedo: $0 * 0.6, emission: $0 * 0.6) } : []
-        var boughMeshes: [Foliage.Species: [Int]] = [:]
+        let lightMaterials = p.view == .light ? Scene.lightColors.map { addMaterial(albedo: $0 * 0.6, emission: $0 * 0.6) } : []
+        var twigMeshes: [Foliage.Species: [Int]] = [:]
         for e in entries {
             guard let set = flora.set(e.species) else { continue }
             let plant = set.plants[e.plant]
@@ -109,27 +110,39 @@ extension Scene {
                 flora.place(e.species, e.plant, at: [e.x, 0, e.z], yaw: 0, size: 1, shade: 0)
                 continue
             }
-            // The stems as thin tubes, a colour to a level, and each bough's the bough's colour.
+            // The stems as thin tubes, a colour to a generation, and each twig's the twigs' colour.
             let age = plant.age, variant = set.plants(of: age).firstIndex(of: e.plant) ?? 0
-            let recipe = def.recipe(age)
+            let growth = def.growth ?? Growth.Params(), up = normalize(growth.up)
             var rng = SplitMix64(seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, age.rawValue, variant))
-            let stems = Scene.thinned(Foliage.grow(recipe, seed: rng.nextUInt64()))
+            // (The plant's own skeleton: the same seed as the library's.)
+            let lit = Growth.lit(Growth.aged(growth, age), seed: rng.nextUInt64())
+            let stems = Scene.thinned(lit.skeleton)
             let at = translate([e.x, 0, e.z])
-            for level in 0..<recipe.levels.count {
+            if p.view == .light {
+                // The light view: the stems in bands of the light they get (the twigs are left out).
+                let bands = lightMaterials.count
+                for band in 0..<bands {
+                    let mine = stems.stems.indices.filter { min(Int(lit.light[$0] * Float(bands)), bands - 1) == band }
+                    guard !mine.isEmpty else { continue }
+                    let mesh = Foliage.mesh(stems, stems: mine, leaves: [], shape: .kite, fold: 0, up: up, allLeaves: false)
+                    addInstance(addMesh(mesh), lightMaterials[band], at)
+                }
+                continue
+            }
+            let generations = Int(stems.stems.map(\.level).max() ?? 0) + 1
+            for level in 0..<generations {
                 let mine = stems.stems.indices.filter { Int(stems.stems[$0].level) == level }
                 guard !mine.isEmpty else { continue }
-                let mesh = Foliage.mesh(stems, stems: mine, leaves: [], shape: .kite, fold: 0, up: recipe.up, allLeaves: false)
+                let mesh = Foliage.mesh(stems, stems: mine, leaves: [], shape: .kite, fold: 0, up: up, allLeaves: false)
                 addInstance(addMesh(mesh), levelMaterials[min(level, levelMaterials.count - 2)], at)
             }
-            if boughMeshes[e.species] == nil {
-                boughMeshes[e.species] = (0..<def.paletteSize).compactMap { j in
-                    guard let bough = def.boughRecipe(variant: j) else { return nil }
-                    var rng = SplitMix64(seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, -1, j))
-                    let stems = Scene.thinned(Foliage.grow(bough, seed: rng.nextUInt64()))
-                    return addMesh(Foliage.mesh(stems, stems: nil, leaves: [], shape: .kite, fold: 0, up: bough.up, allLeaves: false))
+            if twigMeshes[e.species] == nil, let twigs = def.twigs {
+                twigMeshes[e.species] = (0..<def.paletteSize).map { j in
+                    let stems = Scene.thinned(Growth.grow(twigs.growth, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, -1, j)))
+                    return addMesh(Foliage.mesh(stems, stems: nil, leaves: [], shape: .kite, fold: 0, up: twigs.growth.up, allLeaves: false))
                 }
             }
-            let palette = boughMeshes[e.species] ?? []
+            let palette = twigMeshes[e.species] ?? []
             for part in plant.parts where part.shared && palette.indices.contains(part.mesh) {
                 addInstance(palette[part.mesh], levelMaterials[levelMaterials.count - 1], at * part.transform)
             }
@@ -175,7 +188,7 @@ extension Scene {
         if let index = chosen(species), let set = flora.set(species) {
             let plant = set.plants[index]
             var stats = PlantStats(species: catalog[species].id, parts: plant.parts.count, height: plant.height)
-            stats.boughs = plant.parts.filter(\.shared).count
+            stats.twigs = plant.parts.filter(\.shared).count
             stats.triangles = plant.meshes.reduce(0) { $0 + $1.triangles } + set.palette.reduce(0) { $0 + $1.triangles }
             let flat = Foliage.flatten(plant, palette: set.palette)
             stats.traced = flat.wood.triangles + flat.leaves.triangles
@@ -185,9 +198,13 @@ extension Scene {
         }
     }
 
-    /// The skeleton view's colours, by level (level 0 white, then warm to cool), and the boughs' last.
+    /// The skeleton view's colours, by generation (the trunk white, then warm to cool), and the twigs' last.
     package static let skeletonColors: [SIMD3<Float>] = [[0.9, 0.9, 0.85], [1, 0.45, 0.1], [1, 0.85, 0.15], [0.35, 0.9, 0.3], [0.2, 0.75, 1],
                                                  [0.7, 0.4, 1], [0.15, 0.95, 0.85]]
+
+    /// The light view's colours, from deep shade to full sun.
+    package static let lightColors: [SIMD3<Float>] = [[0.05, 0.05, 0.4], [0.15, 0.2, 0.85], [0.1, 0.6, 0.8], [0.3, 0.8, 0.35],
+                                               [0.85, 0.85, 0.2], [1, 0.95, 0.6]]
 
     /// The skeleton with thinner stems, so that the branching shows: under half their radius, never under 4 mm.
     package static func thinned(_ s: Foliage.Skeleton) -> Foliage.Skeleton {

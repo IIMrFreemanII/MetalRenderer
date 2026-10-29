@@ -2,128 +2,306 @@ import EngineCore
 import Foundation
 import simd
 
-/// The built-in species: what the grower, the foliage distributor and the graft distributor are told for each plant,
-/// at each age, and for the boughs of its palette; their colours. Lengths are metres, angles radians.
+/// The built-in species: how each grows (the growth simulation's parameters, Growth.Params), its twigs, its
+/// colours and where it grows. Lengths are metres, angles radians. Originals in the families of Unreal's Mega Plants
+/// presets: a broad oak, a birch, a spruce, a dead tree, a bush, a fern; and grass, patches of blades.
 extension Foliage {
     package static let builtInSpecies: [SpeciesDef] = [oakDef, birchDef, coniferDef, deadDef, bushDef, fernDef, grassDef]
 
-    /// How the built-in trees age: a young tree at 58% of the height, three quarters of the limbs; a sapling at 24%,
-    /// two levels, less than half the limbs, on a thicker trunk mesh.
-    private static let young = AgeRule(trunkLength: 0.58, counts: [CountRule(level: 1, factor: 0.75, minimum: 3),
-                                                                   CountRule(level: 2, factor: 0.7, minimum: 2)], boughScale: 0.9)
-    private static let sapling = AgeRule(trunkLength: 0.24, counts: [CountRule(level: 1, factor: 0.45, minimum: 3)], maxLevels: 2,
-                                         trunkSegments: 6, trunkRadial: 6, limbRadial: 4, ratio: 0.8, boughScale: 0.7)
+    /// The oak grown bud by bud: a clear trunk, then a broad crown of spiral branches that seek the light, the
+    /// shaded inner ones shed.
+    private static let oakGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.cycles = 36
+        p.targetHeight = 16
+        p.maxGeneration = 4
+        p.radiusGrowth = 0.009
+        p.apicalDominance = 0.5
+        p.auxinFalloff = 0.3
+        p.ethyleneBuildup = 0.1
+        p.gravity = 0.2
+        p.trunk.segment = 0.45
+        p.trunk.apicalRamp = .points([[0, 1], [0.55, 0.9], [0.85, 0.2], [1, 0]])
+        p.trunk.axillaryRamp = .points([[0, 0], [0.2, 0], [0.32, 0.8], [1, 1]])
+        p.trunk.axillaryGrowth = 0.9
+        p.trunk.axilAngle = 1.15
+        p.trunk.randomAngle = 0.08
+        p.trunk.phototropism = 0.1
+        p.trunk.gravitropism = 0.05
+        var b = Growth.Shoot()
+        b.segment = 0.4
+        b.apicalGrowth = 1
+        b.apicalRamp = .linear(1, 0.55)
+        b.axillaryGrowth = 0.8
+        b.axillaryRamp = .linear(0.55, 1)
+        b.axilAngle = 0.9
+        b.randomAngle = 0.18
+        b.phototropism = 0.15
+        b.gravitropism = -0.02
+        b.flatten = 0.5
+        p.branch = b
+        p.light.shadow = 4
+        p.senescence?.threshold = 0.2
+        return p
+    }()
 
-    private static func bough(_ levels: [Level], ratio: Float, leaf: LeafRecipe) -> Recipe {
-        Recipe(levels: levels, ratio: ratio, flare: 0, up: [0, 0, 1], leaf: leaf)
-    }
+    /// Its twigs: sprays of broad leaves traced from the scanned sheet.
+    private static let oakTwigs: Growth.Twigs = {
+        var t = Growth.Twigs()
+        t.scale = 1
+        t.spacing = 0.18
+        return t
+    }()
 
     private static let oakDef = SpeciesDef(
         id: "oak", name: "Oak", seedIndex: 0, role: .tree,
-        recipe: Recipe(levels: [
-            Level(count: 1, length: 13, lengthV: 0.12, downAngleV: 0.05, curveV: 0.35, segments: 10, radial: 10, taper: 0.85),
-            Level(count: 14, length: 0.42, lengthV: 0.15, downAngle: 1.15, downAngleEnd: 0.45, downAngleV: 0.15, start: 0.28,
-                  curve: 0.5, curveV: 0.7, segments: 6, radial: 6, taper: 0.85),
-            Level(count: 5, length: 0.5, lengthV: 0.2, downAngle: 0.85, downAngleV: 0.25, start: 0.25, curve: 0.2, curveV: 0.8,
-                  segments: 4, radial: 4, taper: 0.9)],
-                       ratio: 0.033, ratioPower: 1.15, flare: 0.6, crown: .hemispherical,
-                       graft: Graft(spacing: 0.5, start: 0.55, lastStart: 0.2, angle: 0.75, scale: 0.85...1.25, droop: 0.1)),
-        // Broad leaves on twigs spreading roughly in one plane.
-        bough: bough([
-            Level(count: 1, length: 1.2, lengthV: 0.15, downAngleV: 0.1, curve: -0.25, curveV: 0.4, segments: 5, radial: 4, taper: 0.9),
-            Level(count: 9, length: 0.42, lengthV: 0.25, downAngle: 0.9, downAngleV: 0.3, rotate: .pi, rotateV: 0.5, start: 0.12,
-                  curve: 0.2, curveV: 0.6, segments: 3, radial: 3, taper: 0.85)],
-                     ratio: 0.012, leaf: LeafRecipe(shape: .blade, length: 0.13, width: 0.085, perMetre: 40, angle: 0.9, fold: 0.12, flutter: 0.6)),
-        ages: Ages(young: young, sapling: sapling, variants: [2, 2, 3]),
+        growth: oakGrowth,
+        twigs: oakTwigs,
+        ages: Ages(variants: [2, 2, 3]),
         look: Look(bark: [0.2, 0.15, 0.11], leaves: [[0.11, 0.22, 0.05], [0.14, 0.25, 0.06], [0.09, 0.19, 0.05], [0.16, 0.24, 0.05]],
                    autumn: [0.3, 0.14, 0.035]),
         habitat: Habitat(order: 1, base: 0.9, elevation: .init(gain: -0.7, from: 0, to: 0.7), stand: -1.6))
 
+    /// The birch grown: tall and narrow, steep thin branches, white-barked, its twigs hanging.
+    private static let birchGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.cycles = 34
+        p.targetHeight = 17
+        p.radiusGrowth = 0.006
+        p.apicalDominance = 0.45
+        p.gravity = 0.15
+        p.trunk.segment = 0.5
+        p.trunk.apicalRamp = .points([[0, 1], [0.7, 0.95], [1, 0]])
+        p.trunk.axillaryRamp = .points([[0, 0], [0.25, 0], [0.4, 0.7], [1, 1]])
+        p.trunk.axillaryGrowth = 0.9
+        p.trunk.axilAngle = 0.85
+        p.trunk.randomAngle = 0.06
+        p.trunk.phototropism = 0.05
+        p.trunk.gravitropism = 0.08
+        var b = Growth.Shoot()
+        b.segment = 0.35
+        b.apicalRamp = .linear(1, 0.45)
+        b.axillaryGrowth = 0.85
+        b.axillaryRamp = .linear(0.5, 1)
+        b.axilAngle = 0.8
+        b.randomAngle = 0.2
+        b.phototropism = 0.3
+        b.gravitropism = 0.02
+        p.branch = b
+        p.wood.thinning = 0.65
+        p.wood.flare = 0.25
+        p.wood.lobes = 3
+        p.wood.lobeDepth = 0.08
+        p.wood.noise = 0.03
+        p.light.shadow = 5
+        p.senescence = nil
+        p.light.requirement = 0.05
+        return p
+    }()
+
+    private static let birchTwigs: Growth.Twigs = {
+        var t = Growth.Twigs()
+        t.growth.trunk.gravitropism = -0.35       // (its sky is +Z: these hang)
+        t.growth.branch?.gravitropism = -0.35
+        t.leaf.length = 0.075
+        t.leaf.perMetre = 55
+        t.scale = 0.85
+        t.spacing = 0.12
+        t.lightAim = 0.2
+        return t
+    }()
+
+    /// The conifer grown, a spruce: one leader to the top, whorls of five near-level branches in flat sprays, the
+    /// lowest shed in their own shade.
+    private static let coniferGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.cycles = 40
+        p.targetHeight = 20
+        p.maxGeneration = 3
+        p.radiusGrowth = 0.008
+        p.apicalDominance = 0.75
+        p.auxinFalloff = 0.4
+        p.gravity = 0.25
+        p.trunk.segment = 0.5
+        p.trunk.apicalRamp = .points([[0, 1], [0.9, 0.95], [1, 0]])
+        p.trunk.axillaryRamp = .points([[0, 0], [0.08, 0], [0.15, 1], [1, 1]])
+        p.trunk.phyllotaxis = .whorled(5)
+        p.trunk.axilAngle = 1.45
+        p.trunk.randomAngle = 0.03
+        p.trunk.phototropism = 0
+        p.trunk.gravitropism = 0.2
+        var b = Growth.Shoot()
+        b.segment = 0.3
+        b.apicalRamp = .linear(1, 0.3)
+        b.axillaryGrowth = 0.7
+        b.axillaryRamp = .linear(0.6, 1)
+        b.phyllotaxis = .distichous
+        b.axilAngle = 0.9
+        b.flatten = 0.7
+        b.randomAngle = 0.08
+        b.phototropism = 0.15
+        b.gravitropism = -0.05
+        p.branch = b
+        p.wood.thinning = 0.6
+        p.wood.flare = 0.35
+        p.wood.lobes = 6
+        p.wood.lobeDepth = 0.12
+        p.wood.noise = 0.02
+        p.senescence = nil
+        p.light.requirement = 0.03
+        p.light.shadow = 6
+        return p
+    }()
+
+    private static let coniferTwigs: Growth.Twigs = {
+        var t = Growth.Twigs()
+        t.growth.cycles = 7
+        t.growth.trunk.phyllotaxis = .distichous
+        t.growth.trunk.flatten = 0.9
+        t.growth.trunk.axilAngle = 1.0
+        t.growth.branch?.phyllotaxis = .distichous
+        t.growth.branch?.flatten = 0.9
+        t.leaf = LeafRecipe(shape: .needle, length: 0.06, width: 0.015, sizeV: 0.2, perMetre: 130, start: 0.05, angle: 1.0,
+                            angleV: 0.25, fold: 0, flutter: 0.4, cluster: 2)
+        t.spacing = 0.15
+        t.scale = 0.9
+        t.ethylene = 0.9
+        t.angle = 0.4
+        t.lightAim = 0.1
+        return t
+    }()
+
+    /// The dead tree grown: gnarled, most of its branches shed in the shade, no leaves.
+    private static let deadGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.cycles = 30
+        p.targetHeight = 10
+        p.radiusGrowth = 0.01
+        p.apicalDominance = 0.4
+        p.gravity = 0.1
+        p.trunk.segment = 0.4
+        p.trunk.apicalRamp = .linear(1, 0)
+        p.trunk.axillaryRamp = .points([[0, 0], [0.3, 0], [0.45, 0.8], [1, 1]])
+        p.trunk.axilAngle = 0.9
+        p.trunk.randomAngle = 0.15
+        var b = Growth.Shoot()
+        b.segment = 0.35
+        b.randomAngle = 0.3
+        b.phototropism = 0.2
+        b.axillaryGrowth = 0.6
+        b.axillaryRamp = .linear(0.4, 1)
+        p.branch = b
+        p.senescence?.threshold = 0.4
+        p.senescence?.cycles = 2
+        p.wood.noise = 0.12
+        p.wood.flare = 0.5
+        p.wood.lobeDepth = 0.3
+        return p
+    }()
+
+    /// The bush grown: six stems from the ground, branching freely into a rounded mass.
+    private static let bushGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.stems = 6
+        p.stemSpread = 0.55
+        p.cycles = 14
+        p.targetHeight = 2
+        p.maxGeneration = 3
+        p.seedRadius = 0.003
+        p.radiusGrowth = 0.0035
+        p.apicalDominance = 0.2
+        p.gravity = 0.05
+        p.trunk.segment = 0.2
+        p.trunk.apicalRamp = .linear(1, 0.3)
+        p.trunk.axillaryRamp = .linear(0.3, 1)
+        p.trunk.axillaryGrowth = 0.8
+        p.trunk.axilAngle = 0.8
+        p.trunk.randomAngle = 0.18
+        p.trunk.phototropism = 0.3
+        p.trunk.gravitropism = 0.05
+        var b = p.trunk
+        b.segment = 0.15
+        p.branch = b
+        p.wood.flare = 0
+        p.wood.lobeDepth = 0
+        p.wood.noise = 0.02
+        return p
+    }()
+
+    private static let bushTwigs: Growth.Twigs = {
+        var t = Growth.Twigs()
+        t.leaf.length = 0.1
+        t.scale = 0.55
+        t.spacing = 0.14
+        t.fromGeneration = 1
+        t.ethylene = 0.9
+        return t
+    }()
+
+    /// The fern grown: nine fronds from one point, arching over (ribbons, the leaves along them its pinnae).
+    private static let fernGrowth: Growth.Params = {
+        var p = Growth.Params()
+        p.stems = 9
+        p.stemSpread = 0.75
+        p.cycles = 8
+        p.targetHeight = 0.8
+        p.maxGeneration = 1
+        p.seedRadius = 0.003
+        p.radiusGrowth = 0.0004
+        p.apicalDominance = 0
+        p.trunk.segment = 0.1
+        p.trunk.apicalRamp = .linear(1, 0.7)
+        p.trunk.randomAngle = 0.05
+        p.trunk.phototropism = 0
+        p.trunk.gravitropism = -0.22
+        p.light.requirement = 0
+        p.senescence = nil
+        p.wood.ribbon = true
+        p.wood.flare = 0
+        p.wood.noise = 0
+        return p
+    }()
+
     private static let birchDef = SpeciesDef(
         id: "birch", name: "Birch", seedIndex: 1, role: .tree,
-        recipe: Recipe(levels: [
-            Level(count: 1, length: 15, lengthV: 0.1, downAngleV: 0.04, curveV: 0.25, segments: 12, radial: 8, taper: 0.9),
-            Level(count: 20, length: 0.3, lengthV: 0.15, downAngle: 0.95, downAngleEnd: 0.5, downAngleV: 0.12, start: 0.3,
-                  curve: 0.3, curveV: 0.5, segments: 6, radial: 5, taper: 0.9),
-            Level(count: 4, length: 0.55, lengthV: 0.2, downAngle: 0.9, downAngleV: 0.2, start: 0.3, curve: -0.9, curveV: 0.5,
-                  tropism: -0.4, segments: 5, radial: 3, taper: 0.9)],
-                       ratio: 0.02, ratioPower: 1.2, flare: 0.3, crown: .flame,
-                       graft: Graft(spacing: 0.45, start: 0.5, lastStart: 0.2, angle: 0.9, scale: 0.7...1.1, droop: 0.5)),
-        // Thin, hanging twigs with small leaves.
-        bough: bough([
-            Level(count: 1, length: 1.1, lengthV: 0.15, downAngleV: 0.1, curve: -0.8, curveV: 0.4, tropism: -0.5, segments: 6,
-                  radial: 3, taper: 0.9),
-            Level(count: 7, length: 0.4, lengthV: 0.25, downAngle: 0.8, downAngleV: 0.3, start: 0.1, curve: -0.6, curveV: 0.5,
-                  tropism: -0.6, segments: 4, radial: 1, taper: 0.8)],
-                     ratio: 0.009, leaf: LeafRecipe(shape: .kite, length: 0.075, width: 0.055, perMetre: 46, angle: 1.0, fold: 0.12, flutter: 0.8)),
-        ages: Ages(young: young, sapling: sapling, variants: [2, 2, 3]),
+        growth: birchGrowth,
+        twigs: birchTwigs,
+        ages: Ages(variants: [2, 2, 3]),
         look: Look(bark: [0.72, 0.7, 0.65], leaves: [[0.19, 0.31, 0.07], [0.23, 0.34, 0.08], [0.16, 0.28, 0.07]],
                    autumn: [0.42, 0.33, 0.04], barkTexture: .birchBark),
         habitat: Habitat(order: 2, base: 0.25, light: 1))
 
     private static let coniferDef = SpeciesDef(
         id: "conifer", name: "Conifer", seedIndex: 2, role: .tree,
-        recipe: Recipe(levels: [
-            Level(count: 1, length: 18, lengthV: 0.12, downAngleV: 0.02, curveV: 0.08, segments: 12, radial: 8, taper: 0.95),
-            Level(count: 40, length: 0.28, lengthV: 0.12, downAngle: 1.75, downAngleEnd: 1.0, downAngleV: 0.1, start: 0.12,
-                  curve: 0.45, curveV: 0.25, segments: 5, radial: 4, taper: 0.9)],
-                       ratio: 0.02, ratioPower: 1.2, flare: 0.4, crown: .conical,
-                       graft: Graft(spacing: 0.38, lastStart: 0.12, angle: 1.0, angleV: 0.15, rotate: .pi, scale: 0.8...1.15, droop: 0.25)),
-        // A flat spray: side twigs to the left and right, needles all round them.
-        bough: bough([
-            Level(count: 1, length: 1.3, lengthV: 0.1, downAngleV: 0.05, curve: -0.3, curveV: 0.15, segments: 6, radial: 3, taper: 0.9),
-            Level(count: 14, length: 0.42, lengthV: 0.2, downAngle: 0.95, downAngleV: 0.1, rotate: .pi, rotateV: 0, start: 0.08,
-                  curve: -0.15, curveV: 0.15, segments: 3, radial: 1, taper: 0.8)],
-                     ratio: 0.011, leaf: LeafRecipe(shape: .needle, length: 0.07, width: 0.016, sizeV: 0.2, perMetre: 130, start: 0.05,
-                                                    angle: 1.0, angleV: 0.25, fold: 0, flutter: 0.5)),
-        ages: Ages(young: young, sapling: sapling, variants: [2, 2, 3]),
+        growth: coniferGrowth,
+        twigs: coniferTwigs,
+        ages: Ages(variants: [2, 2, 3]),
         look: Look(bark: [0.19, 0.13, 0.09], leaves: [[0.045, 0.11, 0.055], [0.055, 0.13, 0.06], [0.04, 0.1, 0.06]],
                    translucency: 0.12, leafTexture: .needle, evergreen: true),
         habitat: Habitat(order: 0, base: 0.3, elevation: .init(gain: 1.1, from: -0.1, to: 0.7), slope: 3, stand: 1.6))
 
     private static let deadDef = SpeciesDef(
         id: "dead", name: "Dead tree", seedIndex: 3, role: .tree,
-        recipe: Recipe(levels: [
-            Level(count: 1, length: 9, lengthV: 0.2, downAngleV: 0.12, curveV: 0.5, segments: 9, radial: 9, taper: 0.6),
-            Level(count: 7, length: 0.4, lengthV: 0.3, downAngle: 1.0, downAngleV: 0.3, start: 0.35, curve: 0.3, curveV: 1.0,
-                  segments: 5, radial: 5, taper: 0.95),
-            Level(count: 3, length: 0.5, lengthV: 0.3, downAngle: 0.8, downAngleV: 0.3, start: 0.3, curveV: 1.0, segments: 4, radial: 3),
-            Level(count: 3, length: 0.5, lengthV: 0.3, downAngle: 0.8, downAngleV: 0.3, start: 0.3, curveV: 1.0, segments: 3, radial: 3)],
-                       ratio: 0.035, ratioPower: 1.3, flare: 0.5, crown: .cylindrical),
-        ages: Ages(young: young, sapling: sapling, variants: [0, 1, 2]),
+        growth: deadGrowth,
+        ages: Ages(variants: [0, 1, 2]),
         look: Look(bark: [0.36, 0.33, 0.29], leaves: [[0.3, 0.27, 0.2]], translucency: 0),
         habitat: Habitat(order: 3, share: 0.035))
 
-    /// Several stems from the ground, pruned to a rounded shape.
     private static let bushDef = SpeciesDef(
         id: "bush", name: "Bush", seedIndex: 4, role: .bush,
-        recipe: Recipe(levels: [
-            Level(count: 6, length: 1.5, lengthV: 0.25, downAngle: 0.5, downAngleV: 0.25, curve: 0.3, curveV: 0.6, segments: 5,
-                  radial: 4, taper: 0.9),
-            Level(count: 4, length: 0.5, lengthV: 0.2, downAngle: 0.8, downAngleV: 0.25, start: 0.3, curveV: 0.6, segments: 3, radial: 3)],
-                       ratio: 0.018, flare: 0, spread: 0.15,
-                       carve: Carve(center: [0, 0.8, 0], radii: [1.25, 1.1, 1.25], fromLevel: 0),
-                       graft: Graft(spacing: 0.32, start: 0.35, lastStart: 0.2, angle: 0.8, scale: 0.45...0.7, droop: 0.05)),
-        bough: bough([
-            Level(count: 1, length: 1.0, lengthV: 0.15, downAngleV: 0.15, curve: 0.2, curveV: 0.5, segments: 5, radial: 3, taper: 0.9),
-            Level(count: 8, length: 0.45, lengthV: 0.25, downAngle: 0.85, downAngleV: 0.3, start: 0.1, curveV: 0.6, segments: 3,
-                  radial: 1, taper: 0.8)],
-                     ratio: 0.012, leaf: LeafRecipe(shape: .kite, length: 0.11, width: 0.075, perMetre: 48, angle: 0.9, fold: 0.15, flutter: 0.7)),
-        ages: Ages(young: { var r = young; r.carve = Carve(center: [0, 0.5, 0], radii: [0.8, 0.7, 0.8], fromLevel: 0); return r }(),
-                   sapling: sapling, variants: [0, 2, 3]),
+        growth: bushGrowth,
+        twigs: bushTwigs,
+        ages: Ages(variants: [0, 2, 3]),
         look: Look(bark: [0.22, 0.16, 0.11], leaves: [[0.12, 0.24, 0.07], [0.1, 0.2, 0.06], [0.15, 0.25, 0.06]], autumn: [0.36, 0.09, 0.04]),
         habitat: Habitat(order: 10, cover: .init(count: 2600, cell: 6.1, patch: 28, salt: 31, what: 0xB05, size: 0.8...1.3, sink: 0.05)))
 
-    /// Arching fronds from one point: ribbons with pinnae either side, shrinking to the tip.
+    /// Its pinnae either side of the fronds, shrinking to the tip.
     private static let fernDef = SpeciesDef(
         id: "fern", name: "Fern", seedIndex: 5, role: .groundCover,
-        recipe: Recipe(levels: [
-            Level(count: 9, length: 0.75, lengthV: 0.25, downAngle: 0.75, downAngleV: 0.25, curve: -1.3, curveV: 0.3, segments: 7,
-                  radial: 1, taper: 0.7)],
-                       ratio: 0.006, flare: 0, spread: 0.04,
-                       leaf: LeafRecipe(shape: .kite, length: 0.13, width: 0.035, sizeV: 0.1, perMetre: 60, start: 0.12, angle: 1.3,
-                                        angleV: 0.1, phyllotaxis: .distichous, fold: 0.05, tipScale: 0.12, flutter: 0.15)),
-        ages: Ages(young: young, sapling: sapling, variants: [0, 0, 3]),
+        growth: fernGrowth,
+        leaf: LeafRecipe(shape: .kite, length: 0.13, width: 0.035, sizeV: 0.1, perMetre: 60, start: 0.12, angle: 1.3,
+                       angleV: 0.1, phyllotaxis: .distichous, fold: 0.05, tipScale: 0.12, flutter: 0.15),
+        ages: Ages(variants: [0, 0, 3]),
         look: Look(bark: [0.22, 0.16, 0.11], leaves: [[0.13, 0.28, 0.07], [0.16, 0.3, 0.08]], autumn: [0.27, 0.17, 0.06]),
         habitat: Habitat(order: 11, cover: .init(count: 6000, cell: 4, patch: 17, salt: 47, what: 0xFE2, size: 0.9...1.7, sink: 0.02)),
         stemsAreLeaves: true)
@@ -131,8 +309,7 @@ extension Foliage {
     /// Patches of blades (grassPatch), not grown.
     private static let grassDef = SpeciesDef(
         id: "grass", name: "Grass", seedIndex: 6, role: .groundCover, grass: GrassPatch(),
-        recipe: Recipe(levels: [Level()]),
-        ages: Ages(young: young, sapling: sapling, variants: [0, 0, 6]),
+        ages: Ages(variants: [0, 0, 6]),
         look: Look(bark: [0.22, 0.16, 0.11], leaves: [[0.19, 0.32, 0.09], [0.23, 0.34, 0.1], [0.27, 0.33, 0.12]],
                    autumn: [0.3, 0.27, 0.11], translucency: 0.3, leafTexture: .grass),
         habitat: Habitat(order: 12, cover: .init(count: 0, cell: 2, patch: 20, what: 0x62A, size: 1.05...1.2, sink: 0, open: true, grid: 2)))

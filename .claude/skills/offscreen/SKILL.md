@@ -43,7 +43,7 @@ points, backing 2), so the pixels and timings are the same as in the window. Eac
     plus `,objects=…,lights=…` (the crowd: `,characters=…,poses=…,detail=…`; the city: `,seed=…,blocks=…,style=…,lit=…,rooms=…,textures=…`;
     the showcase: `,showcase=owl`, a part of a model's file name; the physics scene, `physics`:
     `,bodies=…,particles=…,cloth=…,substeps=…,physics=gpu|cpu`);
-    the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton`
+    the plant workshop, `plants`: `,species=oak|birch|…,age=…,variant=…,plantseed=…,layout=single|lineup|mutate,view=plant|skeleton|light`
     (`-m plants` renders seven of them);
     the building workshop, `buildings`: `,bstyle=residential|oldtown|office|…,width=…,depth=…,sides=row|backtoback|corner|free,floors=…,bseed=…,blayout=single|street|mutate,bview=full|cutaway|dollhouse,cut=…,night=…`
     (`-m buildings` renders each style outside, the cutaway and dollhouse, rooms by day and night, an office floor, and

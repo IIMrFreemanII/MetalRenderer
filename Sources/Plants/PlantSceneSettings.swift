@@ -27,8 +27,9 @@ package struct PlantSceneSettings: Equatable, Codable {
     package enum View: Int, CaseIterable, Codable {
         case plant
         case skeleton       // the stems as thin lines, a colour to a level; no leaves
+        case light          // a grown plant's stems by the light they get (dark blue in deep shade to yellow in full sun)
 
-        package var title: String { ["Plant", "Skeleton"][rawValue] }
+        package var title: String { ["Plant", "Skeleton", "Light"][rawValue] }
     }
 
     package static let variantRange = 0...7

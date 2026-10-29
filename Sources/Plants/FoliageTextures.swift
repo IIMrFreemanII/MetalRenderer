@@ -130,7 +130,7 @@ package enum FoliageTextures {
             switch leaf.shape {
             case .needle: return 1 - s
             case .kite: return s < 0.4 ? (s / 0.4).squareRoot() : (1 - s) / 0.6
-            case .blade: return (sin(.pi * s)).squareRoot() * (0.85 + 0.15 * sin(s * 5 * .pi))
+            case .blade, .outline: return (sin(.pi * s)).squareRoot() * (0.85 + 0.15 * sin(s * 5 * .pi))
             }
         }
         let twigHalf = max(0.0035, 0.9 * size.y / Float(cell))
@@ -181,7 +181,7 @@ package enum FoliageTextures {
         var images = Kind.allCases.map { ($0.name, make($0)) }
         // The card sheets too, black where a card is cut away.
         for species in Foliage.Species.allCases where species.hasBoughs {
-            guard let leaf = Foliage.boughRecipe(species, variant: 0).leaf else { continue }
+            guard let leaf = PlantCatalog.builtIn[species].twigs?.leaf else { continue }
             var sheet = cardSheet(leaf, twig: Foliage.cardTwig, seed: 0xCA2D &+ UInt64(species.rawValue))
             for i in sheet.alpha.indices where sheet.alpha[i] == 0 { sheet.image.pixels.replaceSubrange(4 * i..<4 * i + 3, with: [0, 0, 0]) }
             images.append(("cards-\(species)", sheet.image))

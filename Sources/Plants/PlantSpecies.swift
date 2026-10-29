@@ -2,7 +2,7 @@ import EngineCore
 import Foundation
 import simd
 
-/// A species as data: everything that makes its plants what they are (its recipes, how it ages, its colours) and
+/// A species as data: everything that makes its plants what they are (how it grows, its twigs, its colours) and
 /// where it grows. The built-in ones are BuiltInPlants.swift's; the plant editor saves its own as JSON
 /// (Assets/Plants/<id>.json, PlantStore.swift), which replace a built-in one of the same id or add a species.
 extension Foliage {
@@ -13,67 +13,25 @@ extension Foliage {
         case groundCover    // ferns and grass: meshes that lean in the wind by themselves
     }
 
-    /// A species whose plants are patches of grass blades (Foliage.grassPatch), not grown from its recipe.
+    /// A species whose plants are patches of grass blades (Foliage.grassPatch), not grown.
     package struct GrassPatch: Codable, Equatable {
         package var size: Float = 2
         package var blades = 800
-    }
 
-    /// The boughs every tree of the species hangs: `count` meshes, every other one `short` times as long.
-    package struct Palette: Codable, Equatable {
-        package var count = 6
-        package var short: Float = 0.8
-    }
-
-    /// A level's child count at an age: `max(minimum, count x factor)`, rounded down.
-    package struct CountRule: Codable, Equatable {
-        package var level: Int
-        package var factor: Float
-        package var minimum: Int
-
-        package init(level: Int, factor: Float, minimum: Int) {
-            self.level = level
-            self.factor = factor
-            self.minimum = minimum
-        }
-
-        package func apply(_ count: Int) -> Int {
-            // (The built-in factors are 3/4, 7/10 and 9/20 of whole counts: what the products' float errors are
-            // rounded past, never across.)
-            max(minimum, Int(Double(count) * Double(factor) + 1e-3))
-        }
-    }
-
-    /// How a younger plant differs from the mature recipe.
-    package struct AgeRule: Codable, Equatable {
-        package var trunkLength: Float = 1          // level 0's length, of the mature one's
-        package var counts: [CountRule] = []
-        package var maxLevels: Int? = nil           // keeps only the first levels
-        package var trunkSegments: Int? = nil
-        package var trunkRadial: Int? = nil
-        package var limbRadial: Int? = nil          // level 1's sides
-        package var ratio: Float = 1                // of the mature radius ratio
-        package var boughScale: Float = 1           // of the mature boughs' sizes
-        package var carve: Carve? = nil             // in place of the mature one
-
-        package func apply(_ r: inout Recipe) {
-            r.levels[0].length *= trunkLength
-            if let s = trunkSegments { r.levels[0].segments = s }
-            if let s = trunkRadial { r.levels[0].radial = s }
-            if let m = maxLevels { r.levels = Array(r.levels.prefix(max(m, 1))) }
-            for rule in counts where rule.level < r.levels.count { r.levels[rule.level].count = rule.apply(r.levels[rule.level].count) }
-            if let s = limbRadial, r.levels.count > 1 { r.levels[1].radial = s }
-            r.ratio *= ratio
-            if let boughs = r.graft?.scale { r.graft?.scale = boughs.lowerBound * boughScale...boughs.upperBound * boughScale }
-            if let carve { r.carve = carve }
+        package init(size: Float = 2, blades: Int = 800) {
+            self.size = size
+            self.blades = blades
         }
     }
 
     package struct Ages: Codable, Equatable {
-        package var young = AgeRule()
-        package var sapling = AgeRule()
-        /// Seeded variants of each age, by `Age.rawValue` (sapling, young, mature).
+        /// Seeded variants of each age, by `Age.rawValue` (sapling, young, mature). (How a younger plant grows is
+        /// its growth's: Growth.Params.young and .sapling.)
         package var variants = [0, 0, 3]
+
+        package init(variants: [Int] = [0, 0, 3]) {
+            self.variants = variants
+        }
     }
 
     /// Colours and textures. Colours are linear RGB; a leaf shade is picked per placed plant.
@@ -95,36 +53,21 @@ extension Foliage {
         package var seedIndex: Int
         package var role: Role
         package var grass: GrassPatch? = nil
-        package var recipe: Recipe                  // the mature plant
-        package var bough: Recipe? = nil            // nil: no palette (its plants are one mesh)
-        package var palette = Palette()
+        /// How it grows, bud by bud (Growth, Unreal's growth simulation); its ages are fewer cycles of it. (nil: the
+        /// grass, which isn't grown.)
+        package var growth: Growth.Params? = nil
+        /// Its twigs: its palette (the meshes its trees hang hundreds of) and how they hang.
+        package var twigs: Growth.Twigs? = nil
+        /// Leaves on its own stems (a fern's pinnae), not on twigs.
+        package var leaf: LeafRecipe? = nil
         package var ages = Ages()
         package var look: Look
         package var habitat = Habitat()
         package var stemsAreLeaves = false          // the stems are leaf material (fern fronds)
         package var basedOn: String? = nil          // a custom species: the one it was copied from
 
-        package var paletteSize: Int { bough == nil || grass != nil ? 0 : palette.count }
+        package var paletteSize: Int { grass != nil ? 0 : twigs?.palette ?? 0 }
         package func variants(_ age: Age) -> Int { ages.variants.indices.contains(age.rawValue) ? ages.variants[age.rawValue] : 0 }
-
-        /// The recipe of its plants of an age.
-        package func recipe(_ age: Age) -> Recipe {
-            var r = recipe
-            switch age {
-            case .mature: break
-            case .young: ages.young.apply(&r)
-            case .sapling: ages.sapling.apply(&r)
-            }
-            return r
-        }
-
-        /// A bough of its palette: grown lying along +Y with +Z toward the sky, about a metre long. The graft
-        /// distributor scales it, so its leaves shrink with it.
-        package func boughRecipe(variant: Int) -> Recipe? {
-            guard var r = bough else { return nil }
-            if variant % 2 != 0 { r.levels[0].length *= palette.short }   // the palette has longer and shorter boughs
-            return r
-        }
     }
 }
 

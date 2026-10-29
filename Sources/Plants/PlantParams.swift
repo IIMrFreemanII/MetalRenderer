@@ -1,46 +1,98 @@
 import EngineCore
 import Foundation
 
+/// The plant editor's numbers (and Mutate's, PlantMutate.swift), by what they belong to: a grown species' growth
+/// (Growth.Params), its trunk's and branches' shoots, its light, senescence and forks, its wood, its twigs.
 package enum PlantParams {
-    package typealias L = Foliage.Level
     private static let pi = Double.pi
 
-    /// Level 0, the stems from the ground: its length is metres, its angle one from `up`.
-    package static let trunk: [PlantParam<L>] = [
-        .int("Stems", \.count, 1...40, mutation: 0.05),
-        .float("Height", \.length, 0.1...40, digits: 2, unit: "m", mutation: 0.08),
-        .float("Height variation", \.lengthV, 0...0.6),
-        .float("Lean variation", \.downAngleV, 0...1),
-        .float("Turn between stems", \.rotate, 0...pi, mutation: 0.05),
-        .float("Turn variation", \.rotateV, 0...1),
-        .float("Bend", \.curve, -3...3),
-        .float("Wander", \.curveV, 0...2),
-        .float("Tropism", \.tropism, -2...2),
-        .int("Segments", \.segments, 1...24, mutation: 0),
-        .int("Sides", \.radial, 1...16, mutation: 0),
+    /// The plant as a whole: how long it grows and toward what height, from how many stems.
+    package static let growth: [PlantParam<Growth.Params>] = [
+        .int("Cycles", \.cycles, 2...90, mutation: 0.06),
+        .float("Height", \.targetHeight, 0.2...40, digits: 2, unit: "m", mutation: 0.08),
+        .int("Generations", \.maxGeneration, 1...6, mutation: 0),
+        .int("Stems", \.stems, 1...24, mutation: 0.05),
+        .float("Stem spread", \.stemSpread, 0...1.5),
+        .float("Seed radius", \.seedRadius, 0.0005...0.05, digits: 4, unit: "m", mutation: 0),
+        .float("Radius growth", \.radiusGrowth, 0...0.03, digits: 4, unit: "m", mutation: 0.08),
     ]
 
-    /// The levels above: lengths are shares of the parent's.
-    package static let level: [PlantParam<L>] = [
-        .int("Count", \.count, 0...60),
-        .float("Length", \.length, 0.02...1.5, digits: 2),
-        .float("Length variation", \.lengthV, 0...0.6),
-        .float("Angle variation", \.downAngleV, 0...1),
-        .float("Turn between", \.rotate, 0...pi, mutation: 0.08),
-        .float("Turn variation", \.rotateV, 0...1),
-        .float("First at", \.start, 0...0.95),
-        .float("Bend", \.curve, -3...3),
-        .float("Wander", \.curveV, 0...2),
-        .float("Tropism", \.tropism, -2...2),
-        .int("Segments", \.segments, 1...24, mutation: 0),
-        .int("Sides", \.radial, 1...16, mutation: 0),
+    /// Its hormones: the tips' hold over the buds below them, and how wood ages.
+    package static let hormones: [PlantParam<Growth.Params>] = [
+        .float("Apical dominance", \.apicalDominance, 0...1),
+        .float("Auxin falloff", \.auxinFalloff, 0...1),
+        .float("Ethylene build-up", \.ethyleneBuildup, 0...0.5, digits: 3),
     ]
 
-    package static let recipe: [PlantParam<Foliage.Recipe>] = [
-        .float("Radius ratio", \.ratio, 0.002...0.08, digits: 3),
-        .float("Radius power", \.ratioPower, 0.5...2),
+    package static let gravity: [PlantParam<Growth.Params>] = [
+        .float("Gravity", \.gravity, 0...2),
+    ]
+
+    /// An axis's growth: the trunk's, or every branch's.
+    package static let shoot: [PlantParam<Growth.Shoot>] = [
+        .float("Internode", \.segment, 0.01...1.5, digits: 3, unit: "m", mutation: 0.06),
+        .float("Internode scale", \.lengthScale, 0.2...2),
+        .float("Tip growth", \.apicalGrowth, 0...1),
+        .float("Bud growth", \.axillaryGrowth, 0...1),
+        .float("Axil angle", \.axilAngle, 0...pi),
+        .float("Random turn", \.randomAngle, 0...0.6),
+        .float("Flatten", \.flatten, 0...1),
+        .float("Phototropism", \.phototropism, 0...1),
+        .float("Gravitropism", \.gravitropism, -0.5...0.5, digits: 3),
+    ]
+
+    package static let light: [PlantParam<Growth.Light>] = [
+        .float("Light needed", \.requirement, 0...0.8),
+        .float("Shade shortens", \.lengthImpact, 0...1),
+        .float("Shadow", \.shadow, 0.2...10),
+        .float("Leaf shadow", \.leafDensity, 0...6),
+    ]
+
+    package static let senescence: [PlantParam<Growth.Senescence>] = [
+        .float("Shed below light", \.threshold, 0...0.8),
+        .int("For cycles", \.cycles, 1...20),
+        .int("From generation", \.fromGeneration, 1...6, mutation: 0),
+    ]
+
+    package static let bifurcation: [PlantParam<Growth.Bifurcation>] = [
+        .float("Chance", \.chance, 0...1),
+        .float("Fork angle", \.angle, 0...1.5),
+        .int("Forks", \.count, 2...4, mutation: 0),
+        .int("Ripens in", \.cycles, 1...12),
+    ]
+
+    /// The mesher's: thinning by generation, the axes' wander, the trunk's foot.
+    package static let wood: [PlantParam<Growth.Wood>] = [
+        .float("Thinning", \.thinning, 0.3...1),
+        .float("Wander", \.noise, 0...0.3, digits: 3, unit: "m"),
+        .float("Wander waves", \.noiseScale, 0.1...4),
         .float("Flare", \.flare, 0...2),
-        .float("Spread", \.spread, 0...2, unit: "m"),
+        .float("Flare height", \.flareHeight, 0.1...5, unit: "m"),
+        .int("Buttresses", \.lobes, 0...12, mutation: 0),
+        .float("Buttress depth", \.lobeDepth, 0...0.6),
+    ]
+
+    /// Where the twigs hang and how many kinds of them there are.
+    package static let twigs: [PlantParam<Growth.Twigs>] = [
+        .int("Kinds", \.palette, 1...12, mutation: 0),
+        .float("Spacing", \.spacing, 0.04...1.5, digits: 3, unit: "m"),
+        .float("Young wood below", \.ethylene, 0...1),
+        .int("From generation", \.fromGeneration, 1...6, mutation: 0),
+        .float("Size", \.scale, 0.1...3),
+        .float("Size variation", \.scaleV, 0...0.8),
+        .float("Angle", \.angle, 0...pi),
+        .float("Toward the light", \.lightAim, 0...1),
+    ]
+
+    /// A younger age, of the mature plant.
+    package static let age: [PlantParam<Growth.AgeShare>] = [
+        .float("Cycles", \.cycles, 0.05...1, mutation: 0),
+        .float("Height", \.height, 0.05...1, mutation: 0),
+    ]
+
+    package static let grass: [PlantParam<Foliage.GrassPatch>] = [
+        .float("Size", \.size, 0.5...6, digits: 1, unit: "m"),
+        .int("Blades", \.blades, 50...3000),
     ]
 
     package static let leaf: [PlantParam<Foliage.LeafRecipe>] = [
@@ -53,35 +105,7 @@ package enum PlantParams {
         .float("Angle variation", \.angleV, 0...1),
         .float("Fold", \.fold, 0...0.5),
         .float("Flutter", \.flutter, 0...1.5),
-        .int("From level", \.fromLevel, 0...5, mutation: 0),
-    ]
-
-    package static let graft: [PlantParam<Foliage.Graft>] = [
-        .float("Spacing", \.spacing, 0.1...2, unit: "m"),
-        .int("From level", \.fromLevel, 0...5, mutation: 0),
-        .float("First at", \.start, 0...0.95),
-        .float("First at (last level)", \.lastStart, 0...0.95),
-        .float("Angle", \.angle, 0...pi),
-        .float("Angle variation", \.angleV, 0...1),
-        .float("Turn between", \.rotate, 0...pi, mutation: 0.05),
-        .float("Droop", \.droop, -1...1),
-        PlantParam(title: "Smallest", range: 0.1...3, step: 0, digits: 2, unit: "", mutation: 0.08,
-                   get: { Double($0.scale.lowerBound) },
-                   set: { $0.scale = Float($1)...max(Float($1), $0.scale.upperBound) }),
-        PlantParam(title: "Largest", range: 0.1...3, step: 0, digits: 2, unit: "", mutation: 0.08,
-                   get: { Double($0.scale.upperBound) },
-                   set: { $0.scale = min(Float($1), $0.scale.lowerBound)...Float($1) }),
-    ]
-
-    package static let palette: [PlantParam<Foliage.Palette>] = [
-        .int("Boughs", \.count, 1...12, mutation: 0),
-        .float("Short boughs", \.short, 0.3...1),
-    ]
-
-    package static let age: [PlantParam<Foliage.AgeRule>] = [
-        .float("Height", \.trunkLength, 0.05...1, mutation: 0),
-        .float("Radius ratio", \.ratio, 0.3...1.5, mutation: 0),
-        .float("Bough size", \.boughScale, 0.2...1.5, mutation: 0),
+        .int("From generation", \.fromLevel, 0...6, mutation: 0),
     ]
 
     package static let look: [PlantParam<Foliage.Look>] = [

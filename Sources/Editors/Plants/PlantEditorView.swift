@@ -18,16 +18,25 @@ struct PlantEditorView: View {
         VStack(spacing: 0) {
             speciesStrip.padding(.horizontal, 10).padding(.top, 8)
             header.padding(.horizontal, 10).padding(.vertical, 6)
-            Picker("", selection: $model.tab) {
-                ForEach(PlantEditorModel.Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            // Two rows: the plant's shape, then how it looks and where it grows.
+            VStack(spacing: 4) {
+                ForEach([PlantEditorModel.Tab.shape, PlantEditorModel.Tab.dressing], id: \.self) { row in
+                    Picker("", selection: $model.tab) {
+                        ForEach(row, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented).labelsHidden()
+                }
             }
-            .pickerStyle(.segmented).labelsHidden().padding(.horizontal, 10)
+            .padding(.horizontal, 10)
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
                     switch model.tab {
-                    case .stems: StemsTab()
+                    case .growth: GrowthTab()
+                    case .branching: BranchingTab()
+                    case .light: LightTab()
+                    case .twigs: TwigsTab()
                     case .leaves: LeavesTab()
-                    case .boughs: BoughsTab()
+                    case .bark: BarkTab()
                     case .look: LookTab()
                     case .habitat: HabitatTab()
                     case .ages: AgesTab()
@@ -95,8 +104,8 @@ struct PlantEditorView: View {
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let s = model.stats, model.inWorkshop {
-                Text(String(format: "%@: %.1f m · %@ triangles (%@ traced, %@ leaves) · %d parts, %d boughs · built in %.0f ms",
-                            s.species, s.height, count(s.triangles), count(s.traced), count(s.leafTriangles), s.parts, s.boughs, s.buildMs))
+                Text(String(format: "%@: %.1f m · %@ triangles (%@ traced, %@ leaves) · %d parts, %d twigs · built in %.0f ms",
+                            s.species, s.height, count(s.triangles), count(s.traced), count(s.leafTriangles), s.parts, s.twigs, s.buildMs))
                     .font(.system(size: 10)).foregroundColor(.secondary).lineLimit(2)
             }
             if model.inWorkshop { workshopControls } else {
@@ -140,7 +149,7 @@ struct PlantEditorView: View {
                 Picker("", selection: Binding(get: { model.scene.plants.view }, set: { v in model.workshop { $0.view = v } })) {
                     ForEach(PlantSceneSettings.View.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 130)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 190)
                 Spacer()
                 Button { model.frame() } label: { Image(systemName: "viewfinder") }.help("Frame the plants (F)")
             }
@@ -158,7 +167,7 @@ struct PlantEditorView: View {
             }
             HStack {
                 Button { model.randomizeSeed() } label: { Label("Seed \(model.scene.plants.seed)", systemImage: "dice") }
-                    .help("Other plants of the same recipe")
+                    .help("Other plants of the same species")
                 Button { model.mutate() } label: { Label("Mutate", systemImage: "wand.and.stars") }
                     .help("Six variations of this species side by side; pick one")
                 PressButton(title: "Compare", help: "Hold (or hold C): the saved plant in place of this one") { model.compare($0) }
