@@ -126,10 +126,11 @@ extension Benchmark {
 
     /// MetalFX's denoising scaler's images, path traced at 3x from 640x400, against supersampled native 1920x1200 references at
     /// t = 5 s (2 bounces, as the frames trace): a still with the frame before it (flicker), the animation running and
-    /// the camera move (Tools/eval/hwrt.py).
+    /// the camera move (Tools/eval/hwrt.py). The gallery's glTF models are the ones with reflections (its own camera move,
+    /// an orbit).
     static func hwrtq() -> [Config] {
         var out: [Config] = []
-        for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall())] {
+        for (sceneTag, scene) in [("cornell", SceneSettings()), ("stress", stressHall()), ("gallery", SceneSettings(kind: .gallery))] {
             out += references([Config("\(sceneTag) ref final", scale: 1.5, scene: scene).reference(frames: 1024, supersample: true)])
             let shown = Config("", scale: 0.5, upscale: 3, scene: scene)
             out += scored(shown) { "\(sceneTag) final \($0) denoiser" }

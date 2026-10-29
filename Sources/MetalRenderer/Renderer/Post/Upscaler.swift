@@ -61,6 +61,8 @@ package final class Upscaler {
         d.specularAlbedoTextureFormat = RenderTargets.gBufferFormat
         d.normalTextureFormat = RenderTargets.gBufferFormat
         d.roughnessTextureFormat = RenderTargets.roughnessFormat
+        d.specularHitDistanceTextureFormat = RenderTargets.hitDistanceFormat
+        d.isSpecularHitDistanceTextureEnabled = true
         d.outputTextureFormat = Upscaler.hdrFormat
         (d.inputWidth, d.inputHeight, d.outputWidth, d.outputHeight) = (inputWidth, inputHeight, outputWidth, outputHeight)
         d.requiresSynchronousInitialization = synchronous
@@ -113,7 +115,8 @@ package final class Upscaler {
     /// What MetalFX reads and writes, for a Metal 4 frame's residency set.
     func resources(_ inputs: UpscaleInputs) -> [MTLTexture] {
         let t = inputs.targets
-        return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.diffuseGuide, t.specularAlbedo, inputs.normalDepth, t.roughness, hdrOutput]
+        return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.diffuseGuide, t.specularAlbedo, inputs.normalDepth, t.roughness,
+                t.specularHitDistance, hdrOutput]
     }
 
     private func set(_ scaler: MTLFXTemporalDenoisedScalerBase, _ inputs: UpscaleInputs) {
@@ -125,6 +128,7 @@ package final class Upscaler {
         scaler.specularAlbedoTexture = t.specularAlbedo
         scaler.normalTexture = inputs.normalDepth      // xyz = world-space shading normal
         scaler.roughnessTexture = t.roughness
+        scaler.specularHitDistanceTexture = t.specularHitDistance   // how far the reflection ray went (Reflections.metal)
         scaler.outputTexture = hdrOutput
         // MetalFX wants the offset that takes a sample back to the pixel center: the negated ray jitter.
         // (Measured with MetalFX's temporal scaler: the wrong sign cost ~5 dB PSNR against a native-resolution render.)

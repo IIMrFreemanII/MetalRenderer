@@ -473,6 +473,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  particleDepth [[texture(21)]], // ...and its surfaces' depths
                             texture2d<float, access::read>  visibilityTex [[texture(22)]], // with FLAG_HDR_OUTPUT: the lights' raw visibility
                             texture2d<float, access::write> outDiffuseGuide [[texture(23)]], // ...and MetalFX's diffuse guide
+                            texture2d<float, access::write> outHitDistance [[texture(24)]],  // ...its reflections' hit distance, without FLAG_SPECULAR
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
@@ -623,6 +624,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
         outRoughness.write(float4(guideRoughness), tid);
         outDiffuseGuide.write(float4(albedo * sunShadowGuide(u, lights, visibilityTex, surfacePos, nd, geoNormal, albedoTex, tid), 1.0f), tid);
+        // (With FLAG_SPECULAR reflectionKernel wrote it; without, no reflection rays.)
+        if (!flagOn(u.flags, FLAG_SPECULAR)) outHitDistance.write(float4(0.0f), tid);
         return;
     }
     if (flagOn(u.flags, FLAG_POST)) {   // the lens effects follow (Post.metal): they want the light as it is
