@@ -47,18 +47,28 @@ package final class PlantPreviewPlayer: SceneBehaviour {
 }
 
 extension Scene {
-    /// What a camera ray sees past everything in the plant workshop (linear, before exposure): a neutral grey.
-    package static let previewBackdrop = SIMD3<Float>(repeating: 0.32)
+    /// Unreal's preview lighting in this renderer's units: its viewport's fixed exposure (EV100 -0.2, so ×0.957) and the
+    /// 0.6 that the ACES fit here wants on its input to be ACES's curve (Narkowicz 2015), which Unreal's is.
+    package static let previewUnits: Float = 0.957 * 0.6
+    /// The vegetation editor's profile, Unreal's "Grey Ambient" (AssetViewerSettings.h): a white sun of 4 lux...
+    package static let previewSun = SIMD3<Float>(repeating: 4 * previewUnits)
+    /// ...and a sky light of 2 times its grey studio cubemap (T_GreyAmbient), here its upper half's mean (as a floor
+    /// sees it; slightly warm overhead)...
+    package static let previewSky = SIMD3<Float>(0.6, 0.55, 0.54) * 2 * previewUnits
+    /// ...whose picture is hidden: a camera ray sees the viewport's clear colour (its EnvironmentColor, 0.2 grey).
+    package static let previewBackdrop = SIMD3<Float>(repeating: 0.2 * previewUnits)
 
-    /// The plant workshop's stage, as Unreal's asset preview: a grey floor to the horizon under a grey backdrop, the
-    /// clear sky (SceneDefinition's `previewSky`) lighting it, a sun 40° up that its rig turns.
+    /// The plant workshop's stage, as Unreal's tree preview (the vegetation editor, its Grey Ambient profile): its grid
+    /// floor to the horizon under a dark grey backdrop, a grey sky (SceneDefinition's `previewSky`, a constant colour)
+    /// lighting it, a white sun 40° up that its rig turns.
     package func addPreviewStage(_ kit: Kit) {
-        let floor = addPBRMaterial(baseColor: [0.36, 0.36, 0.36], metallic: 0, roughness: 0.8)
+        let floor = addGridMaterial(.previewFloor)
         object("Floor") { addInstance(kit.quad, floor, scale([2000, 1, 2000])) }
         backdrop = Scene.previewBackdrop
+        skyColor = Scene.previewSky
         let rig = PlantPreviewRig()
         previewRig = rig
-        addLight(.sun(angularRadius: Scene.degrees(0.27)), color: [1, 1, 1]) { _ in
+        addLight(.sun(angularRadius: Scene.degrees(0.27)), color: Scene.previewSun) { _ in
             LightPose(position: .zero, direction: PlantPreviewRig.sun(yaw: rig.yaw))
         }
     }
