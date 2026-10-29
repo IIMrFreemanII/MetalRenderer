@@ -83,8 +83,9 @@ final class PlantGoldenTests: XCTestCase {
     /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
     /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
     /// either; the scenes' all, by the names.)
+    /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     func testTheLibraryIsAsItWas() {
-        XCTAssertEqual(library(Foliage.library(seed: 1)), "d80344403732")
+        XCTAssertEqual(library(Foliage.library(seed: 1)), "6bd69aced016")
         XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "4e70b286ba9e")
     }
 
@@ -96,14 +97,15 @@ final class PlantGoldenTests: XCTestCase {
     /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
     /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
     /// either; the scenes' all, by the names.)
+    /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "975b7bee1496")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "155809edcfce")
+        XCTAssertEqual(scene(Scene(settings)), "97cb9a3aef90")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "73831b67baef")
         settings.leafCards = true
         XCTAssertEqual(scene(Scene(settings, assemblies: true)), "33ef1dbc0ff2")
     }
@@ -113,11 +115,12 @@ final class PlantGoldenTests: XCTestCase {
     /// every bud, its trunk thinner and its internodes shorter; the bush's stems a hazel's. Then each a leaf sheet of its
     /// own (leaves-birch, leaves-bush), and the built-in plants' meshes named by their recipes too. Every hash that holds
     /// either; the scenes' all, by the names.)
+    /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
         settings.realism = .off
-        XCTAssertEqual(scene(Scene(settings)), "fd1b2899d878")
+        XCTAssertEqual(scene(Scene(settings)), "ef4828ddc1bb")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {

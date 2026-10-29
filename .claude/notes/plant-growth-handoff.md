@@ -102,3 +102,17 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
   `markRealisticLeaf`). The library's cache name carries the catalog's fingerprint for the built-in species too (it
   didn't: a retuned built-in species kept its old far voxels on disk). LeafSet009's albedo has autumn blotches and
   holes (the holes show as leaf: outlines aren't cut out); its bushes read a little darker in the forest.
+
+## Leaves up close (2026-10-29)
+
+Up close the oak's leaves looked flat. There were two reasons:
+- **Geometry:** `writeOutline` drew rows of left and right points only, so each leaf was a flat strip with half-tilted normals.
+- **Shading:** 60% of every leaf's normal bent toward the crown's outside, at any distance.
+
+Now:
+- **Each leaf is a domed blade:** each row has a midrib vertex too (16 triangles). Its edges sit `fold`·width below the midrib and its tip `fold`·length below. The vertex normals are those of that surface.
+  - Convex on purpose: the first try, a cup (edges up), cast hard triangular self-shadows inside each leaf.
+- **The crown bend fades up close:** `LEAF_CROWN_FAR` / `LEAF_CROWN_NEAR` (15 mm / 3 mm pixel footprints). GI rays are wide, so they always use the crown's normals.
+- **Cost:** the forest shot is the same as before (A/B 7.6–7.9 ms both, trace 1.58 ms). Twigs are shared palette meshes.
+- **New shot:** `-m plants` gains "plants oak leaves", a camera in the crown's lower edge.
+- **Realism switch removed:** the "Realistic look" switch is gone from the panel. The app is always realistic, and a saved copy's value is ignored. The env key `realism=` stays for benchmarks and tests.

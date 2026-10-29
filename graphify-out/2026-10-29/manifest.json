@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793299724.420935,
-    "seen": 1793299776.106845,
-    "ast_hash": "554704c61f8aca04878fbdfdff143906",
+    "mtime": 1793300648.691322,
+    "seen": 1793300886.68919,
+    "ast_hash": "c6d3ee819727dd37030bd1e070dd00c3",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -354,9 +354,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Surface.metal": {
-    "mtime": 1793254891.8377614,
-    "seen": 1793254966.2417212,
-    "ast_hash": "7e6a6116f40556779e4b6b2aafb18016",
+    "mtime": 1793300349.160994,
+    "seen": 1793300886.681879,
+    "ast_hash": "bcba12f61d2e7e7a45d202c7acfef565",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Trace.metal": {
@@ -1098,15 +1098,15 @@
     "semantic_hash": ""
   },
   "Tools/textures/fetch.py": {
-    "mtime": 1793222892.9660337,
-    "seen": 1793223730.1633658,
-    "ast_hash": "7fb88f6c9faa43c2a603dacff8b7836a",
+    "mtime": 1793300196.646002,
+    "seen": 1793300886.6879518,
+    "ast_hash": "57795024d275220edb9e90ac58c8fc55",
     "semantic_hash": ""
   },
   "Tools/textures/manifest.json": {
-    "mtime": 1793222892.9660914,
-    "seen": 1793223730.1633668,
-    "ast_hash": "3956aca1a643a1c886679a4f1bef68e3",
+    "mtime": 1793300196.645855,
+    "seen": 1793300886.687953,
+    "ast_hash": "40673ff90d3e5375c17c64c4a8b1025a",
     "semantic_hash": ""
   },
   ".claude/notes/realism-handoff.md": {
@@ -1986,9 +1986,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+Forest.swift": {
-    "mtime": 1793230184.4486372,
-    "seen": 1793231380.2681248,
-    "ast_hash": "54f54ecd198862a1cc67927a74bc4a34",
+    "mtime": 1793300546.8836284,
+    "seen": 1793300886.679691,
+    "ast_hash": "6b5f1d53f404b4ec6729879f7da47383",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+Plants.swift": {
@@ -2574,9 +2574,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
-    "mtime": 1793299647.6759226,
-    "seen": 1793299776.103814,
-    "ast_hash": "9edb28a7a2c2dfc00d66bb945263190d",
+    "mtime": 1793300582.3663802,
+    "seen": 1793300886.6862998,
+    "ast_hash": "9e8b56cf6e4fe7b7d572696e0e2904b3",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantTracingTests.swift": {
@@ -3468,9 +3468,9 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/Textures/TextureSets.swift": {
-    "mtime": 1793222892.8863769,
-    "seen": 1793223730.163064,
-    "ast_hash": "12da266df69510ad1807dca060df78fa",
+    "mtime": 1793300215.9152424,
+    "seen": 1793300886.67631,
+    "ast_hash": "42d3a31a2671fe5ea844d742e2e7d4f5",
     "semantic_hash": ""
   },
   "Sources/EngineCore/Textures/TextureSource.swift": {
@@ -3576,9 +3576,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Textures/Scene+ScanMaterials.swift": {
-    "mtime": 1793222892.916605,
-    "seen": 1793223730.163214,
-    "ast_hash": "110b12d04e5078984ec34e65c223f6cd",
+    "mtime": 1793300341.3360784,
+    "seen": 1793300886.682186,
+    "ast_hash": "6ac279d36698588df95faea369372f6f",
     "semantic_hash": ""
   },
   "Tools/modules/addimport.py": {
@@ -3636,21 +3636,21 @@
     "semantic_hash": ""
   },
   "Sources/Plants/BuiltInPlants.swift": {
-    "mtime": 1793299677.0919778,
-    "seen": 1793299776.101415,
-    "ast_hash": "e21774d970a5c6af54dd1b86b629d87c",
+    "mtime": 1793300357.939956,
+    "seen": 1793300886.684177,
+    "ast_hash": "db6ca904b6ae33d87a18c7f1ecc4a153",
     "semantic_hash": ""
   },
   "Sources/Plants/Foliage.swift": {
-    "mtime": 1793230348.045694,
-    "seen": 1793231380.272321,
-    "ast_hash": "3cb2ec4bc2e502c1260f8f3420b68687",
+    "mtime": 1793300317.367182,
+    "seen": 1793300886.6841779,
+    "ast_hash": "576822e6c8c38ed8c93d134cba7a7247",
     "semantic_hash": ""
   },
   "Sources/Plants/FoliageMesh.swift": {
-    "mtime": 1793229042.3571382,
-    "seen": 1793229173.3238232,
-    "ast_hash": "c766fa2aac58d54777cf4477ed0a33ee",
+    "mtime": 1793300308.880818,
+    "seen": 1793300886.6841788,
+    "ast_hash": "222bef7437e7b1ecf5ed7a4672144ec1",
     "semantic_hash": ""
   },
   "Sources/Plants/FoliageSpecies.swift": {
@@ -5958,9 +5958,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/Grower.swift": {
-    "mtime": 1793229659.359383,
-    "seen": 1793229879.289223,
-    "ast_hash": "6702655323b64312d8494896b176d79a",
+    "mtime": 1793300308.881251,
+    "seen": 1793300886.684233,
+    "ast_hash": "18ab62ba73670f2de7917e2be794fcf7",
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/LightField.swift": {
@@ -5988,21 +5988,21 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/LeafOutline.swift": {
-    "mtime": 1793229042.3573265,
-    "seen": 1793229173.323879,
-    "ast_hash": "3e712762056a9540191ad3df539db6b5",
+    "mtime": 1793300308.8809605,
+    "seen": 1793300886.684234,
+    "ast_hash": "2687cb0a8976630e1221520a983078eb",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/TwigTests.swift": {
-    "mtime": 1793228206.7876987,
-    "seen": 1793228376.016652,
-    "ast_hash": "50dfda5f7bdcf4e489369343e60e4f60",
+    "mtime": 1793300602.562913,
+    "seen": 1793300886.6863391,
+    "ast_hash": "3aa29c293ae8f9d104710f8a8229f44c",
     "semantic_hash": ""
   },
   ".claude/notes/plant-growth-handoff.md": {
-    "mtime": 1793299724.4251575,
-    "seen": 1793299776.105798,
-    "ast_hash": "e3c7509876407ed834e8a60e6b750723",
+    "mtime": 1793300648.6916761,
+    "seen": 1793300886.6882482,
+    "ast_hash": "25a2fa6f3892e4fd2cfd6ac25e41f9b6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift": {
@@ -6027,6 +6027,90 @@
     "mtime": 1793283780.2451837,
     "seen": 1793284733.676939,
     "ast_hash": "eadf0807f5957f5f3e3534e06bd9566c",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/info.json": {
+    "mtime": 1793300182.2682226,
+    "seen": 1793300886.672471,
+    "ast_hash": "6d4499ce084ad418289f90d340f54782",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/info.json": {
+    "mtime": 1793300182.2731342,
+    "seen": 1793300886.672472,
+    "ast_hash": "9804f2ddb80c94246ba7a8a16792e0aa",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/LICENSE.txt": {
+    "mtime": 1793300182.2682905,
+    "seen": 1793300886.688993,
+    "ast_hash": "6646751a116b4ac107c511d1f382c232",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/LICENSE.txt": {
+    "mtime": 1793300182.2731907,
+    "seen": 1793300886.688994,
+    "ast_hash": "0d94c0f674e22a10a1e54a72ea4e5c19",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/albedo.jpg": {
+    "mtime": 1793300182.2680864,
+    "seen": 1793300886.690061,
+    "ast_hash": "145f77e458a472a6ec00161f83f19c47",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/height.jpg": {
+    "mtime": 1793300182.2677689,
+    "seen": 1793300886.690062,
+    "ast_hash": "dd990648ff84832283a159952d4489cf",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/normal.jpg": {
+    "mtime": 1793300182.2672558,
+    "seen": 1793300886.690063,
+    "ast_hash": "ed86239f8d42da1dec0f968486dae200",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/opacity.jpg": {
+    "mtime": 1793300182.2674527,
+    "seen": 1793300886.690063,
+    "ast_hash": "577e0688c3a88b55f69e5db6cccd7570",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-birch/roughness.jpg": {
+    "mtime": 1793300182.266777,
+    "seen": 1793300886.690064,
+    "ast_hash": "f817dfe5f8a00b2e9a365fd369cb0cc0",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/albedo.jpg": {
+    "mtime": 1793300182.2719073,
+    "seen": 1793300886.690064,
+    "ast_hash": "6029f665ef7878fb815494b285e29271",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/height.jpg": {
+    "mtime": 1793300182.2714257,
+    "seen": 1793300886.690065,
+    "ast_hash": "14b3313ab9b1a45674f7344a57bb05c4",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/normal.jpg": {
+    "mtime": 1793300182.2729516,
+    "seen": 1793300886.6900659,
+    "ast_hash": "195fee453304f2b7c8517c1224aa73b5",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/opacity.jpg": {
+    "mtime": 1793300182.2720969,
+    "seen": 1793300886.690067,
+    "ast_hash": "4cf11417b525c539c0ad020abaf6b069",
+    "semantic_hash": ""
+  },
+  "Assets/Textures/leaves-bush/roughness.jpg": {
+    "mtime": 1793300182.2723584,
+    "seen": 1793300886.690068,
+    "ast_hash": "8086005bb532abdc4955331c62e9e7dc",
     "semantic_hash": ""
   }
 }

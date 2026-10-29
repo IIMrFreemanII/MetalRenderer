@@ -51,6 +51,27 @@ final class TwigTests: XCTestCase {
         }
     }
 
+    func testOutlineLeavesAreDomedBlades() {
+        // Each leaf 16 triangles (its rows' midribs too), its vertex normals curving across it (not one flat facet),
+        // and all its triangles wound the same way about their corners' normals (no half of it backwards; a mirrored
+        // leaf is wound the other way, which two-sided shading doesn't mind).
+        let mesh = Growth.twig(def.twigs!, variant: 0, seed: 1)
+        XCTAssertEqual(mesh.leafTriangles % 16, 0)
+        var spread: [Float: Float] = [:], facing: [Float: Set<Bool>] = [:]
+        for t in stride(from: mesh.leafIndex, to: mesh.indices.count, by: 3) {
+            let v = (0..<3).map { Int(mesh.indices[t + $0]) }
+            let face = cross(mesh.positions[v[1]] - mesh.positions[v[0]], mesh.positions[v[2]] - mesh.positions[v[0]])
+            let n = mesh.normals[v[0]] + mesh.normals[v[1]] + mesh.normals[v[2]]
+            let leaf = floor(mesh.uvs[v[0]].y)
+            facing[leaf, default: []].insert(dot(face, n) > 0)
+            let least = v.flatMap { a in v.map { dot(mesh.normals[a], mesh.normals[$0]) } }.min()!
+            spread[leaf] = min(spread[leaf] ?? 1, least)
+        }
+        XCTAssertFalse(spread.isEmpty)
+        for (leaf, least) in spread { XCTAssertLessThan(least, 0.995, "leaf \(leaf) shades flat") }
+        for (leaf, sides) in facing { XCTAssertEqual(sides.count, 1, "leaf \(leaf)") }
+    }
+
     func testTheBirchAndTheBushHaveLeavesOfTheirOwn() throws {
         // Their sheets' 3 by 2 leaves (info.json's "cells"), each traced inside its own cell: the birch's pointed ones
         // narrower than the bush's round ones. (Without the scans, a fresh clone's, both fall back to the ovate leaves.)
