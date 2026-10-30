@@ -158,7 +158,8 @@ let package = Package(
         .testTarget(
             name: "MetalRendererTests",
             dependencies: ["EngineCore", "Plants", "Physics", "Characters", "Effects", "Materials", "Buildings", "Landscape", "Modeling", "Procedural", "MetalRenderer", "Editors", "Game"],
-            path: "Tests/MetalRendererTests"
+            path: "Tests/MetalRendererTests",
+            exclude: ["Plants/Fixtures"]
         )
     ]
 )

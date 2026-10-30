@@ -10,6 +10,8 @@ final class DevReloadTests: XCTestCase {
 
     func testWhatASaveChanges() {
         XCTAssertEqual(DevChange.of("/repo/Sources/MetalRenderer/Shaders.metal", root: root), .shaders)
+        XCTAssertEqual(DevChange.of("/repo/Assets/Plants/oak.swift", root: root), .plants)
+        XCTAssertEqual(DevChange.of("/repo/Assets/Plants/oak.json", root: root), .plants)
         XCTAssertEqual(DevChange.of("/repo/Sources/MetalRenderer/Shaders/Lighting.metal", root: root), .shaders)
         XCTAssertEqual(DevChange.of("/repo/Sources/MetalRenderer/ShadersVFX.metal", root: root), .shaders)
         XCTAssertEqual(DevChange.of("/repo/Sources/Game/Scene/Builders/Scene+Lights.swift", root: root), .game)

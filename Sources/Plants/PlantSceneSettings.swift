@@ -20,6 +20,9 @@ package struct PlantSceneSettings: Equatable, Codable {
     /// (layout `mutate`), and the definition to show in its place (comparing with the saved one). "" = none.
     package var mutants = ""
     package var compare = ""
+    /// Session state: the node of the species' graph (PlantNode.id) to show the plant as it stands at, in the one-plant
+    /// layout (the plant editor's selected or pinned node). -1: all of it.
+    package var stage = -1
 
     package enum Layout: Int, CaseIterable, Codable {
         case single         // the one plant
@@ -39,7 +42,7 @@ package struct PlantSceneSettings: Equatable, Codable {
     package static let variantRange = 0...7
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(species: String = "oak", age: Foliage.Age = Foliage.Age.mature, variant: Int = 0, seed: Int = 1, layout: Layout = Layout.single, view: View = View.plant, figure: Bool = false, ruler: Bool = false, mutants: String = "", compare: String = "") {
+    package init(species: String = "oak", age: Foliage.Age = Foliage.Age.mature, variant: Int = 0, seed: Int = 1, layout: Layout = Layout.single, view: View = View.plant, figure: Bool = false, ruler: Bool = false, mutants: String = "", compare: String = "", stage: Int = -1) {
         self.species = species
         self.age = age
         self.variant = variant
@@ -50,5 +53,6 @@ package struct PlantSceneSettings: Equatable, Codable {
         self.ruler = ruler
         self.mutants = mutants
         self.compare = compare
+        self.stage = stage
     }
 }

@@ -9,8 +9,9 @@ import Physics
 import Plants
 import SwiftUI
 
-/// The plant editor: the species across the top, the selected one's tabs below, and the workshop's controls, its
-/// plant's cost and saving at the foot.
+/// The plant editor: the species across the top, its graph with what's selected beside it (the workshop shows the plant as
+/// it stands at that node), how its Swift stands, and
+/// the workshop's controls, its plant's cost and saving at the foot.
 struct PlantEditorView: View {
     @EnvironmentObject var model: PlantEditorModel
 
@@ -18,36 +19,91 @@ struct PlantEditorView: View {
         VStack(spacing: 0) {
             speciesStrip.padding(.horizontal, 10).padding(.top, 8)
             header.padding(.horizontal, 10).padding(.vertical, 6)
-            // Two rows: the plant's shape, then how it looks and where it grows.
-            VStack(spacing: 4) {
-                ForEach([PlantEditorModel.Tab.shape, PlantEditorModel.Tab.dressing], id: \.self) { row in
-                    Picker("", selection: $model.tab) {
-                        ForEach(row, id: \.self) { Text($0.rawValue).tag($0) }
+            HSplitView {
+                PlantGraphHost(model: model)
+                    .frame(minWidth: 420, minHeight: 300)
+                ScrollView {
+                    Group {
+                        if let id = model.focus.flatMap({ Int32($0) }), let node = model.graph.node(id) {
+                            PlantNodeInspector(model: model, node: node)
+                        } else {
+                            PlantSpeciesInspector()
+                        }
                     }
-                    .pickerStyle(.segmented).labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
                 }
+                .frame(minWidth: 300, idealWidth: 360, maxWidth: 400)
             }
-            .padding(.horizontal, 10)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    switch model.tab {
-                    case .growth: GrowthTab()
-                    case .branching: BranchingTab()
-                    case .light: LightTab()
-                    case .twigs: TwigsTab()
-                    case .leaves: LeavesTab()
-                    case .bark: BarkTab()
-                    case .look: LookTab()
-                    case .habitat: HabitatTab()
-                    case .ages: AgesTab()
-                    }
-                }
-                .padding(10)
-            }
+            Divider()
+            status.padding(.horizontal, 10).padding(.vertical, 4)
             Divider()
             footer.padding(10)
         }
-        .frame(minWidth: 400, idealWidth: 430, minHeight: 520, idealHeight: 760)
+        .frame(minWidth: 820, idealWidth: 1180, minHeight: 620, idealHeight: 820)
+        .background(GraphColors.chrome)
+        .sheet(isPresented: $model.showsSwift) { swiftSheet }
+    }
+
+    // MARK: - Its Swift
+
+    private var status: some View {
+        HStack(spacing: 8) {
+            switch model.compile {
+            case .idle: Image(systemName: "circle").foregroundColor(.secondary); Text("Nothing to compile")
+            case .waiting: Image(systemName: "circle.dotted").foregroundColor(.secondary); Text("The graph runs")
+            case .compiling: ProgressView().controlSize(.mini); Text("Compiling its Swift…")
+            case .compiled(let seconds):
+                Image(systemName: "checkmark.circle").foregroundColor(.green)
+                Text(seconds > 0 ? String(format: "Compiled in %.1f s", seconds) : "Compiled")
+            case .incomplete(let why): Image(systemName: "exclamationmark.triangle").foregroundColor(.orange); Text(why).lineLimit(1)
+            case .failed(let errors):
+                Image(systemName: "xmark.octagon").foregroundColor(.red)
+                Text(errors.first?.message ?? "Doesn't compile").lineLimit(1)
+                ForEach(errors.prefix(3).indices, id: \.self) { i in
+                    if let node = errors[i].node { Button("Show") { model.show(node) }.buttonStyle(.link) }
+                }
+            }
+            Spacer()
+            stageLine
+            Button("Swift") { model.showsSwift = true }.help("The file this graph compiles to")
+        }
+        .font(.system(size: 11))
+    }
+
+    /// What the workshop is showing, of the plant.
+    @ViewBuilder private var stageLine: some View {
+        if let node = model.previewed {
+            let whole = model.wantedStage < 0
+            HStack(spacing: 4) {
+                Image(systemName: model.pinned == node.id ? "pin.fill" : "eye")
+                Text(whole ? "Workshop: the whole plant" : "Workshop: \(node.kind.title) \(node.name)").lineLimit(1)
+            }
+            .foregroundColor(.secondary)
+            .help(whole ? "This node's stage is the plant itself, or has nothing to look at" : "The plant as it stands at this node")
+        }
+    }
+
+    private var swiftSheet: some View {
+        let text = model.swiftText
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("\(model.def.id).swift").font(.headline)
+            ScrollView([.horizontal, .vertical]) {
+                Text(text).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(8)
+            }
+            .background(GraphColors.canvas)
+            HStack {
+                Spacer()
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                Button("Close") { model.showsSwift = false }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(width: 720, height: 640)
     }
 
     // MARK: - Species
@@ -95,7 +151,7 @@ struct PlantEditorView: View {
             }
             if let base = model.def.basedOn { Text("from \(base)").font(.system(size: 10)).foregroundColor(.secondary) }
             Spacer()
-            Text(model.def.id + ".json").font(.system(size: 10)).foregroundColor(.secondary)
+            Text(model.def.id + ".swift").font(.system(size: 10)).foregroundColor(.secondary)
         }
     }
 

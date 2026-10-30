@@ -20,6 +20,9 @@ protocol PlantEditorHost: AnyObject {
     func observeSettings(_ observer: @escaping (RenderSettings) -> Void)
     func observeTick(_ observer: @escaping () -> Void)
     func frameWorkshop()
+    /// The Manual Edit tool in the view.
+    func setPlantTool(_ tool: PlantToolOverlay?)
+    var onPlantTool: ((PlantToolEvent) -> Void)? { get set }
 }
 
 extension RendererController: PlantEditorHost {
@@ -30,23 +33,10 @@ extension RendererController: PlantEditorHost {
 /// one, what is selected, and the workshop's settings as the renderer reports them.
 ///
 /// An edit goes to the renderer as the catalog's registry key (`SceneSettings.plantCatalog`): while a slider is
-/// dragged only the workshop follows it (it is made again in about 20 ms); when the slider is let go, or on any other
-/// edit, the forest, the valley and the world follow too. Unsaved edits are a draft (PlantStore) until saved or
-/// reverted. One undo step per edit; a drag is one edit.
+/// dragged only the workshop follows it, the graph run stage by stage (it is made again in about 20 ms); when the slider
+/// is let go, or on any other edit, the forest, the valley and the world follow too, and the species' Swift compiles
+/// behind them. Unsaved edits are a draft (PlantStore) until saved or reverted. One undo step per edit; a drag is one edit.
 final class PlantEditorModel: ObservableObject {
-    /// The tabs: how the plant grows (Unreal's growth simulation, in the order its editor has them), then how it is
-    /// dressed and where it grows.
-    enum Tab: String, CaseIterable {
-        case growth = "Growth", branching = "Branching", light = "Light", twigs = "Twigs", leaves = "Leaves", bark = "Bark"
-        case look = "Look", habitat = "Habitat", ages = "Ages"
-
-        /// The first row's (the plant's shape) and the second's.
-        static let shape: [Tab] = [.growth, .branching, .light, .twigs, .leaves, .bark]
-        static let dressing: [Tab] = [.look, .habitat, .ages]
-    }
-    /// An axis kind of a grown plant (or of its twig): the trunk's, or its branches'.
-    enum ShootKind: String, Codable { case trunk, branches }
-
     let controller: PlantEditorHost
     let undo = UndoManager()
     /// Where Save writes (nil: nowhere), and whether unsaved edits are kept as a draft.
@@ -55,10 +45,59 @@ final class PlantEditorModel: ObservableObject {
     /// Where Copy and Paste go (the tests' own one, not the user's).
     var pasteboard = NSPasteboard.general
 
-    @Published private(set) var catalog: PlantCatalog
+    // The canvas (GraphCanvasModel, PlantEditorModel+Graph.swift).
+    @Published var pan = CGPoint(x: 60, y: 60)
+    @Published var zoom: CGFloat = 1
+    /// The canvas's size. A view still as it was framed is framed again in the new one (the window settling as it opens, a
+    /// resize); one the user has panned or zoomed stays.
+    var canvasSize = CGSize(width: 800, height: 600) {
+        didSet {
+            if canvasSize != oldValue, let framed, framed.pan == pan, framed.zoom == zoom { frameAll(in: canvasSize) }
+        }
+    }
+    var framed: (pan: CGPoint, zoom: CGFloat)?
+    static let minimapWidth: CGFloat = 192      // (GraphCanvas's, with its margin)
+    var canvasOrigin = CGPoint.zero
+    var hover = CGPoint(x: 200, y: 200)
+    var focusCanvas: (() -> Void)?
+    @Published var selection: Set<String> = []
+    @Published var focus: String? { didSet { if focus != oldValue { showStage() } } }
+    /// The node the workshop stays on whatever is selected (PlantEditorModel+Graph.swift).
+    @Published var pinned: Int32? { didSet { if pinned != oldValue { showStage() } } }
+    /// What the nodes show of themselves.
+    let thumbnails = PlantThumbnails()
+    var thumbnailsWanted = false
+    /// The stage whose scene is to be framed when it's in (a twig's is far smaller than the plant's).
+    var frameStage: Int?
+    @Published var searchAt: SIMD2<Float>?
+    /// How the selected species' file stands: PlantCompileStatus.
+    @Published var compile = PlantCompileStatus.idle
+    /// Its file, while it is shown.
+    @Published var showsSwift = false
+    var compileSoon: DispatchWorkItem?
+    /// The built-in species' files, read as graphs.
+    var builtInGraphs: [String: PlantGraph] = [:]
+
+    // A Manual Edit node's tool (PlantEditorModel+ManualEdit.swift).
+    @Published var editNode: Int32?
+    @Published var editTool: PlantEditTool?
+    @Published var editSpread = PlantEditing.Spread()
+    /// What's picked, and how much each point takes of its move.
+    @Published var editPick: PlantEditing.Pick?
+    var editWeights: [Float] = []
+    var hoverPick: PlantEditing.Pick?
+    var editing: PlantEditing?
+    var editUpstream: [PlantNode] = []
+    var editingView: PlantSceneSettings.View?
+
+    @Published private(set) var catalog: PlantCatalog {
+        didSet {
+            refreshThumbnails()
+            catalogChangedUnderTool()
+        }
+    }
     @Published private(set) var saved: PlantCatalog
-    @Published var selected: String
-    @Published var tab = Tab.growth
+    @Published var selected: String { didSet { if selected != oldValue { refreshThumbnails() } } }
     @Published private(set) var stats: PlantStats?
     /// The renderer's: the scene, the workshop's settings, the wind.
     @Published private(set) var scene: SceneSettings
@@ -75,6 +114,7 @@ final class PlantEditorModel: ObservableObject {
     private var liveSent = 0.0
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
+    private var reloads: NSObjectProtocol?
 
     package init(controller: PlantEditorHost, saved: PlantCatalog = PlantCatalog.launch, folder: URL? = PlantStore.folder, draft: Bool = true) {
         self.controller = controller
@@ -90,8 +130,24 @@ final class PlantEditorModel: ObservableObject {
         selected = controller.settings.scene.plants.species
         if catalog.species(id: selected) == nil { selected = catalog.species[0].id }
         controller.observeSettings { [weak self] s in self?.received(s) }
-        controller.observeTick { [weak self, unowned controller] in self?.stats = controller.plantStats }
+        controller.observeTick { [weak self, unowned controller] in self?.tick(controller.plantStats) }
+        controller.onPlantTool = { [weak self] event in self?.plantToolEvent(event) }
         if catalog != saved { push(final: true) }
+        compileLater()
+        reloads = NotificationCenter.default.addObserver(forName: DevReload.plantsReloaded, object: nil, queue: .main) { [weak self] _ in
+            guard let self, PlantStore.isFolder(self.folder) else { return }
+            self.savedChanged(PlantCatalog.launch)
+        }
+    }
+
+    deinit { reloads.map(NotificationCenter.default.removeObserver) }
+
+    private func tick(_ now: PlantStats?) {
+        if now != stats { stats = now }
+        if let wanted = frameStage, now?.stage == wanted {
+            frameStage = nil
+            frame()
+        }
     }
 
     // MARK: - What is edited
@@ -109,8 +165,15 @@ final class PlantEditorModel: ObservableObject {
     var def: Foliage.SpeciesDef {
         get { catalog[species] }
         set {
+            var d = newValue
+            // An edit of the recipe (Mutate, a slider of the species) goes to the graph that holds it.
+            if let graph = d.graph {
+                var said = d
+                graph.project(into: &said)
+                if !said.sameRecipe(as: d) { d.setGraph(graph.applying(d)) }
+            }
             var c = catalog
-            c.species[species.rawValue] = newValue
+            c.species[species.rawValue] = d
             commit(c)
         }
     }
@@ -129,13 +192,16 @@ final class PlantEditorModel: ObservableObject {
         if let start = dragStart, start != catalog { registerUndo(start) }
         dragStart = nil
         push(final: true)
+        compileLater()
     }
 
     private func commit(_ c: PlantCatalog, undoable: Bool = true) {
         guard c != catalog else { return }
+        message = nil       // (what the last Save said was of the plant before this)
         if !dragging && undoable { registerUndo(catalog) }
         catalog = c
-        if dragging { pushLive() } else { push(final: true) }
+        if dragging { pushLive(); compile = .waiting } else { push(final: true); compileLater() }
+        showStage()
     }
 
     private func registerUndo(_ old: PlantCatalog) {
@@ -150,6 +216,8 @@ final class PlantEditorModel: ObservableObject {
         catalog = old
         if catalog.species(id: selected) == nil { select(catalog.species[0].id) }
         push(final: true)
+        compileLater()
+        showStage()
     }
 
     // MARK: - To the renderer
@@ -172,11 +240,11 @@ final class PlantEditorModel: ObservableObject {
     }
 
     /// The registry key of the edited catalog ("" when it is what is saved).
-    private var key: String { catalog == saved && saved == PlantCatalog.launch ? "" : PlantCatalog.register(catalog) }
+    private var key: String { catalog.fingerprint == PlantCatalog.launch.fingerprint ? "" : PlantCatalog.register(catalog) }
 
     /// Tells the renderer. `final`: every scene with plants; otherwise only the workshop (scenes without plants are
     /// told when they become a scene with them: `received`).
-    private func push(final: Bool) {
+    func push(final: Bool) {
         if final { pendingLive?.cancel(); pendingLive = nil; saveDraft() }
         let key = self.key, kind = controller.settings.scene.kind
         guard kind == .plants || (final && kind.hasPlants), controller.settings.scene.plantCatalog != key else { return }
@@ -193,12 +261,16 @@ final class PlantEditorModel: ObservableObject {
     }
 
     private func received(_ s: RenderSettings) {
+        let plantsBefore = scene.plants
         if s.scene != scene { scene = s.scene }
+        if s.scene.kind != .plants { stopEditing() }
+        if plantsBefore != s.scene.plants { refreshThumbnails() }
         if s.foliage != foliage { foliage = s.foliage }
         if s.previewLightYaw != lightYaw { lightYaw = s.previewLightYaw }
         if s.previewSpin != lightSpin { lightSpin = s.previewSpin }
         // A scene with plants now: it is to have the edited ones.
         if s.scene.kind.hasPlants && !dragging, s.scene.plantCatalog != key { push(final: true) }
+        showStage()
     }
 
     // MARK: - The workshop
@@ -210,7 +282,12 @@ final class PlantEditorModel: ObservableObject {
     }
 
     func select(_ id: String) {
+        stopEditing()
         selected = id
+        selection = []
+        pinned = nil
+        focus = nil
+        compileLater()
         if inWorkshop, scene.plants.species != id {
             workshop { $0.species = id; $0.layout = $0.layout == .mutate ? .single : $0.layout; $0.mutants = "" }
         }
@@ -223,10 +300,11 @@ final class PlantEditorModel: ObservableObject {
     func goToForest() { forest.map { go(to: $0) } }
 
     private func go(to kind: SceneKind) {
-        let id = selected, key = self.key, defaults = controller.defaultSettings
+        let id = selected, key = self.key, defaults = controller.defaultSettings, stage = wantedStage
         controller.update { s in
             s.scene.plants.species = id
             s.scene.plantCatalog = key
+            s.scene.plants.stage = stage
             guard s.scene.kind != kind else { return }
             s.scene.kind = kind
             s.scene.extraModels = []
@@ -341,6 +419,13 @@ final class PlantEditorModel: ObservableObject {
             message = "METALRENDERER_PLANTS=builtin: nothing is saved"
             return
         }
+        // (A graph with a pin not wired has no file that compiles: it stays a draft until it's whole.)
+        for d in catalog.species where d != saved.species.first(where: { $0.id == d.id }) {
+            if let why = d.graph?.wiring {
+                message = "Not saved: \(d.name): \(why)"
+                return
+            }
+        }
         do {
             for (i, d) in catalog.species.enumerated() where d != saved.species.first(where: { $0.id == d.id }) {
                 if i < Foliage.Species.allCases.count && d == PlantCatalog.builtIn.species[i] {
@@ -351,7 +436,7 @@ final class PlantEditorModel: ObservableObject {
             }
             for d in saved.species where catalog.species(id: d.id) == nil { try PlantStore.remove(d.id, in: folder) }
             saved = catalog
-            if folder == PlantStore.folder { PlantCatalog.setLaunch(catalog) }
+            if PlantStore.isFolder(folder) { PlantCatalog.setLaunch(catalog) }
             if keepsDraft { PlantStore.saveDraft(nil) }
             message = "Saved to \(folder.path)"
             push(final: true)
@@ -366,77 +451,59 @@ final class PlantEditorModel: ObservableObject {
         def = savedDef
     }
 
+    /// The files changed on disk, and `new` is what they say. A species with no unsaved edits follows; one with keeps them
+    /// and says so, Save replacing the file and Revert taking it. (The editor's own save reads back as what it wrote.)
+    func savedChanged(_ new: PlantCatalog) {
+        func same(_ a: Foliage.SpeciesDef, _ b: Foliage.SpeciesDef) -> Bool { a == b || PlantSwift.emit(a).text == PlantSwift.emit(b).text }
+        func held(_ id: String) -> Foliage.SpeciesDef? { catalog.species.first { $0.id == id } }
+        var nowSaved: [Foliage.SpeciesDef] = [], edited: [Foliage.SpeciesDef] = []
+        var followed: [String] = [], kept: [String] = []
+        for d in new.species {
+            let old = saved.species.first { $0.id == d.id }
+            if let old, same(old, d) {
+                nowSaved.append(old)
+                if let mine = held(d.id) { edited.append(mine) }
+            } else {
+                nowSaved.append(d)
+                if let mine = held(d.id), mine != old {
+                    edited.append(mine)
+                    kept.append(mine.name)
+                } else {
+                    edited.append(d)
+                    followed.append(d.name)
+                }
+            }
+        }
+        // Only here: never saved, or edited while its file went.
+        for mine in catalog.species where !new.species.contains(where: { $0.id == mine.id }) {
+            guard let old = saved.species.first(where: { $0.id == mine.id }) else { edited.append(mine); continue }
+            if mine != old {
+                edited.append(mine)
+                kept.append(mine.name)
+            } else {
+                followed.append(mine.name)
+            }
+        }
+        let shown = selected
+        if followed.contains(def.name) {
+            selection = []
+            focus = nil
+        }
+        saved = PlantCatalog(species: nowSaved)
+        commit(PlantCatalog(species: edited), undoable: false)
+        if catalog.species(id: shown) == nil { select(catalog.species[0].id) }
+        if !kept.isEmpty {
+            message = "\(kept.joined(separator: ", ")): the file changed on disk. Your unsaved edits stay: Save replaces it, Revert takes it"
+        } else if !followed.isEmpty {
+            message = "Read again from disk: \(followed.joined(separator: ", "))"
+        }
+    }
+
     /// Every unsaved edit dropped.
     func revertAll() {
         guard isDirty else { return }
         commit(saved)
         if catalog.species(id: selected) == nil { select(catalog.species[0].id) }
-    }
-
-    // MARK: - Copy and paste
-
-    enum Clip: String, Codable { case shoot, light, wood, twigs, leaves, look, habitat }
-    private struct Clipboard: Codable {
-        var plantClip: Clip
-        var shoot: Growth.Shoot?
-        var light: Growth.Light?
-        var senescence: Growth.Senescence?
-        var wood: Growth.Wood?
-        var twigs: Growth.Twigs?
-        var leaves: Foliage.LeafRecipe?
-        var look: Foliage.Look?
-        var habitat: Foliage.Habitat?
-    }
-
-    /// The growth a clip of the plant (`twig`: of its twigs) is of.
-    private func growth(_ d: Foliage.SpeciesDef, twig: Bool) -> Growth.Params? { twig ? d.twigs?.growth : d.growth }
-
-    /// `shoot`: which axes a shoot clip is of (the branches' are the trunk's while they grow as it does).
-    func copy(_ clip: Clip, shoot: ShootKind = .trunk, twig: Bool = false) {
-        var c = Clipboard(plantClip: clip)
-        let g = growth(def, twig: twig)
-        switch clip {
-        case .shoot: c.shoot = shoot == .trunk ? g?.trunk : g.map { $0.branch ?? $0.trunk }
-        case .light: c.light = def.growth?.light; c.senescence = def.growth?.senescence
-        case .wood: c.wood = def.growth?.wood
-        case .twigs: c.twigs = def.twigs
-        case .leaves: c.leaves = twig ? def.twigs?.leaf : def.leaf
-        case .look: c.look = def.look
-        case .habitat: c.habitat = def.habitat
-        }
-        guard let data = try? JSONEncoder().encode(c), let text = String(data: data, encoding: .utf8) else { return }
-        pasteboard.clearContents()
-        pasteboard.setString(text, forType: .string)
-    }
-
-    /// What is on the clipboard, if it is that kind of the editor's.
-    func canPaste(_ clip: Clip) -> Bool { clipboard()?.plantClip == clip }
-
-    private func clipboard() -> Clipboard? {
-        guard let text = pasteboard.string(forType: .string), let data = text.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(Clipboard.self, from: data)
-    }
-
-    func paste(_ clip: Clip, shoot: ShootKind = .trunk, twig: Bool = false) {
-        guard let c = clipboard(), c.plantClip == clip else { return }
-        var d = def
-        func into(_ g: inout Growth.Params) {
-            guard let s = c.shoot else { return }
-            if shoot == .trunk { g.trunk = s } else { g.branch = s }
-        }
-        switch clip {
-        case .shoot:
-            if twig { if var t = d.twigs { into(&t.growth); d.twigs = t } } else if var g = d.growth { into(&g); d.growth = g }
-        case .light:
-            if let l = c.light { d.growth?.light = l; d.growth?.senescence = c.senescence }
-        case .wood: if let w = c.wood { d.growth?.wood = w }
-        case .twigs: if let t = c.twigs, d.growth != nil { d.twigs = t }
-        case .leaves:
-            if let l = c.leaves { if twig { d.twigs?.leaf = l } else { d.leaf = l } }
-        case .look: if let l = c.look { d.look = l }
-        case .habitat: if let h = c.habitat { d.habitat = h }
-        }
-        def = d.sanitized()
     }
 
     func clearMessage() { message = nil }

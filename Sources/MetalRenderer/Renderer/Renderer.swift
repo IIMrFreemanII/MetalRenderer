@@ -157,6 +157,11 @@ package final class Renderer: NSObject {
     package var gizmoViewSize = SIMD2<Float>(1280, 800)
     /// A handle dragged: the effect, the emitter, the move (m) since the last call, the phase (0 begins, 1 moves, 2 ends).
     package var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    /// The plant editor's Manual Edit in the view (Renderer+PlantTool.swift): what it draws, a drag of its handle (kept
+    /// across the workshop's remakes as the plant follows it), and what the mouse did, on the render thread.
+    package var plantTool: PlantToolOverlay?
+    package var plantToolDrag: PlantToolDrag?
+    package var onPlantTool: ((PlantToolEvent) -> Void)?
     /// The Material Painter's status, when it changes (Renderer+Painter.swift; on the render thread).
     package var onPainter: ((PainterStatus) -> Void)?
     /// A pen's pressure for the next press or drag (1 for a mouse).

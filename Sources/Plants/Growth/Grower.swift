@@ -388,9 +388,56 @@ package enum Growth {
             }
         }
 
+        /// The gravity stage (Growth.Gravity), once the plant is grown: from the foot out, each internode turns toward
+        /// the pull, by strength / 10 times how thin its point is (0 at the plant's thickest, 1 at its thinnest) times how
+        /// far across the pull it lies; the turn is carried to all beyond it. The trunk bends too, and nothing limits
+        /// the turns but the strength (Params.gravity's sag has a limit, this has none).
+        mutating func bend(_ g: Gravity) {
+            let up = normalize(p.up)
+            let along = g.direction ?? -up
+            guard g.strength != 0, length_squared(along) > 1e-8 else { return }
+            let pull = normalize(along)
+            var thinnest = Float.infinity, thickest = -Float.infinity
+            for point in points where !point.removed {
+                thinnest = min(thinnest, point.radius)
+                thickest = max(thickest, point.radius)
+            }
+            let spread = thickest - thinnest
+            let least = max(0.1, 1 - g.angleCorrection)
+            var turn = [simd_quatf](repeating: simd_quatf(angle: 0, axis: up), count: points.count)
+            var moved = points.map(\.position)
+            for i in points.indices.dropFirst() where !points[i].removed {
+                let parent = Int(points[i].parent)
+                // (A carved trunk's foot has nothing below it left: it stays.)
+                guard !points[parent].removed else { continue }
+                let offset = points[i].position - points[parent].position
+                var q = turn[parent]
+                let turned = q.act(offset)
+                if length_squared(turned) > 1e-12 {
+                    let d = normalize(turned)
+                    var to = pull
+                    if g.mode == .phototropic {
+                        let light = points[i].lightDirection
+                        to = length_squared(light) > 1e-6 ? normalize(light) : up
+                    }
+                    let across = 1 - abs(dot(d, to))
+                    let thin = spread > 0 ? 1 - (points[i].radius - thinnest) / spread : 0
+                    let impact = g.strength / 10 * thin * (least + (1 - least) * across)
+                    let bent = d + (to - d) * impact
+                    if length_squared(bent) > 1e-8 { q = simd_quatf(from: d, to: normalize(bent)) * q }
+                }
+                turn[i] = q
+                moved[i] = moved[parent] + q.act(offset)
+            }
+            for i in points.indices where !points[i].removed {
+                points[i].position = moved[i]
+                points[i].direction = normalize(turn[i].act(points[i].direction))
+                points[i].lateral = normalize(turn[i].act(points[i].lateral))
+            }
+        }
+
         /// The grafts (Params.grafts), once the plant is grown.
-        mutating func graft() {
-            guard let g = p.grafts else { return }
+        mutating func graft(_ g: Grafts) {
             let reach = points.reduce(Float(0)) { $1.removed ? $0 : max($0, $1.fromRoot) }
             guard reach > 0 else { return }
             for b in branches.indices where !branches[b].removed && branches[b].generation >= g.fromGeneration {
@@ -422,8 +469,7 @@ package enum Growth {
 
         /// The spurs (Params.spurs), once the plant is grown: a short shoot at each node of the last generation's
         /// branches, alternate sides, turned a little toward the light.
-        mutating func spur() {
-            guard let s = p.spurs else { return }
+        mutating func spur(_ s: Spurs) {
             let from = s.fromGeneration ?? p.maxGeneration
             for b in branches.indices where !branches[b].removed && branches[b].generation >= from {
                 let nodes = branches[b].points
@@ -444,8 +490,8 @@ package enum Growth {
 
         /// Params.carve: the trunk's foot cut off and the plant lowered (along `up`) onto the cut. Whatever grew from
         /// the part cut off goes with it.
-        mutating func carveFoot() {
-            guard let c = p.carve, c > 0, p.stems <= 1, let last = branches[0].points.last else { return }
+        mutating func carveFoot(_ c: Float) {
+            guard c > 0, p.stems <= 1, let last = branches[0].points.last else { return }
             let trunk = branches[0].points, cut = c * points[Int(last)].fromRoot
             guard let k = trunk.firstIndex(where: { points[Int($0)].fromRoot >= cut }), k > 0 else { return }
             let a = points[Int(trunk[k - 1])], b = points[Int(trunk[k])]
@@ -460,10 +506,18 @@ package enum Growth {
             for i in points.indices { points[i].position -= drop }
         }
 
+        /// Every branch left that was set rather than grown grows from now on (a Grow More's start).
+        mutating func revive() {
+            for b in branches.indices where !branches[b].removed { branches[b].growing = true }
+            for i in points.indices where !points[i].removed && i > 0 && Int(points[i].branch) < branches.count {
+                if branches[Int(points[i].branch)].generation < p.maxGeneration { points[i].bud = true }
+            }
+        }
+
         /// Where each point goes in the wood: moved across its axis by smooth noise (the trunk's foot stays put).
         /// A branch's first node is its parent's point, so the two move together and the branch stays on.
-        func placed() -> [SIMD3<Float>] {
-            let w = p.wood, scale = w.noiseScale
+        func placed(_ w: Wood) -> [SIMD3<Float>] {
+            let scale = w.noiseScale
             return points.map { point in
                 guard w.noise > 0, !point.removed else { return point.position }
                 let generation = branches[Int(point.branch)].generation
@@ -479,9 +533,8 @@ package enum Growth {
 
         /// One stem per branch that is left, its level its generation, each generation `wood.thinning` of the last;
         /// and each branch's stem (-1: none).
-        func skeleton() -> (Foliage.Skeleton, [Int32]) {
+        func skeleton(_ wood: Wood, at: [SIMD3<Float>]) -> (Foliage.Skeleton, [Int32]) {
             var out = Foliage.Skeleton()
-            let at = placed()
             var stemOf = [Int32](repeating: -1, count: branches.count)
             var limbOf = [Int32](repeating: -1, count: branches.count)
             for (b, branch) in branches.enumerated() where !branch.removed && branch.points.count >= 2 {
@@ -500,19 +553,19 @@ package enum Growth {
                 for (k, q) in branch.points.enumerated() {
                     let point = points[Int(q)]
                     // A branch's first node is on its parent, as thick as its own second (it starts inside the parent).
-                    let own = pow(p.wood.thinning, Float(branch.generation - 1))
+                    let own = pow(wood.thinning, Float(branch.generation - 1))
                     var radius = (k == 0 && branch.parent >= 0 ? points[Int(branch.points[1])].radius : point.radius) * own
                     if k == 0 && branch.parent >= 0 {
                         // Its first ring, on its parent's axis, inside its parent: no thicker than nine tenths of the
                         // parent there, or it shows through where the branch leaves at an angle.
                         let parentGeneration = branches[Int(branch.parent)].generation
-                        radius = min(radius, point.radius * pow(p.wood.thinning, Float(parentGeneration - 1)) * 0.9)
+                        radius = min(radius, point.radius * pow(wood.thinning, Float(parentGeneration - 1)) * 0.9)
                     }
                     out.nodes.append(SIMD4(at[Int(q)], radius))
                     if k > 0 { length += point.segment }
                 }
                 let base = out.nodes[first].w
-                let radial: UInt8 = p.wood.ribbon ? 1 : base > 0.1 ? 12 : base > 0.05 ? 10 : base > 0.02 ? 7 : base > 0.008 ? 5 : 3
+                let radial: UInt8 = wood.ribbon ? 1 : base > 0.1 ? 12 : base > 0.05 ? 10 : base > 0.02 ? 7 : base > 0.008 ? 5 : 3
                 stemOf[b] = Int32(out.stems.count)
                 out.stems.append(Foliage.Stem(first: Int32(first), count: Int32(branch.points.count), parent: parentStem, limb: limb,
                                               level: UInt8(min(branch.generation - 1, 255)), radial: radial, length: length))
@@ -569,30 +622,14 @@ package enum Growth {
         }
     }
 
-    /// Grows a plant: `cycles` of `p` (an age grows fewer), from `seed`.
+    /// A plant of `p` as one chain of its stages (what a program's first stages do): for what wants only its skeleton.
     package static func grow(_ p: Params, cycles: Int? = nil, seed: UInt64) -> Foliage.Skeleton {
         var plant = Plant(p, seed: seed)
         for _ in 0..<(cycles ?? p.cycles) { plant.cycle() }
-        plant.graft()
-        plant.spur()
-        plant.carveFoot()
-        return plant.skeleton().0
-    }
-
-    /// Grows a plant and says how lit each of its skeleton's stems is (its points' mean light, 0...1), for the
-    /// workshop's light view.
-    package static func lit(_ p: Params, seed: UInt64) -> (skeleton: Foliage.Skeleton, light: [Float]) {
-        var plant = Plant(p, seed: seed)
-        for _ in 0..<p.cycles { plant.cycle() }
-        plant.graft()
-        plant.spur()
-        plant.carveFoot()
-        let (skeleton, stemOf) = plant.skeleton()
-        var light = [Float](repeating: 1, count: skeleton.stems.count)
-        for (b, branch) in plant.branches.enumerated() where stemOf[b] >= 0 && !branch.points.isEmpty {
-            light[Int(stemOf[b])] = branch.points.reduce(0) { $0 + plant.points[Int($1)].light } / Float(branch.points.count)
-        }
-        return (skeleton, light)
+        if let g = p.grafts { plant.graft(g) }
+        if let s = p.spurs { plant.spur(s) }
+        if let c = p.carve { plant.carveFoot(c) }
+        return plant.skeleton(p.wood, at: plant.placed(p.wood)).0
     }
 
     /// Where a twig of the palette hangs: plant space, its stem (and so its limb), the light it gets there.
@@ -605,43 +642,33 @@ package enum Growth {
         package var radius: Float
     }
 
-    package struct Grown {
-        package var skeleton: Foliage.Skeleton
-        package var twigs: [TwigPlace]
-    }
-
-    /// Grows a plant and, with `twigs`, where they go.
-    package static func grown(_ p: Params, twigs: Twigs?, seed: UInt64) -> Grown {
-        var plant = Plant(p, seed: seed)
-        for _ in 0..<p.cycles { plant.cycle() }
-        plant.graft()
-        plant.spur()
-        plant.carveFoot()
-        let (skeleton, stemOf) = plant.skeleton()
-        let twigs = twigs.map { plant.twigs($0, at: plant.placed(), stemOf: stemOf) } ?? []
-        return Grown(skeleton: skeleton, twigs: twigs)
+    /// Whose bone each twig turns on, its own if it keeps one: a stem's n twigs (they come together, tip first) are split
+    /// into lerp(n, 1, strength) runs, rounded up (Unreal's Bone Reduction keeps as many between a branch's joints), each on
+    /// the bone of its twig nearest the foot.
+    static func keptBones(_ places: [TwigPlace], strength: Float) -> [Int] {
+        var keeper = Array(places.indices)
+        guard strength > 0 else { return keeper }
+        let s = min(strength, 1)
+        var first = 0
+        while first < places.count {
+            var end = first + 1
+            while end < places.count, places[end].stem == places[first].stem { end += 1 }
+            let n = end - first
+            let runs = max(Int((Float(n) + (1 - Float(n)) * s).rounded(.up)), 1)
+            for run in 0..<runs {
+                let last = first + (run + 1) * n / runs - 1
+                for i in (first + run * n / runs)...last { keeper[i] = last }
+            }
+            first = end
+        }
+        return keeper
     }
 
     /// One twig of a palette (Unreal's graft palette): a small plant grown along +Y with +Z its sky, with leaves.
     /// The palette's twigs run from sparse to dense (variant 0 the sparsest), for shade to full light.
     /// `cards`: its leaves as cards (the leaf-card scenes', cut out by the species' card sheet).
     package static func twig(_ t: Twigs, variant: Int, seed: UInt64, cards: Bool = false) -> Foliage.Mesh {
-        let skeleton = grow(t.growth, seed: seed)
-        var leaf = t.leaf
-        let sparse = t.sparse ?? 0.55
-        leaf.perMetre *= t.palette > 1 ? sparse + (1 - sparse) * Float(variant) / Float(t.palette - 1) : 1
-        var rng = SplitMix64(seed: seed ^ 0x51ED_2701)
-        let up = normalize(t.growth.up)
-        if cards { return Foliage.cardMesh(skeleton, cards: Foliage.cards(on: skeleton, leaf, up: up, rng: &rng), up: up) }
-        let anchors = Foliage.leaves(on: skeleton, leaf, up: up, rng: &rng)
-        // Its health, for the shading (the palette's sparse twigs hang in the shade).
-        let health = t.palette > 1 ? Int((7 * Float(variant) / Float(t.palette - 1)).rounded()) : 7
-        var mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up, allLeaves: false,
-                                leafTag: health, sheet: leaf.sheetName)
-        // Its wood (written before its leaves) told from the tree's: its generations carried past twigWood in U.
-        let firstLeafVertex = mesh.indices[mesh.leafIndex...].min().map(Int.init) ?? mesh.uvs.count
-        for v in 0..<firstLeafVertex { mesh.uvs[v].x += twigWood }
-        return mesh
+        PlantRunner(.graph(.twigs(t))).twig(.oak, variant: variant, of: t.palette, sparse: t.sparse, seed: seed, cards: cards)
     }
 
     /// What a twig's wood adds to its generation in U (Surface.metal TWIG_WOOD): its young stems shade yellow-green.

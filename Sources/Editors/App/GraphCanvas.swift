@@ -265,6 +265,8 @@ struct GraphWires: View {
         var to: CGPoint
         var color: Color
         var selected: Bool
+        /// Where it goes straight on its way, to pass around what's between its ends (none: the plain curve).
+        var via: [CGPoint] = []
     }
 
     let area: CGRect
@@ -278,7 +280,12 @@ struct GraphWires: View {
             ctx.translateBy(x: -area.minX, y: -area.minY)
             let curve = vertical ? GraphWires.verticalCurve : GraphWires.curve
             for w in wires {
-                ctx.stroke(curve(w.from, w.to), with: .color(w.color.opacity(w.selected ? 1 : 0.75)), lineWidth: w.selected ? 2.6 : 1.8)
+                var path = curve(w.from, w.via.first ?? w.to)
+                if let last = w.via.last {
+                    w.via.dropFirst().forEach { path.addLine(to: $0) }
+                    path.addPath(curve(last, w.to))
+                }
+                ctx.stroke(path, with: .color(w.color.opacity(w.selected ? 1 : 0.75)), lineWidth: w.selected ? 2.6 : 1.8)
             }
             if let w = dragged {
                 ctx.stroke(curve(w.from, w.to), with: .color(w.color), style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
@@ -524,6 +531,13 @@ final class GraphHostingView: NSHostingView<AnyView> {
         default:
             if event.charactersIgnoringModifiers?.lowercased() == "f" { model.frameAll(in: model.canvasSize) } else { super.keyDown(with: event) }
         }
+    }
+
+    // (A hosting view turns down the menu's actions SwiftUI's own views don't take, and so Cmd-C never comes here.)
+    @objc func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        let own: [Selector] = [#selector(copy(_:)), #selector(paste(_:)), #selector(cut(_:)), #selector(delete(_:)), #selector(selectAll(_:))]
+        if let action = item.action, own.contains(action) { return true }
+        return validateUserInterfaceItem(item)
     }
 
     @objc func copy(_ sender: Any?) { model?.copySelection() }

@@ -1,8 +1,10 @@
 import EngineCore
 import Foundation
 
-/// The species saved as JSON: `Assets/Plants/<id>.json`, one species to a file, `{"format": 2, "species": {...}}`.
-/// A file with a built-in species' id replaces that species everywhere; any other id adds a species. The folder is
+/// The species saved in `Assets/Plants`, one to a file: `<id>.swift`, a program (PlantProgram; PlantSwift reads it as a
+/// graph, PlantCompiler compiles it), which is what the editor saves; or an older `<id>.json`, a recipe,
+/// `{"format": 2, "species": {...}}`. A file with a built-in species' id replaces that species everywhere; any other id
+/// adds a species; a program beats a recipe of its id. The folder is
 /// `METALRENDERER_PLANTS` if set (`builtin`: none, the built-in species only), or `Plants` in the assets folder.
 ///
 /// The plant editor's unsaved edits are a draft in UserDefaults, kept between launches until saved or reverted.
@@ -23,7 +25,14 @@ package enum PlantStore {
         }
     }
 
+    /// Whether `other` is the saved plants' folder. (By path: a URL made before the folder exists has no trailing slash, and
+    /// isn't == one made after.)
+    package static func isFolder(_ other: URL?) -> Bool {
+        other?.standardizedFileURL.path == folder?.standardizedFileURL.path
+    }
+
     package static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).json") }
+    package static func swiftURL(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).swift") }
 
     package static func encode(_ def: Foliage.SpeciesDef) throws -> Data {
         let encoder = JSONEncoder()
@@ -35,6 +44,8 @@ package enum PlantStore {
     package static func load(from folder: URL? = PlantStore.folder) -> PlantCatalog {
         guard let folder, let names = try? FileManager.default.contentsOfDirectory(atPath: folder.path) else { return .builtIn }
         var defs: [Foliage.SpeciesDef] = []
+        var problems: [String] = []
+        defer { setProblems(problems) }
         for name in names.sorted() where name.hasSuffix(".json") {
             do {
                 let file = try JSONDecoder().decode(File.self, from: Data(contentsOf: folder.appendingPathComponent(name)))
@@ -45,21 +56,74 @@ package enum PlantStore {
                 print("Plants: \(name) doesn't read: \(error)")
             }
         }
+        for name in names.sorted() where name.hasSuffix(".swift") {
+            guard let source = try? String(contentsOf: folder.appendingPathComponent(name), encoding: .utf8) else { continue }
+            guard let def = PlantSwift.parse(source, id: String(name.dropLast(6))) else {
+                print("Plants: \(name) has no PlantProgram with a plant function")
+                problems.append("\(name): no PlantProgram with a plant function")
+                continue
+            }
+            // Its stages run as they are, and it's compiled behind them; code only its compiled file can run first.
+            func tell(_ why: String) {
+                print("Plants: \(name) doesn't compile:\n\(why)")
+            }
+            if def.graph?.hasCode == true {
+                switch PlantCompiler.shared.program(source) {
+                case .success(let made): if let graph = def.graph { PlantPrograms.register(made.program, for: graph) }
+                case .failure(.failed(let why)):
+                    tell(why)
+                    problems.append("\(name): \(why)")
+                }
+            } else {
+                PlantCompiler.shared.compileBehind(def) { result in
+                    if case .failure(.failed(let why)) = result {
+                        tell(why)
+                        addProblem("\(name): \(why)")
+                    }
+                }
+            }
+            defs.append(def)
+        }
         let catalog = PlantCatalog.builtIn.merging(defs)
         if !defs.isEmpty { print("Plants: \(defs.map(\.id).joined(separator: ", ")) from \(folder.path)") }
         return catalog
     }
 
-    /// Writes the species' file (in place of the one there).
+    /// Writes the species' file (in place of the one there): its Swift.
     package static func save(_ def: Foliage.SpeciesDef, in folder: URL) throws {
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        try encode(def).write(to: url(def.id, in: folder), options: .atomic)
+        let json = url(def.id, in: folder)
+        if FileManager.default.fileExists(atPath: json.path) { try FileManager.default.removeItem(at: json) }
+        try PlantSwift.emit(def).text.write(to: swiftURL(def.id, in: folder), atomically: true, encoding: .utf8)
     }
 
     /// Deletes the species' file: a built-in species is itself again; a custom one is gone.
     package static func remove(_ id: String, in folder: URL) throws {
-        let file = url(id, in: folder)
-        if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        for file in [url(id, in: folder), swiftURL(id, in: folder)] where FileManager.default.fileExists(atPath: file.path) {
+            try FileManager.default.removeItem(at: file)
+        }
+    }
+
+    private static let problemsLock = NSLock()
+    private nonisolated(unsafe) static var lastProblems: [String] = []
+
+    /// The files the last load couldn't compile, and why.
+    package static var problems: [String] {
+        problemsLock.lock()
+        defer { problemsLock.unlock() }
+        return lastProblems
+    }
+
+    private static func setProblems(_ problems: [String]) {
+        problemsLock.lock()
+        lastProblems = problems
+        problemsLock.unlock()
+    }
+
+    private static func addProblem(_ problem: String) {
+        problemsLock.lock()
+        lastProblems.append(problem)
+        problemsLock.unlock()
     }
 
     // MARK: - The editor's draft
@@ -124,7 +188,7 @@ extension PlantCatalog {
     // MARK: - Fingerprints and the registry
 
     /// Names the catalog's every detail: two catalogs of the same fingerprint grow the same plants in the same places.
-    package var fingerprint: String { PlantCatalog.hash(species) }
+    package var fingerprint: String { PlantCatalog.hash(species.map(\.fingerprintForm)) }
 
     /// Names what decides where plants stand (an open world's tiles hold their trees): which species there are, what
     /// they are to the scenes, where they grow and how many variants each has.

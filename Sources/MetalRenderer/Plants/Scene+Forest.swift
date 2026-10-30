@@ -55,8 +55,9 @@ extension Scene {
         /// `borrowing`: the scene borrows the baked plants' meshes instead of copying them into its arrays.
         /// `keep`: the library is kept for the next scene made with the same plants (not the workshop's, made anew at
         /// every edit: it would push out the forest's).
+        /// `stage`: the plants as they stand at that node of their graphs (the workshop's look at a stage).
         package init(_ scene: Scene, seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Foliage.Species]? = nil, borrowing: Bool = false,
-             keep: Bool = true) {
+             keep: Bool = true, stage: Int = -1) {
             self.scene = scene
             self.catalog = catalog
             borrows = borrowing
@@ -76,6 +77,7 @@ extension Scene {
             library = "plants v\(Foliage.version) seed \(seed) of \(species.map(\.rawValue)) cards \(scene.usesCards)"
                 + " recipes \(catalog.fingerprint)"
                 + (bark.isEmpty ? "" : " bark v2 \(bark.keys.map(\.rawValue).sorted())")
+                + (stage < 0 ? "" : " stage \(stage)")
             palettes = [[Int]](repeating: [], count: catalog.count)
             shades = [[Int]](repeating: [], count: catalog.count)
             sheets = [(texture: UInt32, layer: Int)?](repeating: nil, count: catalog.count)
@@ -90,7 +92,7 @@ extension Scene {
                 return
             }
             var bySpecies = [Foliage.SpeciesSet?](repeating: nil, count: catalog.count)
-            for set in Foliage.library(seed: seed, catalog: catalog, species: species, cards: scene.usesCards, bark: bark) {
+            for set in Foliage.library(seed: seed, catalog: catalog, species: species, cards: scene.usesCards, bark: bark, stage: stage) {
                 bySpecies[set.species.rawValue] = set
             }
             sets = bySpecies
@@ -244,7 +246,7 @@ extension Scene {
                 var rng = SplitMix64(seed: UInt64(b.phase * 1e6) &+ 77)
                 let level = cross(SIMD3<Float>(0, 1, 0), b.axis)
                 let axis = (length_squared(level) > 1e-6 ? normalize(level) : SIMD3<Float>(1, 0, 0)) + Foliage.randomUnit(&rng) * 0.6
-                let angle = limb ? 0.03 * min(max(b.length / (max(b.radius, 0.01) * 90), 0.5), 1.6) : 0.09 * (0.7 + 0.6 * b.phase)
+                let angle = limb ? 0.03 * min(max(b.length / (max(b.radius, 0.01) * 90), 0.5), 1.6) : 0.09 * (0.7 + 0.6 * b.phase) * b.swing
                 return Assembly.Bone(pivot: b.pivot, angle: angle, axis: normalize(axis), phase: b.phase * 2 * .pi)
             }
             /// The furthest a box's corner is from a point: times a turn's angle, how far the turn moves it at most.

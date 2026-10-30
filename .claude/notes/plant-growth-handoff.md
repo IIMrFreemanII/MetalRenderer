@@ -18,11 +18,12 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
     health in U.
 - `Foliage.plant`: a species' plant, its trunk and limbs as parts, its twigs as shared parts on bones of their own.
 - `Surface.metal`: bark by generation (U's whole part) with moss, leaf health tint, outline-leaf detection.
-- Species: `PlantSpecies.swift` (`SpeciesDef`: `growth`, `twigs`, `leaf` for own-stem leaves, `ages.variants`),
-  `BuiltInPlants.swift`; JSON format 2 (`PlantStore.swift`; format 1 files are skipped with a message; the draft key
-  is `plantDraft2`). `Foliage.version` 2 renames every plant cache.
-- Editor: `Sources/Editors/Plants/PlantTabs.swift` (Growth, Branching, Light, Twigs, Leaves, Bark, Look, Habitat,
-  Ages), `PlantParams.swift` (every slider; Mutate reads it), `PlantMutate.swift`.
+- Species: `PlantSpecies.swift` (`SpeciesDef`: `growth`, `twigs`, `leaf` for own-stem leaves, `ages.variants`, `graph`),
+  the built-in ones `Programs/*.swift`; saved as Swift (`PlantStore.swift`, `PlantSwift`), JSON format 2 still read
+  (format 1 files are skipped with a message; the draft key is `plantDraft2`). `Foliage.version` 2 renames every plant
+  cache.
+- Editor: `Sources/Editors/Plants/` (`PlantGraphView`, `PlantEditorModel+Graph`, `PlantNodeInspector`,
+  `PlantSpeciesInspector`), `PlantParams.swift` (every slider; Mutate reads it), `PlantMutate.swift`.
 
 ## Kept on purpose
 - **Leaf cards** (`cards=1`, `Foliage.cards`, `cardSheet`, `rtCutout`): a user-facing setting; grown twigs have a card
@@ -63,7 +64,7 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
   of the editor's viewport (PVE_MyMegaTree, SlateInspector `Screenshot` with an empty ref; CaptureEditorImage and
   `screencapture` both failed): everything there was 1.17× brighter than the fit predicts (the units carry it), the
   floor 8% more (tile 0.18), the sky cool rather than warm, no subgrid visible, and the floor is Floor_Mesh at scale
-  4, a 40 m slab (`Scene.previewFloorReach`). The oak was then matched to the same capture (BuiltInPlants
+  4, a 40 m slab (`Scene.previewFloorReach`). The oak was then matched to the same capture (Programs/Oak.swift
   `oakTwigs`, `oakDef.look`): muted olive leaves (the path tracer's mid-tone leaves 78/82/54 sRGB against Unreal's
   80/83/66) and open, half-flattened sprays (twigs every 0.34 m, 22 leaves a metre), whose shadow has sunflecks in
   the path tracer. The realtime path (640×400, MetalFX denoiser ×3) blurred that shadow back into a blob (MetalFX:
@@ -156,7 +157,7 @@ for what each value does. The graph: Grower (45 cycles) → Graft Distributor (3
 Grower (3 more cycles) → Carve (outer 4%) → Manual Edit → Carve (bottom 10%) → Gravity → Mesh Builder → Bone
 Reduction → Foliage Distributor (hormone mode) → Export. Its tree: 12.15 m tall, 9.5 by 8.9 m, 385 branches, 846 twigs.
 
-Taken, in original code (Grower.swift, BuiltInPlants.swift `oakGrowth`, `oakTwigs`):
+Taken, in original code (Grower.swift, Programs/Oak.swift):
 - Its Grower values: target length 20 m, 0.4 m internodes (branches' 0.34), its four priority curves as our apical and
   axillary ramps (the same basis: length from the root over the target), trunk axil 55° (Unreal's 35° is up from the
   level), branches alternate at 45°, no apical dominance, radius 0.0035 a cycle (a 0.15 m trunk), ethylene 0.15.
@@ -202,3 +203,98 @@ more saturated.
 - Every other species is byte-identical in the workshop's shots (an unset roll draws no random number).
 - Forest shot (dev build, one run): 8.1 ms, about where it was before this work (the grafts' twigs back up from 916 to
   about 1,200).
+
+## Plants as programs, the graph as Swift (2026-10-30)
+
+- `Program/`: `PlantProgram` (a species' two functions, `twig` and `plant`), `PlantContext` (the stages; `Mode.trace` writes
+  down what's called without growing), `PlantGraph` (the same as data; `run`, `standard`/`project`/`applying` to and from
+  the recipe), `PlantPrograms` (`runner(for:)`: a compiled program, the graph, the built-in program, the recipe),
+  `PlantCompiler` (over `EngineCore/Util/SwiftBundleCompiler`, which the wrangles use too).
+- `Program/Swift/`: `PlantSwift.emit`/`parse`, the file's shape. A stage is `let name = p.stage(wires) { $0.a.b = literal }`,
+  a line only for what differs from the stage's preset (`.standard`, `.twig`), in the fields' order (Mirror). Reading applies
+  the lines to the preset's JSON tree (`PlantTree`), numbers as written, Swift's way through `?.`. Anything else is a
+  `.statement` node, kept verbatim. `PlantLiteral.float` keeps a literal exact by way of a Double, which is how the
+  compiler reads it.
+- The random numbers' order is what keeps the goldens: a plant draws its growth seed in `grow`, its root bone's phase in
+  `skeleton` (so a fern's and a dead tree's come at the same place as a tree's), the leaves in `output` or `twig` (not in
+  `leaves`), limbs' phases then per twig `int(3)`, roll, phase in `output`. A twig grows from its seed and draws its leaves
+  from `seed ^ 0x51ED_2701`.
+- The fingerprint is in the scenes' mesh names: `SpeciesDef.fingerprintForm` takes a standard graph out, so a built-in's
+  stays what it was (`PlantProgramTests`, `Fixtures/builtin-species-v2.json`) and a node moved regrows nothing.
+- `Programs/*.swift` are the emitter's output: after changing the emitter, write them again or `testTheBuiltInFilesRoundTrip`
+  fails (parse then emit each and write it back).
+
+## A node's preview (2026-10-30)
+
+- `Program/PlantStage.swift`: `PlantGraph.stages` runs a side in order; with `partial` it skips what can't run and stops at
+  `until`. `PlantStage` turns what a node has made into a `Foliage.Plant`, so that the library, Flora, the views, the ruler
+  and the stats all work as for a whole plant (`Foliage.library(stage:)`, `Flora(stage:)`, `PlantPrograms.runner(for:stage:seed:)`).
+  A twig-side stage runs with the palette's last twig's seed and stands alone as the one part of a plant.
+- `PlantSceneSettings.stage`: session state, not compared by `isSameWorkshop` (a change keeps the camera and the gathered
+  light); `SettingsStore` clears it at launch. `PlantStats.stage` says when the stage is in: the model frames then, if it
+  crossed between the twig's side and the plant's (`frameStage`).
+- `PlantGraph.stageProblem` is why a node has nothing to look at, walking only what leads to it: a graph with an Output
+  not wired still previews its Grower.
+- Thumbnails: `PlantPrograms.sketches` (one probing run, nothing meshed), drawn to CGImages on a utility queue
+  (`PlantThumbnails`), latest request only, at most 10 a second; started by the graph view's appearing, so a hidden panel
+  costs nothing. Nodes grew to 212 by 56 for them.
+- `METALRENDERER_PLANT_SCRIPT=<folder>` (`PlantEditorScript`) drives the editor in its real window, as
+  `METALRENDERER_VFX_SCRIPT` does; run it with `METALRENDERER_PLANTS=builtin`, as a copy of the binary under another name
+  (`cp .build-dev/debug/MetalRenderer .build-dev/debug/PlantScript`). UserDefaults are named after the executable, and that
+  is what keeps its draft and settings out of the user's: `CFFIXED_USER_HOME` moves only the caches.
+- The Project Graph no longer rebuilds while its window can't be seen (`ProjectGraphModel.showing`, set by the panel from its
+  visibility and occlusion): it was 16-23% of the main thread in a drag, at every install. It catches up when shown, or at a
+  click in the view (the view's selection box comes from it). Open and in view, it still rebuilds at every edit.
+- Not done: stages in the lineup and Variations layouts (they show the whole plant); a stage on the Grass Patch or an end
+  Output is the plant itself; a Twig Palette says so rather than showing its twigs in a row.
+
+
+## Gravity and Bone Reduction nodes (2026-10-30)
+
+Read from the plugin's source (`Private/Implementations/PVGravity.cpp`, `Private/Facades/PVBoneFacade.cpp`), in original
+code. No built-in uses either, so a graph with one isn't `isStandard`, and its fingerprint is its canonical graph's.
+- **Gravity** (`p.gravity`, on the growing wire; `Growth.Gravity`, `Plant.bend`): `GrowerTests.testGravityIsUnrealsGravity`
+  runs Unreal's loop, written out line by line, against it. Unreal's is the same on a branch: lerp(tangent, pull,
+  strength / 10 × (1 − radius gradient) × angle term), the turns composed along the branch and into its children; the trunk
+  bends too. Differences: a nil `direction` is away from the plant's sky, so a twig's "down" is its -Z (Unreal's is
+  world -Z); the phototropic pull is each point's `lightDirection`, not Unreal's mix of the two bud light vectors with a
+  hidden bias. Its tooltip says angle correction 1 is no bend; its code gives a tenth of the bend along the pull, and
+  this follows the code. `Params.gravity`'s sag stays in the Grower, so the built-ins don't change, and Unreal has both.
+  The defaults' strength is the sample tree's (0.329 there), Unreal's default being 0.
+- **Bone Reduction** (`p.boneReduction`, on the skeleton wire between the Mesh Builder and the Output, where Unreal has it
+  between its Mesh Builder and its Foliage Distributor; `Growth.keptBones`): Unreal keeps lerp(n, 1, s) bones between a
+  branch's joints, and its bones run along the wood. Ours are a root, one for each limb and one for each twig, so the
+  twigs of a stem are what's reduced, and the limbs always stay: strength 1 is 1 + limbs + stems with twigs. The draws
+  are the same at any strength, so meshes and transforms don't change; a kept bone keeps the bone it was. A group turns
+  about its footmost twig; `Bone.swing` keeps its far twigs from flying (only `Scene+Forest` reads it, ×1 when not shared).
+- **What it doesn't do:** make a frame cheaper. Unreal's skinning cost goes with its bones; the forest copies a bone's
+  pivot, axis, angle and phase into each part (`Assembly.Part.bough`), one per part however many share it. Worth doing
+  only with a palette of bones in the wind pass.
+
+## Manual Edit (2026-10-30)
+
+Read from `PVManualEditSettings.cpp`, `PVManualEditTool.cpp`, `PVSkeletonPointsSelection.cpp`, in original code.
+- **One hero plant, the user's choice:** Unreal has one plant; a species here has many, and a plant's seed goes with the
+  scene's (`Foliage.seed`). The node holds an age, a variant and a seed. `SpeciesDef.plantSeed` (the library and the workshop's
+  skeleton) grows that age and variant from it; the stage edits only a context of that seed. Twigs hang in the same places;
+  the palette's own twig meshes still go with the scene's seed.
+- **Unlike Unreal's storage:** it keeps a dense absolute offset for each bud, so a rotation near the foot writes every
+  point. Here (`Plant.edit`) each edit is local to the tree's frames: a point's internode longer by `moves[k]`, it and all
+  beyond it turned by `turns[k]` about its parent. A rotation is one entry for each thing on the point, and a soft move
+  is `weight - parent's weight` per internode, so the file stays small and a compiled file's array literals stay cheap.
+  Unreal's tool writes its rotation only into a point's own branch and two levels of children; this carries everything.
+- **Differences:** a move carries what's beyond by default (Unreal's leaves a kink; off is its behaviour); a cut thins all
+  that's left on the branch, not its nearest children only; the first axis keeps its first internode, so a plant always has
+  a trunk. An unedited point stays to the bit (`touched`).
+- **Stale edits:** point numbers are the grower's, and an edit of an earlier stage can renumber them. `grown` holds the
+  count; the inspector warns if it changed, and numbers past the end are skipped. It can't see a change that keeps the count.
+- **Where things are:** `Program/PlantManualEdit.swift` (the settings, `Plant.edit`, `plantSeed`, `PlantEditing`: picks,
+  weights, tools, lines), `MetalRenderer/Plants/Renderer+PlantTool.swift` (overlay, handle, mouse), and
+  `Editors/Plants/PlantEditorModel+ManualEdit.swift`, `ManualEditInspector`. A drag runs the workshop as a slider does.
+- **Checked:** `PlantManualEditTests`, `PlantEditorTests.testManualEditTool` (the model with a stand-in host), the
+  renderer's mouse through a script on a headless app (arrows, rings, clicks, Option, hover), and the real window:
+  `METALRENDERER_PLANT_EDIT_SCRIPT=<folder>` (`PlantManualEditScript`) sends mouse events to the inspector's tool and the
+  view, with pictures and a line for each check. Run it as a copy of the binary under another name with
+  `METALRENDERER_PLANTS=builtin`, and `defaults delete` that name after: the copy's draft is otherwise there next time.
+  Not checked with a person's hand: Option-drag and the Clear buttons in the window (their actions were called directly).
+  Highlights ignore the wood's noise (`Plant.placed`), so they can sit up to its amount off the tubes.

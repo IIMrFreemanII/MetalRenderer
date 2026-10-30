@@ -14,7 +14,9 @@ package enum PlantMutate {
             m.name = "\(def.name) \(k)"
             let changes = 3 + rng.int(4)
             for _ in 0..<changes { mutate(&m, &rng) }
-            return m.sanitized()
+            m = m.sanitized()
+            if let graph = m.graph { m.setGraph(graph.applying(m)) }
+            return m
         }
     }
 
@@ -68,6 +70,7 @@ package enum PlantMutate {
         d.leaf = mutant.leaf
         d.grass = mutant.grass
         d.ages = mutant.ages
+        d.graph = mutant.graph
         return d
     }
 }

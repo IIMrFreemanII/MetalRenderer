@@ -24,7 +24,7 @@ package enum DevChange: Hashable {
         case ("Sources", "Game") where ext == "swift": return .game
         case ("Sources", let module) where ext == "swift": return .code(module)
         case ("Assets", "Scenes") where ext == "scene" && parts.count == 3: return .sceneFile(path)
-        case ("Assets", "Plants") where ext == "json": return .plants
+        case ("Assets", "Plants") where ext == "json" || ext == "swift": return .plants
         case ("Assets", "Buildings") where ext == "json": return .buildings
         case ("Assets", "Procedural") where ext == "json": return .procedural
         default: return nil

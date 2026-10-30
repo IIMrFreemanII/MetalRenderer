@@ -268,6 +268,7 @@ package enum Foliage {
         package var length: Float                   // of what it carries: longer and thinner sways more
         package var radius: Float
         package var phase: Float                    // 0...1, so that no two move together
+        package var swing: Float = 1                // of a twig's turn: less on a bone many twigs share
     }
 
     package struct Part {
@@ -315,70 +316,7 @@ package enum Foliage {
 
     /// Grows one plant of `def` (the species `species` of its catalog).
     package static func plant(_ def: SpeciesDef, _ species: Species, age: Age, seed: UInt64, palette: [Mesh], bark: Bark? = nil) -> Plant {
-        if let grass = def.grass {
-            let patch = grassPatch(seed: seed, size: grass.size, blades: grass.blades)
-            return Plant(species: species, age: age, meshes: [patch], parts: [Part(mesh: 0, shared: false,
-                         transform: matrix_identity_float4x4, bone: 0)],
-                         bones: [Bone(pivot: .zero, axis: [0, 1, 0], parent: -1, length: 0.4, radius: 0.004, phase: 0)],
-                         bounds: patch.bounds)
-        }
-        let growth = def.growth ?? Growth.Params()
-        let up = normalize(growth.up)
-        var rng = SplitMix64(seed: seed)
-        let grown = Growth.grown(Growth.aged(growth, age), twigs: def.twigs, seed: rng.nextUInt64())
-        let skeleton = grown.skeleton
-        let trunk = skeleton.stems[0]
-        var bones = [Bone(pivot: .zero, axis: growth.axis.map(normalize) ?? up, parent: -1, length: trunk.length,
-                          radius: skeleton.nodes[Int(trunk.first)].w, phase: rng.next())]
-        var parts: [Part] = []
-        var meshes: [Mesh] = []
-        var bounds = AABB()
-
-        guard def.twigs != nil, !palette.isEmpty else {
-            // No twigs: one mesh, the wood (a dead tree), or the stems with the leaves that grow on them (a fern's
-            // fronds and pinnae).
-            guard let leaf = def.leaf else {
-                let wood = Growth.wood(skeleton, stems: nil, growth.wood, up: up, seed: seed, bark: bark)
-                return Plant(species: species, age: age, meshes: [wood],
-                             parts: [Part(mesh: 0, shared: false, transform: matrix_identity_float4x4, bone: 0)],
-                             bones: bones, bounds: wood.bounds)
-            }
-            let anchors = leaves(on: skeleton, leaf, up: up, rng: &rng)
-            let mesh = Foliage.mesh(skeleton, stems: nil, leaves: anchors, shape: leaf.shape, fold: leaf.fold, up: up,
-                                    allLeaves: def.stemsAreLeaves, bark: bark, sheet: leaf.sheetName)
-            return Plant(species: species, age: age, meshes: [mesh],
-                         parts: [Part(mesh: 0, shared: false, transform: matrix_identity_float4x4, bone: 0)],
-                         bones: bones, bounds: mesh.bounds)
-        }
-
-        // The scaffold: the trunk is one part, each limb (a branch of it and all that grows on it) another.
-        var groups = [[Int]](repeating: [], count: 1 + skeleton.limbs)
-        for (i, s) in skeleton.stems.enumerated() { groups[Int(s.limb) + 1].append(i) }
-        for (g, stems) in groups.enumerated() {
-            let mesh = Growth.wood(skeleton, stems: stems, growth.wood, up: up, seed: seed, bark: bark)
-            bounds.grow(mesh.bounds)
-            if g > 0 {
-                let s = skeleton.stems[stems[0]]
-                let foot = skeleton.sample(s, 0)
-                bones.append(Bone(pivot: foot.position, axis: foot.tangent, parent: 0, length: s.length, radius: foot.radius,
-                                  phase: rng.next()))
-            }
-            parts.append(Part(mesh: meshes.count, shared: false, transform: matrix_identity_float4x4, bone: g))
-            meshes.append(mesh)
-        }
-
-        // The twigs, where the distributor put them: the palette's sparser ones in the shade, its denser ones in the
-        // light (the palette runs from sparse to dense). Each turns on a bone of its own, hung on its limb's.
-        for t in grown.twigs {
-            let lit = Int(min(max(t.light, 0), 0.999) * Float(palette.count))
-            let pick = min(max(lit + rng.int(3) - 1, 0), palette.count - 1)
-            let transform = graftTransform(at: t.position, along: t.direction, scale: t.size, up: up, roll: rng.range(-0.6, 0.6))
-            bounds.grow(palette[pick].bounds.transformed(transform))
-            bones.append(Bone(pivot: t.position, axis: t.direction, parent: skeleton.stems[t.stem].limb + 1, length: t.size,
-                              radius: max(t.radius, 0.002), phase: rng.next()))
-            parts.append(Part(mesh: pick, shared: true, transform: transform, bone: bones.count - 1))
-        }
-        return Plant(species: species, age: age, meshes: meshes, parts: parts, bones: bones, bounds: bounds)
+        PlantPrograms.runner(for: def).plant(species, age: age, seed: seed, palette: palette, bark: bark)
     }
 
     // MARK: - Library
@@ -401,8 +339,9 @@ package enum Foliage {
     /// library, built in parallel or not; a species' plants are the same whatever else is built with it.
     /// `cards`: the twigs' leaves as cards.
     /// `bark`: by species, its bark's relief (the realistic look's, realism high: FoliageMesh.Bark).
+    /// `stage`: its plants as they stand at that node of their graphs (PlantSceneSettings.stage).
     package static func library(seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Species]? = nil, parallel: Bool = true,
-                        cards: Bool = false, bark: [Species: Bark] = [:]) -> [SpeciesSet] {
+                        cards: Bool = false, bark: [Species: Bark] = [:], stage: Int = -1) -> [SpeciesSet] {
         let species = species ?? catalog.all
         struct Job { var species: Species; var age: Age; var index: Int }
         var twigJobs: [Job] = [], plantJobs: [Job] = []
@@ -410,17 +349,19 @@ package enum Foliage {
             for i in 0..<catalog[s].paletteSize { twigJobs.append(Job(species: s, age: .mature, index: i)) }
             for age in Age.allCases { for i in 0..<catalog[s].variants(age) { plantJobs.append(Job(species: s, age: age, index: i)) } }
         }
+        var runners: [PlantRunner?] = Array(repeating: nil, count: catalog.count)
+        for s in species { runners[s.rawValue] = PlantPrograms.runner(for: catalog[s], stage: stage, seed: seed) }
         let twigs = slots(twigJobs.count, parallel: parallel) { j -> Mesh in
             let job = twigJobs[j], def = catalog[job.species]
-            // (paletteSize: a species with a palette has twigs.)
-            return Growth.twig(def.twigs!, variant: job.index, seed: Foliage.seed(seed, def.seedIndex, -1, job.index), cards: cards)
+            return runners[job.species.rawValue]!.twig(job.species, variant: job.index, of: def.paletteSize, sparse: def.twigs?.sparse,
+                                                       seed: Foliage.seed(seed, def.seedIndex, -1, job.index), cards: cards)
         }
         var palettes = [[Mesh]](repeating: [], count: catalog.count)
         for (j, job) in twigJobs.enumerated() { palettes[job.species.rawValue].append(twigs[j]) }
         let plants = slots(plantJobs.count, parallel: parallel) { j -> Plant in
             let job = plantJobs[j], def = catalog[job.species]
-            return plant(def, job.species, age: job.age, seed: Foliage.seed(seed, def.seedIndex, job.age.rawValue, job.index),
-                         palette: palettes[job.species.rawValue], bark: bark[job.species])
+            return runners[job.species.rawValue]!.plant(job.species, age: job.age, seed: def.plantSeed(seed, job.age, job.index),
+                                                        palette: palettes[job.species.rawValue], bark: bark[job.species])
         }
         return species.map { s in
             SpeciesSet(species: s, palette: palettes[s.rawValue],
