@@ -268,6 +268,7 @@ package enum Foliage {
         package var length: Float                   // of what it carries: longer and thinner sways more
         package var radius: Float
         package var phase: Float                    // 0...1, so that no two move together
+        package var swing: Float = 1                // of a twig's turn: less on a bone many twigs share
     }
 
     package struct Part {
@@ -359,7 +360,7 @@ package enum Foliage {
         for (j, job) in twigJobs.enumerated() { palettes[job.species.rawValue].append(twigs[j]) }
         let plants = slots(plantJobs.count, parallel: parallel) { j -> Plant in
             let job = plantJobs[j], def = catalog[job.species]
-            return runners[job.species.rawValue]!.plant(job.species, age: job.age, seed: Foliage.seed(seed, def.seedIndex, job.age.rawValue, job.index),
+            return runners[job.species.rawValue]!.plant(job.species, age: job.age, seed: def.plantSeed(seed, job.age, job.index),
                                                         palette: palettes[job.species.rawValue], bark: bark[job.species])
         }
         return species.map { s in

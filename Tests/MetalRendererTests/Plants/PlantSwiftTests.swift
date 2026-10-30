@@ -3,6 +3,16 @@ import simd
 @testable import EngineCore
 @testable import Plants
 
+extension PlantGraph {
+    /// `settings`, a new node on the wire out of the side's `after`: what took that wire takes the new node's.
+    mutating func insert(_ settings: PlantNodeSettings, after: PlantNodeKind, side: PlantSide = .plant) {
+        let from = first(after, side)!, id = nextID
+        for i in nodes.indices where nodes[i].side == side { nodes[i].inputs = nodes[i].inputs.map { $0 == from.id ? id : $0 } }
+        let node = PlantNode(id: id, name: uniqueName(settings.kind.name(side: side)), side: side, preset: .standard, settings: settings, inputs: [from.id])
+        nodes.insert(node, at: nodes.firstIndex { $0.id == from.id }! + 1)
+    }
+}
+
 /// PlantSwift: a species as a Swift file and back, the file compiled is the graph run, byte for byte.
 final class PlantSwiftTests: XCTestCase {
     private static let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -48,6 +58,59 @@ final class PlantSwiftTests: XCTestCase {
         XCTAssertEqual(back.graph?.canonical, graph.canonical)
         XCTAssertEqual(back.graph?.nodes[0].at, [120.5, -40])
         XCTAssertEqual(PlantSwift.emit(back).text, text)
+    }
+
+    /// Gravity and Bone Reduction, plain and with every field set, on the plant and the twig: lines of their own, back
+    /// as they were.
+    func testGravityAndBoneReductionRoundTrip() throws {
+        var def = PlantCatalog.builtIn[.oak]
+        var graph = PlantGraph.standard(def)
+        var bent = Growth.Gravity()
+        bent.mode = .phototropic
+        bent.strength = 0.123456789
+        bent.direction = [1, -2, 0.5]
+        bent.angleCorrection = 0.25
+        graph.insert(.gravity(bent), after: .carve)
+        graph.insert(.gravity(Growth.Gravity()), after: .gravity)
+        var fewer = Growth.BoneReduction()
+        fewer.strength = 0.6
+        graph.insert(.boneReduction(fewer), after: .skeleton)
+        graph.insert(.gravity(Growth.Gravity()), after: .grow, side: .twig)
+        graph.insert(.boneReduction(Growth.BoneReduction()), after: .skeleton, side: .twig)
+        def.setGraph(graph)
+        XCTAssertNil(graph.wiring)
+        XCTAssertFalse(graph.isStandard)
+
+        let text = PlantSwift.emit(def).text
+        for line in ["let gravity = p.gravity(carve) {", "$0.mode = .phototropic", "$0.direction = [1, -2, 0.5]", "$0.angleCorrection = 0.25",
+                     "let gravity2 = p.gravity(gravity)\n", "let boneReduction = p.boneReduction(wood) { $0.strength = 0.6 }",
+                     "let twigGravity = p.gravity(twigGrow)\n", "let twigBoneReduction = p.boneReduction(twigWood)\n"] {
+            XCTAssertTrue(text.contains(line), line + "\n" + text)
+        }
+        let back = try XCTUnwrap(PlantSwift.parse(text))
+        XCTAssertEqual(back.graph?.canonical, def.graph?.canonical)
+        XCTAssertEqual(PlantSwift.emit(back).text, text)
+        XCTAssertNil(back.graph?.problem)
+
+        // In a hand-written file they're stages, not statements; a setting that isn't one is a statement, as ever.
+        let hand = """
+        enum Mine: PlantProgram {
+            static let species = Foliage.SpeciesInfo(id: "mine")
+            static func plant(_ p: inout PlantContext) -> Wire<Foliage.Plant> {
+                let grow = p.grow()
+                let bent = p.gravity(grow) { $0.strength = 0.5; $0.direction = nil }
+                let odd = p.gravity(bent) { $0.mode = .sideways }
+                let wood = p.skeleton(bent)
+                let fewer = p.boneReduction(wood) { $0.strength = 1 }
+                return p.output(fewer)
+            }
+        }
+        """
+        let read = try XCTUnwrap(PlantSwift.parse(hand)?.graph)
+        XCTAssertEqual(read.nodes.map(\.kind), [.grow, .gravity, .statement, .skeleton, .boneReduction, .output])
+        guard case .gravity(let s) = read.nodes[1].settings else { return XCTFail() }
+        XCTAssertEqual(s.strength, 0.5)
+        XCTAssertNil(s.direction)
     }
 
     /// Every Float's literal is that Float, read as the compiler does and as the parser does.

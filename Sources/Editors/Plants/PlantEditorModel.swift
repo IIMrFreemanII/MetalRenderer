@@ -20,6 +20,9 @@ protocol PlantEditorHost: AnyObject {
     func observeSettings(_ observer: @escaping (RenderSettings) -> Void)
     func observeTick(_ observer: @escaping () -> Void)
     func frameWorkshop()
+    /// The Manual Edit tool in the view.
+    func setPlantTool(_ tool: PlantToolOverlay?)
+    var onPlantTool: ((PlantToolEvent) -> Void)? { get set }
 }
 
 extension RendererController: PlantEditorHost {
@@ -75,7 +78,24 @@ final class PlantEditorModel: ObservableObject {
     /// The built-in species' files, read as graphs.
     var builtInGraphs: [String: PlantGraph] = [:]
 
-    @Published private(set) var catalog: PlantCatalog { didSet { refreshThumbnails() } }
+    // A Manual Edit node's tool (PlantEditorModel+ManualEdit.swift).
+    @Published var editNode: Int32?
+    @Published var editTool: PlantEditTool?
+    @Published var editSpread = PlantEditing.Spread()
+    /// What's picked, and how much each point takes of its move.
+    @Published var editPick: PlantEditing.Pick?
+    var editWeights: [Float] = []
+    var hoverPick: PlantEditing.Pick?
+    var editing: PlantEditing?
+    var editUpstream: [PlantNode] = []
+    var editingView: PlantSceneSettings.View?
+
+    @Published private(set) var catalog: PlantCatalog {
+        didSet {
+            refreshThumbnails()
+            catalogChangedUnderTool()
+        }
+    }
     @Published private(set) var saved: PlantCatalog
     @Published var selected: String { didSet { if selected != oldValue { refreshThumbnails() } } }
     @Published private(set) var stats: PlantStats?
@@ -111,6 +131,7 @@ final class PlantEditorModel: ObservableObject {
         if catalog.species(id: selected) == nil { selected = catalog.species[0].id }
         controller.observeSettings { [weak self] s in self?.received(s) }
         controller.observeTick { [weak self, unowned controller] in self?.tick(controller.plantStats) }
+        controller.onPlantTool = { [weak self] event in self?.plantToolEvent(event) }
         if catalog != saved { push(final: true) }
         compileLater()
         reloads = NotificationCenter.default.addObserver(forName: DevReload.plantsReloaded, object: nil, queue: .main) { [weak self] _ in
@@ -242,6 +263,7 @@ final class PlantEditorModel: ObservableObject {
     private func received(_ s: RenderSettings) {
         let plantsBefore = scene.plants
         if s.scene != scene { scene = s.scene }
+        if s.scene.kind != .plants { stopEditing() }
         if plantsBefore != s.scene.plants { refreshThumbnails() }
         if s.foliage != foliage { foliage = s.foliage }
         if s.previewLightYaw != lightYaw { lightYaw = s.previewLightYaw }
@@ -260,6 +282,7 @@ final class PlantEditorModel: ObservableObject {
     }
 
     func select(_ id: String) {
+        stopEditing()
         selected = id
         selection = []
         pinned = nil

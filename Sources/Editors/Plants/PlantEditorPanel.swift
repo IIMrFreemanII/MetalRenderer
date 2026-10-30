@@ -74,11 +74,18 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
     }
 
     func toggle(nextTo window: NSWindow) {
-        if panel.isVisible { panel.orderOut(nil); UserDefaults.standard.set(false, forKey: PlantEditorPanel.visibleKey) }
+        if panel.isVisible {
+            model.stopEditing()
+            panel.orderOut(nil)
+            UserDefaults.standard.set(false, forKey: PlantEditorPanel.visibleKey)
+        }
         else { show(nextTo: window) }
     }
 
-    func windowWillClose(_ notification: Notification) { UserDefaults.standard.set(false, forKey: PlantEditorPanel.visibleKey) }
+    func windowWillClose(_ notification: Notification) {
+        model.stopEditing()
+        UserDefaults.standard.set(false, forKey: PlantEditorPanel.visibleKey)
+    }
 
     /// (C's key-up won't come here now.)
     func windowDidResignKey(_ notification: Notification) {

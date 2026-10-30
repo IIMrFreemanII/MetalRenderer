@@ -46,10 +46,10 @@ package struct PlantGraph: Codable, Equatable {
 package enum PlantSide: String, Codable { case twig, plant }
 
 package enum PlantNodeKind: String, Codable, CaseIterable {
-    case grow, growMore, grafts, spurs, carve, skeleton, leaves, twig, palette, distribute, output, grass, code, statement
+    case grow, growMore, grafts, spurs, carve, gravity, manualEdit, skeleton, boneReduction, leaves, twig, palette, distribute, output, grass, code, statement
 
     /// What's added by the editor's menus (a statement only comes from a file).
-    package static let adding: [PlantNodeKind] = [.grow, .growMore, .grafts, .spurs, .carve, .skeleton, .leaves, .twig, .palette, .distribute, .output, .grass, .code]
+    package static let adding: [PlantNodeKind] = [.grow, .growMore, .grafts, .spurs, .carve, .gravity, .manualEdit, .skeleton, .boneReduction, .leaves, .twig, .palette, .distribute, .output, .grass, .code]
 
     package var title: String {
         switch self {
@@ -58,7 +58,10 @@ package enum PlantNodeKind: String, Codable, CaseIterable {
         case .grafts: return "Graft Distributor"
         case .spurs: return "Spurs"
         case .carve: return "Carve"
+        case .gravity: return "Gravity"
+        case .manualEdit: return "Manual Edit"
         case .skeleton: return "Mesh Builder"
+        case .boneReduction: return "Bone Reduction"
         case .leaves: return "Leaves"
         case .twig: return "Twig"
         case .palette: return "Twig Palette"
@@ -86,8 +89,8 @@ package enum PlantNodeKind: String, Codable, CaseIterable {
     package var pins: [PlantPin] {
         switch self {
         case .grow, .grass, .statement: return []
-        case .growMore, .grafts, .spurs, .carve, .skeleton: return [PlantPin("In", .growing)]
-        case .leaves: return [PlantPin("Stems", .skeleton)]
+        case .growMore, .grafts, .spurs, .carve, .gravity, .manualEdit, .skeleton: return [PlantPin("In", .growing)]
+        case .boneReduction, .leaves: return [PlantPin("Stems", .skeleton)]
         case .twig: return [PlantPin("Stems", .skeleton), PlantPin("Leaves", .leaves)]
         case .palette: return [PlantPin("Twig", .twigMesh)]
         case .distribute: return [PlantPin("Stems", .skeleton), PlantPin("Palette", .palette)]
@@ -99,8 +102,8 @@ package enum PlantNodeKind: String, Codable, CaseIterable {
     /// What its output carries (.any: a code node's is what's wired into it).
     package var output: PlantWire {
         switch self {
-        case .grow, .growMore, .grafts, .spurs, .carve: return .growing
-        case .skeleton: return .skeleton
+        case .grow, .growMore, .grafts, .spurs, .carve, .gravity, .manualEdit: return .growing
+        case .skeleton, .boneReduction: return .skeleton
         case .leaves: return .leaves
         case .twig: return .twigMesh
         case .palette: return .palette
@@ -173,7 +176,10 @@ package enum PlantNodeSettings: Codable, Equatable {
     case grafts(Growth.Grafts)
     case spurs(Growth.Spurs)
     case carve(Growth.Carve)
+    case gravity(Growth.Gravity)
+    case manualEdit(Growth.ManualEdit)
     case skeleton(Growth.Wood)
+    case boneReduction(Growth.BoneReduction)
     case leaves(Foliage.LeafRecipe)
     case twig
     case palette(Foliage.Palette)
@@ -190,7 +196,10 @@ package enum PlantNodeSettings: Codable, Equatable {
         case .grafts: return .grafts
         case .spurs: return .spurs
         case .carve: return .carve
+        case .gravity: return .gravity
+        case .manualEdit: return .manualEdit
         case .skeleton: return .skeleton
+        case .boneReduction: return .boneReduction
         case .leaves: return .leaves
         case .twig: return .twig
         case .palette: return .palette
@@ -210,7 +219,10 @@ package enum PlantNodeSettings: Codable, Equatable {
         case .grafts: return .grafts(Growth.Grafts())
         case .spurs: return .spurs(Growth.Spurs())
         case .carve: return .carve(Growth.Carve())
+        case .gravity: return .gravity(Growth.Gravity())
+        case .manualEdit: return .manualEdit(Growth.ManualEdit())
         case .skeleton: return .skeleton(preset == .twig ? Growth.Twigs.twigGrowth.wood : Growth.Wood())
+        case .boneReduction: return .boneReduction(Growth.BoneReduction())
         case .leaves: return .leaves(preset == .twig ? Growth.Twigs().leaf : Foliage.LeafRecipe())
         case .twig: return .twig
         case .palette: return .palette(Foliage.Palette())
@@ -376,7 +388,10 @@ extension PlantGraph {
             case .grafts(let s): out = p.grafts(w(i[0]), settings: s).node
             case .spurs(let s): out = p.spurs(w(i[0]), settings: s).node
             case .carve(let s): out = p.carve(w(i[0]), settings: s).node
+            case .gravity(let s): out = p.gravity(w(i[0]), settings: s).node
+            case .manualEdit(let s): out = p.manualEdit(w(i[0]), settings: s).node
             case .skeleton(let s): out = p.skeleton(w(i[0]), settings: s, preset: node.preset).node
+            case .boneReduction(let s): out = p.boneReduction(w(i[0]), settings: s).node
             case .leaves(let s): out = p.leaves(w(i[0]), settings: s, preset: node.preset).node
             case .twig: out = p.twig(w(i[0]), leaves: w(i[1])).node
             case .palette, .statement: continue
@@ -399,6 +414,13 @@ extension PlantGraph {
     }
 
     package func plant(_ p: inout PlantContext) -> Wire<Foliage.Plant> { Wire(node: run(.plant, &p)) }
+
+    /// The plant as it comes into `node`, on the plant's side. nil: it can't be run as far.
+    func growing(into node: Int32, _ p: inout PlantContext) -> Growing? {
+        guard wiring == nil, !nodes.contains(where: \.isStatement) else { return nil }
+        guard let from = self.node(node)?.inputs.first, from >= 0, let made = stages(.plant, &p, until: from).wire[from], made >= 0 else { return nil }
+        return p.value(Wire<Growing>(node: made))
+    }
 }
 
 // MARK: - As a recipe

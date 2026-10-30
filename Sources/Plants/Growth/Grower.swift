@@ -388,6 +388,54 @@ package enum Growth {
             }
         }
 
+        /// The gravity stage (Growth.Gravity), once the plant is grown: from the foot out, each internode turns toward
+        /// the pull, by strength / 10 times how thin its point is (0 at the plant's thickest, 1 at its thinnest) times how
+        /// far across the pull it lies; the turn is carried to all beyond it. The trunk bends too, and nothing limits
+        /// the turns but the strength (Params.gravity's sag has a limit, this has none).
+        mutating func bend(_ g: Gravity) {
+            let up = normalize(p.up)
+            let along = g.direction ?? -up
+            guard g.strength != 0, length_squared(along) > 1e-8 else { return }
+            let pull = normalize(along)
+            var thinnest = Float.infinity, thickest = -Float.infinity
+            for point in points where !point.removed {
+                thinnest = min(thinnest, point.radius)
+                thickest = max(thickest, point.radius)
+            }
+            let spread = thickest - thinnest
+            let least = max(0.1, 1 - g.angleCorrection)
+            var turn = [simd_quatf](repeating: simd_quatf(angle: 0, axis: up), count: points.count)
+            var moved = points.map(\.position)
+            for i in points.indices.dropFirst() where !points[i].removed {
+                let parent = Int(points[i].parent)
+                // (A carved trunk's foot has nothing below it left: it stays.)
+                guard !points[parent].removed else { continue }
+                let offset = points[i].position - points[parent].position
+                var q = turn[parent]
+                let turned = q.act(offset)
+                if length_squared(turned) > 1e-12 {
+                    let d = normalize(turned)
+                    var to = pull
+                    if g.mode == .phototropic {
+                        let light = points[i].lightDirection
+                        to = length_squared(light) > 1e-6 ? normalize(light) : up
+                    }
+                    let across = 1 - abs(dot(d, to))
+                    let thin = spread > 0 ? 1 - (points[i].radius - thinnest) / spread : 0
+                    let impact = g.strength / 10 * thin * (least + (1 - least) * across)
+                    let bent = d + (to - d) * impact
+                    if length_squared(bent) > 1e-8 { q = simd_quatf(from: d, to: normalize(bent)) * q }
+                }
+                turn[i] = q
+                moved[i] = moved[parent] + q.act(offset)
+            }
+            for i in points.indices where !points[i].removed {
+                points[i].position = moved[i]
+                points[i].direction = normalize(turn[i].act(points[i].direction))
+                points[i].lateral = normalize(turn[i].act(points[i].lateral))
+            }
+        }
+
         /// The grafts (Params.grafts), once the plant is grown.
         mutating func graft(_ g: Grafts) {
             let reach = points.reduce(Float(0)) { $1.removed ? $0 : max($0, $1.fromRoot) }
@@ -592,6 +640,28 @@ package enum Growth {
         package var stem: Int
         package var light: Float
         package var radius: Float
+    }
+
+    /// Whose bone each twig turns on, its own if it keeps one: a stem's n twigs (they come together, tip first) are split
+    /// into lerp(n, 1, strength) runs, rounded up (Unreal's Bone Reduction keeps as many between a branch's joints), each on
+    /// the bone of its twig nearest the foot.
+    static func keptBones(_ places: [TwigPlace], strength: Float) -> [Int] {
+        var keeper = Array(places.indices)
+        guard strength > 0 else { return keeper }
+        let s = min(strength, 1)
+        var first = 0
+        while first < places.count {
+            var end = first + 1
+            while end < places.count, places[end].stem == places[first].stem { end += 1 }
+            let n = end - first
+            let runs = max(Int((Float(n) + (1 - Float(n)) * s).rounded(.up)), 1)
+            for run in 0..<runs {
+                let last = first + (run + 1) * n / runs - 1
+                for i in (first + run * n / runs)...last { keeper[i] = last }
+            }
+            first = end
+        }
+        return keeper
     }
 
     /// One twig of a palette (Unreal's graft palette): a small plant grown along +Y with +Z its sky, with leaves.

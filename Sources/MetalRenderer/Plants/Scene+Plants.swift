@@ -119,7 +119,7 @@ extension Scene {
             let age = plant.age, variant = set.plants(of: age).firstIndex(of: e.plant) ?? 0
             // (The plant's own skeleton: the same seed as the library's.)
             let runner = PlantPrograms.runner(for: def, stage: stage, seed: UInt64(max(p.seed, 0)))
-            guard let grown = runner.skeleton(e.species, age: age, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, age.rawValue, variant)) else { continue }
+            guard let grown = runner.skeleton(e.species, age: age, seed: def.plantSeed(UInt64(max(p.seed, 0)), age, variant)) else { continue }
             let up = grown.up
             let stems = Scene.thinned(grown.skeleton)
             let at = translate([e.x, 0, e.z])

@@ -102,6 +102,9 @@ package enum PlantSwift {
             case .grafts(let s): call("grafts", [name(i[0])], s, Growth.Grafts())
             case .spurs(let s): call("spurs", [name(i[0])], s, Growth.Spurs())
             case .carve(let s): call("carve", [name(i[0])], s, Growth.Carve())
+            case .gravity(let s): call("gravity", [name(i[0])], s, Growth.Gravity())
+            case .manualEdit(let s): call("manualEdit", [name(i[0])], s, Growth.ManualEdit())
+            case .boneReduction(let s): call("boneReduction", [name(i[0])], s, Growth.BoneReduction())
             case .skeleton(let s):
                 let base = node.preset == .twig ? Growth.Twigs.twigGrowth.wood : Growth.Wood()
                 call("skeleton", [name(i[0])] + (preset.isEmpty ? [] : [preset]), s, base)

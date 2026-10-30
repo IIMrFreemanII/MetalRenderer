@@ -132,6 +132,9 @@ final class RendererController: InputHandler {
         renderer.onGizmoMoved = { [weak self] effect, emitter, delta, phase in
             DispatchQueue.main.async { self?.onGizmoMoved?(effect, emitter, delta, phase) }
         }
+        renderer.onPlantTool = { [weak self] event in
+            DispatchQueue.main.async { self?.onPlantTool?(event) }
+        }
         renderer.onFrameTime = { [weak self] cpu, gpu in
             DispatchQueue.main.async { self?.onFrameTime?(cpu, gpu) }
         }
@@ -207,8 +210,15 @@ final class RendererController: InputHandler {
     /// The VFX editor's: the scene's clock at `t` (s), and what its gizmos show (nil: none).
     func setTime(_ t: Float) { renderer.perform { $0.setTime(t) } }
     func setGizmos(_ target: VFXGizmos.Target?) { renderer.perform { $0.setGizmos(target) } }
+    /// The plant editor's Manual Edit in the view (Renderer+PlantTool.swift): what it draws, what the mouse did with it.
+    func setPlantTool(_ tool: PlantToolOverlay?) {
+        plantToolOn = tool != nil
+        renderer.perform { $0.plantTool = tool }
+    }
     /// A gizmo's handle dragged in the view (Renderer.onGizmoMoved), on the main thread.
     var onGizmoMoved: ((_ effect: String, _ emitter: String, _ delta: SIMD3<Float>, _ phase: Int) -> Void)?
+    var onPlantTool: ((PlantToolEvent) -> Void)?
+    private var plantToolOn = false
 
     func setTraversalCounters(_ on: Bool, then done: @escaping () -> Void) {
         renderer.perform { [weak self] r in
@@ -352,6 +362,7 @@ final class RendererController: InputHandler {
     func mouseMoved(at cursor: SIMD2<Float>) {
         if painterStatus.active != nil { renderer.perform { $0.paintMouseMoved(at: cursor) } }
         if terrainStatus.active { renderer.perform { $0.terrainMouseMoved(at: cursor) } }
+        if plantToolOn { renderer.perform { $0.plantToolMouseMoved(at: cursor) } }
     }
     func pressure(_ p: Float) { renderer.perform { $0.penPressure = p } }
 }

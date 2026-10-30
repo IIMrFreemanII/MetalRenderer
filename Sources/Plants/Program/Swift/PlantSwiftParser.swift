@@ -553,6 +553,15 @@ struct PlantSwiftParser {
         case "carve":
             guard wires.count == 1, let s = settings(Growth.Carve()) else { return nil }
             return Stage(settings: .carve(s), preset: preset, inputs: [wires[0].id], notes: closure.notes)
+        case "gravity":
+            guard wires.count == 1, let s = settings(Growth.Gravity()) else { return nil }
+            return Stage(settings: .gravity(s), preset: preset, inputs: [wires[0].id], notes: closure.notes)
+        case "manualEdit":
+            guard wires.count == 1, let s = settings(Growth.ManualEdit()) else { return nil }
+            return Stage(settings: .manualEdit(s), preset: preset, inputs: [wires[0].id], notes: closure.notes)
+        case "boneReduction":
+            guard wires.count == 1, let s = settings(Growth.BoneReduction()) else { return nil }
+            return Stage(settings: .boneReduction(s), preset: preset, inputs: [wires[0].id], notes: closure.notes)
         case "skeleton":
             guard wires.count == 1, let s = settings(preset == .twig ? Growth.Twigs.twigGrowth.wood : Growth.Wood()) else { return nil }
             return Stage(settings: .skeleton(s), preset: preset, inputs: [wires[0].id], notes: closure.notes)

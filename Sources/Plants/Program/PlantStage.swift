@@ -168,7 +168,7 @@ extension PlantPrograms {
     package static func sketches(_ def: Foliage.SpeciesDef, species: Foliage.Species, age: Foliage.Age, variant: Int, seed: UInt64) -> [Int32: PlantSketch] {
         let graph = def.grownGraph
         let age = def.variants(age) > 0 ? age : .mature
-        let plantSeed = Foliage.seed(seed, def.seedIndex, age.rawValue, min(max(variant, 0), max(def.variants(age) - 1, 0)))
+        let plantSeed = def.plantSeed(seed, age, min(max(variant, 0), max(def.variants(age) - 1, 0)))
         var out: [Int32: PlantSketch] = [:]
         func draw(_ node: PlantNode, _ wire: [Int32: Int32], _ p: inout PlantContext) {
             func stems(_ id: Int32) -> PlantSkeleton? { wire[id].map { p.value(Wire<PlantSkeleton>(node: $0)) } }

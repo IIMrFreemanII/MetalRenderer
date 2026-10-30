@@ -72,7 +72,8 @@ struct PlantNodeView: View {
         switch kind {
         case .grow, .growMore: return Color(red: 0.36, green: 0.6, blue: 0.32)
         case .grafts, .spurs, .distribute: return Color(red: 0.75, green: 0.55, blue: 0.25)
-        case .carve: return Color(red: 0.7, green: 0.38, blue: 0.3)
+        case .carve, .gravity, .manualEdit: return Color(red: 0.7, green: 0.38, blue: 0.3)
+        case .boneReduction: return Color(red: 0.8, green: 0.3, blue: 0.68)
         case .skeleton: return Color(red: 0.55, green: 0.42, blue: 0.3)
         case .leaves, .twig, .palette: return Color(red: 0.45, green: 0.68, blue: 0.5)
         case .output: return Color(red: 0.32, green: 0.52, blue: 0.78)
@@ -88,6 +89,9 @@ struct PlantNodeView: View {
         case .grafts(let g): return "\(g.perBranch) a branch"
         case .spurs(let s): return String(format: "%.2g m long", s.length)
         case .carve(let c): return String(format: "the foot's %.0f%%", c.share * 100)
+        case .gravity(let g): return String(format: g.mode == .gravity ? "pull %.2g" : "to the light %.2g", g.strength)
+        case .manualEdit(let e): return e.seed == 0 ? "not edited yet" : "\(e.points.count) moved, \(e.removed.count) cut"
+        case .boneReduction(let b): return String(format: "strength %.2g", b.strength)
         case .skeleton(let w): return w.ribbon ? "ribbons" : String(format: "thinning %.2g", w.thinning)
         case .leaves(let l): return "\(l.shape.rawValue), \(String(format: "%g", l.perMetre)) a metre"
         case .twig: return "wood and leaves"
