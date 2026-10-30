@@ -45,7 +45,15 @@ final class PlantEditorModel: ObservableObject {
     // The canvas (GraphCanvasModel, PlantEditorModel+Graph.swift).
     @Published var pan = CGPoint(x: 60, y: 60)
     @Published var zoom: CGFloat = 1
-    var canvasSize = CGSize(width: 800, height: 600)
+    /// The canvas's size. A view still as it was framed is framed again in the new one (the window settling as it opens, a
+    /// resize); one the user has panned or zoomed stays.
+    var canvasSize = CGSize(width: 800, height: 600) {
+        didSet {
+            if canvasSize != oldValue, let framed, framed.pan == pan, framed.zoom == zoom { frameAll(in: canvasSize) }
+        }
+    }
+    var framed: (pan: CGPoint, zoom: CGFloat)?
+    static let minimapWidth: CGFloat = 192      // (GraphCanvas's, with its margin)
     var canvasOrigin = CGPoint.zero
     var hover = CGPoint(x: 200, y: 200)
     var focusCanvas: (() -> Void)?
@@ -86,6 +94,7 @@ final class PlantEditorModel: ObservableObject {
     private var liveSent = 0.0
     private var pendingLive: DispatchWorkItem?
     private var draftSave: DispatchWorkItem?
+    private var reloads: NSObjectProtocol?
 
     package init(controller: PlantEditorHost, saved: PlantCatalog = PlantCatalog.launch, folder: URL? = PlantStore.folder, draft: Bool = true) {
         self.controller = controller
@@ -104,7 +113,13 @@ final class PlantEditorModel: ObservableObject {
         controller.observeTick { [weak self, unowned controller] in self?.tick(controller.plantStats) }
         if catalog != saved { push(final: true) }
         compileLater()
+        reloads = NotificationCenter.default.addObserver(forName: DevReload.plantsReloaded, object: nil, queue: .main) { [weak self] _ in
+            guard let self, PlantStore.isFolder(self.folder) else { return }
+            self.savedChanged(PlantCatalog.launch)
+        }
     }
+
+    deinit { reloads.map(NotificationCenter.default.removeObserver) }
 
     private func tick(_ now: PlantStats?) {
         if now != stats { stats = now }
@@ -161,6 +176,7 @@ final class PlantEditorModel: ObservableObject {
 
     private func commit(_ c: PlantCatalog, undoable: Bool = true) {
         guard c != catalog else { return }
+        message = nil       // (what the last Save said was of the plant before this)
         if !dragging && undoable { registerUndo(catalog) }
         catalog = c
         if dragging { pushLive(); compile = .waiting } else { push(final: true); compileLater() }
@@ -397,7 +413,7 @@ final class PlantEditorModel: ObservableObject {
             }
             for d in saved.species where catalog.species(id: d.id) == nil { try PlantStore.remove(d.id, in: folder) }
             saved = catalog
-            if folder == PlantStore.folder { PlantCatalog.setLaunch(catalog) }
+            if PlantStore.isFolder(folder) { PlantCatalog.setLaunch(catalog) }
             if keepsDraft { PlantStore.saveDraft(nil) }
             message = "Saved to \(folder.path)"
             push(final: true)
@@ -410,6 +426,54 @@ final class PlantEditorModel: ObservableObject {
     func revert() {
         guard let savedDef else { return }
         def = savedDef
+    }
+
+    /// The files changed on disk, and `new` is what they say. A species with no unsaved edits follows; one with keeps them
+    /// and says so, Save replacing the file and Revert taking it. (The editor's own save reads back as what it wrote.)
+    func savedChanged(_ new: PlantCatalog) {
+        func same(_ a: Foliage.SpeciesDef, _ b: Foliage.SpeciesDef) -> Bool { a == b || PlantSwift.emit(a).text == PlantSwift.emit(b).text }
+        func held(_ id: String) -> Foliage.SpeciesDef? { catalog.species.first { $0.id == id } }
+        var nowSaved: [Foliage.SpeciesDef] = [], edited: [Foliage.SpeciesDef] = []
+        var followed: [String] = [], kept: [String] = []
+        for d in new.species {
+            let old = saved.species.first { $0.id == d.id }
+            if let old, same(old, d) {
+                nowSaved.append(old)
+                if let mine = held(d.id) { edited.append(mine) }
+            } else {
+                nowSaved.append(d)
+                if let mine = held(d.id), mine != old {
+                    edited.append(mine)
+                    kept.append(mine.name)
+                } else {
+                    edited.append(d)
+                    followed.append(d.name)
+                }
+            }
+        }
+        // Only here: never saved, or edited while its file went.
+        for mine in catalog.species where !new.species.contains(where: { $0.id == mine.id }) {
+            guard let old = saved.species.first(where: { $0.id == mine.id }) else { edited.append(mine); continue }
+            if mine != old {
+                edited.append(mine)
+                kept.append(mine.name)
+            } else {
+                followed.append(mine.name)
+            }
+        }
+        let shown = selected
+        if followed.contains(def.name) {
+            selection = []
+            focus = nil
+        }
+        saved = PlantCatalog(species: nowSaved)
+        commit(PlantCatalog(species: edited), undoable: false)
+        if catalog.species(id: shown) == nil { select(catalog.species[0].id) }
+        if !kept.isEmpty {
+            message = "\(kept.joined(separator: ", ")): the file changed on disk. Your unsaved edits stay: Save replaces it, Revert takes it"
+        } else if !followed.isEmpty {
+            message = "Read again from disk: \(followed.joined(separator: ", "))"
+        }
     }
 
     /// Every unsaved edit dropped.

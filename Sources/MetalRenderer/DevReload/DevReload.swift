@@ -17,6 +17,8 @@ import QuartzCore
 package final class DevReload {
     /// Posted on the main thread once the game's new code is in: the settings panel takes its rows again.
     package static let gameReloaded = Notification.Name("MetalRendererGameReloaded")
+    /// Posted on the main thread when the saved plants' files changed: the plant editor reads them (PlantCatalog.launch).
+    package static let plantsReloaded = Notification.Name("MetalRendererPlantsReloaded")
 
     private weak var renderer: Renderer?
     private var watcher: SourceWatcher?
@@ -56,8 +58,11 @@ package final class DevReload {
                 }
             case .plants:
                 let saved = PlantStore.load()
-                guard saved.fingerprint != PlantCatalog.launch.fingerprint else { continue }   // the editor's save: it has them
+                guard saved != PlantCatalog.launch else { continue }
+                let regrows = saved.fingerprint != PlantCatalog.launch.fingerprint
                 PlantCatalog.setLaunch(saved)
+                DispatchQueue.main.async { NotificationCenter.default.post(name: DevReload.plantsReloaded, object: nil) }
+                guard regrows else { continue }     // the editor's save, or only a file's comments and places
                 renderer.perform { r in
                     if r.scene.settings.kind.hasPlants && r.scene.settings.plantCatalog.isEmpty { r.remakeScene(because: "the saved plants changed") }
                 }
