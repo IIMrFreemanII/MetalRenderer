@@ -136,6 +136,15 @@ struct PlantNodeInspector: View {
                 Text(node.kind.title).font(.headline)
                 Text(node.name).font(.system(size: 11, design: .monospaced)).foregroundColor(.secondary)
                 Spacer()
+                Button { model.togglePin(node.id) } label: {
+                    Image(systemName: model.pinned == node.id ? "pin.fill" : "pin")
+                }
+                .buttonStyle(.borderless)
+                .help(model.pinned == node.id ? "The workshop follows the selection again (P)" : "The workshop stays on this stage whatever is selected (P)")
+            }
+            if let why = model.stageProblem(node.id) {
+                Label("Nothing to preview: \(why). The workshop shows the whole plant.", systemImage: "eye.slash")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
             }
             ForEach(node.doc, id: \.self) { line in
                 Text(line.replacingOccurrences(of: #"^//+\s?"#, with: "", options: .regularExpression)).font(.system(size: 10)).foregroundColor(.secondary)

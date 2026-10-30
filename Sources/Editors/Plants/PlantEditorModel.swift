@@ -50,7 +50,14 @@ final class PlantEditorModel: ObservableObject {
     var hover = CGPoint(x: 200, y: 200)
     var focusCanvas: (() -> Void)?
     @Published var selection: Set<String> = []
-    @Published var focus: String?
+    @Published var focus: String? { didSet { if focus != oldValue { showStage() } } }
+    /// The node the workshop stays on whatever is selected (PlantEditorModel+Graph.swift).
+    @Published var pinned: Int32? { didSet { if pinned != oldValue { showStage() } } }
+    /// What the nodes show of themselves.
+    let thumbnails = PlantThumbnails()
+    var thumbnailsWanted = false
+    /// The stage whose scene is to be framed when it's in (a twig's is far smaller than the plant's).
+    var frameStage: Int?
     @Published var searchAt: SIMD2<Float>?
     /// How the selected species' file stands: PlantCompileStatus.
     @Published var compile = PlantCompileStatus.idle
@@ -60,9 +67,9 @@ final class PlantEditorModel: ObservableObject {
     /// The built-in species' files, read as graphs.
     var builtInGraphs: [String: PlantGraph] = [:]
 
-    @Published private(set) var catalog: PlantCatalog
+    @Published private(set) var catalog: PlantCatalog { didSet { refreshThumbnails() } }
     @Published private(set) var saved: PlantCatalog
-    @Published var selected: String
+    @Published var selected: String { didSet { if selected != oldValue { refreshThumbnails() } } }
     @Published private(set) var stats: PlantStats?
     /// The renderer's: the scene, the workshop's settings, the wind.
     @Published private(set) var scene: SceneSettings
@@ -94,9 +101,17 @@ final class PlantEditorModel: ObservableObject {
         selected = controller.settings.scene.plants.species
         if catalog.species(id: selected) == nil { selected = catalog.species[0].id }
         controller.observeSettings { [weak self] s in self?.received(s) }
-        controller.observeTick { [weak self, unowned controller] in self?.stats = controller.plantStats }
+        controller.observeTick { [weak self, unowned controller] in self?.tick(controller.plantStats) }
         if catalog != saved { push(final: true) }
         compileLater()
+    }
+
+    private func tick(_ now: PlantStats?) {
+        if now != stats { stats = now }
+        if let wanted = frameStage, now?.stage == wanted {
+            frameStage = nil
+            frame()
+        }
     }
 
     // MARK: - What is edited
@@ -149,6 +164,7 @@ final class PlantEditorModel: ObservableObject {
         if !dragging && undoable { registerUndo(catalog) }
         catalog = c
         if dragging { pushLive(); compile = .waiting } else { push(final: true); compileLater() }
+        showStage()
     }
 
     private func registerUndo(_ old: PlantCatalog) {
@@ -164,6 +180,7 @@ final class PlantEditorModel: ObservableObject {
         if catalog.species(id: selected) == nil { select(catalog.species[0].id) }
         push(final: true)
         compileLater()
+        showStage()
     }
 
     // MARK: - To the renderer
@@ -207,12 +224,15 @@ final class PlantEditorModel: ObservableObject {
     }
 
     private func received(_ s: RenderSettings) {
+        let plantsBefore = scene.plants
         if s.scene != scene { scene = s.scene }
+        if plantsBefore != s.scene.plants { refreshThumbnails() }
         if s.foliage != foliage { foliage = s.foliage }
         if s.previewLightYaw != lightYaw { lightYaw = s.previewLightYaw }
         if s.previewSpin != lightSpin { lightSpin = s.previewSpin }
         // A scene with plants now: it is to have the edited ones.
         if s.scene.kind.hasPlants && !dragging, s.scene.plantCatalog != key { push(final: true) }
+        showStage()
     }
 
     // MARK: - The workshop
@@ -226,6 +246,7 @@ final class PlantEditorModel: ObservableObject {
     func select(_ id: String) {
         selected = id
         selection = []
+        pinned = nil
         focus = nil
         compileLater()
         if inWorkshop, scene.plants.species != id {
@@ -240,10 +261,11 @@ final class PlantEditorModel: ObservableObject {
     func goToForest() { forest.map { go(to: $0) } }
 
     private func go(to kind: SceneKind) {
-        let id = selected, key = self.key, defaults = controller.defaultSettings
+        let id = selected, key = self.key, defaults = controller.defaultSettings, stage = wantedStage
         controller.update { s in
             s.scene.plants.species = id
             s.scene.plantCatalog = key
+            s.scene.plants.stage = stage
             guard s.scene.kind != kind else { return }
             s.scene.kind = kind
             s.scene.extraModels = []

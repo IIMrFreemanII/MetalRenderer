@@ -9,7 +9,8 @@ import Physics
 import Plants
 import SwiftUI
 
-/// The plant editor: the species across the top, its graph with what's selected beside it, how its Swift stands, and
+/// The plant editor: the species across the top, its graph with what's selected beside it (the workshop shows the plant as
+/// it stands at that node), how its Swift stands, and
 /// the workshop's controls, its plant's cost and saving at the foot.
 struct PlantEditorView: View {
     @EnvironmentObject var model: PlantEditorModel
@@ -64,9 +65,23 @@ struct PlantEditorView: View {
                 }
             }
             Spacer()
+            stageLine
             Button("Swift") { model.showsSwift = true }.help("The file this graph compiles to")
         }
         .font(.system(size: 11))
+    }
+
+    /// What the workshop is showing, of the plant.
+    @ViewBuilder private var stageLine: some View {
+        if let node = model.previewed {
+            let whole = model.wantedStage < 0
+            HStack(spacing: 4) {
+                Image(systemName: model.pinned == node.id ? "pin.fill" : "eye")
+                Text(whole ? "Workshop: the whole plant" : "Workshop: \(node.kind.title) \(node.name)").lineLimit(1)
+            }
+            .foregroundColor(.secondary)
+            .help(whole ? "This node's stage is the plant itself, or has nothing to look at" : "The plant as it stands at this node")
+        }
     }
 
     private var swiftSheet: some View {

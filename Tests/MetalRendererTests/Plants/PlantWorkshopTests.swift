@@ -75,6 +75,68 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertTrue(plain.instances.contains { plain.materials[$0.material].params.w > 0 })
     }
 
+    /// A stage of the one plant: what it has made so far on the same stage, and quick as all of it is to make again.
+    func testAStage() throws {
+        let g = PlantCatalog.builtIn[.oak].grownGraph
+        func stage(_ kind: PlantNodeKind, _ side: PlantSide = .plant) throws -> Int { Int(try XCTUnwrap(g.first(kind, side)).id) }
+        let whole = workshop()
+        XCTAssertEqual(whole.plantStats?.stage, -1)
+        // Still growing: stems, a colour to a generation, no leaf.
+        let growing = workshop { $0.stage = (try? stage(.grow)) ?? -1 }
+        XCTAssertEqual(growing.plantStats?.stage, try stage(.grow))
+        XCTAssertGreaterThan(growing.instances.count, 3)
+        for inst in growing.instances { XCTAssertEqual(growing.materials[inst.material].params.w, 0) }
+        // The wood alone, in its own material: the floor and the wood.
+        let wood = workshop { $0.stage = (try? stage(.skeleton)) ?? -1 }
+        XCTAssertEqual(wood.instances.count, 2)
+        XCTAssertFalse(wood.instances.contains { wood.materials[$0.material].params.w > 0 })
+        XCTAssertEqual(wood.plantStats?.leafTriangles, 0)
+        // A twig stands alone, small, and is what's framed.
+        let twig = workshop { $0.stage = (try? stage(.twig, .twig)) ?? -1 }
+        XCTAssertLessThan(try XCTUnwrap(twig.focus).hi.y, 2)
+        XCTAssertGreaterThan(try XCTUnwrap(twig.plantStats).leafTriangles, 0)
+        XCTAssertLessThan(try XCTUnwrap(twig.plantStats).traced, try XCTUnwrap(whole.plantStats).traced / 10)
+        // ... with no person beside it to dwarf it.
+        let alone = workshop { $0.figure = true; $0.stage = (try? stage(.twig, .twig)) ?? -1 }
+        XCTAssertLessThan(try XCTUnwrap(alone.focus).hi.y, 2)
+        XCTAssertEqual(alone.instances.count, twig.instances.count)
+        // The skeleton view of a stage with wood.
+        let thin = workshop { $0.view = .skeleton; $0.stage = (try? stage(.skeleton)) ?? -1 }
+        XCTAssertGreaterThan(thin.instances.count, 3)
+        // Nothing to look at, or no such node: all of it. Other layouts don't show a stage.
+        for shown in [workshop { $0.stage = (try? stage(.palette, .twig)) ?? -1 }, workshop { $0.stage = 999 }] {
+            XCTAssertEqual(shown.instances.count, whole.instances.count)
+            XCTAssertEqual(shown.plantStats?.traced, whole.plantStats?.traced)
+        }
+        let lineup = workshop { $0.layout = .lineup; $0.stage = (try? stage(.grow)) ?? -1 }
+        XCTAssertEqual(lineup.plantStats?.stage, -1)
+        XCTAssertEqual(lineup.instances.count, workshop { $0.layout = .lineup }.instances.count)
+        // Showing another stage is the same workshop: the camera and the gathered light stay.
+        var a = SceneSettings(kind: .plants), b = a
+        b.plants.stage = 2
+        XCTAssertTrue(a.isSameWorkshop(as: b))
+        a.plants.stage = 2
+        XCTAssertEqual(a, b)
+    }
+
+    /// Choosing or dragging a stage is no slower than the whole plant: printed, for a look at the build's numbers.
+    func testAStageIsNoSlower() throws {
+        let g = PlantCatalog.builtIn[.oak].grownGraph
+        func time(_ stage: Int) -> Double {
+            (0..<3).map { _ in
+                let start = CACurrentMediaTime()
+                _ = workshop { $0.stage = stage }
+                return CACurrentMediaTime() - start
+            }.min() ?? 0
+        }
+        let whole = time(-1)
+        for kind in [PlantNodeKind.grow, .skeleton, .distribute] {
+            let t = time(Int(try XCTUnwrap(g.first(kind, .plant)).id))
+            print("workshop at \(kind): \(t * 1000) ms; all of it \(whole * 1000) ms")
+            XCTAssertLessThan(t, whole * 2.5 + 0.02, "\(kind)")
+        }
+    }
+
     /// The light view: a grown plant's stems in bands of the light they get, shaded inside the crown and lit at its
     /// top; no leaf, no twig.
     func testTheLightView() {

@@ -78,6 +78,47 @@ extension PlantEditorModel: GraphCanvasModel {
         focus = "\(node)"
     }
 
+    // MARK: - The stage shown
+
+    /// The node the workshop is to show the plant at: the pinned one, or else the one selected.
+    var previewedID: Int32? { pinned ?? focus.flatMap { Int32($0) } }
+    var previewed: PlantNode? { previewedID.flatMap(graph.node) }
+
+    /// Why `node` has nothing to look at, if it hasn't.
+    func stageProblem(_ node: Int32) -> String? { graph.stageProblem(node) }
+
+    /// PlantSceneSettings.stage for that: all of the plant for its Output, or for a node with nothing to look at.
+    var wantedStage: Int {
+        let g = graph
+        guard let node = previewed, node.id != g.end(of: .plant), g.stageProblem(node.id) == nil else { return -1 }
+        return Int(node.id)
+    }
+
+    /// Pins the selected node, or lets go of the pin if that's the one pinned.
+    func togglePin(_ id: Int32? = nil) {
+        guard let id = id ?? focus.flatMap({ Int32($0) }) else { pinned = nil; return }
+        pinned = pinned == id ? nil : id
+    }
+
+    /// Tells the workshop which stage to show, and frames it once it's in if it's on the other side from the last.
+    func showStage() {
+        if let pin = pinned, graph.node(pin) == nil { pinned = nil; return }
+        guard controller.settings.scene.kind == .plants, controller.settings.scene.plants.species == selected else { return }
+        let stage = wantedStage, was = controller.settings.scene.plants.stage
+        guard stage != was else { return }
+        let g = graph
+        func onTwig(_ id: Int) -> Bool { id >= 0 && g.node(Int32(id))?.side == .twig }
+        if onTwig(stage) != onTwig(was) { frameStage = stage }
+        workshop { $0.stage = stage }
+    }
+
+    /// The nodes' thumbnails, for the species as it is now.
+    func refreshThumbnails() {
+        guard thumbnailsWanted else { return }
+        let plants = controller.settings.scene.plants
+        thumbnails.want(def, species: species, age: plants.age, variant: plants.variant, seed: UInt64(max(plants.seed, 0)))
+    }
+
     // MARK: - GraphCanvasModel
 
     func click(_ id: String, extend: Bool) {

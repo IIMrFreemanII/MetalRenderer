@@ -5,9 +5,9 @@ import simd
 /// Where a plant's nodes are on the canvas: top to bottom in the order they run, as Unreal's vegetation graph flows,
 /// the twig's stages a column left of the plant's.
 enum PlantGraphLayout {
-    static let size = SIMD2<Float>(176, 44)
-    static let rowGap: Float = 88
-    static let columnGap: Float = 232
+    static let size = SIMD2<Float>(212, 56)
+    static let rowGap: Float = 92
+    static let columnGap: Float = 268
 
     static func rect(_ n: PlantNode) -> CGRect {
         let at = n.at ?? .zero

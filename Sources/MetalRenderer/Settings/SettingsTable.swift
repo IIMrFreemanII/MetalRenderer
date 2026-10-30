@@ -461,6 +461,7 @@ package enum SettingsTable {
                 .env(.scene, "seed").when { $0.scene.kind.hasPlants || $0.scene.kind.definition.seeded },
             S.value(\.scene.plants.species).env(.scene, "species"),
             S.popup("Age", \.scene.plants.age, titled { "\($0)".capitalized }).env(.scene, "age").when(workshop),
+            S.value(\.scene.plants.stage).env(.scene, "stage"),
             S.slider("Variant", \.scene.plants.variant, PlantSceneSettings.variantRange, live: false).env(.scene, "variant").when(workshop),
             S.slider("Workshop seed", \.scene.plants.seed, SceneSettings.seedRange, live: false).env(.scene, "plantseed").when(workshop),
             S.popup("Layout", \.scene.plants.layout, titled(\.title)).env(.scene, "layout").when(workshop),
