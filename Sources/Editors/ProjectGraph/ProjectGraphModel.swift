@@ -76,6 +76,21 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
     // MARK: What the graph is made from
 
     private(set) var outlines: [String: SceneOutline]
+    /// Whether anyone can see the window (ProjectGraphPanel). While nobody can, what comes in is only kept, a workshop
+    /// sending an outline at every edit of a slider, and the graph catches up when it's next wanted.
+    var showing: Bool {
+        didSet {
+            guard showing != oldValue else { return }
+            if showing {
+                catchUp()
+                runForce()
+            } else {
+                forceTimer?.invalidate()
+                forceTimer = nil
+            }
+        }
+    }
+    private var behind = false
     @Published private(set) var overrides: SceneOverrides
     private var saved: SceneOverrides
     private let library: [AssetKey]
@@ -133,8 +148,9 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
 
     /// `folder`: where outlines and edits are (nil: nothing is read or written); `saved`: the edits as they are saved.
     package init(host: ProjectGraphHost, folder: URL? = SceneOverrides.folder, outlines: [String: SceneOutline]? = nil,
-         saved: SceneOverrides? = nil, library: [AssetKey]? = nil, loadSource: Bool = true) {
+         saved: SceneOverrides? = nil, library: [AssetKey]? = nil, loadSource: Bool = true, showing: Bool = true) {
         self.host = host
+        self.showing = showing
         self.folder = folder
         self.outlines = outlines ?? OutlineStore.loadAll(from: folder?.appendingPathComponent("Outlines"))
         let edits = saved ?? (folder == SceneOverrides.folder ? SceneOverrides.launch : SceneOverrides.load(from: folder))
@@ -144,7 +160,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
         currentScene = host.settings.scene.kind.envName
         settingsKey = host.settings.scene.sceneOverrides
         open = ["project", ProjectGraph.sceneID(currentScene)]
-        rebuild(keep: false)
+        if showing { rebuild(keep: false) } else { behind = true }
         host.observeOutline { [weak self] o in self?.received(o) }
         host.observeSettings { [weak self] s in self?.settingsChanged(s) }
         host.observeViewportSelection { [weak self] i in self?.selectedInView(i) }
@@ -153,7 +169,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
                 let index = SourceIndex.load()
                 DispatchQueue.main.async {
                     self?.source = index
-                    self?.rebuild(keep: true)
+                    self?.outlinesChanged()
                 }
             }
         }
@@ -169,6 +185,17 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
         guard outlines[o.kind] != o else { return }
         outlines[o.kind] = o
         if status.hasPrefix("Loading") { status = "" }
+        outlinesChanged()
+    }
+
+    /// What the graph is made from changed: made again, or later if nobody can see it.
+    private func outlinesChanged() {
+        if showing { rebuild(keep: true) } else { behind = true }
+    }
+
+    private func catchUp() {
+        guard behind else { return }
+        behind = false
         rebuild(keep: true)
     }
 
@@ -182,7 +209,9 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
                 pendingKey = nil
                 host.update { $0.scene.sceneOverrides = pending }
             }
-            if scope == .scene { refresh(keep: false) }
+            if scope == .scene {
+                if showing { refresh(keep: false) } else { behind = true }
+            }
         }
     }
 
@@ -235,7 +264,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
 
     /// Steps the force layout about 60 times a second, 4 ms of it at most, until it settles.
     private func runForce() {
-        guard forceTimer == nil else { return }
+        guard forceTimer == nil, showing else { return }
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] t in
             guard let self, var f = self.force else { t.invalidate(); return }
             let start = CACurrentMediaTime()
@@ -331,6 +360,7 @@ final class ProjectGraphModel: ObservableObject, GraphCanvasModel {
 
     /// A click in the view selected instance `i` (nil: nothing): its node is selected here.
     private func selectedInView(_ i: Int?) {
+        catchUp()   // (the view's selection box comes from here, the window shown or not)
         guard let i else {
             selection = []
             focus = nil

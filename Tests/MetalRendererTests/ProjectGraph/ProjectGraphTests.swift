@@ -547,6 +547,46 @@ final class ProjectGraphTests: XCTestCase {
         XCTAssertTrue(m.selection.isEmpty)
     }
 
+    /// With nobody able to see the window, an outline (a workshop sends one at every edit) is only kept: the graph stays as
+    /// it was, its layout stops, and it catches up when shown or when a click in the view needs it.
+    func testNobodyLookingNothingIsMade() throws {
+        let (m, host) = model()
+        let ball = "cornell:t:Blue ball"
+        var edited = outline(SceneSettings(kind: .cornell))
+        edited.nodes.removeAll { "cornell:\($0.id)" == ball }
+        XCTAssertNotNil(m.graph[ball])
+
+        m.showing = false
+        let before = m.graph.nodes.count
+        host.send(edited)
+        XCTAssertEqual(m.graph.nodes.count, before, "not made again")
+        XCTAssertNotNil(m.graph[ball])
+        m.showing = true
+        XCTAssertNil(m.graph[ball], "shown: it catches up")
+        XCTAssertLessThan(m.graph.nodes.count, before)
+
+        // The view's selection comes from here, shown or not: a click finds what's in the scene now.
+        m.showing = false
+        host.send(outline(SceneSettings(kind: .cornell)))
+        XCTAssertNil(m.graph[ball])
+        let floor = try XCTUnwrap(m.graph["cornell:t:Room/Floor"])
+        host.click(floor.members.first)
+        XCTAssertNotNil(m.graph[ball], "the click caught up")
+        XCTAssertEqual(m.focus, "cornell:t:Room/Floor")
+
+        // Made hidden, it has made nothing yet; shown, all of it, and its layout runs.
+        let later = Host()
+        later.settings.scene.kind = .cornell
+        let hidden = ProjectGraphModel(host: later, folder: nil, outlines: ["cornell": outline(SceneSettings(kind: .cornell))], saved: SceneOverrides(),
+                                       library: [], loadSource: false, showing: false)
+        XCTAssertTrue(hidden.visible.nodes.isEmpty)
+        hidden.showing = true
+        XCTAssertFalse(hidden.visible.nodes.isEmpty)
+        XCTAssertNotNil(hidden.graph[ball])
+        XCTAssertEqual(hidden.positions.count, hidden.visible.nodes.count)
+        hidden.settle()
+    }
+
     func testEditsAreSaved() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ProjectGraphTests-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
