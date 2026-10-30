@@ -1025,6 +1025,15 @@ The plants are made at load time from a seed (`Foliage*.swift`) and their specie
   each cycle (a pipe model), ages (ethylene: twigs only on young wood) and sags under its load as a beam, a little each
   cycle. Branches that stay in deep shade are shed (senescence); ripe tips may fork. A younger plant is the same seed
   grown fewer cycles toward a lower height.
+  As Unreal's grower, a shoot may ask more light of its buds than another (`Shoot.requirement`: the oak's trunk nearly
+  open sky, its branches none), turn its new branches toward the light as they leave (`sproutLight`), keep the first
+  nodes of every axis bare (`Params.bareNodes`, Unreal's radical auxin); short spurs may grow at the last generations'
+  nodes once the plant is grown (`Params.spurs`, what Unreal's sample tree gets from growing on), small shoots be grafted
+  onto the outer branches (`Params.grafts`, Unreal's graft distributor: large and along the branch inside, small and
+  square to it at the tips; their wood is new, so they carry twigs deep in the crown), and the trunk's foot be carved
+  off with the plant lowered onto the cut (`Params.carve`). The oak takes its values from Unreal's Mega Plants sample
+  tree (DeciduousTree_01's graph): a leader to the top, a clear bole of about 2 m, a branch at nearly every node above
+  it climbing toward the sky, a rounded crown 12 m tall and about 9 wide, of about 1,200 twigs.
 * **Light** (`LightField.swift`): instead of Unreal's rays from every bud, a voxel grid of the shadow the plant casts
   on itself: each point of wood and young leaf darkens a cone of cells below it, and a bud's light is its cell's, its
   way to the light the least shadowed side.
@@ -1045,6 +1054,12 @@ The plants are made at load time from a seed (`Foliage*.swift`) and their specie
   no reflection rays (Reflections.metal: the diffuse GI stands in; a forest's crowns cost 1.4 ms of them). One leaf in
   seven turns olive-brown and undersides are greyer (Surface.metal `LEAF_BROWN_SHARE`); a twig's wood carries its
   generation past `Growth.twigWood` in U and shades as young yellow-green stems (`TWIG_WOOD_TINT`).
+  Twigs hang as Unreal's foliage distributor hangs them in its hormone mode: every `spacing` back from each tip while
+  the wood is young (ethylene). The oak's (as the sample tree's Leaf_Twig meshes, a short shoot crowded with about a
+  dozen leaves set round it: a clump) hang every 0.3 m on every branch and the trunk's top, left and right of the branch
+  in turn in a plane of the branch's own, rolled from the level by up to 60° (`Twigs.alternate`, `roll`), 83° from
+  it, 1.7 to 2.3 times their size and larger toward the branch's foot (`alongScale`): big leaves, 20 to 30 cm, on thin
+  twigs. Its shaded twigs are nearly as leafy as its lit ones (`sparse`: Unreal's palette picks at random).
   Each leaf is a domed blade, 4 triangles a row with a midrib (6 rows, 24 triangles): its edges and its tip droop by the recipe's `fold`, with the
   curved surface's normals, so up close it shades round rather than as flat facets (convex toward the sky: a cup would
   shadow itself in hard triangles). The crown's normals that a tree's leaves shade with far off fade out under a

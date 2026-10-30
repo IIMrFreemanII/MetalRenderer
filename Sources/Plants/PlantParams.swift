@@ -44,7 +44,7 @@ package enum PlantParams {
     package static let light: [PlantParam<Growth.Light>] = [
         .float("Light needed", \.requirement, 0...0.8),
         .float("Shade shortens", \.lengthImpact, 0...1),
-        .float("Shadow", \.shadow, 0.2...10),
+        .float("Shadow", \.shadow, 0.2...20),
         .float("Leaf shadow", \.leafDensity, 0...6),
     ]
 

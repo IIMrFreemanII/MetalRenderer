@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793304238.399845,
-    "seen": 1793304257.5261068,
-    "ast_hash": "161b88843e1f7d0070da563dadeb7769",
+    "mtime": 1793343875.8988664,
+    "seen": 1793343895.215507,
+    "ast_hash": "9011330fa60fed7e60581bb2bb9f12d7",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -864,9 +864,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/plants.json": {
-    "mtime": 1793301430.68833,
-    "seen": 1793302085.8676548,
-    "ast_hash": "77fec67df676a64bf98dda097d862606",
+    "mtime": 1793341560.0629923,
+    "seen": 1793343336.0310872,
+    "ast_hash": "7d41c7fe9982bb1c5a2ddc183d1bfd49",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/ragdolls.json": {
@@ -2568,15 +2568,15 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantEditorTests.swift": {
-    "mtime": 1793230248.6803,
-    "seen": 1793231380.274251,
-    "ast_hash": "9cc105a2913ad9c11d6792a148ff67aa",
+    "mtime": 1793343243.4262393,
+    "seen": 1793343336.044975,
+    "ast_hash": "c88b9f52f37755906dce4aa609002e34",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
-    "mtime": 1793304199.0062993,
-    "seen": 1793304257.523309,
-    "ast_hash": "de833188edeb4d2866106a2a1f12eb43",
+    "mtime": 1793343816.0694056,
+    "seen": 1793343895.212503,
+    "ast_hash": "6d9208c4743f162049fc20d6bf3e48b4",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantTracingTests.swift": {
@@ -2586,9 +2586,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift": {
-    "mtime": 1793286229.6362863,
-    "seen": 1793286432.504767,
-    "ast_hash": "c0c973b7c2baeded3f49337bafc141cf",
+    "mtime": 1793343783.2735794,
+    "seen": 1793343895.212523,
+    "ast_hash": "04d08699e185f140acdf255124720b16",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProjectGraph/ProjectGraphTests.swift": {
@@ -3636,9 +3636,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/BuiltInPlants.swift": {
-    "mtime": 1793304104.1490915,
-    "seen": 1793304257.521219,
-    "ast_hash": "a438538504ffe8a2eaffa3adee3d76a6",
+    "mtime": 1793343700.0369968,
+    "seen": 1793343895.210287,
+    "ast_hash": "1a26d20f6e0172cc177b76239e053438",
     "semantic_hash": ""
   },
   "Sources/Plants/Foliage.swift": {
@@ -3690,9 +3690,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/PlantParams.swift": {
-    "mtime": 1793229455.7261908,
-    "seen": 1793229879.2893178,
-    "ast_hash": "5c31533220517ad0531e92c8968997d8",
+    "mtime": 1793343243.4264967,
+    "seen": 1793343336.0431051,
+    "ast_hash": "b5b3639f884c3546258dbf5baf4e3def",
     "semantic_hash": ""
   },
   "Sources/Plants/PlantSceneSettings.swift": {
@@ -5958,9 +5958,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/Grower.swift": {
-    "mtime": 1793303618.3180108,
-    "seen": 1793304257.5212958,
-    "ast_hash": "ffe856118aa5cab9dc9f9e985fed33d1",
+    "mtime": 1793343765.750237,
+    "seen": 1793343895.210392,
+    "ast_hash": "ddd3df5e9ffe03041af93f3894a6023d",
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/LightField.swift": {
@@ -6000,9 +6000,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/plant-growth-handoff.md": {
-    "mtime": 1793304238.4044259,
-    "seen": 1793304257.5251222,
-    "ast_hash": "a4707dccc96e7fa8d417a8a79fba7345",
+    "mtime": 1793343875.899165,
+    "seen": 1793343895.2145238,
+    "ast_hash": "989b81c13183f1fa20cca5d21ddf081b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift": {
