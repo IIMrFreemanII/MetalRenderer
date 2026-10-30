@@ -738,19 +738,50 @@ The first frame of a sky also draws the noise and the atmosphere's tables, and r
 
 ### The plant editor
 
-The Plant Editor (K or ⌘E, a SwiftUI panel: `Plants/Editor/`) shapes every species of plant and makes new ones; the
+The Plant Editor (K or ⌘E, a window of its own: `Sources/Editors/Plants/`) shapes every species of plant and makes new ones; the
 **Plant workshop** scene (`METALRENDERER_SCENE=plants`, `Scene+Plants.swift`) shows what it edits. Entering the workshop
 opens the editor.
 
-* **Species** are data (`PlantSpecies.swift`): a `SpeciesDef` holds how it grows (`Growth.Params`: the growth
-  simulation's parameters, its wood and how its younger ages grow), its twigs (`Growth.Twigs`: the palette's own small
-  plant, its leaves and where they hang), any leaves on its own stems (a fern's pinnae), colours and textures, and where
-  it grows. The seven built-in ones are `BuiltInPlants.swift`. The tabs, in two rows: **Growth** (cycles, height,
-  generations, stems, the trunk's shoot), **Branching** (the branches' own shoot or the trunk's, apical dominance, auxin
-  and ethylene, forks, gravity), **Light** (what a bud needs, how shade shortens growth, senescence), **Twigs** (where
-  they hang, and the twig's own growth), **Leaves**, **Bark** (colour, texture, thinning, wander, the flared and
-  buttressed foot); then **Look**, **Habitat**, **Ages** (variants, and the younger ages' shares of the cycles and
-  height). Copy and Paste carry a shoot, the light, the wood, the twigs, leaves, the look or the habitat.
+* **Plants are programs** (`Sources/Plants/Program/`): Swift that calls its stages one after another, each stage's
+  result a wire into the next, as the nodes of Unreal's vegetation graph are wired. The seven built-in species are such
+  files (`Sources/Plants/Programs/`, compiled into the app):
+  ```swift
+  package enum Oak: PlantProgram {
+      package static let species = Foliage.SpeciesInfo(id: "oak") { $0.name = "Oak" ... }
+      package static let palette: Foliage.Palette? = Foliage.Palette { $0.sparse = 0.85 }
+
+      package static func twig(_ p: inout PlantContext) -> Wire<Foliage.Mesh> { ... }
+
+      package static func plant(_ p: inout PlantContext) -> Wire<Foliage.Plant> {
+          let grow = p.grow { $0.cycles = 45; $0.targetHeight = 20 ... }
+          let grafts = p.grafts(grow) { $0.perBranch = 2 }
+          let wood = p.skeleton(grafts) { $0.thinning = 0.9 }
+          let twigs = p.distribute(wood, palette: p.palette) { $0.spacing = 0.3 ... }
+          let output = p.output(wood, twigs: twigs)
+          return output
+      }
+  }
+  ```
+  A file `Assets/Plants/<id>.swift` is compiled when it is loaded (`PlantCompiler`: `swiftc` against the build's modules,
+  about 8 s the first time in a session, then under a second; needs Xcode's tools and a SwiftPM build) and needs no
+  boilerplate: a copy of a built-in file compiles as it is. A stage is `p.grow`, `p.growMore`, `p.grafts`, `p.spurs`,
+  `p.carve`, `p.skeleton`, `p.leaves`, `p.twig`, `p.distribute`, `p.output`, `p.grass` or `p.code`.
+* **The graph is that code** (`PlantGraphView`, `PlantSwift`): the editor shows the species' stages as nodes, top to
+  bottom, the twig's a column of their own beside the plant's. Tab or a right-click adds a node (wired below the selected
+  one), a drag from an output to an input wires them, wires go only where what they carry is taken; Delete, Cmd-C, Cmd-V,
+  F frames, L lays out. Select a node and its settings are at the side (the slider tables of `PlantParams.swift`); with
+  none selected, the species' colours, bark, habitat and variants. Saving writes the graph as a Swift file of the shape
+  above, `// @node (x, y)` over each stage saying where it is, and the editor reads such a file back as the graph (the
+  button *Swift* shows it). Comments stay. What the parser can't read as a stage's call with literal settings stays as it
+  is written, a statement node that runs when the file is compiled; a *Swift Code* node holds a function on what's wired
+  into it, `static func bend(_ p: inout PlantContext, _ input: PlantSkeleton) -> PlantSkeleton`.
+* **While a slider is dragged the graph runs stage by stage**, through the same functions the file calls, in the same
+  order, with the same random numbers. When it's let go the file compiles behind the workshop, from which point the
+  compiled program grows the plant: the same bytes (`PlantSwiftTests`). The line under the graph says how it stands; a
+  compile error's *Show* selects its node. A graph with a wire missing says what's missing and the plant stays as it was.
+* **Species** are data too (`PlantSpecies.swift`): a `SpeciesDef` holds its colours and textures and where it grows,
+  and its recipe (`Growth.Params`, `Growth.Twigs`, leaves on its own stems), which is what the standard chain of stages
+  holds (`PlantGraph.standard`, `project`) and what Mutate moves.
 * **Curves:** a shoot's two priority ramps (a tip's chance to grow on, a bud's to sprout, by how far up toward the
   target height it is) and a leaf's size along its stem are curves: a line, a taper, or points. Dragging a preset
   turns it into points. Double-click adds a point, Option-click removes one.
@@ -778,11 +809,12 @@ opens the editor.
 * **Edits are live:** the workshop is made again while a slider is dragged (about 20 ms for a tree on an M1 Max: its
   structures are built for speed, uncompacted, with no leaf-fall variants), and the Forest, the valley and the open
   world take the edits when it is let go (*Forest* goes there). An edit is one undo step; a drag is one.
-* **Saving:** *Save* writes every changed species to `Assets/Plants/<id>.json` (`PlantStore.swift`); a file with a
-  built-in species' id replaces it, any other is a species of its own (format 2; a format 1 file, of the species grown
-  level by level before the growth simulation, is not read). A built-in species reset to as it is built in has no
-  file. Unsaved edits are a draft, kept between launches until saved or reverted. `METALRENDERER_PLANTS=builtin`
-  ignores the files (benchmarks comparing builds), `METALRENDERER_PLANTS=<folder>` reads and saves another folder.
+* **Saving:** *Save* writes every changed species to `Assets/Plants/<id>.swift` (`PlantStore.swift`); a file with a
+  built-in species' id replaces it, any other is a species of its own. An older `<id>.json` (format 2) still loads until
+  it is saved; a `.swift` of the same id beats it (a format 1 file, of the species grown level by level before the growth
+  simulation, is not read). A built-in species reset to as it is built in has no file. Unsaved edits are a draft, kept
+  between launches until saved or reverted. `METALRENDERER_PLANTS=builtin` ignores the files (benchmarks comparing
+  builds), `METALRENDERER_PLANTS=<folder>` reads and saves another folder.
 * **New species** (the + menu) start as a copy of the selected one, with seeds and patches of their own. Their
   **Habitat** says where they grow: a tree's weight against the others (base, height on the hills, slope, the stand
   noise, light, or a fixed share), a bush's or ground cover's density and patches. The forest and the open world place
@@ -2787,7 +2819,7 @@ The code is in modules, each a target of `Package.swift` in a folder per feature
 | Module | Folder | Holds |
 |---|---|---|
 | `EngineCore` | `Sources/EngineCore` | What every module shares and that knows no scene or renderer: maths, `SourceTree` and the assets' folder, the load activity; offline geometry (BVH, mesh builders, simplification, SDF shapes and volumes, the virtual geometry builder); file formats (glTF, EXR, cache and section files); textures (sets, streaming, generated ones); the GPU structs every module reads (`GPU/GPUTypes.swift`), compute passes, the kernels and their pipelines |
-| `Plants` | `Sources/Plants` | The plants: species and their parameters, the generator (stems, leaves, meshes, voxels, textures), habitats, the catalog and its store (`Assets/Plants`), the workshop's settings. Tracing them in a scene (descriptors, voxel levels, the wind's structures) is the engine's |
+| `Plants` | `Sources/Plants` | The plants: species and their parameters, the generator (stems, leaves, meshes, voxels, textures), programs and their stages (`Program/`, the built-in ones in `Programs/`), graphs and their Swift (`Program/Swift/`), habitats, the catalog and its store (`Assets/Plants`), the workshop's settings. Tracing them in a scene (descriptors, voxel levels, the wind's structures) is the engine's |
 | `Physics` | `Sources/Physics` | The physics: rigid bodies and their CPU and GPU steps (`PhysicsCPU+*`, threads, the stepper), shapes and collisions, joints, particles and cloth, soft bodies, muscles and skin, hair, liquids, and the destruction inside the step (`Destruction/`: fracture, demolition); its GPU structs and settings. The scene's side (`Scene+PhysicsWorld`, the rigs, `CharacterRig`) is the engine's |
 | `Characters` | `Sources/Characters` | People: their DNA and bodies, faces, skin, hair, muscles and skeletons (the atlases), animation (FBX, the Mixamo library), the crowd and its skinning, a character's rig for the physics, the catalog and store, the workshop's settings; on the plants (their parameter rows) and the physics. Putting them in a scene (`Scene+Characters`, the crowd's parts) is the engine's |
 | `Effects` | `Sources/Effects` | GPU particles (emitters, fields, colliders, their textures and maths) and effects as graphs (the VFX graph and its nodes, the lowering, the interpreter, generated Metal and its compiler, the library and store, the gizmos), with their GPU structs and settings; on the physics (its break events emit particles). Running them in a scene (`Scene+Effects`, the stage, `VFXLive`) is the engine's |

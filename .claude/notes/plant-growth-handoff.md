@@ -18,11 +18,12 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
     health in U.
 - `Foliage.plant`: a species' plant, its trunk and limbs as parts, its twigs as shared parts on bones of their own.
 - `Surface.metal`: bark by generation (U's whole part) with moss, leaf health tint, outline-leaf detection.
-- Species: `PlantSpecies.swift` (`SpeciesDef`: `growth`, `twigs`, `leaf` for own-stem leaves, `ages.variants`),
-  `BuiltInPlants.swift`; JSON format 2 (`PlantStore.swift`; format 1 files are skipped with a message; the draft key
-  is `plantDraft2`). `Foliage.version` 2 renames every plant cache.
-- Editor: `Sources/Editors/Plants/PlantTabs.swift` (Growth, Branching, Light, Twigs, Leaves, Bark, Look, Habitat,
-  Ages), `PlantParams.swift` (every slider; Mutate reads it), `PlantMutate.swift`.
+- Species: `PlantSpecies.swift` (`SpeciesDef`: `growth`, `twigs`, `leaf` for own-stem leaves, `ages.variants`, `graph`),
+  the built-in ones `Programs/*.swift`; saved as Swift (`PlantStore.swift`, `PlantSwift`), JSON format 2 still read
+  (format 1 files are skipped with a message; the draft key is `plantDraft2`). `Foliage.version` 2 renames every plant
+  cache.
+- Editor: `Sources/Editors/Plants/` (`PlantGraphView`, `PlantEditorModel+Graph`, `PlantNodeInspector`,
+  `PlantSpeciesInspector`), `PlantParams.swift` (every slider; Mutate reads it), `PlantMutate.swift`.
 
 ## Kept on purpose
 - **Leaf cards** (`cards=1`, `Foliage.cards`, `cardSheet`, `rtCutout`): a user-facing setting; grown twigs have a card
@@ -63,7 +64,7 @@ grower (Weber–Penn: `Recipe`, `Level`, `Graft`, `AgeRule`, boughs), its JSON a
   of the editor's viewport (PVE_MyMegaTree, SlateInspector `Screenshot` with an empty ref; CaptureEditorImage and
   `screencapture` both failed): everything there was 1.17× brighter than the fit predicts (the units carry it), the
   floor 8% more (tile 0.18), the sky cool rather than warm, no subgrid visible, and the floor is Floor_Mesh at scale
-  4, a 40 m slab (`Scene.previewFloorReach`). The oak was then matched to the same capture (BuiltInPlants
+  4, a 40 m slab (`Scene.previewFloorReach`). The oak was then matched to the same capture (Programs/Oak.swift
   `oakTwigs`, `oakDef.look`): muted olive leaves (the path tracer's mid-tone leaves 78/82/54 sRGB against Unreal's
   80/83/66) and open, half-flattened sprays (twigs every 0.34 m, 22 leaves a metre), whose shadow has sunflecks in
   the path tracer. The realtime path (640×400, MetalFX denoiser ×3) blurred that shadow back into a blob (MetalFX:
@@ -156,7 +157,7 @@ for what each value does. The graph: Grower (45 cycles) → Graft Distributor (3
 Grower (3 more cycles) → Carve (outer 4%) → Manual Edit → Carve (bottom 10%) → Gravity → Mesh Builder → Bone
 Reduction → Foliage Distributor (hormone mode) → Export. Its tree: 12.15 m tall, 9.5 by 8.9 m, 385 branches, 846 twigs.
 
-Taken, in original code (Grower.swift, BuiltInPlants.swift `oakGrowth`, `oakTwigs`):
+Taken, in original code (Grower.swift, Programs/Oak.swift):
 - Its Grower values: target length 20 m, 0.4 m internodes (branches' 0.34), its four priority curves as our apical and
   axillary ramps (the same basis: length from the root over the target), trunk axil 55° (Unreal's 35° is up from the
   level), branches alternate at 45°, no apical dominance, radius 0.0035 a cycle (a 0.15 m trunk), ethylene 0.15.
@@ -202,3 +203,24 @@ more saturated.
 - Every other species is byte-identical in the workshop's shots (an unset roll draws no random number).
 - Forest shot (dev build, one run): 8.1 ms, about where it was before this work (the grafts' twigs back up from 916 to
   about 1,200).
+
+## Plants as programs, the graph as Swift (2026-10-30)
+
+- `Program/`: `PlantProgram` (a species' two functions, `twig` and `plant`), `PlantContext` (the stages; `Mode.trace` writes
+  down what's called without growing), `PlantGraph` (the same as data; `run`, `standard`/`project`/`applying` to and from
+  the recipe), `PlantPrograms` (`runner(for:)`: a compiled program, the graph, the built-in program, the recipe),
+  `PlantCompiler` (over `EngineCore/Util/SwiftBundleCompiler`, which the wrangles use too).
+- `Program/Swift/`: `PlantSwift.emit`/`parse`, the file's shape. A stage is `let name = p.stage(wires) { $0.a.b = literal }`,
+  a line only for what differs from the stage's preset (`.standard`, `.twig`), in the fields' order (Mirror). Reading applies
+  the lines to the preset's JSON tree (`PlantTree`), numbers as written, Swift's way through `?.`. Anything else is a
+  `.statement` node, kept verbatim. `PlantLiteral.float` keeps a literal exact by way of a Double, which is how the
+  compiler reads it.
+- The random numbers' order is what keeps the goldens: a plant draws its growth seed in `grow`, its root bone's phase in
+  `skeleton` (so a fern's and a dead tree's come at the same place as a tree's), the leaves in `output` or `twig` (not in
+  `leaves`), limbs' phases then per twig `int(3)`, roll, phase in `output`. A twig grows from its seed and draws its leaves
+  from `seed ^ 0x51ED_2701`.
+- The fingerprint is in the scenes' mesh names: `SpeciesDef.fingerprintForm` takes a standard graph out, so a built-in's
+  stays what it was (`PlantProgramTests`, `Fixtures/builtin-species-v2.json`) and a node moved regrows nothing.
+- `Programs/*.swift` are the emitter's output: after changing the emitter, write them again or `testTheBuiltInFilesRoundTrip`
+  fails (parse then emit each and write it back). Not done: PVE's Gravity node (sag stays per cycle in Grow), Manual Edit,
+  Bone Reduction; a graph's node previews.

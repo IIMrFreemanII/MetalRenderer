@@ -32,19 +32,11 @@ package struct ScriptCompiler {
     }
 
     /// `SWIFT_PACKAGE_NAME` in SwiftPM's `manifest.pif`.
-    package static func packageName(pif: String) -> String? {
-        guard let key = pif.range(of: "\"SWIFT_PACKAGE_NAME\"") else { return nil }
-        let rest = pif[key.upperBound...].drop { $0 == " " || $0 == ":" || $0 == "\t" }
-        guard rest.first == "\"" else { return nil }
-        let name = rest.dropFirst().prefix { $0 != "\"" }
-        return name.isEmpty ? nil : String(name)
-    }
+    package static func packageName(pif: String) -> String? { SwiftBundleCompiler.packageName(pif: pif) }
 
     /// SwiftPM's identity of a package in folder `folder`: lowercased, `-` (and anything not a letter, digit or `_`)
     /// as `_`.
-    package static func packageName(folder: String) -> String {
-        String(folder.lowercased().map { $0.isLetter || $0.isNumber || $0 == "_" ? $0 : "_" })
-    }
+    package static func packageName(folder: String) -> String { SwiftBundleCompiler.packageName(folder: folder) }
 
     /// Where the scripts' generated files, bundles and the compiler's module cache go.
     package var workDirectory: URL { scratch.appendingPathComponent("scripts") }

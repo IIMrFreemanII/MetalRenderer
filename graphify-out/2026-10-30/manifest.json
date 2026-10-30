@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793343317.0846772,
-    "seen": 1793343336.0478349,
-    "ast_hash": "f71ad43fe90cda07ae87f77e60d6fa6e",
+    "mtime": 1793343875.8988664,
+    "seen": 1793343895.215507,
+    "ast_hash": "9011330fa60fed7e60581bb2bb9f12d7",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -2574,9 +2574,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
-    "mtime": 1793343262.6701598,
-    "seen": 1793343336.0449762,
-    "ast_hash": "c97684bf24d118d55e983e0c6a96576a",
+    "mtime": 1793343816.0694056,
+    "seen": 1793343895.212503,
+    "ast_hash": "6d9208c4743f162049fc20d6bf3e48b4",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantTracingTests.swift": {
@@ -2586,9 +2586,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantWorkshopTests.swift": {
-    "mtime": 1793286229.6362863,
-    "seen": 1793286432.504767,
-    "ast_hash": "c0c973b7c2baeded3f49337bafc141cf",
+    "mtime": 1793343783.2735794,
+    "seen": 1793343895.212523,
+    "ast_hash": "04d08699e185f140acdf255124720b16",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/ProjectGraph/ProjectGraphTests.swift": {
@@ -3636,9 +3636,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/BuiltInPlants.swift": {
-    "mtime": 1793343134.7827039,
-    "seen": 1793343336.042915,
-    "ast_hash": "ce6246656e0714bf3f45eb4bbcf91831",
+    "mtime": 1793343700.0369968,
+    "seen": 1793343895.210287,
+    "ast_hash": "1a26d20f6e0172cc177b76239e053438",
     "semantic_hash": ""
   },
   "Sources/Plants/Foliage.swift": {
@@ -5958,9 +5958,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/Grower.swift": {
-    "mtime": 1793343092.7017987,
-    "seen": 1793343336.0430021,
-    "ast_hash": "57065cfdf97a767fc6108763b53d2151",
+    "mtime": 1793343765.750237,
+    "seen": 1793343895.210392,
+    "ast_hash": "ddd3df5e9ffe03041af93f3894a6023d",
     "semantic_hash": ""
   },
   "Sources/Plants/Growth/LightField.swift": {
@@ -6000,9 +6000,9 @@
     "semantic_hash": ""
   },
   ".claude/notes/plant-growth-handoff.md": {
-    "mtime": 1793343317.0848093,
-    "seen": 1793343336.046852,
-    "ast_hash": "6eed677349619dac6169f4a847c71b36",
+    "mtime": 1793343875.899165,
+    "seen": 1793343895.2145238,
+    "ast_hash": "989b81c13183f1fa20cca5d21ddf081b",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Plants/Scene+PlantPreview.swift": {

@@ -70,7 +70,7 @@ by_name() {
     FBXReader.swift) add FBXTests ;;
     Foliage*.swift|Scene+Forest.swift) add FoliageTests ForestTests FoliageRuntimeTests PlantGoldenTests PlantCatalogTests ProjectGraphTests ;;
     PlantTracing.swift) add PlantTracingTests FoliageTests ForestTests FoliageRuntimeTests ;;
-    Plant*.swift|BuiltInPlants.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests FoliageTests ForestTests ;;
+    Plant*.swift) add PlantGoldenTests PlantCatalogTests PlantWorkshopTests PlantEditorTests PlantProgramTests PlantCompilerTests PlantSwiftTests FoliageTests ForestTests ;;
     Scene+Plants.swift) add PlantWorkshopTests PlantGoldenTests ;;
     Voxel*.swift) add FoliageRuntimeTests SceneBuffersTests ;;
     SDF*.swift|Scene+Shapes.swift) add SDFTests SceneBuffersTests PhysicsTests CharacterBaseTests ;;

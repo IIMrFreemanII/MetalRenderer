@@ -3,8 +3,8 @@ import Foundation
 import simd
 
 /// A species as data: everything that makes its plants what they are (how it grows, its twigs, its colours) and
-/// where it grows. The built-in ones are BuiltInPlants.swift's; the plant editor saves its own as JSON
-/// (Assets/Plants/<id>.json, PlantStore.swift), which replace a built-in one of the same id or add a species.
+/// where it grows. The built-in ones are the programs of Programs/, known by their traces (PlantPrograms); the plant
+/// editor saves its own in Assets/Plants (PlantStore.swift), which replace a built-in one of the same id or add a species.
 extension Foliage {
     /// What a species is to the scenes that place it.
     package enum Role: String, CaseIterable, Codable {
@@ -36,13 +36,25 @@ extension Foliage {
 
     /// Colours and textures. Colours are linear RGB; a leaf shade is picked per placed plant.
     package struct Look: Codable, Equatable {
-        package var bark: SIMD3<Float>
-        package var leaves: [SIMD3<Float>]
+        package var bark: SIMD3<Float> = [0.22, 0.16, 0.11]
+        package var leaves: [SIMD3<Float>] = [[0.12, 0.24, 0.07]]
         package var autumn: SIMD3<Float>? = nil     // nil: the leaves stay as they are
         package var translucency: Float = 0.35
         package var barkTexture = FoliageTextures.Kind.roughBark
         package var leafTexture = FoliageTextures.Kind.leaf
         package var evergreen = false               // keeps its leaves: no leaf fall
+
+        package init(bark: SIMD3<Float> = [0.22, 0.16, 0.11], leaves: [SIMD3<Float>] = [[0.12, 0.24, 0.07]], autumn: SIMD3<Float>? = nil,
+                     translucency: Float = 0.35, barkTexture: FoliageTextures.Kind = .roughBark, leafTexture: FoliageTextures.Kind = .leaf,
+                     evergreen: Bool = false) {
+            self.bark = bark
+            self.leaves = leaves
+            self.autumn = autumn
+            self.translucency = translucency
+            self.barkTexture = barkTexture
+            self.leafTexture = leafTexture
+            self.evergreen = evergreen
+        }
     }
 
     package struct SpeciesDef: Codable, Equatable {
@@ -65,9 +77,18 @@ extension Foliage {
         package var habitat = Habitat()
         package var stemsAreLeaves = false          // the stems are leaf material (fern fronds)
         package var basedOn: String? = nil          // a custom species: the one it was copied from
+        /// How it grows as stages, the node editor's and its file's (nil: its recipe's standard graph). Then the recipe's
+        /// fields above are what these stages say (PlantGraph.project).
+        package var graph: PlantGraph? = nil
 
         package var paletteSize: Int { grass != nil ? 0 : twigs?.palette ?? 0 }
         package func variants(_ age: Age) -> Int { ages.variants.indices.contains(age.rawValue) ? ages.variants[age.rawValue] : 0 }
+
+        /// Whether it grows just as `other` does.
+        package func sameRecipe(as other: SpeciesDef) -> Bool {
+            grass == other.grass && growth == other.growth && twigs == other.twigs && leaf == other.leaf
+                && stemsAreLeaves == other.stemsAreLeaves
+        }
     }
 }
 
@@ -128,7 +149,7 @@ package struct PlantCatalog: Equatable {
             .sorted { (self[$0].habitat.order, $0.rawValue) < (self[$1].habitat.order, $1.rawValue) }
     }
 
-    package static let builtIn = PlantCatalog(species: Foliage.builtInSpecies)
+    package static let builtIn = PlantCatalog(species: PlantPrograms.builtIn.map(PlantPrograms.def(of:)))
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(species: [Foliage.SpeciesDef]) {

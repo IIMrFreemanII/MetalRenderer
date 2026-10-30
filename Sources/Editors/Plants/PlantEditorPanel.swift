@@ -10,10 +10,11 @@ import Physics
 import Plants
 import SwiftUI
 
-/// The plant editor's floating panel (PlantEditorView in an NSPanel), beside the main window like Render Settings.
-/// It answers Cmd-Z / Shift-Cmd-Z with the editor's undo while it, or the main window, is key.
+/// The plant editor's window (PlantEditorView), beside the main one. It takes the keys when clicked: Delete removes the
+/// selected nodes, Tab adds one, F frames the graph, L lays it out, Cmd-C / Cmd-V copy and paste nodes, and it answers
+/// Cmd-Z / Shift-Cmd-Z with the editor's undo.
 final class PlantEditorPanel: NSObject, NSWindowDelegate {
-    let panel: NSPanel
+    let panel: NSWindow
     let model: PlantEditorModel
     private static let visibleKey = "plantEditor.visible"
 
@@ -21,15 +22,13 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
 
     package init(controller: RendererController) {
         model = PlantEditorModel(controller: controller)
-        panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 430, height: 760),
-                        styleMask: [.titled, .closable, .resizable, .utilityWindow, .nonactivatingPanel],
-                        backing: .buffered, defer: false)
+        panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1180, height: 820),
+                         styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         super.init()
         panel.title = "Plant Editor"
         panel.delegate = self
-        panel.isFloatingPanel = true
-        panel.becomesKeyOnlyIfNeeded = true   // sliders don't need key status; the name field does
-        panel.hidesOnDeactivate = true
+        panel.isReleasedWhenClosed = false
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.setFrameAutosaveName("PlantEditor")
         panel.contentView = NSHostingView(rootView: PlantEditorView().environmentObject(model)
             .environment(\.editorDrag, EditorDrag(begin: model.beginDrag, end: model.endDrag)))
@@ -48,7 +47,8 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
             origin.y = max(origin.y, visible.minY)
             panel.setFrameOrigin(origin)
         }
-        panel.orderFront(nil)
+        panel.makeKeyAndOrderFront(nil)
+        DispatchQueue.main.async { [model] in model.frameAll(in: model.canvasSize) }
         UserDefaults.standard.set(true, forKey: PlantEditorPanel.visibleKey)
     }
 

@@ -34,6 +34,12 @@ extension Foliage {
             package var gain: Float = 0
             package var from: Float = 0
             package var to: Float = 0.7
+
+            package init(gain: Float = 0, from: Float = 0, to: Float = 0.7) {
+                self.gain = gain
+                self.from = from
+                self.to = to
+            }
         }
 
         package struct Cover: Codable, Equatable {

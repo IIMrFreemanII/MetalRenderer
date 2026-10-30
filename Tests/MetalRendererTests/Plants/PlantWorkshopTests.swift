@@ -88,7 +88,7 @@ final class PlantWorkshopTests: XCTestCase {
         XCTAssertEqual(stems.count + 1, scene.instances.count, "nothing but the stems and the floor")
         for inst in scene.instances { XCTAssertEqual(scene.materials[inst.material].params.w, 0) }
         // The trunk's foot is in the crown's shade, the leader's tip in the sun.
-        let lit = Growth.lit(PlantCatalog.builtIn[.oak].growth!, seed: 9)
+        let lit = PlantPrograms.runner(for: PlantCatalog.builtIn[.oak]).skeleton(.oak, age: .mature, seed: 9)!
         XCTAssertEqual(lit.light.count, lit.skeleton.stems.count)
         XCTAssertLessThan(lit.light.min()!, 0.5)
         XCTAssertGreaterThan(lit.light.max()!, 0.8)

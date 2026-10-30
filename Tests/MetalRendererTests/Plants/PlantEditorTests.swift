@@ -205,31 +205,82 @@ final class PlantEditorTests: XCTestCase {
     func testCopyAndPaste() {
         let (m, _) = editor()
         m.pasteboard = NSPasteboard(name: NSPasteboard.Name("PlantEditorTests"))
-        let birch = PlantCatalog.builtIn[.birch], conifer = PlantCatalog.builtIn[.conifer]
         m.select("birch")
-        m.copy(.shoot, shoot: .branches)
-        XCTAssertTrue(m.canPaste(.shoot))
-        XCTAssertFalse(m.canPaste(.look))
+        let wood = m.graph.first(.skeleton, .plant)!
+        m.selection = ["\(wood.id)"]
+        m.copySelection()
         m.select("oak")
-        m.paste(.shoot, shoot: .branches)
-        XCTAssertEqual(m.def.growth?.branch, birch.growth?.branch ?? birch.growth?.trunk)
-        XCTAssertEqual(m.def.growth?.trunk, PlantCatalog.builtIn[.oak].growth?.trunk, "only the branches")
-        m.paste(.look)   // not what is on the clipboard: nothing
-        XCTAssertEqual(m.def.look, PlantCatalog.builtIn[.oak].look)
-        m.select("conifer")
-        m.copy(.leaves, twig: true)
-        m.select("bush")
-        m.paste(.leaves, twig: true)
-        XCTAssertEqual(m.def.twigs?.leaf, conifer.twigs?.leaf)
-        m.copy(.wood)
+        m.paste()
+        let pasted = m.graph.nodes.last!
+        XCTAssertEqual(pasted.settings, wood.settings)
+        XCTAssertNotEqual(pasted.name, wood.name, "named for this graph")
+        XCTAssertEqual(pasted.inputs, [-1], "its wires stayed behind")
+        XCTAssertEqual(m.selection, ["\(pasted.id)"])
+    }
+
+    /// The graph is an edit like any other: what its nodes hold is the species', one undo step to a slider's drag;
+    /// wires go only where what they carry is taken and never in a circle; what can't run yet leaves the plant as it was.
+    func testTheGraphIsTheSpecies() throws {
+        let (m, host) = editor()
+        m.select("oak")
+        let grow = try XCTUnwrap(m.graph.first(.grow, .plant))
+        guard case .grow(var p) = grow.settings else { return XCTFail("a grower") }
+        m.beginDrag()
+        p.cycles = 20
+        m.setSettings(grow.id, .grow(p))
+        XCTAssertEqual(m.def.growth?.cycles, 20)
+        p.cycles = 21
+        m.setSettings(grow.id, .grow(p))
+        m.endDrag()
+        XCTAssertEqual(m.def.growth?.cycles, 21)
+        XCTAssertNotEqual(host.settings.scene.plantCatalog, "")
+        m.undo.undo()
+        XCTAssertEqual(m.def, PlantCatalog.builtIn[.oak], "the drag is one step")
+
+        // Moved: no other plants.
+        let key = host.settings.scene.plantCatalog
+        m.moveSelection(by: [10, 0], ids: ["\(grow.id)"])
+        XCTAssertEqual(m.graph.node(grow.id)?.at?.x, (grow.at?.x ?? 0) + 10)
+        XCTAssertEqual(host.settings.scene.plantCatalog, key, "a node moved grows nothing new")
+        m.undo.undo()
+
+        // Wires.
+        let g = m.graph
+        let wood = try XCTUnwrap(g.first(.skeleton, .plant)), output = try XCTUnwrap(g.first(.output, .plant))
+        XCTAssertFalse(m.link("\(grow.id)", "out", to: "\(output.id)", "0"), "wood takes stems, not what's growing")
+        XCTAssertFalse(m.link("\(output.id)", "out", to: "\(grow.id)", "0"), "a grower takes nothing")
+        XCTAssertFalse(m.link("\(wood.id)", "out", to: "\(wood.id)", "0"))
+        XCTAssertEqual(m.wire(into: "\(output.id)", "0")?.from, "\(wood.id)")
+
+        // A wire off: the graph says what's missing, and the plant stays its recipe's.
+        m.unlink("\(output.id)", "0")
+        XCTAssertNotNil(m.def.graph?.problem)
+        guard case .graph(let running) = PlantPrograms.runner(for: m.def).body else { return XCTFail("its recipe") }
+        XCTAssertNil(running.problem)
+        m.link("\(wood.id)", "out", to: "\(output.id)", "0")
+        XCTAssertNil(m.def.graph?.problem)
+
+        // Added below the selected one, wired to it.
+        m.selection = ["\(grow.id)"]
+        m.addNode(.growMore, at: [0, 0])
+        let more = try XCTUnwrap(m.graph.nodes.first { $0.kind == .growMore })
+        XCTAssertEqual(more.inputs, [grow.id])
+        XCTAssertFalse(try XCTUnwrap(m.def.graph).isStandard)
+        m.selection = ["\(more.id)"]
+        m.deleteSelection()
+        XCTAssertNil(m.graph.nodes.first { $0.kind == .growMore })
+    }
+
+    /// Mutate and the recipe's other edits reach a species that has a graph.
+    func testAGraphFollowsItsRecipe() throws {
+        let (m, _) = editor()
         m.select("birch")
-        m.paste(.wood)
-        XCTAssertEqual(m.def.growth?.wood, PlantCatalog.builtIn[.bush].growth?.wood)
-        m.select("conifer")
-        m.copy(.shoot, twig: true)
-        m.select("oak")
-        m.paste(.shoot, twig: true)
-        XCTAssertEqual(m.def.twigs?.growth.trunk, conifer.twigs?.growth.trunk)
+        m.moveSelection(by: [5, 5], ids: Set(m.graph.nodes.map { "\($0.id)" }))
+        XCTAssertNotNil(m.def.graph)
+        m.def.growth?.cycles = 12
+        XCTAssertEqual(m.def.grownGraph.first(.grow, .plant).flatMap { n -> Int? in if case .grow(let p) = n.settings { return p.cycles } else { return nil } }, 12)
+        let mutants = PlantMutate.mutants(of: m.def, seed: 4)
+        for mutant in mutants { XCTAssertEqual(mutant.graph?.canonical, PlantGraph.standard(mutant).canonical) }
     }
 
     /// New species, renamed, saved as files; a built-in species as it is built in has no file.
@@ -250,12 +301,12 @@ final class PlantEditorTests: XCTestCase {
         m.save()
         XCTAssertFalse(m.isDirty)
         let files = try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
-        XCTAssertEqual(files, ["oak.json", "weeping-willow.json"])
+        XCTAssertEqual(files, ["oak.swift", "weeping-willow.swift"])
         XCTAssertEqual(PlantStore.load(from: folder).species(id: "weeping-willow").map { PlantStore.load(from: folder)[$0].growth?.trunk.gravitropism }, -0.3)
         // Back to built in: the file goes.
         m.resetToBuiltIn()
         m.save()
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["weeping-willow.json"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["weeping-willow.swift"])
         m.select("weeping-willow")
         m.deleteSpecies()
         m.save()

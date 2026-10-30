@@ -89,7 +89,7 @@ final class TwigTests: XCTestCase {
         // Their sheets' 3 by 2 leaves (info.json's "cells"), each traced inside its own cell: the birch's pointed ones
         // narrower than the bush's round ones; the oak's elliptic ones (the Mega Plants tree's) narrower still. (Without
         // the scans, a fresh clone's, they fall back to the ovate leaves.)
-        let def = { (id: String) in Foliage.builtInSpecies.first { $0.id == id }!.twigs!.leaf }
+        let def = { (id: String) in PlantCatalog.builtIn.species.first { $0.id == id }!.twigs!.leaf }
         XCTAssertEqual(def("birch").sheetName, "leaves-birch")
         XCTAssertEqual(def("bush").sheetName, "leaves-bush")
         XCTAssertEqual(def("oak").sheetName, "leaves-oak")

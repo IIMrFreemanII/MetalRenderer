@@ -1,0 +1,1686 @@
+[
+  {
+    "ages" : {
+      "variants" : [
+        2,
+        2,
+        3
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0,
+      "auxinFalloff" : 0.25,
+      "bareNodes" : 3,
+      "branch" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "points" : [
+            [
+              0,
+              0.205
+            ],
+            [
+              0.423,
+              0.34
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "axilAngle" : 0.785,
+        "axillaryGrowth" : 1,
+        "axillaryRamp" : {
+          "points" : [
+            [
+              0,
+              0
+            ],
+            [
+              0.218,
+              0.387
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0,
+        "lengthScale" : 1,
+        "phototropism" : 0.08,
+        "phyllotaxis" : "distichous",
+        "randomAngle" : 0.06,
+        "requirement" : 0,
+        "segment" : 0.34
+      },
+      "carve" : 0.1,
+      "cycles" : 45,
+      "ethyleneBuildup" : 0.15,
+      "grafts" : {
+        "angle" : [
+          0.17,
+          1.39
+        ],
+        "from" : 0.51,
+        "fromGeneration" : 3,
+        "length" : 0.25,
+        "perBranch" : 2,
+        "scale" : [
+          2,
+          0.2
+        ],
+        "segments" : 3
+      },
+      "gravity" : 0.2,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0,
+        "requirement" : 0.12,
+        "shadow" : 16
+      },
+      "maxGeneration" : 4,
+      "radiusGrowth" : 0.0035,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.004,
+      "senescence" : {
+        "cycles" : 3,
+        "fromGeneration" : 2,
+        "threshold" : 0.2
+      },
+      "spurs" : {
+        "angle" : 0.45,
+        "fromNode" : 3,
+        "length" : 0.25
+      },
+      "stemSpread" : 0.3,
+      "stems" : 1,
+      "targetHeight" : 20,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "points" : [
+            [
+              0,
+              0.994
+            ],
+            [
+              0.619,
+              0.381
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "axilAngle" : 0.96,
+        "axillaryGrowth" : 1,
+        "axillaryRamp" : {
+          "points" : [
+            [
+              0,
+              0
+            ],
+            [
+              0.156,
+              0
+            ],
+            [
+              0.179,
+              0.435
+            ],
+            [
+              0.312,
+              0.674
+            ],
+            [
+              0.493,
+              0.664
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0,
+        "lengthScale" : 1,
+        "phototropism" : 0.19,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.03,
+        "requirement" : 0.2,
+        "segment" : 0.4,
+        "sproutLight" : 0.44
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0.9,
+        "flareHeight" : 0.7,
+        "lobeDepth" : 0.22,
+        "lobes" : 5,
+        "noise" : 0.05,
+        "noiseScale" : 0.7,
+        "ribbon" : false,
+        "thinning" : 0.9
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.9,
+      "elevation" : {
+        "from" : 0,
+        "gain" : -0.7,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 1,
+      "slope" : 0,
+      "stand" : -1.6
+    },
+    "id" : "oak",
+    "look" : {
+      "autumn" : [
+        0.3,
+        0.14,
+        0.035
+      ],
+      "bark" : [
+        0.15,
+        0.125,
+        0.092
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : false,
+      "leafTexture" : "leaf",
+      "leaves" : [
+        [
+          0.21,
+          0.24,
+          0.19
+        ],
+        [
+          0.23,
+          0.26,
+          0.205
+        ],
+        [
+          0.18,
+          0.21,
+          0.17
+        ],
+        [
+          0.235,
+          0.255,
+          0.2
+        ]
+      ],
+      "translucency" : 0.35
+    },
+    "name" : "Oak",
+    "role" : "tree",
+    "seedIndex" : 0,
+    "stemsAreLeaves" : false,
+    "twigs" : {
+      "alongScale" : 0.333,
+      "alternate" : true,
+      "angle" : 1.45,
+      "ethylene" : 0.9,
+      "fromGeneration" : 1,
+      "growth" : {
+        "apicalDominance" : 0.1,
+        "auxinFalloff" : 0.5,
+        "axis" : [
+          0,
+          1,
+          0
+        ],
+        "branch" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.15,
+          "segment" : 0.06
+        },
+        "cycles" : 4,
+        "ethyleneBuildup" : 0,
+        "gravity" : 0,
+        "light" : {
+          "leafDensity" : 2,
+          "lengthImpact" : 0,
+          "requirement" : 0,
+          "shadow" : 3
+        },
+        "maxGeneration" : 2,
+        "radiusGrowth" : 0.0005,
+        "sapling" : {
+          "cycles" : 0.32,
+          "height" : 0.4
+        },
+        "seedRadius" : 0.0009,
+        "stemSpread" : 0.3,
+        "stems" : 1,
+        "targetHeight" : 0.34,
+        "trunk" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.8
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 0.5,
+          "axillaryRamp" : {
+            "linear" : [
+              0,
+              0.4
+            ]
+          },
+          "flatten" : 0,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.2,
+          "segment" : 0.08
+        },
+        "up" : [
+          0,
+          0,
+          1
+        ],
+        "wood" : {
+          "flare" : 0,
+          "flareHeight" : 1.4,
+          "lobeDepth" : 0.22,
+          "lobes" : 5,
+          "noise" : 0.004,
+          "noiseScale" : 0.7,
+          "ribbon" : false,
+          "thinning" : 0.72
+        },
+        "young" : {
+          "cycles" : 0.6,
+          "height" : 0.7
+        }
+      },
+      "leaf" : {
+        "angle" : 0.75,
+        "angleV" : 0.3,
+        "flutter" : 0.6,
+        "fold" : 0.12,
+        "fromLevel" : 0,
+        "length" : 0.13,
+        "perMetre" : 40,
+        "phyllotaxis" : "spiral",
+        "shape" : "outline",
+        "sheet" : "leaves-oak",
+        "size" : {
+          "linear" : [
+            1,
+            1
+          ]
+        },
+        "sizeV" : 0.25,
+        "start" : 0.1,
+        "width" : 0.07
+      },
+      "lightAim" : 0.1,
+      "palette" : 6,
+      "roll" : 1.05,
+      "scale" : 1.725,
+      "scaleV" : 0.1,
+      "spacing" : 0.3,
+      "sparse" : 0.85,
+      "tipScale" : 1
+    }
+  },
+  {
+    "ages" : {
+      "variants" : [
+        2,
+        2,
+        3
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0.45,
+      "auxinFalloff" : 0.25,
+      "branch" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0.45
+          ]
+        },
+        "axilAngle" : 0.8,
+        "axillaryGrowth" : 0.85,
+        "axillaryRamp" : {
+          "linear" : [
+            0.5,
+            1
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0.02,
+        "lengthScale" : 1,
+        "phototropism" : 0.3,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.2,
+        "segment" : 0.35
+      },
+      "cycles" : 34,
+      "ethyleneBuildup" : 0.12,
+      "gravity" : 0.15,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0.5,
+        "requirement" : 0,
+        "shadow" : 5
+      },
+      "maxGeneration" : 4,
+      "radiusGrowth" : 0.0034,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.004,
+      "stemSpread" : 0.3,
+      "stems" : 1,
+      "targetHeight" : 17,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "points" : [
+            [
+              0,
+              1
+            ],
+            [
+              0.7,
+              0.95
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "axilAngle" : 0.85,
+        "axillaryGrowth" : 0.9,
+        "axillaryRamp" : {
+          "points" : [
+            [
+              0,
+              0
+            ],
+            [
+              0.25,
+              0
+            ],
+            [
+              0.4,
+              0.7
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0.08,
+        "lengthScale" : 1,
+        "phototropism" : 0.05,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.06,
+        "segment" : 0.4
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0.25,
+        "flareHeight" : 1.4,
+        "lobeDepth" : 0.08,
+        "lobes" : 3,
+        "noise" : 0.03,
+        "noiseScale" : 0.7,
+        "ribbon" : false,
+        "thinning" : 0.65
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.25,
+      "elevation" : {
+        "from" : 0,
+        "gain" : 0,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 1,
+      "order" : 2,
+      "slope" : 0,
+      "stand" : 0
+    },
+    "id" : "birch",
+    "look" : {
+      "autumn" : [
+        0.42,
+        0.33,
+        0.04
+      ],
+      "bark" : [
+        0.72,
+        0.7,
+        0.65
+      ],
+      "barkTexture" : "birchBark",
+      "evergreen" : false,
+      "leafTexture" : "leaf",
+      "leaves" : [
+        [
+          0.19,
+          0.31,
+          0.07
+        ],
+        [
+          0.23,
+          0.34,
+          0.08
+        ],
+        [
+          0.16,
+          0.28,
+          0.07
+        ]
+      ],
+      "translucency" : 0.35
+    },
+    "name" : "Birch",
+    "role" : "tree",
+    "seedIndex" : 1,
+    "stemsAreLeaves" : false,
+    "twigs" : {
+      "angle" : 0.75,
+      "ethylene" : 0.85,
+      "fromGeneration" : 2,
+      "growth" : {
+        "apicalDominance" : 0.1,
+        "auxinFalloff" : 0.5,
+        "axis" : [
+          0,
+          1,
+          0
+        ],
+        "branch" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.7,
+          "gravitropism" : -0.35,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.15,
+          "segment" : 0.08
+        },
+        "cycles" : 8,
+        "ethyleneBuildup" : 0,
+        "gravity" : 0,
+        "light" : {
+          "leafDensity" : 2,
+          "lengthImpact" : 0,
+          "requirement" : 0,
+          "shadow" : 3
+        },
+        "maxGeneration" : 3,
+        "radiusGrowth" : 0.0011,
+        "sapling" : {
+          "cycles" : 0.32,
+          "height" : 0.4
+        },
+        "seedRadius" : 0.0018,
+        "stemSpread" : 0.3,
+        "stems" : 1,
+        "targetHeight" : 0.9,
+        "trunk" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.6,
+          "gravitropism" : -0.35,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.15,
+          "segment" : 0.11
+        },
+        "up" : [
+          0,
+          0,
+          1
+        ],
+        "wood" : {
+          "flare" : 0,
+          "flareHeight" : 1.4,
+          "lobeDepth" : 0.22,
+          "lobes" : 5,
+          "noise" : 0.004,
+          "noiseScale" : 0.7,
+          "ribbon" : false,
+          "thinning" : 0.72
+        },
+        "young" : {
+          "cycles" : 0.6,
+          "height" : 0.7
+        }
+      },
+      "leaf" : {
+        "angle" : 0.9,
+        "angleV" : 0.3,
+        "flutter" : 0.6,
+        "fold" : 0.12,
+        "fromLevel" : 0,
+        "length" : 0.075,
+        "perMetre" : 55,
+        "phyllotaxis" : "spiral",
+        "shape" : "outline",
+        "sheet" : "leaves-birch",
+        "size" : {
+          "linear" : [
+            1,
+            1
+          ]
+        },
+        "sizeV" : 0.25,
+        "start" : 0.1,
+        "width" : 0.07
+      },
+      "lightAim" : 0.2,
+      "palette" : 6,
+      "scale" : 0.85,
+      "scaleV" : 0.2,
+      "spacing" : 0.12
+    }
+  },
+  {
+    "ages" : {
+      "variants" : [
+        2,
+        2,
+        3
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0.75,
+      "auxinFalloff" : 0.4,
+      "branch" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0.3
+          ]
+        },
+        "axilAngle" : 0.9,
+        "axillaryGrowth" : 0.7,
+        "axillaryRamp" : {
+          "linear" : [
+            0.6,
+            1
+          ]
+        },
+        "flatten" : 0.7,
+        "gravitropism" : -0.05,
+        "lengthScale" : 1,
+        "phototropism" : 0.15,
+        "phyllotaxis" : "distichous",
+        "randomAngle" : 0.08,
+        "segment" : 0.3
+      },
+      "cycles" : 40,
+      "ethyleneBuildup" : 0.12,
+      "gravity" : 0.25,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0.5,
+        "requirement" : 0.03,
+        "shadow" : 6
+      },
+      "maxGeneration" : 3,
+      "radiusGrowth" : 0.008,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.004,
+      "stemSpread" : 0.3,
+      "stems" : 1,
+      "targetHeight" : 20,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "points" : [
+            [
+              0,
+              1
+            ],
+            [
+              0.9,
+              0.95
+            ],
+            [
+              1,
+              0
+            ]
+          ]
+        },
+        "axilAngle" : 1.45,
+        "axillaryGrowth" : 1,
+        "axillaryRamp" : {
+          "points" : [
+            [
+              0,
+              0
+            ],
+            [
+              0.08,
+              0
+            ],
+            [
+              0.15,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0.2,
+        "lengthScale" : 1,
+        "phototropism" : 0,
+        "phyllotaxis" : {
+          "whorled" : 5
+        },
+        "randomAngle" : 0.03,
+        "segment" : 0.5
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0.35,
+        "flareHeight" : 1.4,
+        "lobeDepth" : 0.12,
+        "lobes" : 6,
+        "noise" : 0.02,
+        "noiseScale" : 0.7,
+        "ribbon" : false,
+        "thinning" : 0.6
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.3,
+      "elevation" : {
+        "from" : -0.1,
+        "gain" : 1.1,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 0,
+      "slope" : 3,
+      "stand" : 1.6
+    },
+    "id" : "conifer",
+    "look" : {
+      "bark" : [
+        0.19,
+        0.13,
+        0.09
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : true,
+      "leafTexture" : "needle",
+      "leaves" : [
+        [
+          0.045,
+          0.11,
+          0.055
+        ],
+        [
+          0.055,
+          0.13,
+          0.06
+        ],
+        [
+          0.04,
+          0.1,
+          0.06
+        ]
+      ],
+      "translucency" : 0.12
+    },
+    "name" : "Conifer",
+    "role" : "tree",
+    "seedIndex" : 2,
+    "stemsAreLeaves" : false,
+    "twigs" : {
+      "angle" : 0.4,
+      "ethylene" : 0.9,
+      "fromGeneration" : 2,
+      "growth" : {
+        "apicalDominance" : 0.1,
+        "auxinFalloff" : 0.5,
+        "axis" : [
+          0,
+          1,
+          0
+        ],
+        "branch" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.9,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "distichous",
+          "randomAngle" : 0.15,
+          "segment" : 0.08
+        },
+        "cycles" : 7,
+        "ethyleneBuildup" : 0,
+        "gravity" : 0,
+        "light" : {
+          "leafDensity" : 2,
+          "lengthImpact" : 0,
+          "requirement" : 0,
+          "shadow" : 3
+        },
+        "maxGeneration" : 3,
+        "radiusGrowth" : 0.0011,
+        "sapling" : {
+          "cycles" : 0.32,
+          "height" : 0.4
+        },
+        "seedRadius" : 0.0018,
+        "stemSpread" : 0.3,
+        "stems" : 1,
+        "targetHeight" : 0.9,
+        "trunk" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 1,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.9,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "distichous",
+          "randomAngle" : 0.15,
+          "segment" : 0.11
+        },
+        "up" : [
+          0,
+          0,
+          1
+        ],
+        "wood" : {
+          "flare" : 0,
+          "flareHeight" : 1.4,
+          "lobeDepth" : 0.22,
+          "lobes" : 5,
+          "noise" : 0.004,
+          "noiseScale" : 0.7,
+          "ribbon" : false,
+          "thinning" : 0.72
+        },
+        "young" : {
+          "cycles" : 0.6,
+          "height" : 0.7
+        }
+      },
+      "leaf" : {
+        "angle" : 1,
+        "angleV" : 0.25,
+        "cluster" : 2,
+        "flutter" : 0.4,
+        "fold" : 0,
+        "fromLevel" : 0,
+        "length" : 0.06,
+        "perMetre" : 130,
+        "phyllotaxis" : "spiral",
+        "shape" : "needle",
+        "size" : {
+          "linear" : [
+            1,
+            1
+          ]
+        },
+        "sizeV" : 0.2,
+        "start" : 0.05,
+        "width" : 0.015
+      },
+      "lightAim" : 0.1,
+      "palette" : 6,
+      "scale" : 0.9,
+      "scaleV" : 0.2,
+      "spacing" : 0.15
+    }
+  },
+  {
+    "ages" : {
+      "variants" : [
+        0,
+        1,
+        2
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0.4,
+      "auxinFalloff" : 0.25,
+      "branch" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0
+          ]
+        },
+        "axilAngle" : 0.8,
+        "axillaryGrowth" : 0.6,
+        "axillaryRamp" : {
+          "linear" : [
+            0.4,
+            1
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0,
+        "lengthScale" : 1,
+        "phototropism" : 0.2,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.3,
+        "segment" : 0.35
+      },
+      "cycles" : 30,
+      "ethyleneBuildup" : 0.12,
+      "gravity" : 0.1,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0.5,
+        "requirement" : 0.12,
+        "shadow" : 3
+      },
+      "maxGeneration" : 4,
+      "radiusGrowth" : 0.01,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.004,
+      "senescence" : {
+        "cycles" : 2,
+        "fromGeneration" : 2,
+        "threshold" : 0.4
+      },
+      "stemSpread" : 0.3,
+      "stems" : 1,
+      "targetHeight" : 10,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0
+          ]
+        },
+        "axilAngle" : 0.9,
+        "axillaryGrowth" : 1,
+        "axillaryRamp" : {
+          "points" : [
+            [
+              0,
+              0
+            ],
+            [
+              0.3,
+              0
+            ],
+            [
+              0.45,
+              0.8
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0,
+        "lengthScale" : 1,
+        "phototropism" : 0.2,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.15,
+        "segment" : 0.4
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0.5,
+        "flareHeight" : 1.4,
+        "lobeDepth" : 0.3,
+        "lobes" : 5,
+        "noise" : 0.12,
+        "noiseScale" : 0.7,
+        "ribbon" : false,
+        "thinning" : 0.72
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.5,
+      "elevation" : {
+        "from" : 0,
+        "gain" : 0,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 3,
+      "share" : 0.035,
+      "slope" : 0,
+      "stand" : 0
+    },
+    "id" : "dead",
+    "look" : {
+      "bark" : [
+        0.36,
+        0.33,
+        0.29
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : false,
+      "leafTexture" : "leaf",
+      "leaves" : [
+        [
+          0.3,
+          0.27,
+          0.2
+        ]
+      ],
+      "translucency" : 0
+    },
+    "name" : "Dead tree",
+    "role" : "tree",
+    "seedIndex" : 3,
+    "stemsAreLeaves" : false
+  },
+  {
+    "ages" : {
+      "variants" : [
+        0,
+        2,
+        3
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0.2,
+      "auxinFalloff" : 0.25,
+      "branch" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0.3
+          ]
+        },
+        "axilAngle" : 0.8,
+        "axillaryGrowth" : 0.8,
+        "axillaryRamp" : {
+          "linear" : [
+            0.3,
+            1
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0.05,
+        "lengthScale" : 1,
+        "phototropism" : 0.3,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.18,
+        "segment" : 0.15
+      },
+      "cycles" : 14,
+      "ethyleneBuildup" : 0.12,
+      "gravity" : 0.05,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0.5,
+        "requirement" : 0.12,
+        "shadow" : 3
+      },
+      "maxGeneration" : 3,
+      "radiusGrowth" : 0.0009,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.003,
+      "senescence" : {
+        "cycles" : 3,
+        "fromGeneration" : 2,
+        "threshold" : 0.25
+      },
+      "stemSpread" : 0.55,
+      "stems" : 6,
+      "targetHeight" : 2,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0.3
+          ]
+        },
+        "axilAngle" : 0.8,
+        "axillaryGrowth" : 0.8,
+        "axillaryRamp" : {
+          "linear" : [
+            0.3,
+            1
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : 0.05,
+        "lengthScale" : 1,
+        "phototropism" : 0.3,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.18,
+        "segment" : 0.2
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0,
+        "flareHeight" : 1.4,
+        "lobeDepth" : 0,
+        "lobes" : 5,
+        "noise" : 0.02,
+        "noiseScale" : 0.7,
+        "ribbon" : false,
+        "thinning" : 0.72
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.5,
+      "cover" : {
+        "cell" : 6.1,
+        "count" : 2600,
+        "gridScale" : 1.12,
+        "open" : false,
+        "patch" : 28,
+        "salt" : 31,
+        "sink" : 0.05,
+        "size" : [
+          0.8,
+          1.3
+        ],
+        "what" : 2821
+      },
+      "elevation" : {
+        "from" : 0,
+        "gain" : 0,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 10,
+      "slope" : 0,
+      "stand" : 0
+    },
+    "id" : "bush",
+    "look" : {
+      "autumn" : [
+        0.36,
+        0.09,
+        0.04
+      ],
+      "bark" : [
+        0.22,
+        0.16,
+        0.11
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : false,
+      "leafTexture" : "leaf",
+      "leaves" : [
+        [
+          0.12,
+          0.24,
+          0.07
+        ],
+        [
+          0.1,
+          0.2,
+          0.06
+        ],
+        [
+          0.15,
+          0.25,
+          0.06
+        ]
+      ],
+      "translucency" : 0.35
+    },
+    "name" : "Bush",
+    "role" : "bush",
+    "seedIndex" : 4,
+    "stemsAreLeaves" : false,
+    "twigs" : {
+      "angle" : 0.75,
+      "ethylene" : 0.9,
+      "fromGeneration" : 1,
+      "growth" : {
+        "apicalDominance" : 0.1,
+        "auxinFalloff" : 0.5,
+        "axis" : [
+          0,
+          1,
+          0
+        ],
+        "branch" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.7,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.15,
+          "segment" : 0.08
+        },
+        "cycles" : 8,
+        "ethyleneBuildup" : 0,
+        "gravity" : 0,
+        "light" : {
+          "leafDensity" : 2,
+          "lengthImpact" : 0,
+          "requirement" : 0,
+          "shadow" : 3
+        },
+        "maxGeneration" : 3,
+        "radiusGrowth" : 0.0011,
+        "sapling" : {
+          "cycles" : 0.32,
+          "height" : 0.4
+        },
+        "seedRadius" : 0.0018,
+        "stemSpread" : 0.3,
+        "stems" : 1,
+        "targetHeight" : 0.9,
+        "trunk" : {
+          "apicalGrowth" : 1,
+          "apicalRamp" : {
+            "linear" : [
+              1,
+              0.6
+            ]
+          },
+          "axilAngle" : 0.9,
+          "axillaryGrowth" : 1,
+          "axillaryRamp" : {
+            "linear" : [
+              0.6,
+              1
+            ]
+          },
+          "flatten" : 0.6,
+          "gravitropism" : 0,
+          "lengthScale" : 1,
+          "phototropism" : 0,
+          "phyllotaxis" : "spiral",
+          "randomAngle" : 0.15,
+          "segment" : 0.11
+        },
+        "up" : [
+          0,
+          0,
+          1
+        ],
+        "wood" : {
+          "flare" : 0,
+          "flareHeight" : 1.4,
+          "lobeDepth" : 0.22,
+          "lobes" : 5,
+          "noise" : 0.004,
+          "noiseScale" : 0.7,
+          "ribbon" : false,
+          "thinning" : 0.72
+        },
+        "young" : {
+          "cycles" : 0.6,
+          "height" : 0.7
+        }
+      },
+      "leaf" : {
+        "angle" : 0.9,
+        "angleV" : 0.3,
+        "flutter" : 0.6,
+        "fold" : 0.12,
+        "fromLevel" : 0,
+        "length" : 0.1,
+        "perMetre" : 45,
+        "phyllotaxis" : "spiral",
+        "shape" : "outline",
+        "sheet" : "leaves-bush",
+        "size" : {
+          "linear" : [
+            1,
+            1
+          ]
+        },
+        "sizeV" : 0.25,
+        "start" : 0.1,
+        "width" : 0.07
+      },
+      "lightAim" : 0.3,
+      "palette" : 6,
+      "scale" : 0.55,
+      "scaleV" : 0.2,
+      "spacing" : 0.14
+    }
+  },
+  {
+    "ages" : {
+      "variants" : [
+        0,
+        0,
+        3
+      ]
+    },
+    "growth" : {
+      "apicalDominance" : 0,
+      "auxinFalloff" : 0.25,
+      "cycles" : 8,
+      "ethyleneBuildup" : 0.12,
+      "gravity" : 0,
+      "light" : {
+        "leafDensity" : 2,
+        "lengthImpact" : 0.5,
+        "requirement" : 0,
+        "shadow" : 3
+      },
+      "maxGeneration" : 1,
+      "radiusGrowth" : 0.0004,
+      "sapling" : {
+        "cycles" : 0.32,
+        "height" : 0.4
+      },
+      "seedRadius" : 0.003,
+      "stemSpread" : 0.75,
+      "stems" : 9,
+      "targetHeight" : 0.8,
+      "trunk" : {
+        "apicalGrowth" : 1,
+        "apicalRamp" : {
+          "linear" : [
+            1,
+            0.7
+          ]
+        },
+        "axilAngle" : 0.8,
+        "axillaryGrowth" : 1,
+        "axillaryRamp" : {
+          "linear" : [
+            0.2,
+            1
+          ]
+        },
+        "flatten" : 0,
+        "gravitropism" : -0.22,
+        "lengthScale" : 1,
+        "phototropism" : 0,
+        "phyllotaxis" : "spiral",
+        "randomAngle" : 0.05,
+        "segment" : 0.1
+      },
+      "up" : [
+        0,
+        1,
+        0
+      ],
+      "wood" : {
+        "flare" : 0,
+        "flareHeight" : 1.4,
+        "lobeDepth" : 0.22,
+        "lobes" : 5,
+        "noise" : 0,
+        "noiseScale" : 0.7,
+        "ribbon" : true,
+        "thinning" : 0.72
+      },
+      "young" : {
+        "cycles" : 0.6,
+        "height" : 0.7
+      }
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.5,
+      "cover" : {
+        "cell" : 4,
+        "count" : 6000,
+        "gridScale" : 1.12,
+        "open" : false,
+        "patch" : 17,
+        "salt" : 47,
+        "sink" : 0.02,
+        "size" : [
+          0.9,
+          1.7
+        ],
+        "what" : 4066
+      },
+      "elevation" : {
+        "from" : 0,
+        "gain" : 0,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 11,
+      "slope" : 0,
+      "stand" : 0
+    },
+    "id" : "fern",
+    "leaf" : {
+      "angle" : 1.3,
+      "angleV" : 0.1,
+      "flutter" : 0.15,
+      "fold" : 0.05,
+      "fromLevel" : 0,
+      "length" : 0.13,
+      "perMetre" : 60,
+      "phyllotaxis" : "distichous",
+      "shape" : "kite",
+      "size" : {
+        "linear" : [
+          1,
+          0.12
+        ]
+      },
+      "sizeV" : 0.1,
+      "start" : 0.12,
+      "width" : 0.035
+    },
+    "look" : {
+      "autumn" : [
+        0.27,
+        0.17,
+        0.06
+      ],
+      "bark" : [
+        0.22,
+        0.16,
+        0.11
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : false,
+      "leafTexture" : "leaf",
+      "leaves" : [
+        [
+          0.13,
+          0.28,
+          0.07
+        ],
+        [
+          0.16,
+          0.3,
+          0.08
+        ]
+      ],
+      "translucency" : 0.35
+    },
+    "name" : "Fern",
+    "role" : "groundCover",
+    "seedIndex" : 5,
+    "stemsAreLeaves" : true
+  },
+  {
+    "ages" : {
+      "variants" : [
+        0,
+        0,
+        6
+      ]
+    },
+    "grass" : {
+      "blades" : 800,
+      "size" : 2
+    },
+    "habitat" : {
+      "ages" : [
+        0.12,
+        0.4
+      ],
+      "base" : 0.5,
+      "cover" : {
+        "cell" : 2,
+        "count" : 0,
+        "grid" : 2,
+        "gridScale" : 1.12,
+        "open" : true,
+        "patch" : 20,
+        "salt" : 0,
+        "sink" : 0,
+        "size" : [
+          1.05,
+          1.2
+        ],
+        "what" : 1578
+      },
+      "elevation" : {
+        "from" : 0,
+        "gain" : 0,
+        "to" : 0.7
+      },
+      "floor" : 0.05,
+      "frequency" : 1,
+      "light" : 0,
+      "order" : 12,
+      "slope" : 0,
+      "stand" : 0
+    },
+    "id" : "grass",
+    "look" : {
+      "autumn" : [
+        0.3,
+        0.27,
+        0.11
+      ],
+      "bark" : [
+        0.22,
+        0.16,
+        0.11
+      ],
+      "barkTexture" : "roughBark",
+      "evergreen" : false,
+      "leafTexture" : "grass",
+      "leaves" : [
+        [
+          0.19,
+          0.32,
+          0.09
+        ],
+        [
+          0.23,
+          0.34,
+          0.1
+        ],
+        [
+          0.27,
+          0.33,
+          0.12
+        ]
+      ],
+      "translucency" : 0.3
+    },
+    "name" : "Grass",
+    "role" : "groundCover",
+    "seedIndex" : 6,
+    "stemsAreLeaves" : false
+  }
+]

@@ -112,17 +112,17 @@ extension Scene {
             }
             // The stems as thin tubes, a colour to a generation, and each twig's the twigs' colour.
             let age = plant.age, variant = set.plants(of: age).firstIndex(of: e.plant) ?? 0
-            let growth = def.growth ?? Growth.Params(), up = normalize(growth.up)
-            var rng = SplitMix64(seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, age.rawValue, variant))
             // (The plant's own skeleton: the same seed as the library's.)
-            let lit = Growth.lit(Growth.aged(growth, age), seed: rng.nextUInt64())
-            let stems = Scene.thinned(lit.skeleton)
+            let runner = PlantPrograms.runner(for: def)
+            guard let grown = runner.skeleton(e.species, age: age, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, age.rawValue, variant)) else { continue }
+            let up = grown.up
+            let stems = Scene.thinned(grown.skeleton)
             let at = translate([e.x, 0, e.z])
             if p.view == .light {
                 // The light view: the stems in bands of the light they get (the twigs are left out).
-                let bands = lightMaterials.count
+                let bands = lightMaterials.count, light = grown.light
                 for band in 0..<bands {
-                    let mine = stems.stems.indices.filter { min(Int(lit.light[$0] * Float(bands)), bands - 1) == band }
+                    let mine = stems.stems.indices.filter { min(Int(light[$0] * Float(bands)), bands - 1) == band }
                     guard !mine.isEmpty else { continue }
                     let mesh = Foliage.mesh(stems, stems: mine, leaves: [], shape: .kite, fold: 0, up: up, allLeaves: false)
                     addInstance(addMesh(mesh), lightMaterials[band], at)
@@ -136,10 +136,10 @@ extension Scene {
                 let mesh = Foliage.mesh(stems, stems: mine, leaves: [], shape: .kite, fold: 0, up: up, allLeaves: false)
                 addInstance(addMesh(mesh), levelMaterials[min(level, levelMaterials.count - 2)], at)
             }
-            if twigMeshes[e.species] == nil, let twigs = def.twigs {
-                twigMeshes[e.species] = (0..<def.paletteSize).map { j in
-                    let stems = Scene.thinned(Growth.grow(twigs.growth, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, -1, j)))
-                    return addMesh(Foliage.mesh(stems, stems: nil, leaves: [], shape: .kite, fold: 0, up: twigs.growth.up, allLeaves: false))
+            if twigMeshes[e.species] == nil, def.paletteSize > 0 {
+                twigMeshes[e.species] = (0..<def.paletteSize).compactMap { j in
+                    guard let twig = runner.twigSkeleton(e.species, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, -1, j)) else { return nil }
+                    return addMesh(Foliage.mesh(Scene.thinned(twig.skeleton), stems: nil, leaves: [], shape: .kite, fold: 0, up: twig.up, allLeaves: false))
                 }
             }
             let palette = twigMeshes[e.species] ?? []
