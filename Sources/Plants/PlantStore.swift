@@ -25,6 +25,12 @@ package enum PlantStore {
         }
     }
 
+    /// Whether `other` is the saved plants' folder. (By path: a URL made before the folder exists has no trailing slash, and
+    /// isn't == one made after.)
+    package static func isFolder(_ other: URL?) -> Bool {
+        other?.standardizedFileURL.path == folder?.standardizedFileURL.path
+    }
+
     package static func url(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).json") }
     package static func swiftURL(_ id: String, in folder: URL) -> URL { folder.appendingPathComponent("\(id).swift") }
 

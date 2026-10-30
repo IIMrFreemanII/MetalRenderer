@@ -1,3 +1,4 @@
+import SwiftUI
 import XCTest
 import AppKit
 import simd
@@ -288,6 +289,133 @@ final class PlantEditorTests: XCTestCase {
     }
 
     /// New species, renamed, saved as files; a built-in species as it is built in has no file.
+    /// Every built-in graph's wires run beside the nodes, not behind them, and the graph is framed clear of the minimap.
+    func testWiresPassBesideNodes() throws {
+        let (m, _) = editor()
+        let L = PlantGraphLayout.self
+        var routed = 0
+        for d in m.catalog.species {
+            m.select(d.id)
+            let g = m.graph
+            for n in g.nodes {
+                for (i, id) in n.inputs.enumerated() {
+                    guard let from = g.node(id), n.kind != .statement else { continue }
+                    let a = L.output(from), b = L.input(n, i)
+                    let others = g.nodes.filter { $0.id != n.id && $0.id != id }.map(L.rect)
+                    let via = L.route(from: a, to: b, around: others)
+                    routed += via.isEmpty ? 0 : 1
+                    var path = GraphWires.verticalCurve(a, via.first ?? b)
+                    if let first = via.first, let last = via.last {
+                        path.addPath(Path { $0.move(to: first); $0.addLine(to: last) })
+                        path.addPath(GraphWires.verticalCurve(last, b))
+                    }
+                    for rect in others { XCTAssertFalse(L.crosses(path, rect), "\(d.id): \(from.name) to \(n.name) runs over \(rect)") }
+                }
+            }
+        }
+        XCTAssertGreaterThan(routed, 0, "the oak's wood skips a row to its Output")
+        m.select("oak")
+        m.canvasSize = CGSize(width: 660, height: 530)
+        m.frameAll(in: m.canvasSize)
+        let right = m.viewPoint([Float(L.bounds(m.graph).maxX), 0]).x, bottom = m.viewPoint([0, Float(L.bounds(m.graph).maxY)]).y
+        XCTAssertLessThanOrEqual(right, 660 - PlantEditorModel.minimapWidth)
+        XCTAssertLessThanOrEqual(bottom, 530)
+    }
+
+    /// A file changed on disk: the species follows it, unless it has unsaved edits, which stay and say so. The editor's own
+    /// save reads back as nothing new.
+    func testTheEditorFollowsItsFiles() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (m, _) = editor(folder: folder)
+        func onDisk(_ edit: (inout Growth.Params) -> Void) throws -> PlantCatalog {
+            var d = PlantCatalog.builtIn.species[0]
+            var g = PlantGraph.standard(d)
+            let i = try XCTUnwrap(g.nodes.firstIndex { $0.kind == .grow && $0.side == .plant })
+            guard case .grow(var p) = g.nodes[i].settings else { throw XCTSkip("no grower") }
+            edit(&p)
+            g.nodes[i].settings = .grow(p)
+            d.setGraph(g)
+            var c = PlantCatalog.builtIn
+            c.species[0] = d
+            return c
+        }
+
+        // No unsaved edits: it follows, and it isn't an edit.
+        m.selection = ["1"]
+        try m.savedChanged(onDisk { $0.targetHeight = 8 })
+        XCTAssertFalse(m.isDirty)
+        XCTAssertEqual(m.selection, [])
+        guard case .grow(let followed)? = m.graph.first(.grow, .plant)?.settings else { return XCTFail("a grower") }
+        XCTAssertEqual(followed.targetHeight, 8)
+        XCTAssertTrue(m.message?.contains("Oak") == true, m.message ?? "")
+        XCTAssertFalse(m.undo.canUndo)
+
+        // Unsaved edits stay, the file is what Revert takes.
+        m.addNode(.spurs, at: [0, 0])
+        let mine = m.def
+        try m.savedChanged(onDisk { $0.targetHeight = 9 })
+        XCTAssertEqual(m.def, mine)
+        XCTAssertTrue(m.isDirty)
+        XCTAssertTrue(m.message?.contains("unsaved edits stay") == true, m.message ?? "")
+        m.revert()
+        guard case .grow(let reverted)? = m.graph.first(.grow, .plant)?.settings else { return XCTFail("a grower") }
+        XCTAssertEqual(reverted.targetHeight, 9)
+
+        // Its own save: nothing changes, not even the selection.
+        m.selection = ["\(try XCTUnwrap(m.graph.first(.grow, .plant)).id)"]
+        m.addNode(.spurs, at: [40, 40])
+        m.save()
+        let id = m.selection
+        let text = try String(contentsOf: PlantStore.swiftURL("oak", in: folder), encoding: .utf8)
+        var read = PlantCatalog.builtIn
+        read.species[0] = try XCTUnwrap(PlantSwift.parse(text, id: "oak"))
+        m.savedChanged(read)
+        XCTAssertFalse(m.isDirty)
+        XCTAssertEqual(m.selection, id)
+    }
+
+    /// A view as it was framed follows the canvas's size, however late the window settles; one the user moved stays.
+    func testTheFramedViewFollowsTheCanvas() {
+        let (m, _) = editor()
+        m.frameAll(in: m.canvasSize)
+        let before = m.zoom
+        m.canvasSize = CGSize(width: 660, height: 530)
+        XCTAssertLessThan(m.zoom, before)
+        let fitted = m.viewPoint([Float(PlantGraphLayout.bounds(m.graph).maxX), Float(PlantGraphLayout.bounds(m.graph).maxY)])
+        XCTAssertLessThanOrEqual(fitted.x, 660 - PlantEditorModel.minimapWidth)
+        XCTAssertLessThanOrEqual(fitted.y, 530)
+
+        m.pan.x += 20
+        let moved = (m.pan, m.zoom)
+        m.canvasSize = CGSize(width: 900, height: 700)
+        XCTAssertEqual(m.pan, moved.0)
+        XCTAssertEqual(m.zoom, moved.1)
+    }
+
+    /// The plants' folder is the same before and after it exists, as the reload's and Save's checks need.
+    func testThePlantsFolderIsItselfOnceItExists() throws {
+        let folder = try XCTUnwrap(PlantStore.folder)
+        XCTAssertTrue(PlantStore.isFolder(URL(fileURLWithPath: folder.path, isDirectory: false)))
+        XCTAssertTrue(PlantStore.isFolder(URL(fileURLWithPath: folder.path, isDirectory: true)))
+        XCTAssertFalse(PlantStore.isFolder(folder.appendingPathComponent("other")))
+        XCTAssertFalse(PlantStore.isFolder(nil))
+    }
+
+    /// An edit makes what the last Save said old news.
+    func testAnEditClearsTheMessage() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (m, _) = editor(folder: folder)
+        m.selection = []
+        m.addNode(.code, at: [0, 0])
+        m.save()
+        XCTAssertNotNil(m.message)
+        m.undo.undo()
+        m.addNode(.spurs, at: [0, 0])
+        XCTAssertNil(m.message)
+    }
+
     /// A node hung off the chain, added below the selected one, comes after the Output: the plant is still the Output's,
     /// run or compiled, and a Swift Code node's first function takes what it's wired to.
     func testANodeOffTheChainLeavesThePlant() throws {
@@ -471,6 +599,110 @@ final class PlantEditorTests: XCTestCase {
         XCTAssertNil(m.editNode)
         XCTAssertNil(host.tool)
         XCTAssertEqual(host.settings.scene.plants.view, .light)
+    }
+
+    /// The node selected, or the one pinned, is the stage the workshop shows; one that has nothing to show says so and
+    /// the workshop shows all of the plant.
+    func testChoosingANodeShowsItsStage() throws {
+        let (m, host) = editor()
+        let g = m.graph
+        // (The ids are the same in the graph on the canvas and the one that's run.)
+        XCTAssertEqual(g.nodes.map(\.id), m.def.grownGraph.nodes.map(\.id))
+        XCTAssertEqual(g.nodes.map(\.kind), m.def.grownGraph.nodes.map(\.kind))
+        func id(_ kind: PlantNodeKind, _ side: PlantSide = .plant) throws -> Int32 { try XCTUnwrap(g.first(kind, side)).id }
+        var stage: Int { host.settings.scene.plants.stage }
+        XCTAssertEqual(stage, -1)
+        m.click("\(try id(.grow))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.grow)))
+        XCTAssertNil(m.frameStage, "the same side: the camera stays")
+        // Its Output is the whole plant, and a palette has nothing to show.
+        m.clearSelection()
+        m.click("\(try id(.output))", extend: false)
+        XCTAssertEqual(stage, -1)
+        m.clearSelection()
+        m.click("\(try id(.palette, .twig))", extend: false)
+        XCTAssertEqual(stage, -1)
+        XCTAssertNotNil(m.stageProblem(try id(.palette, .twig)))
+        m.clearSelection()
+        // A twig's stage is framed when it's in; going back, the plant is.
+        m.click("\(try id(.twig, .twig))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.twig, .twig)))
+        XCTAssertEqual(m.frameStage, stage)
+        m.clearSelection()
+        XCTAssertEqual(stage, -1)
+        XCTAssertEqual(m.frameStage, -1)
+
+        // Pinned, it stays whatever is selected, and the sliders of another node still reach it.
+        m.click("\(try id(.skeleton))", extend: false)
+        m.togglePin()
+        XCTAssertEqual(m.pinned, try id(.skeleton))
+        m.clearSelection()
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        m.click("\(try id(.grow))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        m.beginDrag()
+        let cycles = m.def.growth!.cycles
+        m.setSettings(try id(.grow), { var p = m.def.growth!.growOnly(.standard); p.cycles = cycles - 5; return .grow(p) }())
+        m.endDrag()
+        XCTAssertEqual(m.def.growth?.cycles, cycles - 5)
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        // Deleted, it's let go of.
+        m.clearSelection()
+        m.selection = ["\(try id(.skeleton))"]
+        m.deleteSelection()
+        XCTAssertNil(m.pinned)
+        XCTAssertEqual(stage, -1)
+    }
+
+    /// A wire taken away while its node is shown: the workshop goes back to all of it, and the node says why.
+    func testAStageWithoutItsWires() throws {
+        let (m, host) = editor()
+        let wood = try XCTUnwrap(m.graph.first(.skeleton, .plant))
+        m.click("\(wood.id)", extend: false)
+        XCTAssertEqual(host.settings.scene.plants.stage, Int(wood.id))
+        m.unlink("\(wood.id)", "0")
+        XCTAssertEqual(host.settings.scene.plants.stage, -1)
+        XCTAssertTrue(try XCTUnwrap(m.stageProblem(wood.id)).contains("nothing is wired"))
+    }
+
+    /// Outside the workshop the scene isn't touched.
+    func testStagesOnlyInTheWorkshop() throws {
+        let (m, host) = editor(in: .forest)
+        let before = host.updates
+        m.click("\(try XCTUnwrap(m.graph.first(.grow, .plant)).id)", extend: false)
+        XCTAssertEqual(host.updates, before)
+        XCTAssertEqual(host.settings.scene.plants.stage, -1)
+        m.goToWorkshop()
+        XCTAssertEqual(host.settings.scene.kind, .plants)
+        XCTAssertEqual(host.settings.scene.plants.stage, Int(try XCTUnwrap(m.graph.first(.grow, .plant)).id))
+    }
+
+    /// The nodes' pictures come off the main thread, the latest edit's; a node with no shape has none.
+    func testThumbnails() throws {
+        let (m, _) = editor()
+        XCTAssertTrue(m.thumbnails.images.isEmpty, "nobody's looking")
+        m.thumbnailsWanted = true
+        m.refreshThumbnails()
+        let g = m.graph
+        let grow = try XCTUnwrap(g.first(.grow, .plant)).id, palette = try XCTUnwrap(g.first(.palette, .twig)).id
+        let first = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in m.thumbnails.images[grow] != nil }, object: nil)
+        wait(for: [first], timeout: 10)
+        let image = try XCTUnwrap(m.thumbnails.images[grow])
+        XCTAssertEqual(image.width, Int(CGFloat(PlantThumbnails.size) * PlantThumbnails.scale))
+        XCTAssertNil(m.thumbnails.images[palette])
+        // Many edits at once are one or two runs, and it ends on the last.
+        m.beginDrag()
+        for c in 1...20 {
+            var p = m.def.growth!.growOnly(.standard)
+            p.cycles = 10 + c
+            m.setSettings(grow, .grow(p))
+        }
+        m.endDrag()
+        let short = PlantThumbnails.draw(PlantPrograms.sketches(m.def, species: .oak, age: .mature, variant: 0, seed: 1)[grow]!)
+        let last = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            m.thumbnails.images[grow].flatMap { $0.dataProvider?.data } == short?.dataProvider?.data
+        }, object: nil)
+        wait(for: [last], timeout: 10)
     }
 
     func testSpeciesAndSaving() throws {

@@ -339,8 +339,9 @@ package enum Foliage {
     /// library, built in parallel or not; a species' plants are the same whatever else is built with it.
     /// `cards`: the twigs' leaves as cards.
     /// `bark`: by species, its bark's relief (the realistic look's, realism high: FoliageMesh.Bark).
+    /// `stage`: its plants as they stand at that node of their graphs (PlantSceneSettings.stage).
     package static func library(seed: UInt64, catalog: PlantCatalog = .builtIn, species: [Species]? = nil, parallel: Bool = true,
-                        cards: Bool = false, bark: [Species: Bark] = [:]) -> [SpeciesSet] {
+                        cards: Bool = false, bark: [Species: Bark] = [:], stage: Int = -1) -> [SpeciesSet] {
         let species = species ?? catalog.all
         struct Job { var species: Species; var age: Age; var index: Int }
         var twigJobs: [Job] = [], plantJobs: [Job] = []
@@ -349,7 +350,7 @@ package enum Foliage {
             for age in Age.allCases { for i in 0..<catalog[s].variants(age) { plantJobs.append(Job(species: s, age: age, index: i)) } }
         }
         var runners: [PlantRunner?] = Array(repeating: nil, count: catalog.count)
-        for s in species { runners[s.rawValue] = PlantPrograms.runner(for: catalog[s]) }
+        for s in species { runners[s.rawValue] = PlantPrograms.runner(for: catalog[s], stage: stage, seed: seed) }
         let twigs = slots(twigJobs.count, parallel: parallel) { j -> Mesh in
             let job = twigJobs[j], def = catalog[job.species]
             return runners[job.species.rawValue]!.twig(job.species, variant: job.index, of: def.paletteSize, sparse: def.twigs?.sparse,

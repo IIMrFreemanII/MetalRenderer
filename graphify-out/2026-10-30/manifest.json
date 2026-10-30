@@ -864,9 +864,9 @@
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/plants.json": {
-    "mtime": 1793341560.0629923,
-    "seen": 1793343336.0310872,
-    "ast_hash": "7d41c7fe9982bb1c5a2ddc183d1bfd49",
+    "mtime": 1793351342.080338,
+    "seen": 1793351406.4592268,
+    "ast_hash": "1f931455f5070e3fc76b68700f9151fe",
     "semantic_hash": ""
   },
   "Assets/Scenes/Outlines/ragdolls.json": {
@@ -2568,9 +2568,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantEditorTests.swift": {
-    "mtime": 1793347395.052858,
-    "seen": 1793347598.932653,
-    "ast_hash": "1582ace510e779d0062f059ed041b030",
+    "mtime": 1793350761.5902002,
+    "seen": 1793351406.473394,
+    "ast_hash": "bd92762c65373aa6f23836cb479d2df8",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantGoldenTests.swift": {
@@ -3054,9 +3054,9 @@
     "semantic_hash": ""
   },
   "Sources/Editors/App/GraphCanvas.swift": {
-    "mtime": 1793222892.870298,
-    "seen": 1793223730.162991,
-    "ast_hash": "50ab971303b995d13d3e2e87b56ccf47",
+    "mtime": 1793350968.2765024,
+    "seen": 1793351406.4608572,
+    "ast_hash": "2df590f63129d5d0e2493a4e2d303cae",
     "semantic_hash": ""
   },
   "Sources/Editors/App/LoadingOverlay.swift": {
@@ -3216,21 +3216,21 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantEditorModel.swift": {
-    "mtime": 1793347370.5942936,
-    "seen": 1793347598.921841,
-    "ast_hash": "a574c9696e355b9c9fb58494aa4c26a7",
+    "mtime": 1793351198.6728003,
+    "seen": 1793351406.4620311,
+    "ast_hash": "2b75691be553ec1e07c8ba6fdcd7b7af",
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantEditorPanel.swift": {
-    "mtime": 1793347370.5947447,
-    "seen": 1793347598.9218419,
-    "ast_hash": "925be7f986ea29408f61bce0a66329b5",
+    "mtime": 1793351198.6734004,
+    "seen": 1793351406.4620311,
+    "ast_hash": "31725d878d9e7ba24c53d648b8db45b1",
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantEditorView.swift": {
-    "mtime": 1793347494.2155075,
-    "seen": 1793347598.921843,
-    "ast_hash": "e8899db35e063f1747a48cafa36cdfbd",
+    "mtime": 1793351139.6117294,
+    "seen": 1793351406.4620318,
+    "ast_hash": "003647edc932fa7d6aa0730d6eb08002",
     "semantic_hash": ""
   },
   "Sources/Editors/ProjectGraph/ConeTreeView.swift": {
@@ -6144,21 +6144,21 @@
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantEditorModel+Graph.swift": {
-    "mtime": 1793347370.5984693,
-    "seen": 1793347598.9218402,
-    "ast_hash": "d7c8d13ad2cc02186bb605ed30bec9c8",
+    "mtime": 1793351096.3674603,
+    "seen": 1793351406.4620302,
+    "ast_hash": "8dfaa8a7481c0c8866595d8db6df23cc",
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantGraphLayout.swift": {
-    "mtime": 1793347370.5724165,
-    "seen": 1793347598.921843,
-    "ast_hash": "5456da44e3a074c677ab418cfd46bcf9",
+    "mtime": 1793350761.5900366,
+    "seen": 1793351406.4620328,
+    "ast_hash": "4c20c21fd08d86fa6741d722b4b0c75b",
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantGraphView.swift": {
-    "mtime": 1793347370.5743454,
-    "seen": 1793347598.921844,
-    "ast_hash": "6c1d4009bd3378c601268860bdba5a73",
+    "mtime": 1793350716.1608272,
+    "seen": 1793351406.4620328,
+    "ast_hash": "0fb03f3ca30b9eda01155e6b68763a88",
     "semantic_hash": ""
   },
   "Sources/Editors/Plants/PlantNodeInspector.swift": {
@@ -6192,15 +6192,15 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Program/PlantGraph.swift": {
-    "mtime": 1793347370.564833,
-    "seen": 1793347598.930882,
-    "ast_hash": "af589af58f6c0283fa4856a70d78cb5d",
+    "mtime": 1793349245.8092327,
+    "seen": 1793349419.647813,
+    "ast_hash": "954961b78760ecedd7e02f005a7c5219",
     "semantic_hash": ""
   },
   "Sources/Plants/Program/PlantProgram.swift": {
-    "mtime": 1793346928.3428838,
-    "seen": 1793347598.9308832,
-    "ast_hash": "d97ab322472183fa6c5ff54071446335",
+    "mtime": 1793349245.8094916,
+    "seen": 1793349419.647815,
+    "ast_hash": "86a6db6a21b41b57c12750ef300ecead",
     "semantic_hash": ""
   },
   "Sources/Plants/Program/PlantPrograms.swift": {
@@ -6222,9 +6222,9 @@
     "semantic_hash": ""
   },
   "Sources/Plants/Program/Swift/PlantSwift.swift": {
-    "mtime": 1793346947.7724743,
-    "seen": 1793347598.930885,
-    "ast_hash": "f89ac42c0e60ac3b150a2cf933fd8b7b",
+    "mtime": 1793349245.8093953,
+    "seen": 1793349419.647885,
+    "ast_hash": "cf63b7f41ee5f16181701d41b6d7441a",
     "semantic_hash": ""
   },
   "Sources/Plants/Program/Swift/PlantSwiftLexer.swift": {
@@ -6294,9 +6294,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Plants/PlantSwiftTests.swift": {
-    "mtime": 1793347494.2153492,
-    "seen": 1793347598.932673,
-    "ast_hash": "1b578c7447d1d064f693b389bb602d9e",
+    "mtime": 1793348985.1398728,
+    "seen": 1793349419.6502872,
+    "ast_hash": "174ef1d105afa6cebb5c42db8873bbf7",
     "semantic_hash": ""
   }
 }

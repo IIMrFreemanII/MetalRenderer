@@ -67,6 +67,16 @@ package enum PlantPrograms {
         return PlantRunner(.graph(PlantGraph.standard(def)))
     }
 
+    /// What runs `def` as far as its graph's node `stage`, for a library of seed `seed` to show (the plant's end, a node
+    /// with nothing to look at, or no such node: what runs it all).
+    package static func runner(for def: Foliage.SpeciesDef, stage: Int, seed: UInt64) -> PlantRunner {
+        let graph = def.grownGraph, id = Int32(truncatingIfNeeded: stage)
+        guard stage >= 0, id != graph.end(of: .plant), graph.stageProblem(id) == nil, let made = PlantStage(graph, id, def: def, seed: seed) else {
+            return runner(for: def)
+        }
+        return PlantRunner(.stage(made))
+    }
+
     /// The checked-in file of a built-in species, read as a graph, where the sources are at hand: the graph with its
     /// comments, the same as the recipe's.
     package static func sourceGraph(_ def: Foliage.SpeciesDef) -> PlantGraph? {
@@ -84,6 +94,7 @@ package struct PlantRunner {
     package enum Body {
         case program(any PlantProgram.Type)
         case graph(PlantGraph)
+        case stage(PlantStage)
     }
 
     package let body: Body
@@ -94,6 +105,7 @@ package struct PlantRunner {
         switch body {
         case .program(let program): return program.twig(&p)
         case .graph(let graph): return graph.twig(&p)
+        case .stage(let stage): return stage.graph.partialTwig(&p)
         }
     }
 
@@ -101,6 +113,7 @@ package struct PlantRunner {
         switch body {
         case .program(let program): return program.plant(&p)
         case .graph(let graph): return graph.plant(&p)
+        case .stage(let stage): return stage.plant(&p)
         }
     }
 
@@ -111,6 +124,7 @@ package struct PlantRunner {
     }
 
     package func plant(_ species: Foliage.Species, age: Foliage.Age, seed: UInt64, palette: [Foliage.Mesh], bark: Foliage.Bark? = nil) -> Foliage.Plant {
+        if case .stage(let stage) = body, stage.onTwig { return stage.twigAsPlant(species, age: age) }
         var p = PlantContext(.plant(age: age, palette: palette, bark: bark), species: species, seed: seed)
         let made = plant(&p)
         return p.value(made)
@@ -118,6 +132,7 @@ package struct PlantRunner {
 
     /// A plant's skeleton, the same as `plant`'s: nothing is meshed.
     package func skeleton(_ species: Foliage.Species, age: Foliage.Age, seed: UInt64) -> PlantSkeleton? {
+        if case .stage(let stage) = body, stage.onTwig { return stage.twigSkeleton(species) }
         var p = PlantContext(.plant(age: age, palette: [], bark: nil), species: species, seed: seed, probe: true)
         _ = plant(&p)
         return p.kept
@@ -128,5 +143,17 @@ package struct PlantRunner {
         var p = PlantContext(.twig(variant: 0, of: 1, sparse: 1, cards: false), species: species, seed: seed, probe: true)
         _ = twig(&p)
         return p.kept
+    }
+
+    /// Whether what it makes is a twig, standing alone: too small for the workshop's person to stand beside.
+    package var showsTwig: Bool {
+        if case .stage(let stage) = body { return stage.onTwig }
+        return false
+    }
+
+    /// Whether what it makes is only stems so far: a plant still growing, which has no wood yet.
+    package var showsStems: Bool {
+        if case .stage(let stage) = body { return stage.isGrowing }
+        return false
     }
 }

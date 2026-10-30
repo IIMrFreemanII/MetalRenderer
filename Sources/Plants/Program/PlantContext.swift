@@ -82,7 +82,7 @@ package struct PlantContext {
         var p = settings
         if case .plant(let age, _, _) = mode { p = Growth.aged(p, age) }
         var plant = Growth.Plant(p, seed: growthSeed())
-        for _ in 0..<p.cycles { plant.cycle() }
+        for _ in 0..<max(p.cycles, 0) { plant.cycle() }
         return store(Growing(plant: plant))
     }
 
@@ -97,7 +97,7 @@ package struct PlantContext {
         guard side == nil else { return record(.growMore(settings), .standard, [input.node]) }
         var g = value(input)
         if settings.revive { g.plant.revive() }
-        for _ in 0..<settings.cycles { g.plant.cycle() }
+        for _ in 0..<max(settings.cycles, 0) { g.plant.cycle() }
         return store(g)
     }
 
@@ -243,10 +243,24 @@ package struct PlantContext {
         return store(mesh)
     }
 
+    /// A twig's wood alone, written as `twig` writes it: for a look at a twig before it has leaves.
+    mutating func twigStems(_ input: Wire<PlantSkeleton>) -> Wire<Foliage.Mesh> {
+        guard !probe else { return noTwig() }
+        let made = value(input)
+        var mesh = Foliage.mesh(made.skeleton, stems: nil, leaves: [], shape: .kite, fold: 0, up: made.up, allLeaves: false)
+        for v in mesh.uvs.indices { mesh.uvs[v].x += Growth.twigWood }
+        return store(mesh)
+    }
+
     /// (A program without twigs: its palette is empty, so this is never a twig.)
     package mutating func noTwig() -> Wire<Foliage.Mesh> {
         guard side == nil else { return Wire(node: -1) }
         return store(Foliage.Mesh(positions: [], normals: [], uvs: [], indices: [], leafVertex: 0, leafIndex: 0, bounds: AABB()))
+    }
+
+    /// A plant of nothing.
+    mutating func noPlant() -> Wire<Foliage.Plant> {
+        store(Foliage.Plant(species: species, age: .mature, meshes: [], parts: [], bones: [], bounds: AABB()))
     }
 
     /// The species' palette of twigs, for the distributor.
@@ -280,7 +294,7 @@ package struct PlantContext {
         guard side == nil else {
             return record(.output(settings), .standard, [input.node, twigs?.node ?? -1, leaves?.node ?? -1])
         }
-        guard case .plant(let age, let palette, let bark) = mode, !probe else { return store(Foliage.Plant(species: species, age: .mature, meshes: [], parts: [], bones: [], bounds: AABB())) }
+        guard case .plant(let age, let palette, let bark) = mode, !probe else { return noPlant() }
         let made = value(input), skeleton = made.skeleton, up = made.up, trunk = skeleton.stems[0]
         var bones = [Foliage.Bone(pivot: .zero, axis: made.axis ?? up, parent: -1, length: trunk.length,
                                   radius: skeleton.nodes[Int(trunk.first)].w, phase: made.rootPhase)]

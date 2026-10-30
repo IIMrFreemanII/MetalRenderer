@@ -1,13 +1,14 @@
 import CoreGraphics
 import Plants
+import SwiftUI
 import simd
 
 /// Where a plant's nodes are on the canvas: top to bottom in the order they run, as Unreal's vegetation graph flows,
 /// the twig's stages a column left of the plant's.
 enum PlantGraphLayout {
-    static let size = SIMD2<Float>(176, 44)
-    static let rowGap: Float = 88
-    static let columnGap: Float = 232
+    static let size = SIMD2<Float>(212, 56)
+    static let rowGap: Float = 92
+    static let columnGap: Float = 268
 
     static func rect(_ n: PlantNode) -> CGRect {
         let at = n.at ?? .zero
@@ -46,6 +47,31 @@ enum PlantGraphLayout {
             }
         }
         return best?.0
+    }
+
+    /// Where a wire from `a` to `b` goes straight, to pass beside the `nodes` in its way instead of behind them (nothing
+    /// when none is, or when it runs upward, where it loops anyway).
+    static func route(from a: CGPoint, to b: CGPoint, around nodes: [CGRect]) -> [CGPoint] {
+        guard b.y > a.y else { return [] }
+        var blocked = nodes.filter { crosses(GraphWires.verticalCurve(a, b), $0) }
+        guard !blocked.isEmpty else { return [] }
+        let gap: CGFloat = 14, middle = (a.x + b.x) / 2
+        for _ in nodes {
+            let box = blocked.reduce(CGRect.null) { $0.union($1) }
+            let left = box.minX - gap, right = box.maxX + gap
+            let x = abs(left - middle) <= abs(right - middle) ? left : right
+            let top = max(box.minY - gap, a.y + gap), bottom = min(box.maxY + gap, b.y - gap)
+            // (Another node on the way past: go past that too.)
+            let more = nodes.filter { !blocked.contains($0) && $0.minX - gap < x && x < $0.maxX + gap && $0.minY < bottom && $0.maxY > top }
+            if more.isEmpty { return [CGPoint(x: x, y: top), CGPoint(x: x, y: bottom)] }
+            blocked += more
+        }
+        return []
+    }
+
+    /// Whether a wire's path runs over `node`.
+    static func crosses(_ path: Path, _ node: CGRect) -> Bool {
+        path.strokedPath(StrokeStyle(lineWidth: 2)).cgPath.intersects(CGPath(rect: node, transform: nil))
     }
 
     /// `g` with its nodes that have no place given one; with `all`, every one.

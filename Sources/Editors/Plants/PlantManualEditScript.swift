@@ -292,6 +292,8 @@ enum PlantManualEditScript {
         later(12, "the plant, edited and compiled") { done in
             check(m.editTool == nil, "the click on Off put the tool down")
             check(m.scene.plants.view == .plant, "the plant's view is back")
+            // (With the node selected the view shows the plant as far as the node, stems: all of it.)
+            m.clearSelection()
             let e = edit()
             check((e?.points.isEmpty == false) && (e?.removed.count ?? 0) >= 2, "its edits stay")
             check(!m.swiftText.isEmpty && PlantSwift.parse(m.swiftText)?.graph?.canonical == m.graph.canonical, "the file reads back as the graph")
@@ -301,6 +303,7 @@ enum PlantManualEditScript {
             if case .compiled = m.compile { check(true, "the edited plant's file compiled") } else { check(false, "the edited plant's file compiled: \(m.compile)") }
         }
         step(3, "cleared") {
+            m.click("\(nodeID)", extend: false)
             m.clearEditing(moves: true)
             m.clearEditing(moves: false)
             check(edit()?.points.isEmpty == true && edit()?.removed.isEmpty == true, "the Clear buttons' actions clear them")

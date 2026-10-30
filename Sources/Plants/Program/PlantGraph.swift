@@ -290,17 +290,7 @@ extension PlantGraph {
         var seen = Set<Int32>()
         for n in nodes {
             defer { seen.insert(n.id) }
-            for (pin, id) in zip(n.kind.pins, n.inputs + Array(repeating: -1, count: max(0, n.kind.pins.count - n.inputs.count))) {
-                if id < 0 {
-                    if !pin.optional { return "\(n.kind.title) \(n.name): nothing is wired into \(pin.name)" }
-                    continue
-                }
-                guard seen.contains(id) else { return "\(n.kind.title) \(n.name): its \(pin.name) comes after it, or from nothing" }
-                let wire = output(of: id)
-                if pin.type != .any && wire != .any && wire != pin.type {
-                    return "\(n.kind.title) \(n.name): \(pin.name) doesn't take what's wired into it"
-                }
-            }
+            if let why = pinProblem(n, seen: seen) { return why }
         }
         for n in nodes where n.kind != .distribute {
             if n.inputs.contains(where: { node($0).map { $0.side != n.side } ?? false }) { return "\(n.kind.title) \(n.name) is wired across the twig and the plant" }
@@ -308,6 +298,22 @@ extension PlantGraph {
         if nodes.contains(where: \.isStatement) { return nil }
         let ends = nodes.filter { $0.side == .plant && ($0.kind == .output || $0.kind == .grass) }
         if ends.count != 1 { return ends.isEmpty ? "There's no Output" : "There's more than one Output" }
+        return nil
+    }
+
+    /// What's wrong with what's wired into `n`, if anything is (`seen`: what may come before it).
+    func pinProblem(_ n: PlantNode, seen: Set<Int32>? = nil) -> String? {
+        for (pin, id) in zip(n.kind.pins, n.inputs + Array(repeating: -1, count: max(0, n.kind.pins.count - n.inputs.count))) {
+            if id < 0 {
+                if !pin.optional { return "\(n.kind.title) \(n.name): nothing is wired into \(pin.name)" }
+                continue
+            }
+            if let seen, !seen.contains(id) { return "\(n.kind.title) \(n.name): its \(pin.name) comes after it, or from nothing" }
+            let wire = output(of: id)
+            if pin.type != .any && wire != .any && wire != pin.type {
+                return "\(n.kind.title) \(n.name): \(pin.name) doesn't take what's wired into it"
+            }
+        }
         return nil
     }
 
@@ -355,15 +361,25 @@ extension PlantGraph {
         }
     }
 
-    /// One run of the graph's side, calling the stages as a program's code would (the same draws in the same order), or
-    /// as far as what comes into `stop`.
-    private func run(_ side: PlantSide, _ p: inout PlantContext, stop: Int32? = nil) -> Int32 {
+    /// One run of the graph's side, calling the stages as a program's code would (the same draws in the same order).
+    private func run(_ side: PlantSide, _ p: inout PlantContext) -> Int32 {
+        let ran = stages(side, &p)
+        return end(of: side).flatMap { ran.wire[$0] } ?? ran.last
+    }
+
+    /// The stages of a side, in order: which of the context's values each node's output is, and the last one.
+    /// `partial` (a graph looked at before it's whole): only what can run runs, and only as far as `until`. `each` sees
+    /// every stage that ran, with the wires so far.
+    func stages(_ side: PlantSide, _ p: inout PlantContext, partial: Bool = false, until: Int32? = nil,
+                each: (PlantNode, [Int32: Int32], inout PlantContext) -> Void = { _, _, _ in }) -> (wire: [Int32: Int32], last: Int32) {
         var wire: [Int32: Int32] = [:]
         var last: Int32 = -1
         func w<T>(_ id: Int32) -> Wire<T> { Wire(node: wire[id] ?? -1) }
         func optional<T>(_ id: Int32) -> Wire<T>? { id >= 0 ? w(id) : nil }
         for node in nodes where node.side == side {
-            if node.id == stop { return node.inputs.first.flatMap { wire[$0] } ?? -1 }
+            if partial {
+                guard pinProblem(node) == nil, zip(node.kind.pins, node.inputs).allSatisfy({ $0.type == .palette || $1 < 0 || wire[$1] != nil }) else { continue }
+            }
             var out: Int32 = -1
             let i = node.inputs
             switch node.settings {
@@ -386,8 +402,10 @@ extension PlantGraph {
             }
             wire[node.id] = out
             last = out
+            each(node, wire, &p)
+            if node.id == until { break }
         }
-        return end(of: side).flatMap { wire[$0] } ?? last
+        return (wire, last)
     }
 
     package func twig(_ p: inout PlantContext) -> Wire<Foliage.Mesh> {
@@ -400,8 +418,8 @@ extension PlantGraph {
     /// The plant as it comes into `node`, on the plant's side. nil: it can't be run as far.
     func growing(into node: Int32, _ p: inout PlantContext) -> Growing? {
         guard wiring == nil, !nodes.contains(where: \.isStatement) else { return nil }
-        let made = run(.plant, &p, stop: node)
-        return made >= 0 ? p.value(Wire<Growing>(node: made)) : nil
+        guard let from = self.node(node)?.inputs.first, from >= 0, let made = stages(.plant, &p, until: from).wire[from], made >= 0 else { return nil }
+        return p.value(Wire<Growing>(node: made))
     }
 }
 

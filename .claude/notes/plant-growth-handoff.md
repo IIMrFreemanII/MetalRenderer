@@ -222,7 +222,32 @@ more saturated.
 - The fingerprint is in the scenes' mesh names: `SpeciesDef.fingerprintForm` takes a standard graph out, so a built-in's
   stays what it was (`PlantProgramTests`, `Fixtures/builtin-species-v2.json`) and a node moved regrows nothing.
 - `Programs/*.swift` are the emitter's output: after changing the emitter, write them again or `testTheBuiltInFilesRoundTrip`
-  fails (parse then emit each and write it back). Not done: a graph's node previews.
+  fails (parse then emit each and write it back).
+
+## A node's preview (2026-10-30)
+
+- `Program/PlantStage.swift`: `PlantGraph.stages` runs a side in order; with `partial` it skips what can't run and stops at
+  `until`. `PlantStage` turns what a node has made into a `Foliage.Plant`, so that the library, Flora, the views, the ruler
+  and the stats all work as for a whole plant (`Foliage.library(stage:)`, `Flora(stage:)`, `PlantPrograms.runner(for:stage:seed:)`).
+  A twig-side stage runs with the palette's last twig's seed and stands alone as the one part of a plant.
+- `PlantSceneSettings.stage`: session state, not compared by `isSameWorkshop` (a change keeps the camera and the gathered
+  light); `SettingsStore` clears it at launch. `PlantStats.stage` says when the stage is in: the model frames then, if it
+  crossed between the twig's side and the plant's (`frameStage`).
+- `PlantGraph.stageProblem` is why a node has nothing to look at, walking only what leads to it: a graph with an Output
+  not wired still previews its Grower.
+- Thumbnails: `PlantPrograms.sketches` (one probing run, nothing meshed), drawn to CGImages on a utility queue
+  (`PlantThumbnails`), latest request only, at most 10 a second; started by the graph view's appearing, so a hidden panel
+  costs nothing. Nodes grew to 212 by 56 for them.
+- `METALRENDERER_PLANT_SCRIPT=<folder>` (`PlantEditorScript`) drives the editor in its real window, as
+  `METALRENDERER_VFX_SCRIPT` does; run it with `METALRENDERER_PLANTS=builtin`, as a copy of the binary under another name
+  (`cp .build-dev/debug/MetalRenderer .build-dev/debug/PlantScript`). UserDefaults are named after the executable, and that
+  is what keeps its draft and settings out of the user's: `CFFIXED_USER_HOME` moves only the caches.
+- The Project Graph no longer rebuilds while its window can't be seen (`ProjectGraphModel.showing`, set by the panel from its
+  visibility and occlusion): it was 16-23% of the main thread in a drag, at every install. It catches up when shown, or at a
+  click in the view (the view's selection box comes from it). Open and in view, it still rebuilds at every edit.
+- Not done: stages in the lineup and Variations layouts (they show the whole plant); a stage on the Grass Patch or an end
+  Output is the plant itself; a Twig Palette says so rather than showing its twigs in a row.
+
 
 ## Gravity and Bone Reduction nodes (2026-10-30)
 
