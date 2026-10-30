@@ -779,6 +779,16 @@ opens the editor.
   order, with the same random numbers. When it's let go the file compiles behind the workshop, from which point the
   compiled program grows the plant: the same bytes (`PlantSwiftTests`). The line under the graph says how it stands; a
   compile error's *Show* selects its node. A graph with a wire missing says what's missing and the plant stays as it was.
+* **Every node shows what it has made** (`PlantStage.swift`, Unreal's vegetation editor has it too): select a node and the
+  workshop shows the plant as it stands there, with the same seeds and draws as far as it has come, following a slider as
+  it's dragged. A plant still growing (Grower, Grow More, Grafts, Spurs, Carve) is its stems, a colour to a generation; a
+  Mesh Builder its wood; Leaves those on their stems; a Foliage Distributor the wood with its twigs hung; on the twig's
+  side, the palette's fullest twig so far, standing alone and framed (Skeleton and Light still show the stems of any
+  stage). P or the pin on a node keeps the workshop on that stage whatever else is selected, so that a Grower's sliders
+  can be dragged watching the wood or the Output. A node's own thumbnail is its stage from the side
+  (`PlantThumbnails`: one run of the graph, about 2 ms for the oak, off the main thread, only the latest edit). A node
+  with no shape (a Twig Palette, Swift Code on a `LeafSet`, a statement, something upstream not wired) shows a crossed-out
+  eye, says why, and the workshop shows the whole plant. `,stage=<node id>` in `METALRENDERER_SCENE` renders one offscreen.
 * **Species** are data too (`PlantSpecies.swift`): a `SpeciesDef` holds its colours and textures and where it grows,
   and its recipe (`Growth.Params`, `Growth.Twigs`, leaves on its own stems), which is what the standard chain of stages
   holds (`PlantGraph.standard`, `project`) and what Mutate moves.

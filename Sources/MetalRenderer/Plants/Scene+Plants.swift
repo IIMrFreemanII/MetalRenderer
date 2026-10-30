@@ -21,6 +21,8 @@ package struct PlantStats: Equatable {
     package var twigs = 0
     package var height: Float = 0
     package var buildMs = 0.0
+    /// The graph's node it shows the plant at (PlantSceneSettings.stage; -1: all of it).
+    package var stage = -1
 }
 
 extension Camera {
@@ -62,7 +64,9 @@ extension Scene {
                 shown.append(Foliage.Species(rawValue: catalog.count - 1))
             }
         }
-        let flora = Flora(self, seed: UInt64(max(p.seed, 0)), catalog: catalog, species: shown, keep: false)
+        // A stage of the one plant: the library holds it as it stands at that node.
+        let stage = p.layout == .single ? p.stage : -1
+        let flora = Flora(self, seed: UInt64(max(p.seed, 0)), catalog: catalog, species: shown, keep: false, stage: stage)
 
         // What stands where: (species, plant, x, z).
         var entries: [(species: Foliage.Species, plant: Int, x: Float, z: Float)] = []
@@ -97,7 +101,8 @@ extension Scene {
         }
 
         var focus = AABB()
-        let skeleton = p.view != .plant
+        // (A plant still growing has only stems to show, in any view.)
+        let skeleton = p.view != .plant || PlantPrograms.runner(for: catalog[species], stage: stage, seed: UInt64(max(p.seed, 0))).showsStems
         let levelMaterials = skeleton ? Scene.skeletonColors.map { addMaterial(albedo: $0 * 0.6, emission: $0 * 0.6) } : []
         let lightMaterials = p.view == .light ? Scene.lightColors.map { addMaterial(albedo: $0 * 0.6, emission: $0 * 0.6) } : []
         var twigMeshes: [Foliage.Species: [Int]] = [:]
@@ -113,7 +118,7 @@ extension Scene {
             // The stems as thin tubes, a colour to a generation, and each twig's the twigs' colour.
             let age = plant.age, variant = set.plants(of: age).firstIndex(of: e.plant) ?? 0
             // (The plant's own skeleton: the same seed as the library's.)
-            let runner = PlantPrograms.runner(for: def)
+            let runner = PlantPrograms.runner(for: def, stage: stage, seed: UInt64(max(p.seed, 0)))
             guard let grown = runner.skeleton(e.species, age: age, seed: Foliage.seed(UInt64(max(p.seed, 0)), def.seedIndex, age.rawValue, variant)) else { continue }
             let up = grown.up
             let stems = Scene.thinned(grown.skeleton)
@@ -158,7 +163,8 @@ extension Scene {
         let edited = chosen(species).flatMap { index in entries.first { $0.species == species && $0.plant == index } }
         if let e = edited, let set = flora.set(e.species) {
             let measured = set.plants[e.plant].bounds.transformed(translate([e.x, 0, e.z]))
-            if p.figure { let figure = addPlantFigure(beside: measured, kit); focus.grow(figure); framed.grow(figure) }
+            let twig = PlantPrograms.runner(for: catalog[species], stage: stage, seed: UInt64(max(p.seed, 0))).showsTwig
+            if p.figure && !twig { let figure = addPlantFigure(beside: measured, kit); focus.grow(figure); framed.grow(figure) }
             if p.ruler { framed.grow(addSizeRuler(measured, kit)) }
         }
         self.focus = focus
@@ -167,7 +173,7 @@ extension Scene {
         // What the chosen plant costs (its age and variant, whatever the layout shows besides).
         if let index = chosen(species), let set = flora.set(species) {
             let plant = set.plants[index]
-            var stats = PlantStats(species: catalog[species].id, parts: plant.parts.count, height: plant.height)
+            var stats = PlantStats(species: catalog[species].id, parts: plant.parts.count, height: plant.height, stage: stage)
             stats.twigs = plant.parts.filter(\.shared).count
             stats.triangles = plant.meshes.reduce(0) { $0 + $1.triangles } + set.palette.reduce(0) { $0 + $1.triangles }
             let flat = Foliage.flatten(plant, palette: set.palette)

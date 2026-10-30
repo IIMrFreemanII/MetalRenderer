@@ -21,7 +21,7 @@ final class ProjectGraphPanel: NSObject, NSWindowDelegate {
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
     package init(host: ProjectGraphHost, openEditor: @escaping (EditorTarget) -> Void) {
-        model = ProjectGraphModel(host: host)
+        model = ProjectGraphModel(host: host, showing: false)
         model.openEditor = openEditor
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 860),
                           styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
@@ -64,6 +64,7 @@ final class ProjectGraphPanel: NSObject, NSWindowDelegate {
             window.setFrameOrigin(NSPoint(x: min(main.frame.maxX - 200, visible.maxX - window.frame.width), y: max(main.frame.minY - 120, visible.minY)))
         }
         window.makeKeyAndOrderFront(nil)
+        model.showing = true
         UserDefaults.standard.set(true, forKey: ProjectGraphPanel.visibleKey)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [model] in model.frameAll(in: model.canvasSize) }
     }
@@ -71,6 +72,7 @@ final class ProjectGraphPanel: NSObject, NSWindowDelegate {
     func toggle(nextTo main: NSWindow) {
         if window.isVisible && window.isKeyWindow {
             window.orderOut(nil)
+            model.showing = false
             UserDefaults.standard.set(false, forKey: ProjectGraphPanel.visibleKey)
         } else {
             show(nextTo: main)
@@ -78,8 +80,14 @@ final class ProjectGraphPanel: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        model.showing = false
         UserDefaults.standard.set(false, forKey: ProjectGraphPanel.visibleKey)
         model.save()
+    }
+
+    /// Hidden behind another window, minimized, on another space, on a locked screen.
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        model.showing = window.occlusionState.contains(.visible)
     }
 
     func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? { model.undo }

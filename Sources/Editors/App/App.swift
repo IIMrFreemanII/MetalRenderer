@@ -213,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         plantEditor = plants
         if PlantEditorPanel.wasVisible || controller.settings.scene.kind == .plants { plants.show(nextTo: window) }
         controller.onTogglePlants = { [weak self] in self?.togglePlants(nil) }
+        PlantEditorScript.run(plants, controller: controller, renderer: renderer)
         let buildings = BuildingEditorPanel(controller: controller)
         buildingEditor = buildings
         if BuildingEditorPanel.wasVisible || controller.settings.scene.kind == .buildings { buildings.show(nextTo: window) }

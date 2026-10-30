@@ -460,6 +460,110 @@ final class PlantEditorTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: PlantStore.swiftURL("oak", in: folder).path))
     }
 
+    /// The node selected, or the one pinned, is the stage the workshop shows; one that has nothing to show says so and
+    /// the workshop shows all of the plant.
+    func testChoosingANodeShowsItsStage() throws {
+        let (m, host) = editor()
+        let g = m.graph
+        // (The ids are the same in the graph on the canvas and the one that's run.)
+        XCTAssertEqual(g.nodes.map(\.id), m.def.grownGraph.nodes.map(\.id))
+        XCTAssertEqual(g.nodes.map(\.kind), m.def.grownGraph.nodes.map(\.kind))
+        func id(_ kind: PlantNodeKind, _ side: PlantSide = .plant) throws -> Int32 { try XCTUnwrap(g.first(kind, side)).id }
+        var stage: Int { host.settings.scene.plants.stage }
+        XCTAssertEqual(stage, -1)
+        m.click("\(try id(.grow))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.grow)))
+        XCTAssertNil(m.frameStage, "the same side: the camera stays")
+        // Its Output is the whole plant, and a palette has nothing to show.
+        m.clearSelection()
+        m.click("\(try id(.output))", extend: false)
+        XCTAssertEqual(stage, -1)
+        m.clearSelection()
+        m.click("\(try id(.palette, .twig))", extend: false)
+        XCTAssertEqual(stage, -1)
+        XCTAssertNotNil(m.stageProblem(try id(.palette, .twig)))
+        m.clearSelection()
+        // A twig's stage is framed when it's in; going back, the plant is.
+        m.click("\(try id(.twig, .twig))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.twig, .twig)))
+        XCTAssertEqual(m.frameStage, stage)
+        m.clearSelection()
+        XCTAssertEqual(stage, -1)
+        XCTAssertEqual(m.frameStage, -1)
+
+        // Pinned, it stays whatever is selected, and the sliders of another node still reach it.
+        m.click("\(try id(.skeleton))", extend: false)
+        m.togglePin()
+        XCTAssertEqual(m.pinned, try id(.skeleton))
+        m.clearSelection()
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        m.click("\(try id(.grow))", extend: false)
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        m.beginDrag()
+        let cycles = m.def.growth!.cycles
+        m.setSettings(try id(.grow), { var p = m.def.growth!.growOnly(.standard); p.cycles = cycles - 5; return .grow(p) }())
+        m.endDrag()
+        XCTAssertEqual(m.def.growth?.cycles, cycles - 5)
+        XCTAssertEqual(stage, Int(try id(.skeleton)))
+        // Deleted, it's let go of.
+        m.clearSelection()
+        m.selection = ["\(try id(.skeleton))"]
+        m.deleteSelection()
+        XCTAssertNil(m.pinned)
+        XCTAssertEqual(stage, -1)
+    }
+
+    /// A wire taken away while its node is shown: the workshop goes back to all of it, and the node says why.
+    func testAStageWithoutItsWires() throws {
+        let (m, host) = editor()
+        let wood = try XCTUnwrap(m.graph.first(.skeleton, .plant))
+        m.click("\(wood.id)", extend: false)
+        XCTAssertEqual(host.settings.scene.plants.stage, Int(wood.id))
+        m.unlink("\(wood.id)", "0")
+        XCTAssertEqual(host.settings.scene.plants.stage, -1)
+        XCTAssertTrue(try XCTUnwrap(m.stageProblem(wood.id)).contains("nothing is wired"))
+    }
+
+    /// Outside the workshop the scene isn't touched.
+    func testStagesOnlyInTheWorkshop() throws {
+        let (m, host) = editor(in: .forest)
+        let before = host.updates
+        m.click("\(try XCTUnwrap(m.graph.first(.grow, .plant)).id)", extend: false)
+        XCTAssertEqual(host.updates, before)
+        XCTAssertEqual(host.settings.scene.plants.stage, -1)
+        m.goToWorkshop()
+        XCTAssertEqual(host.settings.scene.kind, .plants)
+        XCTAssertEqual(host.settings.scene.plants.stage, Int(try XCTUnwrap(m.graph.first(.grow, .plant)).id))
+    }
+
+    /// The nodes' pictures come off the main thread, the latest edit's; a node with no shape has none.
+    func testThumbnails() throws {
+        let (m, _) = editor()
+        XCTAssertTrue(m.thumbnails.images.isEmpty, "nobody's looking")
+        m.thumbnailsWanted = true
+        m.refreshThumbnails()
+        let g = m.graph
+        let grow = try XCTUnwrap(g.first(.grow, .plant)).id, palette = try XCTUnwrap(g.first(.palette, .twig)).id
+        let first = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in m.thumbnails.images[grow] != nil }, object: nil)
+        wait(for: [first], timeout: 10)
+        let image = try XCTUnwrap(m.thumbnails.images[grow])
+        XCTAssertEqual(image.width, Int(CGFloat(PlantThumbnails.size) * PlantThumbnails.scale))
+        XCTAssertNil(m.thumbnails.images[palette])
+        // Many edits at once are one or two runs, and it ends on the last.
+        m.beginDrag()
+        for c in 1...20 {
+            var p = m.def.growth!.growOnly(.standard)
+            p.cycles = 10 + c
+            m.setSettings(grow, .grow(p))
+        }
+        m.endDrag()
+        let short = PlantThumbnails.draw(PlantPrograms.sketches(m.def, species: .oak, age: .mature, variant: 0, seed: 1)[grow]!)
+        let last = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            m.thumbnails.images[grow].flatMap { $0.dataProvider?.data } == short?.dataProvider?.data
+        }, object: nil)
+        wait(for: [last], timeout: 10)
+    }
+
     func testSpeciesAndSaving() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("plant-editor-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }

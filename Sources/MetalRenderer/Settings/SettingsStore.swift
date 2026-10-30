@@ -54,6 +54,7 @@ package enum SettingsStore {
         s.scene.buildings.compare = ""
         s.scene.plants.mutants = ""
         s.scene.plants.compare = ""
+        s.scene.plants.stage = -1
         s.virtualGeometry.freeze = false
         s.scene.realism = defaults.scene.realism   // (once the panel's switch: a copy saved with it off stays realistic)
         if let path = s.sky.imagePath, !FileManager.default.fileExists(atPath: path) {
