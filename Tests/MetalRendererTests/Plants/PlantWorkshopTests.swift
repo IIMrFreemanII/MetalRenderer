@@ -211,8 +211,9 @@ final class PlantWorkshopTests: XCTestCase {
     func testCustomAndCompared() {
         var catalog = PlantCatalog.builtIn
         var tall = catalog[.oak]
-        tall.growth?.targetHeight = 20
-        tall.growth?.cycles = 60
+        let cycles = tall.growth!.cycles
+        tall.growth?.targetHeight *= 1.6
+        tall.growth?.cycles = Int(Float(cycles) * 1.6)
         catalog.species[0] = tall
         let key = PlantCatalog.register(catalog)
         let edited = workshop(catalog: key)

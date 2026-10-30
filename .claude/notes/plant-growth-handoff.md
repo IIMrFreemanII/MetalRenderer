@@ -145,3 +145,60 @@ Now:
   - Oak look colours are about a third darker and toward UE's hue. Workshop crown mid-tones: 80/83/57 sRGB, against UE's 80/83/66 (before: 77/79/55).
 - **Twig wood:** `Growth.twigWood` = 8 is added to a twig's wood U (`TWIG_WOOD` in Surface.metal). It shades as yellow-green young stems, `TWIG_WOOD_TINT`, without the trunk's moss.
 - **Forest shot:** 7.9–8.0 ms against 7.6–7.9 before (trace +0.05 ms from the extra leaf triangles).
+
+## The oak grown as Unreal's Mega Plants sample tree (2026-10-30)
+
+The tree editor's tree (PVE_MyMegaTree, the sample DeciduousTree_01 graph) still looked different: a dense conical
+crown on a leader, against our broad oak of few limbs with sprays at their ends. Its graph was read from the editor
+(PCGToolset GetGraphStructure on `PVE_MyMegaTree:ProceduralVegetationGraph`; the node values, compact, in the session's
+scratchpad `pve_params.txt`) and the plugin's source (`ProceduralVegetationEditor/Source/ProceduralVegetation`) read
+for what each value does. The graph: Grower (45 cycles) → Graft Distributor (3-cycle grafts on generations 3–4) →
+Grower (3 more cycles) → Carve (outer 4%) → Manual Edit → Carve (bottom 10%) → Gravity → Mesh Builder → Bone
+Reduction → Foliage Distributor (hormone mode) → Export. Its tree: 12.15 m tall, 9.5 by 8.9 m, 385 branches, 846 twigs.
+
+Taken, in original code (Grower.swift, BuiltInPlants.swift `oakGrowth`, `oakTwigs`):
+- Its Grower values: target length 20 m, 0.4 m internodes (branches' 0.34), its four priority curves as our apical and
+  axillary ramps (the same basis: length from the root over the target), trunk axil 55° (Unreal's 35° is up from the
+  level), branches alternate at 45°, no apical dominance, radius 0.0035 a cycle (a 0.15 m trunk), ethylene 0.15.
+- New, as Unreal's grower: `Shoot.requirement` (its trunk's buds ask nearly open sky, its branches' none),
+  `Shoot.sproutLight` (axillary phototropism), `Params.bareNodes` (radical auxin: the first nodes bare), `Params.spurs`
+  (the grafts grown on: a 0.25 m shoot at each node of the last generations' branches), `Params.carve` (Carve from the
+  bottom: the trunk's foot cut, the plant lowered). All optional: saved species decode, and every other species is
+  bit-identical (the workshop's shots byte for byte).
+- Not taken: its light's strength. Unreal's phototropism (0.49 a step toward a light that is straight up in the open)
+  is offset by its grower's heavy sag of young tips (about 16° a cycle); ours pulls toward a light that is mostly up
+  and sags little, so its values stood every branch upright (crowns 0.5 m wide). The oak's turns are weaker (branch
+  phototropism 0.08, trunk sproutLight 0.15) and its shade lighter (`light.shadow` 16), chosen by sweeping them for
+  Unreal's counts: 20 primaries, about 500 branches and spurs, 916 twigs, 12.2 m by 12 by 10.5 (the width set by one
+  long low branch: the seed's).
+- Twigs (hormone mode): every 0.3 m back from each tip while ethylene < 0.9, from the trunk on (`fromGeneration` 1),
+  alternate and level (`Twigs.alternate`: Alternate phyllotaxy with reset, then BranchUpFlatten), 83° from the branch,
+  scale 2.3 × lerp(0.75, 1) from tip to foot (`tipScale` 1, `alongScale` 0.333). The twig itself as Leaf_Twig: a
+  0.42 m shoot of 8 to 15 alternate leaves (13 cm, scaled to 22–30), its wood half as thick (it is hung at twice its size).
+- The forest shot (dev build, one run): 8.0 → 6.7 ms (fewer leaf triangles: 916 twigs of ~14 leaves against 433 of ~80).
+- Not done: Unreal's mesh builder (generation radius ramps, its trunk profile's 2.4× lobed foot over the bottom 15%,
+  bark displacement), its Gravity node, the outer carve, the manual edit; the new fields have no sliders in the plant
+  editor yet (Mutate doesn't touch them).
+
+### Then: grafts, clumps, the crown's shape and colour (2026-10-30)
+
+Side by side with the editor's capture (ffmpeg `hstack` of the PVE crop and the workshop's oak), it still differed:
+broad and triangular on near-level limbs, its twigs flat level fronds strung along them like fishbones, darker and
+more saturated.
+- **Grafts** (`Params.grafts`, Unreal's graft distributor, parametric mode): 2 a branch on generations 3 and up where
+  the plant's gradient (length from the root over the longest) is past 0.51; 3 internodes of 0.25 m, scaled 2 inside
+  to 0.2 at the tips, 10° from the branch inside to 80° at the tips (Unreal's axil angle there is measured from the
+  perpendicular), 135° round from the last. New wood: twigs deep in the crown. (Unreal sets 3 a branch at plant
+  gradient levels 0.51, 0.76 and 1; on outer branches only the last lands, at the tip; 2 here.)
+- **Clumped twigs**: the twig a 0.34 m shoot of leaves set round it (spiral, 43° forward), not a frond; hung
+  alternate in a plane of each branch's own (`Twigs.roll` 60° from the level; Unreal resets the phyllotaxy to the
+  bud's frame, which is no more level than the branch); `Twigs.sparse` 0.85 (Unreal's palette picks at random, all
+  as leafy).
+- **Shape**: the trunk's `sproutLight` at Unreal's own value, 0.44: the first branches climb and the crown rounds,
+  8.4–9.7 m by 11.2–12.2 m over seeds 5 and 9 (Unreal's 9.5 by 8.9, 12.15).
+- **Colour**: leaves lighter and greyer (crown 88/92/63 sRGB against Unreal's 93/96/77; it was 63/69/42), bark greyer
+  and darker (Unreal's trunk 86/79/69; ours was 115/98/86). Unreal's grey is likely its leaves' specular sky sheen,
+  which our camera leaves skip (reflections: the diffuse GI stands in); the albedo stands in for it here.
+- Every other species is byte-identical in the workshop's shots (an unset roll draws no random number).
+- Forest shot (dev build, one run): 8.1 ms, about where it was before this work (the grafts' twigs back up from 916 to
+  about 1,200).

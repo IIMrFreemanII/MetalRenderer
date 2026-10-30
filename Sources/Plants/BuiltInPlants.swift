@@ -8,56 +8,92 @@ import simd
 extension Foliage {
     package static let builtInSpecies: [SpeciesDef] = [oakDef, birchDef, coniferDef, deadDef, bushDef, fernDef, grassDef]
 
-    /// The oak grown bud by bud: a clear trunk, then a broad crown of spiral branches that seek the light, the
-    /// shaded inner ones shed.
+    /// The oak grown bud by bud, as Unreal's Mega Plants sample tree (DeciduousTree_01, its Grower nodes' values):
+    /// a leader to the top, a clear bole to about 3 m, then a branch at nearly every node; alternate side branches;
+    /// short spurs on the last generation's nodes; the shaded inner shoots shed. Its light is ours, not Unreal's (whose
+    /// strong pull toward the sky its tips' heavy sag offsets): the turns toward it are weaker, the shade lighter, so
+    /// that it comes out as that tree does, 12 m tall and 9 wide, about 350 branches and 750 twigs.
     private static let oakGrowth: Growth.Params = {
         var p = Growth.Params()
-        p.cycles = 36
-        p.targetHeight = 16
+        p.cycles = 45
+        p.targetHeight = 20
         p.maxGeneration = 4
-        p.radiusGrowth = 0.009
-        p.apicalDominance = 0.5
-        p.auxinFalloff = 0.3
-        p.ethyleneBuildup = 0.1
+        p.radiusGrowth = 0.0035
+        p.apicalDominance = 0
+        p.ethyleneBuildup = 0.15
         p.gravity = 0.2
-        p.trunk.segment = 0.45
-        p.trunk.apicalRamp = .points([[0, 1], [0.55, 0.9], [0.85, 0.2], [1, 0]])
-        p.trunk.axillaryRamp = .points([[0, 0], [0.2, 0], [0.32, 0.8], [1, 1]])
-        p.trunk.axillaryGrowth = 0.9
-        p.trunk.axilAngle = 1.15
-        p.trunk.randomAngle = 0.08
-        p.trunk.phototropism = 0.1
-        p.trunk.gravitropism = 0.05
+        p.bareNodes = 3
+        p.trunk.segment = 0.4
+        p.trunk.apicalRamp = .points([[0, 0.994], [0.619, 0.381], [1, 0]])
+        p.trunk.axillaryRamp = .points([[0, 0], [0.156, 0], [0.179, 0.435], [0.312, 0.674], [0.493, 0.664], [1, 1]])
+        p.trunk.axillaryGrowth = 1
+        p.trunk.axilAngle = 0.96                    // 55° (Unreal's axil angle 35° is up from the level)
+        p.trunk.randomAngle = 0.03
+        p.trunk.phototropism = 0.19
+        p.trunk.sproutLight = 0.44
+        p.trunk.requirement = 0.2
         var b = Growth.Shoot()
-        b.segment = 0.4
+        b.segment = 0.34                            // 0.4 × its branch scale 0.85
         b.apicalGrowth = 1
-        b.apicalRamp = .linear(1, 0.55)
-        b.axillaryGrowth = 0.8
-        b.axillaryRamp = .linear(0.55, 1)
-        b.axilAngle = 0.9
-        b.randomAngle = 0.18
-        b.phototropism = 0.15
-        b.gravitropism = -0.02
-        b.flatten = 0.5
+        b.apicalRamp = .points([[0, 0.205], [0.423, 0.34], [1, 0]])
+        b.axillaryGrowth = 1
+        b.axillaryRamp = .points([[0, 0], [0.218, 0.387], [1, 1]])
+        b.phyllotaxis = .distichous
+        b.axilAngle = 0.785                         // 45°
+        b.randomAngle = 0.06
+        b.phototropism = 0.08
+        b.requirement = 0
         p.branch = b
-        p.light.shadow = 4
+        p.light.lengthImpact = 0
+        p.light.shadow = 16
         p.senescence?.threshold = 0.2
+        p.grafts = Growth.Grafts()
+        p.grafts?.perBranch = 2
+        p.spurs = Growth.Spurs()
+        p.carve = 0.1
+        p.wood.thinning = 0.9
+        p.wood.flare = 0.9
+        p.wood.flareHeight = 0.7
         return p
     }()
 
-    /// Its twigs: sprays of broad leaves traced from the scanned sheet, open and only half flattened, so that the sun
-    /// gets through the crown in flecks (as the Mega Plants tree's does in Unreal's vegetation editor; flat dense
-    /// sprays facing the sky cast one solid shadow). Its leaves are elliptic and smooth-edged, 15 cm, as that tree's
-    /// (its Leaf_Twig meshes: a laurel-like leaf): LeafSet022's (leaves-oak).
+    /// Its twigs, as that tree's Leaf_Twig meshes: a short shoot crowded with about a dozen elliptic, smooth-edged
+    /// leaves set round it (LeafSet022's, leaves-oak), hung by Unreal's foliage distributor's hormone mode: every 0.3 m
+    /// back from each tip while the wood is young, the trunk's top too, left and right of the branch in a plane of its
+    /// own nearly square to it, twice their size and larger toward the branch's foot.
     private static let oakTwigs: Growth.Twigs = {
         var t = Growth.Twigs()
-        t.scale = 1
-        t.spacing = 0.34
-        t.leaf.perMetre = 22
-        t.leaf.length = 0.15
+        // The twig: a short shoot crowded with leaves set round it, a clump, as the sample's Leaf_Twig meshes are.
+        t.growth.cycles = 4
+        t.growth.targetHeight = 0.34
+        t.growth.maxGeneration = 2
+        t.growth.trunk.segment = 0.08
+        t.growth.trunk.apicalRamp = .linear(1, 0.8)
+        t.growth.trunk.axillaryRamp = .linear(0, 0.4)
+        t.growth.trunk.axillaryGrowth = 0.5
+        t.growth.trunk.flatten = 0
+        t.growth.trunk.randomAngle = 0.2
+        t.growth.branch?.segment = 0.06
+        t.growth.branch?.flatten = 0
+        t.growth.seedRadius = 0.0009                // (hung twice their size: as thin as that tree's twigs)
+        t.growth.radiusGrowth = 0.0005
+        t.leaf.perMetre = 40
+        t.leaf.length = 0.13
+        t.leaf.start = 0.1
+        t.leaf.angle = 0.75
         t.leaf.sheet = "leaves-oak"     // (LeafSet024's beech leaves stay the default sheet)
-        t.growth.trunk.flatten = 0.25
-        t.growth.branch?.flatten = 0.3
+        t.scale = 1.725
+        t.scaleV = 0.1
+        t.spacing = 0.3
+        t.ethylene = 0.9
+        t.fromGeneration = 1
+        t.angle = 1.45                              // 83°
+        t.lightAim = 0.1
+        t.alternate = true
+        t.roll = 1.05
+        t.tipScale = 1
+        t.alongScale = 0.333
+        t.sparse = 0.85                             // (Unreal's palette picks its twigs at random, all as leafy)
         return t
     }()
 
@@ -70,7 +106,7 @@ extension Foliage {
         // among themselves greens and saturates them). Its leaf texture's own mean is a deeper olive, 0.10/0.12/0.04:
         // these sit between that hue and the grey ones that once matched its crown (a third darker: its glossier leaves
         // catch more of the sun).
-        look: Look(bark: [0.2, 0.15, 0.11], leaves: [[0.134, 0.162, 0.1], [0.148, 0.176, 0.11], [0.113, 0.141, 0.09], [0.155, 0.172, 0.106]],
+        look: Look(bark: [0.15, 0.125, 0.092], leaves: [[0.21, 0.24, 0.19], [0.23, 0.26, 0.205], [0.18, 0.21, 0.17], [0.235, 0.255, 0.2]],
                    autumn: [0.3, 0.14, 0.035]),
         habitat: Habitat(order: 1, base: 0.9, elevation: .init(gain: -0.7, from: 0, to: 0.7), stand: -1.6))
 

@@ -86,9 +86,13 @@ final class PlantGoldenTests: XCTestCase {
     /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     /// (Oct 2026: the oak's leaves as the Mega Plants tree's: its own elliptic sheet (leaves-oak), 15 cm, olive; outline
     /// leaves 6 rows; twig wood carried past Growth.twigWood in U. Every hash that holds a twig.)
+    /// (Oct 2026: the oak grown as Unreal's Mega Plants sample tree: its Grower nodes' values, spurs, its foot carved,
+    /// twigs every 0.3 m of a dozen big leaves, alternate and level. Every hash that holds an oak.)
+    /// (Oct 2026: the oak's grafts (Unreal's graft distributor), its twigs clumps in a plane of each branch's own, its
+    /// new branches climbing as Unreal's (0.44), lighter greyer leaves and bark. Every hash that holds an oak.)
     func testTheLibraryIsAsItWas() {
-        XCTAssertEqual(library(Foliage.library(seed: 1)), "74235a9790c8")
-        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "36fb2efa79de")
+        XCTAssertEqual(library(Foliage.library(seed: 1)), "305cdbe3d9e4")
+        XCTAssertEqual(library(Foliage.library(seed: 7, cards: true)), "945e20812b56")
     }
 
     /// (Oct 2026: the ground became the terrain's sectors, its layer materials added: the plants as they were, the
@@ -102,16 +106,20 @@ final class PlantGoldenTests: XCTestCase {
     /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     /// (Oct 2026: the oak's leaves as the Mega Plants tree's: its own elliptic sheet (leaves-oak), 15 cm, olive; outline
     /// leaves 6 rows; twig wood carried past Growth.twigWood in U. Every hash that holds a twig.)
+    /// (Oct 2026: the oak grown as Unreal's Mega Plants sample tree: its Grower nodes' values, spurs, its foot carved,
+    /// twigs every 0.3 m of a dozen big leaves, alternate and level. Every hash that holds an oak.)
+    /// (Oct 2026: the oak's grafts (Unreal's graft distributor), its twigs clumps in a plane of each branch's own, its
+    /// new branches climbing as Unreal's (0.44), lighter greyer leaves and bark. Every hash that holds an oak.)
     func testTheForestIsAsItWas() {
         var settings = SceneSettings(kind: .forest)
         settings.plantCatalog = "builtin"   // (not what Assets/Plants may hold)
         settings.realism = .off             // (the generated plants, not the scans: the same with or without them)
         settings.trees = 300
         settings.undergrowth = 25
-        XCTAssertEqual(scene(Scene(settings)), "31f64554013f")
-        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "dfbd85285c8f")
+        XCTAssertEqual(scene(Scene(settings)), "d988558790cf")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true, voxelBoxes: true)), "68652ae60565")
         settings.leafCards = true
-        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "3ca6c4f1d05f")
+        XCTAssertEqual(scene(Scene(settings, assemblies: true)), "63adb6742ad3")
     }
 
     /// (Oct 2026: a lake and its stream in place of the pond's slab, no tree in them.)
@@ -122,11 +130,15 @@ final class PlantGoldenTests: XCTestCase {
     /// (Oct 2026: outline leaves domed, with a midrib: 16 triangles each, curved normals. Every hash that holds one.)
     /// (Oct 2026: the oak's leaves as the Mega Plants tree's: its own elliptic sheet (leaves-oak), 15 cm, olive; outline
     /// leaves 6 rows; twig wood carried past Growth.twigWood in U. Every hash that holds a twig.)
+    /// (Oct 2026: the oak grown as Unreal's Mega Plants sample tree: its Grower nodes' values, spurs, its foot carved,
+    /// twigs every 0.3 m of a dozen big leaves, alternate and level. Every hash that holds an oak.)
+    /// (Oct 2026: the oak's grafts (Unreal's graft distributor), its twigs clumps in a plane of each branch's own, its
+    /// new branches climbing as Unreal's (0.44), lighter greyer leaves and bark. Every hash that holds an oak.)
     func testTheValleyIsAsItWas() {
         var settings = SceneSettings(kind: .valley)
         settings.plantCatalog = "builtin"
         settings.realism = .off
-        XCTAssertEqual(scene(Scene(settings)), "6482c79cec06")
+        XCTAssertEqual(scene(Scene(settings)), "00a3737cd9c7")
     }
 
     func testTheWorldsPlantsAreAsTheyWere() {

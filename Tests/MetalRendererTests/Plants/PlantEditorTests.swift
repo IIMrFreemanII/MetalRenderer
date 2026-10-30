@@ -102,7 +102,7 @@ final class PlantEditorTests: XCTestCase {
     func testAgesAreShares() {
         var g = PlantCatalog.builtIn[.oak].growth!
         g.young = Growth.AgeShare(cycles: 0.5, height: 0.25)
-        XCTAssertEqual(Growth.aged(g, .young).cycles, g.cycles / 2)
+        XCTAssertEqual(Growth.aged(g, .young).cycles, Int((Float(g.cycles) / 2).rounded()))
         XCTAssertEqual(Growth.aged(g, .young).targetHeight, g.targetHeight / 4, accuracy: 1e-5)
         XCTAssertEqual(Growth.aged(g, .mature), g)
         XCTAssertLessThan(Growth.aged(g, .sapling).cycles, Growth.aged(g, .young).cycles)

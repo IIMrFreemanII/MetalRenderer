@@ -33,6 +33,12 @@ package enum Growth {
         package var phototropism: Float = 0.2       // each internode's turn toward the light
         package var gravitropism: Float = 0         // each internode's turn toward the sky (negative: toward the ground)
         package var lengthScale: Float = 1          // a branch's internodes, of `segment`
+        /// A new branch from this axis turns this far toward the light as it leaves (Unreal's axillary phototropism:
+        /// a tree's first branches climb toward the open sky).
+        package var sproutLight: Float? = nil
+        /// A bud on this axis sprouts only in this much light (nil: Light.requirement). Unreal's trunk asks nearly open
+        /// sky of its buds, its branches none.
+        package var requirement: Float? = nil
 
         package init() {}
     }
@@ -50,6 +56,35 @@ package enum Growth {
         package var threshold: Float = 0.25         // a branch whose mean light stays below this...
         package var cycles = 3                      // ...for more cycles than this is shed
         package var fromGeneration = 2              // the trunk and the first branches are never shed
+
+        package init() {}
+    }
+
+    /// Short side shoots on the last generation's nodes (what Unreal's sample tree gets from growing its grafted crown a
+    /// few cycles more): one at each node from `fromNode` on, alternate, `angle` from the branch, that bear the twigs
+    /// that fill the crown.
+    package struct Spurs: Codable, Equatable {
+        package var length: Float = 0.25
+        package var angle: Float = 0.45             // from the branch (rad)
+        package var fromNode = 3                    // a branch's first nodes stay bare
+        package var fromGeneration: Int? = nil      // nil: the last generation's branches only
+
+        package init() {}
+    }
+
+    /// Small shoots set on the outer branches once the plant is grown (Unreal's graft distributor in its parametric
+    /// mode, a three-cycle seedling as the graft): `perBranch` along each branch of `fromGeneration` on, where the
+    /// plant's gradient (a point's length from the root over the longest) is past `from`. Toward the inside they are
+    /// large and lie along their branch, toward the tips small and square to it; each turns 135° round the branch from
+    /// the last. Their wood is new, so they carry twigs deep in the crown.
+    package struct Grafts: Codable, Equatable {
+        package var perBranch = 3
+        package var from: Float = 0.51
+        package var fromGeneration = 3
+        package var segments = 3
+        package var length: Float = 0.25            // an internode, at scale 1
+        package var scale: SIMD2<Float> = [2, 0.2]  // inside, at the tips
+        package var angle: SIMD2<Float> = [0.17, 1.39]  // from the branch (rad), inside, at the tips
 
         package init() {}
     }
@@ -89,6 +124,13 @@ package enum Growth {
         package var light = Light()
         package var senescence: Senescence? = Senescence()
         package var bifurcation: Bifurcation? = nil
+        package var spurs: Spurs? = nil
+        package var grafts: Grafts? = nil
+        /// The foot of the trunk cut off, this share of its length, and the plant lowered onto the cut (Unreal's Carve
+        /// from the bottom): a shorter bole under the same crown.
+        package var carve: Float? = nil
+        /// The first nodes of every axis never sprout (Unreal's radical auxin, halved at each node of an axis).
+        package var bareNodes: Int? = nil
         package var wood = Wood()
         package var stems = 1                       // from the seed (a bush's several, a fern's fronds)
         package var stemSpread: Float = 0.3         // ...each leaning out from the axis this far (rad), round it
@@ -233,6 +275,7 @@ package enum Growth {
                     d = normalize(d * cos(fork.angle) + axis * sin(fork.angle))
                 } else {
                     points[tipIndex].bud = branches[b].generation < p.maxGeneration
+                        && branches[b].points.count > (p.bareNodes ?? 0)
                 }
                 let next = add(to: b, from: tipIndex, direction: d, length: length)
                 // Its axillary bud faces round from the last by the phyllotaxy's turn.
@@ -247,7 +290,7 @@ package enum Growth {
                 // Whether it sprouts, how many and at what angle is the axis it is on's (its ramp, its phyllotaxy); how
                 // the new branch grows is the branch shoot's.
                 let own = p.shoot(generation), s = p.shoot(generation + 1)
-                guard point.auxin <= 1 - p.apicalDominance, point.light >= p.light.requirement,
+                guard point.auxin <= 1 - p.apicalDominance, point.light >= own.requirement ?? p.light.requirement,
                       rng.next() * own.axillaryGrowth > 1 - own.axillaryRamp.value(relative(point)) else { continue }
                 points[i].bud = false
                 let (_, count) = phyllotaxy(own)
@@ -259,6 +302,7 @@ package enum Growth {
                         let up = normalize(p.up), level = d - up * dot(d, up)
                         if length_squared(level) > 1e-6 { d = normalize(d + (normalize(level) - d) * s.flatten) }
                     }
+                    if let lean = own.sproutLight { d = normalize(d + (point.lightDirection - d) * lean) }
                     d = steer(d, s, light: point.lightDirection)
                     branches.append(Branch(points: [Int32(i)], generation: generation + 1, parent: point.branch))
                     let first = add(to: branches.count - 1, from: i, direction: d, length: length)
@@ -344,6 +388,78 @@ package enum Growth {
             }
         }
 
+        /// The grafts (Params.grafts), once the plant is grown.
+        mutating func graft() {
+            guard let g = p.grafts else { return }
+            let reach = points.reduce(Float(0)) { $1.removed ? $0 : max($0, $1.fromRoot) }
+            guard reach > 0 else { return }
+            for b in branches.indices where !branches[b].removed && branches[b].generation >= g.fromGeneration {
+                let nodes = branches[b].points
+                guard nodes.count >= 3 else { continue }
+                var azimuth = rng.range(0, 2 * .pi)
+                for j in 0..<g.perBranch {
+                    let k = min(1 + Int(Float(j + 1) / Float(g.perBranch + 1) * Float(nodes.count - 1)), nodes.count - 1)
+                    let i = Int(nodes[k]), host = points[i]
+                    let u = (host.fromRoot / reach - g.from) / max(1 - g.from, 1e-3)
+                    guard !host.removed, u >= 0 else { continue }
+                    let t = min(u, 1), scale = g.scale.x + (g.scale.y - g.scale.x) * t
+                    let angle = g.angle.x + (g.angle.y - g.angle.x) * t
+                    azimuth += 0.75 * .pi
+                    let side = simd_quatf(angle: azimuth, axis: host.direction).act(host.lateral)
+                    var d = normalize(host.direction * cos(angle) + side * sin(angle))
+                    branches.append(Branch(points: [Int32(i)], generation: branches[b].generation + 1, parent: Int32(b), growing: false))
+                    let nb = branches.count - 1
+                    var from = i
+                    for n in 0..<g.segments {
+                        from = add(to: nb, from: from, direction: d, length: g.length * scale * rng.range(0.85, 1.15))
+                        points[from].radius = max(host.radius * 0.5 * (1 - 0.25 * Float(n)), p.seedRadius)
+                        points[from].light = host.light
+                        d = normalize(d + Foliage.randomUnit(&rng) * 0.15 + (host.lightDirection - d) * 0.1)
+                    }
+                }
+            }
+        }
+
+        /// The spurs (Params.spurs), once the plant is grown: a short shoot at each node of the last generation's
+        /// branches, alternate sides, turned a little toward the light.
+        mutating func spur() {
+            guard let s = p.spurs else { return }
+            let from = s.fromGeneration ?? p.maxGeneration
+            for b in branches.indices where !branches[b].removed && branches[b].generation >= from {
+                let nodes = branches[b].points
+                guard nodes.count > s.fromNode else { continue }
+                var flip: Float = 1
+                for k in s.fromNode..<(nodes.count - 1) {
+                    let i = Int(nodes[k]), point = points[i]
+                    guard !point.removed else { continue }
+                    flip = -flip
+                    let side = normalize(point.lateral) * flip
+                    var d = normalize(point.direction * cos(s.angle) + side * sin(s.angle))
+                    d = normalize(d + (point.lightDirection - d) * 0.2)
+                    branches.append(Branch(points: [Int32(i)], generation: branches[b].generation + 1, parent: Int32(b), growing: false))
+                    add(to: branches.count - 1, from: i, direction: d, length: s.length * rng.range(0.8, 1.2))
+                }
+            }
+        }
+
+        /// Params.carve: the trunk's foot cut off and the plant lowered (along `up`) onto the cut. Whatever grew from
+        /// the part cut off goes with it.
+        mutating func carveFoot() {
+            guard let c = p.carve, c > 0, p.stems <= 1, let last = branches[0].points.last else { return }
+            let trunk = branches[0].points, cut = c * points[Int(last)].fromRoot
+            guard let k = trunk.firstIndex(where: { points[Int($0)].fromRoot >= cut }), k > 0 else { return }
+            let a = points[Int(trunk[k - 1])], b = points[Int(trunk[k])]
+            let t = (cut - a.fromRoot) / max(b.fromRoot - a.fromRoot, 1e-6)
+            let foot = Int(trunk[k - 1])
+            points[foot].position = simd_mix(a.position, b.position, SIMD3(repeating: t))
+            points[foot].radius = a.radius + (b.radius - a.radius) * t
+            for j in 0..<(k - 1) { points[Int(trunk[j])].removed = true; points[Int(trunk[j])].bud = false }
+            branches[0].points = Array(trunk[(k - 1)...])
+            for b in branches.indices.dropFirst() where !branches[b].removed && points[Int(branches[b].points[0])].removed { remove(b) }
+            let up = normalize(p.up), drop = up * dot(points[foot].position, up)
+            for i in points.indices { points[i].position -= drop }
+        }
+
         /// Where each point goes in the wood: moved across its axis by smooth noise (the trunk's foot stays put).
         /// A branch's first node is its parent's point, so the two move together and the branch stays on.
         func placed() -> [SIMD3<Float>] {
@@ -410,12 +526,14 @@ package enum Growth {
         func twigs(_ t: Twigs, at: [SIMD3<Float>], stemOf: [Int32]) -> [TwigPlace] {
             var out: [TwigPlace] = []
             var rng = SplitMix64(seed: UInt64(noiseSeed) &* 0x9E3779B97F4A7C15 ^ 0x7A1C)
+            let up = normalize(p.up)
             for (b, branch) in branches.enumerated() where !branch.removed && branch.generation >= t.fromGeneration
                 && branch.points.count >= 2 && stemOf[b] >= 0 {
                 let stem = Int(stemOf[b])
                 var total: Float = 0
                 for q in branch.points.dropFirst() { total += points[Int(q)].segment }
                 var along: Float = 0, next: Float = 0, azimuth = rng.range(0, 2 * .pi)
+                let roll = t.roll.map { rng.range(-1, 1) * $0 } ?? 0
                 for k in stride(from: branch.points.count - 1, through: 1, by: -1) {
                     let q = Int(branch.points[k]), point = points[q]
                     defer { along += point.segment }
@@ -425,13 +543,24 @@ package enum Growth {
                     next = along + t.spacing * rng.range(0.8, 1.2)
                     var d = point.direction
                     if !tip {
-                        azimuth += Foliage.goldenAngle
-                        let side = simd_quatf(angle: azimuth, axis: d).act(point.lateral)
+                        let side: SIMD3<Float>
+                        if t.alternate == true {
+                            // Left and right of the branch in turn, in a plane of the branch's own (Unreal's alternate
+                            // phyllotaxy, reset to the bud's frame and flattened across its up): a plane rolled from
+                            // the level by up to `roll`, so that branches' sprays don't all lie alike.
+                            azimuth += .pi
+                            var level = cross(d, up)
+                            level = length_squared(level) > 1e-4 ? normalize(level) : point.lateral
+                            side = simd_quatf(angle: roll, axis: d).act(level) * (cos(azimuth) < 0 ? -1 : 1)
+                        } else {
+                            azimuth += Foliage.goldenAngle
+                            side = simd_quatf(angle: azimuth, axis: d).act(point.lateral)
+                        }
                         d = normalize(d * cos(t.angle) + side * sin(t.angle))
                     }
                     d = normalize(d + (point.lightDirection - d) * t.lightAim)
                     let u = total > 0 ? along / total : 0
-                    let size = t.scale * (1 + rng.range(-1, 1) * t.scaleV) * (tip ? 1.1 : 1 - 0.3 * u)
+                    let size = t.scale * (1 + rng.range(-1, 1) * t.scaleV) * (tip ? t.tipScale ?? 1.1 : 1 + (t.alongScale ?? -0.3) * u)
                     out.append(TwigPlace(position: at[q], direction: d, size: size, stem: stem, light: point.light,
                                          radius: point.radius))
                 }
@@ -444,6 +573,9 @@ package enum Growth {
     package static func grow(_ p: Params, cycles: Int? = nil, seed: UInt64) -> Foliage.Skeleton {
         var plant = Plant(p, seed: seed)
         for _ in 0..<(cycles ?? p.cycles) { plant.cycle() }
+        plant.graft()
+        plant.spur()
+        plant.carveFoot()
         return plant.skeleton().0
     }
 
@@ -452,6 +584,9 @@ package enum Growth {
     package static func lit(_ p: Params, seed: UInt64) -> (skeleton: Foliage.Skeleton, light: [Float]) {
         var plant = Plant(p, seed: seed)
         for _ in 0..<p.cycles { plant.cycle() }
+        plant.graft()
+        plant.spur()
+        plant.carveFoot()
         let (skeleton, stemOf) = plant.skeleton()
         var light = [Float](repeating: 1, count: skeleton.stems.count)
         for (b, branch) in plant.branches.enumerated() where stemOf[b] >= 0 && !branch.points.isEmpty {
@@ -479,6 +614,9 @@ package enum Growth {
     package static func grown(_ p: Params, twigs: Twigs?, seed: UInt64) -> Grown {
         var plant = Plant(p, seed: seed)
         for _ in 0..<p.cycles { plant.cycle() }
+        plant.graft()
+        plant.spur()
+        plant.carveFoot()
         let (skeleton, stemOf) = plant.skeleton()
         let twigs = twigs.map { plant.twigs($0, at: plant.placed(), stemOf: stemOf) } ?? []
         return Grown(skeleton: skeleton, twigs: twigs)
@@ -490,7 +628,8 @@ package enum Growth {
     package static func twig(_ t: Twigs, variant: Int, seed: UInt64, cards: Bool = false) -> Foliage.Mesh {
         let skeleton = grow(t.growth, seed: seed)
         var leaf = t.leaf
-        leaf.perMetre *= t.palette > 1 ? 0.55 + 0.45 * Float(variant) / Float(t.palette - 1) : 1
+        let sparse = t.sparse ?? 0.55
+        leaf.perMetre *= t.palette > 1 ? sparse + (1 - sparse) * Float(variant) / Float(t.palette - 1) : 1
         var rng = SplitMix64(seed: seed ^ 0x51ED_2701)
         let up = normalize(t.growth.up)
         if cards { return Foliage.cardMesh(skeleton, cards: Foliage.cards(on: skeleton, leaf, up: up, rng: &rng), up: up) }
@@ -521,6 +660,13 @@ package enum Growth {
         package var scaleV: Float = 0.2
         package var angle: Float = 0.75             // out from the branch (rad)
         package var lightAim: Float = 0.3           // turned this far toward the light
+        package var alternate: Bool? = nil          // left and right of the branch in turn (nil: spiral)
+        package var roll: Float? = nil              // ...in a plane rolled from the level by up to this (rad)
+        package var sparse: Float? = nil            // the palette's sparsest twig's leaves, of its densest's (nil: 0.55)
+        package var tipScale: Float? = nil          // a branch tip's twig, of `scale` (nil: 1.1)
+        /// The others', from the tip back to the branch's foot: 1 + this · the share of the branch behind them (nil:
+        /// -0.3, smaller toward the foot; Unreal's sample tree's grow toward it).
+        package var alongScale: Float? = nil
 
         package init() {}
 
