@@ -32,7 +32,7 @@ struct PlantEditorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                 }
-                .frame(minWidth: 300, idealWidth: 360, maxWidth: 520)
+                .frame(minWidth: 300, idealWidth: 360, maxWidth: 400)
             }
             Divider()
             status.padding(.horizontal, 10).padding(.vertical, 4)

@@ -46,8 +46,10 @@ struct PlantGraphView: View {
             for (i, from) in n.inputs.enumerated() {
                 guard let a = g.node(from) else { continue }
                 let selected = model.selection.contains("\(n.id)") || model.selection.contains("\(a.id)")
-                out.append(.init(from: PlantGraphLayout.output(a), to: PlantGraphLayout.input(n, i),
-                                 color: selected ? GraphColors.selected : PlantNodeView.color(a.kind), selected: selected))
+                let from = PlantGraphLayout.output(a), to = PlantGraphLayout.input(n, i)
+                let others = g.nodes.filter { $0.id != n.id && $0.id != a.id }.map(PlantGraphLayout.rect)
+                out.append(.init(from: from, to: to, color: selected ? GraphColors.selected : PlantNodeView.color(a.kind), selected: selected,
+                                 via: PlantGraphLayout.route(from: from, to: to, around: others)))
             }
         }
         return out

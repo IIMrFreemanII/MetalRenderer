@@ -190,7 +190,12 @@ extension PlantEditorModel: GraphCanvasModel {
     func openSearch() { searchAt = graphPoint(hover) }
     func closeSearch() { searchAt = nil; focusCanvas?() }
 
-    func frameAll(in size: CGSize) { frame(PlantGraphLayout.bounds(graph), in: size) }
+    /// The graph in view, beside the minimap where the canvas has the room.
+    func frameAll(in size: CGSize) {
+        let beside = CGSize(width: size.width - PlantEditorModel.minimapWidth, height: size.height)
+        frame(PlantGraphLayout.bounds(graph), in: beside.width >= 340 ? beside : size)
+        framed = (pan, zoom)
+    }
 
     // MARK: - Its Swift
 
