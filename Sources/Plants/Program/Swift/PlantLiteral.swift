@@ -172,7 +172,9 @@ enum PlantLiteral {
         case let x as String: return quoted(x)
         case let x as SIMD2<Float>: return "[\(float(x.x)), \(float(x.y))]"
         case let x as SIMD3<Float>: return "[\(float(x.x)), \(float(x.y)), \(float(x.z))]"
+        case let x as SIMD4<Float>: return "[\(float(x.x)), \(float(x.y)), \(float(x.z)), \(float(x.w))]"
         case let x as [SIMD3<Float>]: return "[" + x.map { atom($0)! }.joined(separator: ", ") + "]"
+        case let x as [SIMD4<Float>]: return "[" + x.map { atom($0)! }.joined(separator: ", ") + "]"
         case let x as [SIMD2<Float>]: return "[" + x.map { atom($0)! }.joined(separator: ", ") + "]"
         case let x as [Int]: return "[" + x.map(String.init).joined(separator: ", ") + "]"
         case let x as ClosedRange<Float>: return "\(float(x.lowerBound))...\(float(x.upperBound))"
@@ -190,6 +192,7 @@ enum PlantLiteral {
             }
         case let x as Foliage.LeafShape: return "." + x.rawValue
         case let x as Foliage.Role: return "." + x.rawValue
+        case let x as Growth.Gravity.Mode: return "." + x.rawValue
         case let x as FoliageTextures.Kind: return "." + x.name
         default: return nil
         }

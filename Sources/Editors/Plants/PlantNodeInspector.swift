@@ -118,6 +118,79 @@ struct GrowInspector: View {
     }
 }
 
+/// A Manual Edit node: its tool in the view, how a move spreads, its edits and which plant has them.
+struct ManualEditInspector: View {
+    @ObservedObject var model: PlantEditorModel
+    let node: Int32
+    let edit: Growth.ManualEdit
+
+    private var tool: Binding<PlantEditTool?> {
+        Binding(get: { model.editNode == node ? model.editTool : nil },
+                set: { if let tool = $0 { model.startEditing(node, tool: tool) } else { model.stopEditing() } })
+    }
+
+    private var spread: Binding<PlantEditing.Spread> { Binding(get: { model.editSpread }, set: { model.setSpread($0) }) }
+
+    var body: some View {
+        EditorGroup(title: "In the view") {
+            Picker("Tool", selection: tool) {
+                Text("Off").tag(PlantEditTool?.none)
+                Text("Move").tag(PlantEditTool?.some(.transform))
+                Text("Remove").tag(PlantEditTool?.some(.removeBranch))
+                Text("Trim").tag(PlantEditTool?.some(.trim))
+            }
+            .pickerStyle(.segmented).font(.system(size: 11))
+            Text(toolHelp).font(.system(size: 10)).foregroundColor(.secondary)
+            if tool.wrappedValue == .transform { spreadRows }
+        }
+        EditorGroup(title: "The plant") {
+            Text(plantLine).font(.system(size: 11))
+            if model.editNode == node, model.editing?.isStale == true {
+                Text("The stages before this one have changed: these edits may land on other branches.")
+                    .font(.system(size: 10)).foregroundColor(.orange)
+            }
+            HStack {
+                Button("Clear moves") { model.clearEditing(moves: true) }.disabled(edit.points.isEmpty)
+                Button("Clear cuts") { model.clearEditing(moves: false) }.disabled(edit.removed.isEmpty)
+            }
+            .font(.system(size: 11))
+        }
+    }
+
+    private var plantLine: String {
+        guard edit.seed != 0, let age = Foliage.Age(rawValue: edit.age) else { return "Take up a tool: the plant in the view becomes this node's." }
+        return "The \(age) plant, variant \(edit.variant + 1), in every scene: \(edit.points.count) points moved or turned, \(edit.removed.count) cuts."
+    }
+
+    private var toolHelp: String {
+        switch tool.wrappedValue {
+        case .transform: return "Click a point of the wood, then drag its arrows or rings. Option-drag orbits, as ever."
+        case .removeBranch: return "Click a branch to cut it off, with all on it."
+        case .trim: return "Click a branch to cut it beyond that point."
+        case nil: return "The plant shows as stems while a tool is up."
+        }
+    }
+
+    @ViewBuilder private var spreadRows: some View {
+        Toggle("All beyond the point goes with it", isOn: spread.carries).font(.system(size: 11))
+        Picker("Reach by", selection: spread.measure) {
+            Text("Points along the wood").tag(PlantEditing.Spread.Measure.neighbours)
+            Text("Metres along the wood").tag(PlantEditing.Spread.Measure.treeDistance)
+            Text("Metres around it").tag(PlantEditing.Spread.Measure.distance)
+        }
+        .font(.system(size: 11))
+        if spread.wrappedValue.measure == .neighbours {
+            Stepper("\(spread.wrappedValue.neighbours) points", value: spread.neighbours, in: 0...40).font(.system(size: 11))
+        } else {
+            ValueRow(title: "Reach", value: spread.reach, range: 0...10, unit: "m")
+        }
+        Picker("Falloff", selection: spread.falloff) {
+            ForEach(PlantEditing.Spread.Falloff.allCases, id: \.self) { Text($0.rawValue.capitalized).tag($0) }
+        }
+        .font(.system(size: 11))
+    }
+}
+
 /// What the selected node's settings are: the sliders of the tables its kind has.
 struct PlantNodeInspector: View {
     @ObservedObject var model: PlantEditorModel
@@ -142,6 +215,7 @@ struct PlantNodeInspector: View {
             }
             content
         }
+        .onDisappear { if model.editNode == node.id { model.stopEditing() } }
     }
 
     @ViewBuilder private var content: some View {
@@ -177,11 +251,43 @@ struct PlantNodeInspector: View {
         case .carve:
             let s = settings({ if case .carve(let s) = $0 { return s } else { return nil } }, { .carve($0) }, or: Growth.Carve())
             EditorGroup(title: "Carve") { ValueRow(title: "The trunk's foot cut off", value: s.share, range: 0...0.6) }
+        case .gravity:
+            let s = settings({ if case .gravity(let s) = $0 { return s } else { return nil } }, { .gravity($0) }, or: Growth.Gravity())
+            EditorGroup(title: "Gravity") {
+                Picker("Pull", selection: s.mode) {
+                    Text("Gravity").tag(Growth.Gravity.Mode.gravity)
+                    Text("Toward the light").tag(Growth.Gravity.Mode.phototropic)
+                }
+                .pickerStyle(.segmented).font(.system(size: 11))
+                ValueRow(title: "Strength", value: s.strength, range: 0...1)
+                ValueRow(title: "Angle correction", value: s.angleCorrection, range: 0...1)
+                if s.wrappedValue.mode == .gravity {
+                    Toggle("Straight down", isOn: Binding(get: { s.wrappedValue.direction == nil }, set: { s.wrappedValue.direction = $0 ? nil : [0, -1, 0] }))
+                        .font(.system(size: 11))
+                    if s.wrappedValue.direction != nil {
+                        let d = Binding(s.direction, or: SIMD3<Float>(0, -1, 0))
+                        ValueRow(title: "Direction x", value: d.x, range: -1...1)
+                        ValueRow(title: "Direction y", value: d.y, range: -1...1)
+                        ValueRow(title: "Direction z", value: d.z, range: -1...1)
+                    }
+                }
+                Text("Bends the plant once it's grown, its thin wood most. The Grower's Gravity sags it as it grows.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
+            }
         case .skeleton:
             let s = settings({ if case .skeleton(let s) = $0 { return s } else { return nil } }, { .skeleton($0) }, or: Growth.Wood())
             EditorGroup(title: "Wood") {
                 ParamRows(table: PlantParams.wood, root: s)
                 Toggle("Flat stems (ribbons, a fern's fronds)", isOn: s.ribbon).font(.system(size: 11))
+            }
+        case .manualEdit(let e):
+            ManualEditInspector(model: model, node: node.id, edit: e)
+        case .boneReduction:
+            let s = settings({ if case .boneReduction(let s) = $0 { return s } else { return nil } }, { .boneReduction($0) }, or: Growth.BoneReduction())
+            EditorGroup(title: "Bone reduction") {
+                ValueRow(title: "Strength", value: s.strength, range: 0...1)
+                Text("A stem's twigs share fewer bones (1: one a stem), so the wind is less exact. Nothing moves. Wire it between the Mesh Builder and the Output.")
+                    .font(.system(size: 10)).foregroundColor(.secondary)
             }
         case .leaves:
             EditorGroup(title: "Leaves") {

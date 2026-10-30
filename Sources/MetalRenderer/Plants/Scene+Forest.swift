@@ -244,7 +244,7 @@ extension Scene {
                 var rng = SplitMix64(seed: UInt64(b.phase * 1e6) &+ 77)
                 let level = cross(SIMD3<Float>(0, 1, 0), b.axis)
                 let axis = (length_squared(level) > 1e-6 ? normalize(level) : SIMD3<Float>(1, 0, 0)) + Foliage.randomUnit(&rng) * 0.6
-                let angle = limb ? 0.03 * min(max(b.length / (max(b.radius, 0.01) * 90), 0.5), 1.6) : 0.09 * (0.7 + 0.6 * b.phase)
+                let angle = limb ? 0.03 * min(max(b.length / (max(b.radius, 0.01) * 90), 0.5), 1.6) : 0.09 * (0.7 + 0.6 * b.phase) * b.swing
                 return Assembly.Bone(pivot: b.pivot, angle: angle, axis: normalize(axis), phase: b.phase * 2 * .pi)
             }
             /// The furthest a box's corner is from a point: times a turn's angle, how far the turn moves it at most.

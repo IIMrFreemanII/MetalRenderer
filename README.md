@@ -765,7 +765,8 @@ opens the editor.
   A file `Assets/Plants/<id>.swift` is compiled when it is loaded (`PlantCompiler`: `swiftc` against the build's modules,
   about 8 s the first time in a session, then under a second; needs Xcode's tools and a SwiftPM build) and needs no
   boilerplate: a copy of a built-in file compiles as it is. A stage is `p.grow`, `p.growMore`, `p.grafts`, `p.spurs`,
-  `p.carve`, `p.skeleton`, `p.leaves`, `p.twig`, `p.distribute`, `p.output`, `p.grass` or `p.code`.
+  `p.carve`, `p.gravity`, `p.manualEdit`, `p.skeleton`, `p.boneReduction`, `p.leaves`, `p.twig`, `p.distribute`, `p.output`,
+  `p.grass` or `p.code`.
 * **The graph is that code** (`PlantGraphView`, `PlantSwift`): the editor shows the species' stages as nodes, top to
   bottom, the twig's a column of their own beside the plant's. Tab or a right-click adds a node (wired below the selected
   one), a drag from an output to an input wires them, wires go only where what they carry is taken; Delete, Cmd-C, Cmd-V,
@@ -775,6 +776,25 @@ opens the editor.
   button *Swift* shows it). Comments stay. What the parser can't read as a stage's call with literal settings stays as it
   is written, a statement node that runs when the file is compiled; a *Swift Code* node holds a function on what's wired
   into it, `static func bend(_ p: inout PlantContext, _ input: PlantSkeleton) -> PlantSkeleton`.
+* **Two nodes as Unreal's, no built-in uses them.** *Gravity* bends the plant once it's grown (the formula of Unreal's
+  Gravity node; `Growth.Plant.bend`): each internode turns toward the pull by strength / 10, thin wood most, the turn
+  carried to all beyond it; or toward each point's light. The Grower's Gravity is another thing, a sag cycle by cycle, as
+  it is in Unreal. *Bone Reduction*, wired between the Mesh Builder and the Output, hangs a stem's n twigs on
+  lerp(n, 1, strength) bones: nothing moves, and the wind is less exact. A shared bone turns less
+  (`Foliage.Bone.swing`), so that its furthest twig moves no further than a twig does alone. Fewer bones don't make a
+  frame cheaper here, unlike in Unreal: the forest keeps a turn for each part, whatever bone it comes from.
+* **Manual Edit edits one plant by hand, its hero** (`Growth.ManualEdit`, `PlantEditing`). A species has many plants, so
+  the node holds the one in the workshop when a tool is first taken up, by its age, variant and seed: that age and variant
+  grows from that seed in every scene (the leaves on its twigs still come from the species' palette, which goes with the
+  scene's seed), and every other plant grows as before. In its inspector, *Move* takes a click on the wood and gives the
+  point arrows and rings: all beyond the point goes with it, and what's near it takes a share by a reach and a falloff
+  (Unreal's three measures and seven falloffs); *Remove* cuts a branch off, *Trim* cuts it beyond a point (the cut branch
+  thinner by the share left, as in Unreal). Option-drag orbits and a drag elsewhere looks round, as ever; the plant shows as
+  stems while a tool is up; a handle's drag is one undo step. The file holds the edits by point number
+  (`$0.points`, `$0.moves`, `$0.turns`, `$0.removed`), so editing a stage before the node can land them on other branches,
+  and the inspector says so when the plant's count of points has changed. A branch's tip has arrows but no rings: there's
+  nothing beyond it to turn. `METALRENDERER_PLANT_EDIT_SCRIPT=<folder>` runs all of this in the real window, mouse events and
+  all (`PlantManualEditScript`).
 * **While a slider is dragged the graph runs stage by stage**, through the same functions the file calls, in the same
   order, with the same random numbers. When it's let go the file compiles behind the workshop, from which point the
   compiled program grows the plant: the same bytes (`PlantSwiftTests`). The line under the graph says how it stands; a

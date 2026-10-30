@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import simd
 @testable import Buildings
 @testable import Characters
 @testable import Editors
@@ -139,6 +140,9 @@ final class PlantEditorTests: XCTestCase {
         func observeSettings(_ observer: @escaping (RenderSettings) -> Void) { observers.append(observer) }
         func observeTick(_ observer: @escaping () -> Void) {}
         func frameWorkshop() {}
+        var tool: PlantToolOverlay?
+        var onPlantTool: ((PlantToolEvent) -> Void)?
+        func setPlantTool(_ tool: PlantToolOverlay?) { self.tool = tool }
     }
 
     private func editor(in kind: SceneKind = .plants, folder: URL? = nil) -> (PlantEditorModel, Host) {
@@ -330,6 +334,143 @@ final class PlantEditorTests: XCTestCase {
         guard case .incomplete = m.compile else { return XCTFail("\(m.compile)") }
         m.save()
         XCTAssertFalse(FileManager.default.fileExists(atPath: PlantStore.swiftURL("oak", in: folder).path))
+    }
+
+    /// Tab search has them, and adding one wires it below the selected node, as what can be wired there.
+    func testGravityAndBoneReductionAreAddedFromTabSearch() throws {
+        XCTAssertTrue(PlantNodeKind.adding.contains(.gravity))
+        XCTAssertTrue(PlantNodeKind.adding.contains(.boneReduction))
+        XCTAssertEqual(PlantNodeKind.gravity.title, "Gravity")
+        XCTAssertEqual(PlantNodeKind.boneReduction.title, "Bone Reduction")
+        let (m, _) = editor()
+        m.select("oak")
+        let carve = try XCTUnwrap(m.graph.first(.carve, .plant)), wood = try XCTUnwrap(m.graph.first(.skeleton, .plant))
+        m.selection = ["\(carve.id)"]
+        m.addNode(.gravity, at: [0, 0])
+        let gravity = try XCTUnwrap(m.graph.nodes.first { $0.kind == .gravity })
+        XCTAssertEqual(gravity.inputs, [carve.id])
+        guard case .gravity(let s) = gravity.settings else { return XCTFail() }
+        XCTAssertEqual(s, Growth.Gravity())
+        m.selection = ["\(wood.id)"]
+        m.addNode(.boneReduction, at: [0, 0])
+        let fewer = try XCTUnwrap(m.graph.nodes.first { $0.kind == .boneReduction })
+        XCTAssertEqual(fewer.inputs, [wood.id])
+        // Between what it came from and what went on: wires it in, and the plant grows it.
+        XCTAssertTrue(m.link("\(gravity.id)", "out", to: "\(wood.id)", "0"))
+        let output = try XCTUnwrap(m.graph.first(.output, .plant)), twigs = try XCTUnwrap(m.graph.first(.distribute, .plant))
+        XCTAssertTrue(m.link("\(fewer.id)", "out", to: "\(output.id)", "0"))
+        XCTAssertTrue(m.link("\(fewer.id)", "out", to: "\(twigs.id)", "0"))
+        XCTAssertNil(m.graph.problem)
+        XCTAssertFalse(m.link("\(gravity.id)", "out", to: "\(output.id)", "0"), "wires of different kinds don't join")
+        XCTAssertTrue(m.swiftText.contains("p.gravity(carve)"), m.swiftText)
+        XCTAssertTrue(m.swiftText.contains("p.boneReduction(wood)"), m.swiftText)
+    }
+
+    /// Manual Edit in the view: the plant shown becomes the hero; a click picks, the handle's drag is one undo step and
+    /// the file follows; Remove and Trim cut; an undo reaches the tool; the plant's view comes back when it's put down.
+    func testManualEditTool() throws {
+        let (m, host) = editor()
+        m.select("oak")
+        m.workshop { $0.age = .young; $0.variant = 1; $0.seed = 4; $0.view = .light }
+        let carve = try XCTUnwrap(m.graph.first(.carve, .plant))
+        m.selection = ["\(carve.id)"]
+        m.addNode(.manualEdit, at: [0, 0])
+        let node = try XCTUnwrap(m.graph.nodes.first { $0.kind == .manualEdit })
+        XCTAssertEqual(node.inputs, [carve.id])
+        XCTAssertTrue(PlantNodeKind.adding.contains(.manualEdit))
+        // Rewired into the Mesh Builder: its stage is on the way.
+        let wood = try XCTUnwrap(m.graph.first(.skeleton, .plant))
+        XCTAssertTrue(m.link("\(node.id)", "out", to: "\(wood.id)", "0"))
+        func edit() -> Growth.ManualEdit {
+            guard case .manualEdit(let e)? = m.graph.node(node.id)?.settings else { fatalError() }
+            return e
+        }
+        XCTAssertEqual(edit().seed, 0)
+        m.startEditing(node.id, tool: .transform)
+        let e = edit()
+        XCTAssertEqual(e.age, Foliage.Age.young.rawValue)
+        XCTAssertEqual(e.variant, 1)
+        XCTAssertEqual(e.seed, Foliage.seed(4, m.def.seedIndex, Foliage.Age.young.rawValue, 1))
+        XCTAssertEqual(host.settings.scene.plants.view, .skeleton)
+        XCTAssertNotNil(host.tool)
+        XCTAssertNil(host.tool?.handle)
+
+        // A click on a point of the wood: it's picked, with its handle.
+        let editing = try XCTUnwrap(m.editing)
+        let top = editing.position(Int(editing.edited.branches[0].points.last!))
+        let foot = editing.position(Int(editing.edited.branches[0].points[2]))
+        let eye = (top + foot) / 2 + [0, 0, 20]
+        func ray(to p: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) { (eye, normalize(p - eye)) }
+        let (origin, direction) = ray(to: foot)
+        m.plantToolEvent(.hover(origin: origin, direction: direction))
+        XCTAssertNotNil(m.hoverPick)
+        XCTAssertFalse(host.tool?.lines.isEmpty ?? true)
+        m.plantToolEvent(.click(origin: origin, direction: direction))
+        let pick = try XCTUnwrap(m.editPick)
+        let handle = try XCTUnwrap(host.tool?.handle)
+        XCTAssertEqual(simd_distance(handle, editing.position(pick.point)), 0, accuracy: 1e-5)
+
+        // A drag: one step, the file's, the handle following.
+        let steps = m.undo.canUndo
+        XCTAssertTrue(steps)
+        m.plantToolEvent(.moved(delta: .zero, phase: 0))
+        for _ in 0..<4 { m.plantToolEvent(.moved(delta: [0.1, 0, 0], phase: 1)) }
+        m.plantToolEvent(.moved(delta: .zero, phase: 2))
+        XCTAssertFalse(edit().points.isEmpty)
+        let moved = try XCTUnwrap(host.tool?.handle)
+        XCTAssertEqual(moved.x, handle.x + 0.4, accuracy: 1e-3)
+        XCTAssertTrue(m.swiftText.contains("p.manualEdit(carve) {"), m.swiftText)
+        XCTAssertEqual(PlantSwift.parse(m.swiftText)?.graph?.canonical, m.graph.canonical)
+        m.undo.undo()
+        XCTAssertTrue(edit().points.isEmpty)
+        XCTAssertEqual(try XCTUnwrap(host.tool?.handle).x, handle.x, accuracy: 1e-5, "the tool follows the undo")
+        m.undo.redo()
+        XCTAssertFalse(edit().points.isEmpty)
+
+        // A turn, by a ring; nothing without a pick.
+        m.plantToolEvent(.turned(axis: [0, 1, 0], angle: 0, phase: 0))
+        m.plantToolEvent(.turned(axis: [0, 1, 0], angle: 0.2, phase: 1))
+        m.plantToolEvent(.turned(axis: [0, 1, 0], angle: 0, phase: 2))
+        XCTAssertGreaterThan(edit().points.count, 1)
+
+        // Trim, then Remove: a click cuts.
+        m.startEditing(node.id, tool: .trim)
+        let trimAt = try XCTUnwrap(m.editing)
+        let tip = trimAt.position(Int(trimAt.edited.branches[0].points[trimAt.edited.branches[0].points.count - 3]))
+        let (o2, d2) = ray(to: tip)
+        m.plantToolEvent(.click(origin: o2, direction: d2))
+        XCTAssertEqual(edit().removed.count, 1)
+        XCTAssertNil(host.tool?.handle)
+        // Clear.
+        m.selection = ["\(node.id)"]
+        m.focus = "\(node.id)"
+        m.clearEditing(moves: false)
+        XCTAssertTrue(edit().removed.isEmpty)
+        XCTAssertFalse(edit().points.isEmpty)
+        m.clearEditing(moves: true)
+        XCTAssertTrue(edit().points.isEmpty)
+        XCTAssertNotEqual(edit().seed, 0, "it's still its plant")
+
+        // A stage before it edited: the plant comes in anew, the pick gone.
+        m.startEditing(node.id, tool: .transform)
+        m.plantToolEvent(.click(origin: origin, direction: direction))
+        XCTAssertNotNil(m.editPick)
+        guard case .carve(var c)? = m.graph.node(carve.id)?.settings else { return XCTFail() }
+        c.share = 0.2
+        m.setSettings(carve.id, .carve(c))
+        XCTAssertNil(m.editPick)
+        XCTAssertNotNil(m.editing)
+
+        // Put down: the view as it was. Deleting the node puts it down too.
+        m.stopEditing()
+        XCTAssertNil(host.tool)
+        XCTAssertEqual(host.settings.scene.plants.view, .light)
+        m.startEditing(node.id, tool: .removeBranch)
+        m.selection = ["\(node.id)"]
+        m.deleteSelection()
+        XCTAssertNil(m.editNode)
+        XCTAssertNil(host.tool)
+        XCTAssertEqual(host.settings.scene.plants.view, .light)
     }
 
     func testSpeciesAndSaving() throws {

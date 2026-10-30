@@ -95,4 +95,28 @@ extension Growth {
 
         package init() {}
     }
+
+    /// The gravity stage's settings: the plant bent once it's grown (Unreal's Gravity node), where Params.gravity sags
+    /// it cycle by cycle. The defaults' strength is Unreal's sample tree's.
+    package struct Gravity: Codable, Equatable {
+        package enum Mode: String, Codable {
+            case gravity
+            case phototropic                        // toward each point's light, not `direction`
+        }
+
+        package var mode = Mode.gravity
+        package var strength: Float = 0.33          // an internode turns toward the pull by a tenth of this at most
+        package var direction: SIMD3<Float>? = nil  // the pull (nil: away from the plant's sky)
+        package var angleCorrection: Float = 0      // what's along the pull already turns less: at 1, a tenth as much
+
+        package init() {}
+    }
+
+    /// The bone reduction stage's settings (Unreal's Bone Reduction): of a stem's n twig bones, lerp(n, 1, strength) stay.
+    /// The default is Unreal's sample tree's.
+    package struct BoneReduction: Codable, Equatable {
+        package var strength: Float = 0.83
+
+        package init() {}
+    }
 }

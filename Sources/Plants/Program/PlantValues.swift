@@ -18,6 +18,8 @@ package struct PlantSkeleton {
     private(set) var placed: [SIMD3<Float>]
     let plant: Growth.Plant
     let rootPhase: Float
+    /// Its twigs' bones as the Output will make them (Growth.BoneReduction).
+    var boneReduction: Float = 0
 
     /// Every point of the stems (and what hangs on them: `placed`) moved, for a Swift Code node.
     package mutating func moveStems(_ move: (inout SIMD3<Float>) -> Void) {

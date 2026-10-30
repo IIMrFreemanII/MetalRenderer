@@ -143,6 +143,34 @@ package struct PlantContext {
         return store(g)
     }
 
+    /// The plant bent toward a pull or the light, once it's grown (Unreal's Gravity).
+    package mutating func gravity(_ input: Wire<Growing>, _ edit: (inout Growth.Gravity) -> Void = { _ in }) -> Wire<Growing> {
+        var settings = Growth.Gravity()
+        edit(&settings)
+        return gravity(input, settings: settings)
+    }
+
+    package mutating func gravity(_ input: Wire<Growing>, settings: Growth.Gravity) -> Wire<Growing> {
+        guard side == nil else { return record(.gravity(settings), .standard, [input.node]) }
+        var g = value(input)
+        g.plant.bend(settings)
+        return store(g)
+    }
+
+    /// One plant's points moved, turned and cut by hand (Unreal's Manual Edit): only the plant of the seed it holds.
+    package mutating func manualEdit(_ input: Wire<Growing>, _ edit: (inout Growth.ManualEdit) -> Void = { _ in }) -> Wire<Growing> {
+        var settings = Growth.ManualEdit()
+        edit(&settings)
+        return manualEdit(input, settings: settings)
+    }
+
+    package mutating func manualEdit(_ input: Wire<Growing>, settings: Growth.ManualEdit) -> Wire<Growing> {
+        guard side == nil else { return record(.manualEdit(settings), .standard, [input.node]) }
+        var g = value(input)
+        if settings.seed != 0, seed == settings.seed { g.plant.edit(settings) }
+        return store(g)
+    }
+
     /// The branches as stems, and how they will be wood (Unreal's Mesh Builder, its settings). A plant draws its root
     /// bone's sway here.
     package mutating func skeleton(_ input: Wire<Growing>, _ preset: PlantPreset = .standard,
@@ -162,6 +190,21 @@ package struct PlantContext {
         let made = PlantSkeleton(skeleton: skeleton, wood: settings, up: normalize(plant.p.up), axis: plant.p.axis.map(normalize),
                                  stemOf: stemOf, placed: placed, plant: plant, rootPhase: rootPhase)
         if probe { kept = made }
+        return store(made)
+    }
+
+    /// Fewer bones for the wind to turn (Unreal's Bone Reduction): the Output these stems go on to hangs a stem's twigs
+    /// on fewer bones. Nothing moves and nothing else is drawn differently; the wind is less exact.
+    package mutating func boneReduction(_ input: Wire<PlantSkeleton>, _ edit: (inout Growth.BoneReduction) -> Void = { _ in }) -> Wire<PlantSkeleton> {
+        var settings = Growth.BoneReduction()
+        edit(&settings)
+        return boneReduction(input, settings: settings)
+    }
+
+    package mutating func boneReduction(_ input: Wire<PlantSkeleton>, settings: Growth.BoneReduction) -> Wire<PlantSkeleton> {
+        guard side == nil else { return record(.boneReduction(settings), .standard, [input.node]) }
+        var made = value(input)
+        made.boneReduction = settings.strength
         return store(made)
     }
 
@@ -278,15 +321,32 @@ package struct PlantContext {
         }
 
         // The twigs, where the distributor put them: the palette's sparser ones in the shade, its denser ones in the
-        // light (the palette runs from sparse to dense). Each turns on a bone of its own, hung on its limb's.
-        for t in value(twigs).places {
+        // light (the palette runs from sparse to dense). Each turns on a bone of its own, hung on its limb's, or with a
+        // bone reduction on the one it shares (the draws are the same whichever): that one turns less, so that the
+        // furthest twig on it moves no further than a twig does by itself.
+        let places = value(twigs).places
+        let keeper = Growth.keptBones(places, strength: made.boneReduction)
+        var boneOf = [Int](repeating: 0, count: places.count)
+        var reach = places.map(\.size)
+        var next = bones.count
+        for (i, k) in keeper.enumerated() {
+            if k == i {
+                boneOf[i] = next
+                next += 1
+            }
+            reach[k] = max(reach[k], length(places[i].position - places[k].position) + places[i].size)
+        }
+        for (i, t) in places.enumerated() {
             let lit = Int(min(max(t.light, 0), 0.999) * Float(palette.count))
             let pick = min(max(lit + rng.int(3) - 1, 0), palette.count - 1)
             let transform = Foliage.graftTransform(at: t.position, along: t.direction, scale: t.size, up: up, roll: rng.range(-0.6, 0.6))
             bounds.grow(palette[pick].bounds.transformed(transform))
-            bones.append(Foliage.Bone(pivot: t.position, axis: t.direction, parent: skeleton.stems[t.stem].limb + 1, length: t.size,
-                                      radius: max(t.radius, 0.002), phase: rng.next()))
-            parts.append(Foliage.Part(mesh: pick, shared: true, transform: transform, bone: bones.count - 1))
+            let phase = rng.next()
+            if keeper[i] == i {
+                bones.append(Foliage.Bone(pivot: t.position, axis: t.direction, parent: skeleton.stems[t.stem].limb + 1, length: t.size,
+                                          radius: max(t.radius, 0.002), phase: phase, swing: reach[i] > 0 ? t.size / reach[i] : 1))
+            }
+            parts.append(Foliage.Part(mesh: pick, shared: true, transform: transform, bone: boneOf[keeper[i]]))
         }
         return store(Foliage.Plant(species: species, age: age, meshes: meshes, parts: parts, bones: bones, bounds: bounds))
     }

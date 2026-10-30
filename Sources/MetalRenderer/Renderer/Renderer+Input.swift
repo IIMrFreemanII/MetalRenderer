@@ -122,6 +122,7 @@ extension Renderer {
         navDrag = nil
         leftLook = false
         navCursor = cursor
+        if plantToolMouseDown(at: cursor) { return }
         // A placed object's arrow (Option: turns it, Control: scales it).
         if walker == nil, placementMouseDown(at: cursor) { return }
         if walker == nil, optionHeld {
@@ -154,6 +155,7 @@ extension Renderer {
         if paintMouseDragged(dx: dx, dy: dy, at: cursor, pressure: penPressure) { return }
         if terrainMouseDragged(at: cursor, pressure: penPressure) { return }
         if placementMouseDragged(at: cursor) { return }
+        if plantToolMouseDragged(at: cursor) { return }
         if let drag = session.gizmoDrag {
             let s = VFXGizmos.along(origin: drag.origin, axis: drag.axis, from: camera.position, dir: cursorRay(cursor))
             let move = min(max(s - drag.last, -5), 5)
@@ -184,6 +186,10 @@ extension Renderer {
             clickAt = nil
             return
         }
+        if plantToolMouseUp() {
+            clickAt = nil
+            return
+        }
         if session.gizmoDrag != nil, let target = gizmoTarget, let emitter = target.emitter { onGizmoMoved?(target.effect, emitter, .zero, 2) }
         session.gizmoDrag = nil
         // A click (no drag): an armed pick's; while walking: use what is there; otherwise select what is there.
@@ -193,6 +199,7 @@ extension Renderer {
                 pickSelects = false
                 pickArmed = false
             } else if scene.behaviour?.click(self, at: c) == true {
+            } else if plantToolClick(at: c) {
             } else if walker != nil {
                 use(cursorRay(c))
             } else {

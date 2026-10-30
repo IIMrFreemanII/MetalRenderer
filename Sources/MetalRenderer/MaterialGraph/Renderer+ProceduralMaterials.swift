@@ -350,7 +350,7 @@ extension Renderer {
     package func encodeGizmos(_ outputs: [MTLTexture], slot: Int, passes: FrameEncoder) {
         guard let output = outputs.first else { return }
         // The brushes, what the graph showed, the placed object's arrows.
-        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments() + placementSegments()
+        var segments = painterRingSegments() + terrainRingSegments() + selectionSegments() + placementSegments() + plantToolSegments()
         if let target = gizmoTarget, let gpu = particlesGPU {
             let (s, handle) = VFXGizmos.segments(gpu.system, owners: scene.effectOwners, target: target)
             gizmoHandle = handle

@@ -222,5 +222,54 @@ more saturated.
 - The fingerprint is in the scenes' mesh names: `SpeciesDef.fingerprintForm` takes a standard graph out, so a built-in's
   stays what it was (`PlantProgramTests`, `Fixtures/builtin-species-v2.json`) and a node moved regrows nothing.
 - `Programs/*.swift` are the emitter's output: after changing the emitter, write them again or `testTheBuiltInFilesRoundTrip`
-  fails (parse then emit each and write it back). Not done: PVE's Gravity node (sag stays per cycle in Grow), Manual Edit,
-  Bone Reduction; a graph's node previews.
+  fails (parse then emit each and write it back). Not done: a graph's node previews.
+
+## Gravity and Bone Reduction nodes (2026-10-30)
+
+Read from the plugin's source (`Private/Implementations/PVGravity.cpp`, `Private/Facades/PVBoneFacade.cpp`), in original
+code. No built-in uses either, so a graph with one isn't `isStandard`, and its fingerprint is its canonical graph's.
+- **Gravity** (`p.gravity`, on the growing wire; `Growth.Gravity`, `Plant.bend`): `GrowerTests.testGravityIsUnrealsGravity`
+  runs Unreal's loop, written out line by line, against it. Unreal's is the same on a branch: lerp(tangent, pull,
+  strength / 10 × (1 − radius gradient) × angle term), the turns composed along the branch and into its children; the trunk
+  bends too. Differences: a nil `direction` is away from the plant's sky, so a twig's "down" is its -Z (Unreal's is
+  world -Z); the phototropic pull is each point's `lightDirection`, not Unreal's mix of the two bud light vectors with a
+  hidden bias. Its tooltip says angle correction 1 is no bend; its code gives a tenth of the bend along the pull, and
+  this follows the code. `Params.gravity`'s sag stays in the Grower, so the built-ins don't change, and Unreal has both.
+  The defaults' strength is the sample tree's (0.329 there), Unreal's default being 0.
+- **Bone Reduction** (`p.boneReduction`, on the skeleton wire between the Mesh Builder and the Output, where Unreal has it
+  between its Mesh Builder and its Foliage Distributor; `Growth.keptBones`): Unreal keeps lerp(n, 1, s) bones between a
+  branch's joints, and its bones run along the wood. Ours are a root, one for each limb and one for each twig, so the
+  twigs of a stem are what's reduced, and the limbs always stay: strength 1 is 1 + limbs + stems with twigs. The draws
+  are the same at any strength, so meshes and transforms don't change; a kept bone keeps the bone it was. A group turns
+  about its footmost twig; `Bone.swing` keeps its far twigs from flying (only `Scene+Forest` reads it, ×1 when not shared).
+- **What it doesn't do:** make a frame cheaper. Unreal's skinning cost goes with its bones; the forest copies a bone's
+  pivot, axis, angle and phase into each part (`Assembly.Part.bough`), one per part however many share it. Worth doing
+  only with a palette of bones in the wind pass.
+
+## Manual Edit (2026-10-30)
+
+Read from `PVManualEditSettings.cpp`, `PVManualEditTool.cpp`, `PVSkeletonPointsSelection.cpp`, in original code.
+- **One hero plant, the user's choice:** Unreal has one plant; a species here has many, and a plant's seed goes with the
+  scene's (`Foliage.seed`). The node holds an age, a variant and a seed. `SpeciesDef.plantSeed` (the library and the workshop's
+  skeleton) grows that age and variant from it; the stage edits only a context of that seed. Twigs hang in the same places;
+  the palette's own twig meshes still go with the scene's seed.
+- **Unlike Unreal's storage:** it keeps a dense absolute offset for each bud, so a rotation near the foot writes every
+  point. Here (`Plant.edit`) each edit is local to the tree's frames: a point's internode longer by `moves[k]`, it and all
+  beyond it turned by `turns[k]` about its parent. A rotation is one entry for each thing on the point, and a soft move
+  is `weight - parent's weight` per internode, so the file stays small and a compiled file's array literals stay cheap.
+  Unreal's tool writes its rotation only into a point's own branch and two levels of children; this carries everything.
+- **Differences:** a move carries what's beyond by default (Unreal's leaves a kink; off is its behaviour); a cut thins all
+  that's left on the branch, not its nearest children only; the first axis keeps its first internode, so a plant always has
+  a trunk. An unedited point stays to the bit (`touched`).
+- **Stale edits:** point numbers are the grower's, and an edit of an earlier stage can renumber them. `grown` holds the
+  count; the inspector warns if it changed, and numbers past the end are skipped. It can't see a change that keeps the count.
+- **Where things are:** `Program/PlantManualEdit.swift` (the settings, `Plant.edit`, `plantSeed`, `PlantEditing`: picks,
+  weights, tools, lines), `MetalRenderer/Plants/Renderer+PlantTool.swift` (overlay, handle, mouse), and
+  `Editors/Plants/PlantEditorModel+ManualEdit.swift`, `ManualEditInspector`. A drag runs the workshop as a slider does.
+- **Checked:** `PlantManualEditTests`, `PlantEditorTests.testManualEditTool` (the model with a stand-in host), the
+  renderer's mouse through a script on a headless app (arrows, rings, clicks, Option, hover), and the real window:
+  `METALRENDERER_PLANT_EDIT_SCRIPT=<folder>` (`PlantManualEditScript`) sends mouse events to the inspector's tool and the
+  view, with pictures and a line for each check. Run it as a copy of the binary under another name with
+  `METALRENDERER_PLANTS=builtin`, and `defaults delete` that name after: the copy's draft is otherwise there next time.
+  Not checked with a person's hand: Option-drag and the Clear buttons in the window (their actions were called directly).
+  Highlights ignore the wood's noise (`Plant.placed`), so they can sit up to its amount off the tubes.
