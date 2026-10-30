@@ -96,6 +96,7 @@ final class PlantEditorModel: ObservableObject {
         controller.observeSettings { [weak self] s in self?.received(s) }
         controller.observeTick { [weak self, unowned controller] in self?.stats = controller.plantStats }
         if catalog != saved { push(final: true) }
+        compileLater()
     }
 
     // MARK: - What is edited
@@ -147,7 +148,7 @@ final class PlantEditorModel: ObservableObject {
         guard c != catalog else { return }
         if !dragging && undoable { registerUndo(catalog) }
         catalog = c
-        if dragging { pushLive() } else { push(final: true); compileLater() }
+        if dragging { pushLive(); compile = .waiting } else { push(final: true); compileLater() }
     }
 
     private func registerUndo(_ old: PlantCatalog) {
@@ -356,6 +357,13 @@ final class PlantEditorModel: ObservableObject {
         guard let folder else {
             message = "METALRENDERER_PLANTS=builtin: nothing is saved"
             return
+        }
+        // (A graph with a pin not wired has no file that compiles: it stays a draft until it's whole.)
+        for d in catalog.species where d != saved.species.first(where: { $0.id == d.id }) {
+            if let why = d.graph?.wiring {
+                message = "Not saved: \(d.name): \(why)"
+                return
+            }
         }
         do {
             for (i, d) in catalog.species.enumerated() where d != saved.species.first(where: { $0.id == d.id }) {

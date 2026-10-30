@@ -17,6 +17,7 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
     let panel: NSWindow
     let model: PlantEditorModel
     private static let visibleKey = "plantEditor.visible"
+    private static let frameName = "PlantGraphEditor"   // (not "PlantEditor": that one's size was the slider panel's)
 
     static var wasVisible: Bool { UserDefaults.standard.bool(forKey: visibleKey) }
 
@@ -29,7 +30,7 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.appearance = NSAppearance(named: .darkAqua)
-        panel.setFrameAutosaveName("PlantEditor")
+        panel.setFrameAutosaveName(PlantEditorPanel.frameName)
         panel.contentView = NSHostingView(rootView: PlantEditorView().environmentObject(model)
             .environment(\.editorDrag, EditorDrag(begin: model.beginDrag, end: model.endDrag)))
         controller.onCompare = { [weak self] on in self?.model.compare(on) }
@@ -39,7 +40,7 @@ final class PlantEditorPanel: NSObject, NSWindowDelegate {
 
     /// Shows the panel to the left of `window` (Render Settings is on its right), or inside it if there is no room.
     func show(nextTo window: NSWindow) {
-        if !panel.setFrameUsingName("PlantEditor") {
+        if !panel.setFrameUsingName(PlantEditorPanel.frameName) {
             let frame = window.frame, size = panel.frame.size
             let visible = window.screen?.visibleFrame ?? frame
             var origin = NSPoint(x: frame.minX - size.width - 8, y: frame.maxY - size.height)

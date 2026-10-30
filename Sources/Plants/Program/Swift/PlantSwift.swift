@@ -125,12 +125,10 @@ package enum PlantSwift {
             }
         }
 
-        let twigResult = graph.nodes.last { $0.side == .twig && $0.kind == .twig }?.id
         if palette != nil {
-            function("package static func twig(_ p: inout PlantContext) -> Wire<Foliage.Mesh>", doc: source.twigDoc, side: .twig, result: twigResult)
+            function("package static func twig(_ p: inout PlantContext) -> Wire<Foliage.Mesh>", doc: source.twigDoc, side: .twig, result: graph.end(of: .twig))
         }
-        let end = graph.nodes.last { $0.side == .plant && ($0.kind == .output || $0.kind == .grass) }?.id
-        function("package static func plant(_ p: inout PlantContext) -> Wire<Foliage.Plant>", doc: source.plantDoc, side: .plant, result: end)
+        function("package static func plant(_ p: inout PlantContext) -> Wire<Foliage.Plant>", doc: source.plantDoc, side: .plant, result: graph.end(of: .plant))
 
         // Code nodes' functions, and the table that runs them while the graph is what's run.
         let code = graph.nodes.compactMap { n -> (PlantNode, PlantCode)? in

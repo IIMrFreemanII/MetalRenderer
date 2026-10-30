@@ -34,7 +34,11 @@ package struct PlantCodeEntry {
 
     package init<T>(_ hash: String, _ function: @escaping (inout PlantContext, T) -> T) {
         self.hash = hash
-        run = { p, input in function(&p, input as! T) }
+        // (Its wire may have been moved to another type since: what's on it goes through until it compiles again.)
+        run = { p, input in
+            guard let value = input as? T else { return input }
+            return function(&p, value)
+        }
     }
 }
 

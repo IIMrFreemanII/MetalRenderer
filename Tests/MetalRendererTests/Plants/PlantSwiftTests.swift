@@ -105,6 +105,7 @@ final class PlantSwiftTests: XCTestCase {
         let graph = try XCTUnwrap(read.graph)
         XCTAssertEqual(graph.nodes.map(\.kind), [.statement, .statement, .statement, .skeleton, .output])
         XCTAssertNotNil(graph.problem, "a statement runs only compiled")
+        XCTAssertNil(graph.wiring, "and its file still compiles")
         let written = PlantSwift.emit(read).text
         XCTAssertTrue(written.contains("$0.cycles = 6 + 6 // not a literal"), written)
         XCTAssertTrue(written.contains(#"let name = "a \(1 + 2) string with } in it""#), written)

@@ -112,7 +112,22 @@ package enum PlantNodeKind: String, Codable, CaseIterable {
 }
 
 /// What a wire carries.
-package enum PlantWire: String, Codable { case growing, skeleton, leaves, twigMesh, palette, twigs, plant, any }
+package enum PlantWire: String, Codable {
+    case growing, skeleton, leaves, twigMesh, palette, twigs, plant, any
+
+    /// The type on the wire, in a program's Swift. (`any`: nothing says yet; a stem is the likeliest.)
+    var swiftType: String {
+        switch self {
+        case .growing: return "Growing"
+        case .skeleton, .any: return "PlantSkeleton"
+        case .leaves: return "LeafSet"
+        case .twigMesh: return "Foliage.Mesh"
+        case .palette: return "TwigPalette"
+        case .twigs: return "TwigPlacement"
+        case .plant: return "Foliage.Plant"
+        }
+    }
+}
 
 package struct PlantPin: Equatable {
     package let name: String
@@ -131,6 +146,12 @@ package struct PlantCode: Codable, Equatable {
     package var text: String
 
     package init(text: String) { self.text = text }
+
+    /// A function that hands on what's on its wire: a new node's.
+    package init(on wire: PlantWire) {
+        let type = wire.swiftType
+        text = "static func code(_ p: inout PlantContext, _ input: \(type)) -> \(type) {\n    input\n}"
+    }
 
     /// What names the text, whatever else the file holds: a compiled function runs as long as this is the same.
     package var hash: String { PlantCompiler.hash(text) }
@@ -196,8 +217,7 @@ package enum PlantNodeSettings: Codable, Equatable {
         case .distribute: return .distribute(Growth.Twigs())
         case .output: return .output(Foliage.Assembly())
         case .grass: return .grass(Foliage.GrassPatch())
-        case .code:
-            return .code(PlantCode(text: "static func code(_ p: inout PlantContext, _ input: PlantSkeleton) -> PlantSkeleton {\n    input\n}"))
+        case .code: return .code(PlantCode(on: .any))
         case .statement: return .statement("")
         }
     }
@@ -224,6 +244,7 @@ package struct PlantNode: Codable, Equatable {
     package var notes = PlantNotes()
 
     package var kind: PlantNodeKind { settings.kind }
+    package var isStatement: Bool { if case .statement = settings { return true }; return false }
 
     package init(id: Int32, name: String, side: PlantSide, preset: PlantPreset, settings: PlantNodeSettings, inputs: [Int32]) {
         self.id = id
@@ -245,12 +266,18 @@ extension PlantGraph {
         return n.kind.output
     }
 
-    /// Why the graph can't be run stage by stage, if it can't: a pin not wired, or a statement only its compiled file
-    /// can run.
+    /// Why the graph can't be run stage by stage, if it can't: a statement only its compiled file can run, or `wiring`.
     package var problem: String? {
+        if let n = nodes.first(where: \.isStatement) { return "\(n.name.isEmpty ? "A statement" : n.name) runs only when its file is compiled" }
+        return wiring
+    }
+
+    /// Why the graph has no file that compiles, if it hasn't: a pin not wired, or wired wrongly. (A statement is its
+    /// file's as written, and what it declares is only the compiler's to judge: an Output is asked for only without one.)
+    package var wiring: String? {
         var seen = Set<Int32>()
         for n in nodes {
-            if case .statement = n.settings { return "\(n.name.isEmpty ? "A statement" : n.name) runs only when its file is compiled" }
+            defer { seen.insert(n.id) }
             for (pin, id) in zip(n.kind.pins, n.inputs + Array(repeating: -1, count: max(0, n.kind.pins.count - n.inputs.count))) {
                 if id < 0 {
                     if !pin.optional { return "\(n.kind.title) \(n.name): nothing is wired into \(pin.name)" }
@@ -262,18 +289,18 @@ extension PlantGraph {
                     return "\(n.kind.title) \(n.name): \(pin.name) doesn't take what's wired into it"
                 }
             }
-            seen.insert(n.id)
         }
         for n in nodes where n.kind != .distribute {
             if n.inputs.contains(where: { node($0).map { $0.side != n.side } ?? false }) { return "\(n.kind.title) \(n.name) is wired across the twig and the plant" }
         }
+        if nodes.contains(where: \.isStatement) { return nil }
         let ends = nodes.filter { $0.side == .plant && ($0.kind == .output || $0.kind == .grass) }
         if ends.count != 1 { return ends.isEmpty ? "There's no Output" : "There's more than one Output" }
         return nil
     }
 
     package var hasCode: Bool {
-        nodes.contains { if case .code = $0.settings { return true }; if case .statement = $0.settings { return true }; return false }
+        nodes.contains { if case .code = $0.settings { return true }; return $0.isStatement }
     }
 
     /// In the order they can run, the order they had wherever that does, and each on its side: upstream of the palette
@@ -305,6 +332,17 @@ extension PlantGraph {
 // MARK: - Running one
 
 extension PlantGraph {
+    /// What a side's function returns: the plant's Output, the wire into the palette. (Not the last node: one can hang off
+    /// the chain, wired to nothing, after them.)
+    package func end(of side: PlantSide) -> Int32? {
+        switch side {
+        case .plant: return nodes.last { $0.side == .plant && ($0.kind == .output || $0.kind == .grass) }?.id
+        case .twig:
+            if let wired = nodes.first(where: { $0.kind == .palette })?.inputs.first, wired >= 0 { return wired }
+            return nodes.last { $0.side == .twig && $0.kind == .twig }?.id
+        }
+    }
+
     /// One run of the graph's side, calling the stages as a program's code would (the same draws in the same order).
     private func run(_ side: PlantSide, _ p: inout PlantContext) -> Int32 {
         var wire: [Int32: Int32] = [:]
@@ -332,7 +370,7 @@ extension PlantGraph {
             wire[node.id] = out
             last = out
         }
-        return last
+        return end(of: side).flatMap { wire[$0] } ?? last
     }
 
     package func twig(_ p: inout PlantContext) -> Wire<Foliage.Mesh> {

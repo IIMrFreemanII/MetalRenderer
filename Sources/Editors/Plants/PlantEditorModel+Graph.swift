@@ -55,7 +55,10 @@ extension PlantEditorModel: GraphCanvasModel {
                              settings: .new(kind, preset: preset), inputs: Array(repeating: -1, count: kind.pins.count))
         node.at = at ?? from.map { ($0.at ?? .zero) + [0, PlantGraphLayout.rowGap] } ?? graphPoint(hover)
         // Wired below the selected one, into the first pin that takes what it makes.
-        if let from, let pin = kind.pins.firstIndex(where: { $0.type == .any || $0.type == g.output(of: from.id) }) { node.inputs[pin] = from.id }
+        if let from, let pin = kind.pins.firstIndex(where: { $0.type == .any || $0.type == g.output(of: from.id) }) {
+            node.inputs[pin] = from.id
+            if kind == .code { node.settings = .code(PlantCode(on: g.output(of: from.id))) }
+        }
         g.nodes.append(node)
         setGraph(g)
         selection = ["\(id)"]
@@ -207,7 +210,7 @@ extension PlantEditorModel: GraphCanvasModel {
             compile = PlantPrograms.compiled(PlantGraph.standard(d)) != nil || d.sameRecipe(as: isBuiltIn ? PlantCatalog.builtIn[species] : d) ? .idle : .waiting
             return
         }
-        if let why = graph.problem, !graph.hasCode {
+        if let why = graph.wiring {
             compile = .incomplete(why)
             return
         }

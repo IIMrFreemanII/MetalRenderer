@@ -284,6 +284,54 @@ final class PlantEditorTests: XCTestCase {
     }
 
     /// New species, renamed, saved as files; a built-in species as it is built in has no file.
+    /// A node hung off the chain, added below the selected one, comes after the Output: the plant is still the Output's,
+    /// run or compiled, and a Swift Code node's first function takes what it's wired to.
+    func testANodeOffTheChainLeavesThePlant() throws {
+        let (m, _) = editor()
+        let before = PlantPrograms.runner(for: m.def).plant(.oak, age: .mature, seed: 1, palette: [])
+        let grow = try XCTUnwrap(m.graph.first(.grow, .plant))
+        for kind in [PlantNodeKind.spurs, .code] {
+            m.selection = ["\(grow.id)"]
+            m.addNode(kind, at: [0, 0])
+        }
+        let graph = try XCTUnwrap(m.def.graph)
+        XCTAssertEqual(graph.nodes.suffix(2).map(\.kind), [.spurs, .code])
+        XCTAssertNil(graph.problem)
+        guard case .code(let code)? = graph.nodes.last?.settings else { return XCTFail("a code node") }
+        XCTAssertTrue(code.text.contains("_ input: Growing) -> Growing"), code.text)
+
+        let after = PlantPrograms.runner(for: m.def).plant(.oak, age: .mature, seed: 1, palette: [])
+        XCTAssertEqual(after.parts.count, before.parts.count)
+        XCTAssertEqual(after.bones.count, before.bones.count)
+
+        if let why = PlantCompiler.shared.problem() { throw XCTSkip(why) }
+        guard case .success = PlantCompiler.shared.program(PlantSwift.emit(m.def).text) else { return XCTFail("it doesn't compile") }
+    }
+
+    /// A pin not wired has no file that compiles: the status says what's missing, not the compiler, and Save leaves the
+    /// file as it was.
+    func testAnUnwiredGraphStaysADraft() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (m, _) = editor(folder: folder)
+
+        m.selection = []
+        m.addNode(.code, at: [0, 0])
+        guard case .incomplete(let code) = m.compile else { return XCTFail("\(m.compile)") }
+        XCTAssertTrue(code.contains("nothing is wired into In"), code)
+        m.save()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: PlantStore.swiftURL("oak", in: folder).path))
+        XCTAssertTrue(m.message?.hasPrefix("Not saved") == true, m.message ?? "")
+        XCTAssertTrue(m.isDirty)
+        m.undo.undo()
+
+        let wood = try XCTUnwrap(m.graph.first(.skeleton, .plant))
+        m.unlink("\(wood.id)", "0")
+        guard case .incomplete = m.compile else { return XCTFail("\(m.compile)") }
+        m.save()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: PlantStore.swiftURL("oak", in: folder).path))
+    }
+
     func testSpeciesAndSaving() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("plant-editor-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: folder) }
