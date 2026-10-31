@@ -401,6 +401,7 @@ extension Renderer {
     /// scene before is the `SceneChange`'s (`remade`: asked for by `remakeScene`); `configured`: a benchmark's config,
     /// which sets the camera and the clock itself.
     package func install(_ prepared: PreparedScene, remade: Bool, configured: Bool = false) {
+        if !remade { exposureMeter.reset() }   // another scene's light: its first measure is taken at once
         for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.wait() }
         defer { for _ in 0..<Renderer.maxFramesInFlight { frameSemaphore.signal() } }
         let oldPipelines = pipelines

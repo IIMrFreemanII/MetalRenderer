@@ -27,9 +27,16 @@ package enum SettingsStore {
     /// Saved settings' JSON laid over `defaults` as a launch reads them (a script given the window's saved copy, from
     /// a build with other fields, reads it the same way).
     package static func decode(saved data: Data, over defaults: RenderSettings) -> RenderSettings? {
-        guard let saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let base = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any],
-              var s = decode(merge(base, saved), defaults: base) else { return nil }
+        guard var saved = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let base = try? JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any] else { return nil }
+        // Saved under an older default look: that look's choices go, once, and the app opens where a first launch does.
+        let oldLook = (saved["lookVersion"] as? Int ?? 0) < RenderSettings.currentLook
+        if oldLook { for key in ["post", "fog", "sky", "toneMap", "exposure", "lookVersion"] { saved[key] = nil } }
+        guard var s = decode(merge(base, saved), defaults: base) else { return nil }
+        if oldLook {
+            s.scene.kind = RenderSettings.firstLaunch(defaults).scene.kind
+            s.applySceneDefaults(from: defaults)
+        }
         // Session state rather than preferences.
         s.paused = defaults.paused
         s.viewMode = defaults.viewMode

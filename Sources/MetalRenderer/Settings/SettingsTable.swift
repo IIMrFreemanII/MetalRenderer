@@ -487,7 +487,7 @@ package enum SettingsTable {
     }
 
     private static let post: Section = {
-        let bloom: When = { $0.post.bloom > 0 }, focus: When = { $0.post.aperture > 0 }
+        let bloom: When = { $0.post.bloom > 0 }, focus: When = { $0.post.aperture > 0 }, film: When = { $0.toneMap == .film }
         return Section(title: "Lens and finish", rows: [
             S.slider("Bloom", \.post.bloom, PostSettings.bloomRange, step: 0.01, fmt("%.2f")).env(.post, "bloom"),
             S.slider("Bloom threshold", \.post.bloomThreshold, PostSettings.thresholdRange, step: 0.1, fmt("%.1f"))
@@ -503,6 +503,11 @@ package enum SettingsTable {
             S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
             S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }
                 .env(.post, "ca"),
+            S.slider("Film slope", \.post.filmSlope, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "slope").enabled(film).advanced(),
+            S.slider("Film toe", \.post.filmToe, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "toe").enabled(film).advanced(),
+            S.slider("Film shoulder", \.post.filmShoulder, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "shoulder").enabled(film).advanced(),
+            S.slider("Film black clip", \.post.filmBlackClip, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "blackclip").enabled(film).advanced(),
+            S.slider("Film white clip", \.post.filmWhiteClip, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "whiteclip").enabled(film).advanced(),
         ])
     }()
 

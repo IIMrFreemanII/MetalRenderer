@@ -32,6 +32,7 @@ import simd
 @_cdecl("metalrenderer_game_reload") func gameReloaded() { GameScenes.register() }
 
 extension SceneKind {
+    static let level = SceneKind("level")
     static let stress = SceneKind("stress")
     static let gallery = SceneKind("gallery")
     static let spots = SceneKind("spots")
@@ -204,9 +205,9 @@ extension GameScenes {
                 $0.sky = sky {
                     $0.coverage = 0.3; $0.cloudBase = 1400; $0.cloudThickness = 1200; $0.cloudScale = 3000; $0.shadowStrength = 0.6
                 }
-                // Its rooms to walk into (CitySettings.interiors): exposure that follows the light (at the street's, a
-                // room lit by its windows is black).
-                $0.post = { _ in
+                // The classic look's exposure follows the light for its rooms to walk into (CitySettings.interiors): at
+                // the street's, a room lit by its windows is black. The default look's always does.
+                $0.classicPost = { _ in
                     var p = PostSettings()
                     p.autoExposure = true
                     return p
@@ -346,6 +347,13 @@ extension GameScenes {
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 5, 15], pitch: -0.28)
             },
+            scene(.level, "Default level", "buildDefaultLevel", build: { $0.buildDefaultLevel() }) {
+                $0.opensFirst = true
+                $0.realisticLook = true
+                $0.fog = fog { $0.density = 0.0025; $0.heightFalloff = 0.025; $0.anisotropy = 0.6; $0.maxDistance = 90 }
+                $0.sky = sky { $0.coverage = 0.25; $0.cloudBase = 1400; $0.cloudThickness = 1200; $0.cloudScale = 3000 }
+                $0.camera = Scene.camera([0, 1.8, 1.5], pitch: -0.14)
+            }
         ]
     }
 }

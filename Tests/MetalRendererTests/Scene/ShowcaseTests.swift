@@ -46,8 +46,8 @@ final class ShowcaseTests: XCTestCase {
         XCTAssertEqual(ShowcaseLook.look(for: "no such model").stage, .studio)
     }
 
-    /// The realistic look (Realism) gives the outdoor scenes a camera's lens (auto exposure, a grade, bloom and
-    /// vignette) and haze in their fog; every other scene, and every scene with the look off, has no lens and its kind's fog.
+    /// Every scene opens with a lens: Unreal's defaults, or its own; with the look off, none (and its kind's fog). The
+    /// realistic look (Realism) gives the outdoor scenes haze in their fog too.
     func testLensIsTheShowcasesAndTheRealisticLooksAlone() {
         for kind in SceneKind.allCases where kind != .showcase {
             var scene = SceneSettings(kind: kind)
@@ -57,7 +57,7 @@ final class ShowcaseTests: XCTestCase {
             for realism in Realism.allCases where realism != .off {
                 scene.realism = realism
                 let post = PostSettings.preset(for: scene), fog = FogSettings.preset(for: scene)
-                XCTAssertEqual(post.isOn, kind.hasRealisticLook, "\(kind), realism \(realism)")
+                XCTAssertEqual(post, kind.definition.post == nil ? .unreal : kind.definition.post!(scene), "\(kind), realism \(realism)")
                 if kind.hasRealisticLook && kind.definition.realisticAir {
                     XCTAssertTrue(post.autoExposure, "\(kind)")
                     XCTAssertGreaterThan(fog.haze, FogSettings.preset(for: kind).haze, "\(kind)'s aerial perspective")
@@ -72,7 +72,7 @@ final class ShowcaseTests: XCTestCase {
         }
         var s = RenderSettings()
         s.applySceneDefaults(from: RenderSettings())
-        XCTAssertFalse(s.post.isOn)
+        XCTAssertEqual(s.post, .unreal)
     }
 
     func testShowcaseDefaultsFollowTheModel() throws {

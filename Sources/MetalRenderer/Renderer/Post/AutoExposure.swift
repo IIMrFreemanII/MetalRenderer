@@ -25,10 +25,20 @@ package final class AutoExposure {
     /// through its door reads as a dim room, not a black one; darker still stays dark).
     static let fullLimit: Float = 6, limit: Float = 8
 
+    // The default (the above is the classic look's, PostSettings.classic), Unreal's: the mean between the 10th and 90th
+    // percentiles goes to middle grey plus its default bias of one stop, 0.36 (a uniform frame in 5.8 settles there). It
+    // moves in stops a second, 3 closing down and 1 opening up, easing over the last 1.5 stops. Its limits are its
+    // EV100 -10...20, with its units the same as here: 1 = 1 cd/m2, a sun of 1 = 1 lux (the shading is colour x cos / pi).
+    static let filmLow: Float = 0.1, filmHigh: Float = 0.9, filmKey: Float = 0.36
+    static let filmClose: Float = 3, filmOpen: Float = 1, filmEase: Float = 1.5
+    static let filmLimits: ClosedRange<Float> = -21.6...8.4
+
     private let buffers: [MTLBuffer]
     private var frame = 0
     private var exposure: Float = 1
     private var settled = false
+    /// Histograms still to come from frames before the reset: not measured, or the new scene would start from the old one's.
+    private var stale = 0
 
     package init(device: MTLDevice, framesInFlight: Int) {
         buffers = (0...framesInFlight).map { _ in
@@ -48,19 +58,24 @@ package final class AutoExposure {
     func reset() {
         settled = false
         exposure = 1
+        stale = buffers.count
     }
 
     /// Once a frame, before it is encoded: the oldest histogram (its frame is done) read and cleared for this frame,
     /// and the exposure scale (times the manual exposure) to use. `dt`: the clock's step since the last frame.
-    func next(dt: Float = 1.0 / 60) -> Float {
+    func next(dt: Float = 1.0 / 60, classic: Bool = false) -> Float {
         frame += 1
         let b = current, h = b.contents().bindMemory(to: UInt32.self, capacity: AutoExposure.bins)
         var counts = [Float](repeating: 0, count: AutoExposure.bins)
         for i in 0..<AutoExposure.bins { counts[i] = Float(h[i]) }
         memset(b.contents(), 0, AutoExposure.bins * 4)
+        if stale > 0 {
+            stale -= 1
+            return exposure
+        }
         let total = counts.reduce(0, +)
         guard total >= 16 else { return exposure }
-        let lo = total * 0.4, hi = total * 0.92
+        let lo = total * (classic ? 0.4 : AutoExposure.filmLow), hi = total * (classic ? 0.92 : AutoExposure.filmHigh)
         var seen: Float = 0, sum: Float = 0, weight: Float = 0
         let step = (AutoExposure.logMax - AutoExposure.logMin) / Float(AutoExposure.bins)
         for i in 0..<AutoExposure.bins {
@@ -73,6 +88,19 @@ package final class AutoExposure {
         }
         guard weight > 0 else { return exposure }
         // (The light was measured before the exposure: the target is absolute.)
+        guard classic else {
+            let target = AutoExposure.filmLimits.clamp(log2(AutoExposure.filmKey) - sum / weight)
+            if settled {
+                let now = log2(exposure), away = target - now, far = abs(away)
+                let stops = (away < 0 ? AutoExposure.filmClose : AutoExposure.filmOpen) * max(dt, 0)
+                let move = far > AutoExposure.filmEase ? stops : far * (1 - exp(-stops / AutoExposure.filmEase))
+                exposure = exp2(now + (away < 0 ? -1 : 1) * min(move, far))
+            } else {
+                exposure = exp2(target)
+            }
+            settled = true
+            return exposure
+        }
         var target = log2(AutoExposure.key) - sum / weight
         if target > AutoExposure.fullLimit { target = AutoExposure.fullLimit + (target - AutoExposure.fullLimit) * 0.5 }
         target = min(max(target, -6), AutoExposure.limit)

@@ -40,7 +40,7 @@ struct ShowcaseLook {
     var post = ShowcaseLook.lens
 
     /// The lens every look starts from.
-    static let lens = PostSettings(bloom: 0.06, bloomThreshold: 1, aperture: 6, focus: 0, vignette: 0.35, grain: 0.015,
+    static let lens = PostSettings(bloom: 0.45, bloomThreshold: 1, aperture: 6, focus: 0, vignette: 0.35, grain: 0.015,
                                    aberration: 0.0015)
 
     /// The models of Assets/, by a part of their file name.
@@ -49,26 +49,26 @@ struct ShowcaseLook {
             stage: .neon, key: [0.85, 0.92, 1], rim: [0.3, 0.55, 1], accent: [0.2, 0.85, 1], sky: [0.004, 0.006, 0.012],
             particles: .dust,
             fog: { $0.density = 0.035; $0.heightFalloff = 0.05; $0.anisotropy = 0.7; $0.albedo = [0.8, 0.85, 1] },
-            post: lens.with { $0.bloom = 0.08; $0.aberration = 0.002 })),
+            post: lens.with { $0.bloom = 0.6; $0.aberration = 0.002 })),
         ("cat robot", ShowcaseLook(
             stage: .neon, size: 1.5, key: [1, 0.85, 0.95], rim: [1, 0.15, 0.6], accent: [0.1, 0.85, 1], sky: [0.006, 0.003, 0.01],
             fog: { $0.density = 0.04; $0.heightFalloff = 0.05; $0.anisotropy = 0.6; $0.albedo = [0.95, 0.85, 1] },
-            post: lens.with { $0.bloom = 0.1; $0.aperture = 4; $0.aberration = 0.0025 })),
+            post: lens.with { $0.bloom = 0.75; $0.aperture = 4; $0.aberration = 0.0025 })),
         ("fantasy character", ShowcaseLook(
             stage: .sanctum, key: [1, 0.85, 0.55], rim: [1, 0.7, 0.35], accent: [1, 0.72, 0.28], sky: [0.012, 0.009, 0.006],
             particles: .runes,
             fog: { $0.density = 0.03; $0.albedo = [1, 0.9, 0.75] },
-            post: lens.with { $0.bloom = 0.08 })),
+            post: lens.with { $0.bloom = 0.6 })),
         ("sorceress", ShowcaseLook(
             stage: .sanctum, key: [0.85, 0.8, 1], rim: [0.65, 0.3, 1], accent: [0.2, 1, 0.85], sky: [0.008, 0.005, 0.014],
             particles: .runes,
             fog: { $0.density = 0.035; $0.albedo = [0.8, 0.7, 1] },
-            post: lens.with { $0.bloom = 0.1 })),
+            post: lens.with { $0.bloom = 0.75 })),
         ("demon", ShowcaseLook(
             stage: .forge, size: 2.2, view: 0.35, key: [1, 0.55, 0.3], rim: [1, 0.3, 0.1], accent: [1, 0.35, 0.05],
             sky: [0.012, 0.004, 0.002], particles: .embers,
             fog: { $0.density = 0.045; $0.heightFalloff = 0.1; $0.anisotropy = 0.5; $0.albedo = [0.6, 0.5, 0.45]; $0.noise = 0.7 },
-            post: lens.with { $0.bloom = 0.12; $0.grain = 0.025 })),
+            post: lens.with { $0.bloom = 0.9; $0.grain = 0.025 })),
         ("golem", ShowcaseLook(
             stage: .crypt, size: 2.3, view: 0.4, key: [0.7, 0.85, 1], rim: [0.45, 0.65, 1], accent: [0.3, 1, 0.6],
             sky: [0.006, 0.008, 0.012], particles: .dust,
@@ -78,7 +78,7 @@ struct ShowcaseLook {
             stage: .forge, key: [1, 0.8, 0.55], rim: [1, 0.55, 0.2], accent: [1, 0.45, 0.1], sky: [0.01, 0.006, 0.003],
             particles: .embers,
             fog: { $0.density = 0.04; $0.anisotropy = 0.55; $0.albedo = [0.75, 0.65, 0.55] },
-            post: lens.with { $0.bloom = 0.09 })),
+            post: lens.with { $0.bloom = 0.675 })),
         ("owl", ShowcaseLook(
             stage: .workshop, size: 1.1, spin: 0.1, key: [1, 0.75, 0.45], rim: [0.5, 0.65, 1], accent: [1, 0.6, 0.25],
             sky: [0.03, 0.025, 0.03], particles: .dust,
@@ -102,7 +102,7 @@ struct ShowcaseLook {
             stage: .crypt, size: 2.2, key: [1, 0.75, 0.5], rim: [1, 0.55, 0.3], accent: [1, 0.6, 0.3], sky: [0.014, 0.01, 0.008],
             particles: .dust,
             fog: { $0.density = 0.04; $0.heightFalloff = 0.08; $0.anisotropy = 0.75; $0.albedo = [1, 0.9, 0.8] },
-            post: lens.with { $0.bloom = 0.08 })),
+            post: lens.with { $0.bloom = 0.6 })),
     ]
 
     /// The look of the model `name` names (`SceneSettings.showcase`; "" = the first model), or the studio's.

@@ -105,14 +105,14 @@ final class RealismTests: XCTestCase {
         let bin = Int((Float(-2) - AutoExposure.logMin) / (AutoExposure.logMax - AutoExposure.logMin) * Float(AutoExposure.bins))
         var e: Float = 1
         for _ in 0..<4 {
-            _ = meter.next()   // (moves to the next histogram)
+            _ = meter.next(classic: true)   // (moves to the next histogram)
         }
         for _ in 0..<3 {
             // The histogram the next frame reads: fill it.
             let next = meter.peekNext()
             let h = next.contents().bindMemory(to: UInt32.self, capacity: AutoExposure.bins)
             h[bin] = 1000
-            e = meter.next()
+            e = meter.next(classic: true)
         }
         let step = (AutoExposure.logMax - AutoExposure.logMin) / Float(AutoExposure.bins)
         let measured = exp2(AutoExposure.logMin + (Float(bin) + 0.5) * step)
@@ -124,7 +124,7 @@ final class RealismTests: XCTestCase {
         let bin = Int((l - AutoExposure.logMin) / (AutoExposure.logMax - AutoExposure.logMin) * Float(AutoExposure.bins))
         let h = meter.peekNext().contents().bindMemory(to: UInt32.self, capacity: AutoExposure.bins)
         h[bin] = 1000
-        return meter.next(dt: dt)
+        return meter.next(dt: dt, classic: true)
     }
 
     /// A very dark view (a storeroom lit only through its door) opens the exposure past 2^6 only half as fast, and no
@@ -132,7 +132,7 @@ final class RealismTests: XCTestCase {
     func testAutoExposureOpensDarkRoomsPartly() throws {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
         let m = AutoExposure(device: device, framesInFlight: 2)
-        for _ in 0..<4 { _ = m.next() }
+        for _ in 0..<4 { _ = m.next(classic: true) }
         var e: Float = 1
         for _ in 0..<3 { e = meter(m, at: -10) }   // the first measure is taken at once
         let full = log2(AutoExposure.key) + 10
@@ -148,7 +148,7 @@ final class RealismTests: XCTestCase {
         guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
         func settled(at l: Float) -> AutoExposure {
             let m = AutoExposure(device: device, framesInFlight: 2)
-            for _ in 0..<4 { _ = m.next() }
+            for _ in 0..<4 { _ = m.next(classic: true) }
             for _ in 0..<3 { _ = meter(m, at: l) }
             return m
         }

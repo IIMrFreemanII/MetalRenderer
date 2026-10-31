@@ -24,9 +24,10 @@ struct Uniforms {
     float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
     uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
     uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
-    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none,
-                            // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings)
+    float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none, 4 film,
+                            // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings), w = film's white clip
     float4 grade;           // the colour grade: red and blue gains (white balance), saturation, contrast
+    float4 film;            // the film curve: slope, toe, shoulder, black clip
     float4 interiorLo;      // xyz: the walkable interiors' box (Scene.interiorBox; empty: lo > hi), where GI's hits see
     float4 interiorHi;      //   the sun through a shadow ray (giSunVisibility), its light map too coarse for rooms
     float4 backdrop;        // xyz: what camera rays that hit nothing see in place of the sky, w = 1 when on (Scene.backdrop)

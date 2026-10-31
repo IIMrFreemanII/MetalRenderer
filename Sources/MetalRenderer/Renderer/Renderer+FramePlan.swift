@@ -654,9 +654,10 @@ extension Renderer {
         }
         if let post = p.post {
             p.postParams = GPUPostParams(
-                bloom: SIMD4(PostSettings.bloomRange.clamp(lens.bloom), lens.bloomThreshold, u.post.x, Float(post.down.count)),
+                bloom: SIMD4(PostSettings.bloomRange.clamp(lens.bloom), lens.bloomThreshold, u.post.x,
+                             Float(lens.classic ? min(post.down.count, PostSettings.classicBloomLevels) : post.down.count)),
                 lens: SIMD4(PostSettings.apertureRange.clamp(lens.aperture), lens.focus, PostSettings.maxBlur, 0.1),
-                finish: SIMD4(lens.vignette, lens.grain, lens.aberration, 0),
+                finish: SIMD4(lens.vignette, lens.grain, lens.aberration, lens.classic ? 1 : 0),
                 size: SIMD4(UInt32(size.outWidth), UInt32(size.outHeight), UInt32(width), UInt32(height)),
                 frame: SIMD4(frameIndex, 0, 0, 0))
         }

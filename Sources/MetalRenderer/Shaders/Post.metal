@@ -111,6 +111,11 @@ inline float3 postTap(texture2d<float, access::sample> src, float2 uv, float2 te
 
 inline float karisWeight(float3 c) { return 1.0f / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f))); }
 
+/// How much light each of the glow's levels adds, per unit of PostSettings.bloom: fitted so that a bright patch's glow
+/// follows Unreal's default bloom at 0.675, from 10 pixels out to about 450 at 1920x1200 (median error 11%; its far tail
+/// is the worst). They sum to 0.1324: at 0.675 a uniform frame gains 9%, as there.
+constant float bloomWeights[7] = {0.0658f, 0.0136f, 0.0268f, 0.0071f, 0.0051f, 0.0035f, 0.0105f};
+
 kernel void bloomDownKernel(constant Uniforms&               u      [[buffer(0)]],
                             constant PostParams&             p      [[buffer(1)]],
                             texture2d<float, access::sample> src    [[texture(0)]],
@@ -160,7 +165,11 @@ kernel void bloomUpKernel(constant Uniforms&               u      [[buffer(0)]],
     float3 tent = postTap(lower, uv, t, -1, -1) + postTap(lower, uv, t, 1, -1) + postTap(lower, uv, t, -1, 1) + postTap(lower, uv, t, 1, 1)
         + 2.0f * (postTap(lower, uv, t, 0, -1) + postTap(lower, uv, t, -1, 0) + postTap(lower, uv, t, 1, 0) + postTap(lower, uv, t, 0, 1))
         + 4.0f * postTap(lower, uv, t, 0, 0);
-    dst.write(float4(level.read(tid).rgb + tent / 16.0f, 1.0f), tid);
+    // Classic: every level alike. Otherwise each by its weight, and the lowest (which comes up unweighted) by its own.
+    uint at = p.frame.y;
+    bool classic = p.finish.w > 0.0f, lowest = at + 2u == uint(p.bloom.w);
+    float mine = classic ? 1.0f : bloomWeights[min(at, 6u)], below = classic || !lowest ? 1.0f : bloomWeights[min(at + 1u, 6u)];
+    dst.write(float4(level.read(tid).rgb * mine + tent / 16.0f * below, 1.0f), tid);
 }
 
 kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
@@ -184,12 +193,19 @@ kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],
     }
     c = max(c, 0.0f);
     if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
-    if (p.bloom.x > 0.0f) c = mix(c, bloom.sample(postSampler, uv).rgb / p.bloom.w, p.bloom.x);
-    c = toneMap(c, u.post, u.grade);
-    if (p.finish.x > 0.0f) {
-        float r2 = dot(fromCentre * float2(size.x / size.y, 1.0f), fromCentre * float2(size.x / size.y, 1.0f)) * 2.0f;
-        c *= 1.0f - p.finish.x * smoothstep(0.15f, 1.6f, r2);
+    bool classic = p.finish.w > 0.0f;
+    if (p.bloom.x > 0.0f) {
+        float3 glow = bloom.sample(postSampler, uv).rgb;
+        c = classic ? mix(c, glow / p.bloom.w, p.bloom.x) : c + glow * p.bloom.x;
     }
+    float2 fromAxis = fromCentre * float2(size.x / size.y, 1.0f);
+    if (p.finish.x > 0.0f && !classic) {
+        // On the light, a lens's: a cos^4-like falloff, which follows Unreal's at 0.4 to within 1% across the frame.
+        float fall = 1.0f / (1.0f + 0.9025f * p.finish.x * dot(fromAxis, fromAxis));
+        c *= fall * fall;
+    }
+    c = toneMap(c, u);
+    if (p.finish.x > 0.0f && classic) c *= 1.0f - p.finish.x * smoothstep(0.15f, 1.6f, dot(fromAxis, fromAxis) * 2.0f);
     if (p.finish.y > 0.0f) {
         // Triangular noise, strongest in the mid-tones, on the display's (about square-root) scale.
         uint h = pixelSeed(tid, p.frame.x, 0x68E31DA4u);

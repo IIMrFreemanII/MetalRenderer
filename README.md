@@ -89,7 +89,7 @@ below were measured on an M1 Max, which it ran on until October 2026; they say s
 * **SVGF denoiser (indirect light):** temporal accumulation (16 frames) with motion vectors and disocclusion checks, then a 4-pass edge-aware à-trous wavelet filter guided by variance. It filters path-traced indirect light (or cascade light if you enable that). With the shadow denoiser off, it also filters direct light as before. The settings were tuned against converged reference images (see below).
 * **Settings panel:** a floating **Render Settings** panel (Tab or ⌘,) has a control for every setting, including the GI method and its parameters and the denoiser parameters. It remembers your settings between launches and copies them as `METALRENDERER_*` variables (see [The settings panel](#the-settings-panel)).
 * **Debug window:** a floating **Debug** window (I or ⌘I) shows a frame-time graph, GPU time per pass, the scene's instance, triangle and light counts, virtual geometry's cut and streaming, texture streaming, GPU memory and the ray queries' counters (see [The debug window](#the-debug-window)).
-* **Exposure and tone curves:** exposure in stops and a choice of ACES (the default), AgX, Reinhard or none, applied in the composite pass before any upscaler.
+* **Exposure and tone curves:** exposure in stops and a choice of Filmic (the default, Unreal's image: within 1.3 of 255 sRGB levels of 5.8's output on greys, 5.1 at worst on 108 colour patches), ACES, AgX, Reinhard or none, applied after any upscaler.
 * **Everything runs in compute kernels.** The shaders (`Shaders.metal` and the pieces in `Shaders/`) are compiled at runtime, so you can edit them while the app runs and press **R** to reload. A compile error names the file and the line.
 
 ## Build and run
@@ -829,7 +829,8 @@ opens the editor.
   writes them in metres, in glowing bars only the camera sees. The slider beside them turns the sun and sky about the
   plant, live (*Light rotation*, `RenderSettings.previewLightYaw`), and the button next to it turns them by themselves,
   10° a second (`previewSpin`; the scene's behaviour, `PlantPreviewPlayer`). A first launch, with nothing saved, opens
-  the workshop.
+  the default level (`Scene+DefaultLevel.swift`: Unreal's default level with a row of test spheres), and so does the
+  first launch after a new default look (`RenderSettings.currentLook`), which resets a saved copy's look once.
 * **The workshop** shows one plant (its age and variant), every age and variant (*Ages and variants*), or the plant and
   six **Mutate** variations of it (*Use 1–6* takes one). The *Skeleton* view shows the stems alone, a colour to a
   generation, and the twigs' stems; the *Light* view colours each stem by the light it got as it grew (dark blue in deep
@@ -1497,7 +1498,7 @@ One model of `Assets/` on a set made for it, seen through a lens. Pick the scene
 * The camera frames the model from its bounds: three-quarters from the front, slightly below its middle, the model filling about 70% of the frame's height.
 * A model is found by a part of its file name, without regard to case. A model with no look of its own (any `.glb` you add to `Assets/`) gets the studio. The looks are a table in `Showcase.swift`: a new model is one row.
 
-**The lens and the finish** (`Shaders/Post.metal`, the "Lens and finish" settings) work in any scene, but are on only in the showcase by default, so every other scene draws what it drew. They run on the frame's light at the output resolution, after the composite or after MetalFX's denoising scaler, before and after the tone curve:
+**The lens and the finish** (`Shaders/Post.metal`, the "Lens and finish" settings) work in any scene. Every scene opens with Unreal's defaults (`PostSettings.unreal`: histogram exposure at middle grey plus a stop, bloom 0.675 with no threshold, vignette 0.4, no grade) or its own look; the benchmarks keep the look from before (`PostSettings.classic`, `METALRENDERER_LOOK=app` or `Config.appLook()` for the app's) so their scores stay comparable with the tables here. They run on the frame's light at the output resolution, after the composite or after MetalFX's denoising scaler, before and after the tone curve:
 * **Depth of field:** each pixel's blur circle grows with its distance from the focus (`aperture` is its radius in output pixels far behind it, at most 24). A gather of up to 64 taps on a golden-angle disc, each tap counted where its own circle reaches the pixel and spread over its circle's area, so bright points become discs; a tap behind a pixel can't blur over it, so a sharp model keeps its edge against a blurred background. Focus 0 is autofocus: the median depth of a patch at the centre of the frame, eased in over about ten frames.
 * **Bloom:** six halvings from half the output size (13 taps; the first with a soft threshold and Karis's average, so a lone bright pixel doesn't flicker into a blob), then back up with a tent filter, mixed in before the tone curve.
 * **Chromatic aberration**, **vignette** and **film grain** (luminance-weighted, new every frame) finish the image.
@@ -3075,7 +3076,7 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
                        (cascade indirect light skips the denoiser unless you enable it)
     4  atrousKernel x4 edge-aware wavelet filter (step 1, 2, 4, 8)
     5  compositeKernel exact unshadowed light (diffuse + GGX) x visibility + indirect, x albedo, + reflections x
-                       specular albedo + emission -> x fog transmittance + fog in-scatter -> ACES tonemap
+                       specular albedo + emission -> x fog transmittance + fog in-scatter -> tone curve
                        -> drawable (sRGB format: the GPU encodes), or with upscaling the raw linear light at render resolution
     6  upscale         MetalFX's denoising scaler (in place of 3-4), then tonemapKernel into the drawable
 ```
