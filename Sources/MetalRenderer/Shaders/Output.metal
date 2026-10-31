@@ -80,15 +80,7 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     bool isVirtual = false;
     uint cluster = 0, local = 0, group = 0, level = 0;
-    if (res.cluster != HIT_NO_CLUSTER) {
-        uint2 rc = accel.clusters[res.cluster];
-        uint packed = ((device const uint*)(accel.pool + rc.y))[3];   // group | level << 24
-        isVirtual = true;
-        cluster = rc.y;                 // its place in the pool: stable while it stays resident
-        local = res.primitive;
-        group = packed & 0xFFFFFFu;
-        level = packed >> 24;
-    } else if (inst.pad1 != 0) {
+    if (inst.pad1 != 0) {
         VGBlas e = accel.vgBlas[inst.pad1 - 1];
         uint a = as_type<uint>(e.tris[3 * res.primitive + 1].w), b = as_type<uint>(e.tris[3 * res.primitive + 2].w);
         isVirtual = true;

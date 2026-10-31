@@ -27,7 +27,6 @@ package enum SettingsEnv {
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true
         d.virtualGeometry.pixelError = 1
-        d.virtualGeometry.poolMB = 768
         d.scene = SceneSettings()
         d.scene.kind = s.scene.kind
         d.scene.showcase = s.scene.showcase   // the model's look: its fog and lens

@@ -119,7 +119,7 @@ package enum EnvVariable: String, CaseIterable {
     // One value each.
     case direct = "METALRENDERER_DIRECT", specular = "METALRENDERER_SPECULAR"
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
-    case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU", vgPool = "METALRENDERER_VG_POOL"
+    case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
@@ -732,7 +732,6 @@ package enum SettingsTable {
     }()
 
     private static let memory = Section(title: "Memory", advanced: true, rows: [
-        S.popup("Geometry pool", \.virtualGeometry.poolMB, VirtualGeometrySettings.poolOptions.map { ("\($0) MB", $0) }).env(.vgPool).advanced(),
         S.popup("Texture budget", \.textureBudgetMB, RenderSettings.textureBudgetOptions.map { ("\($0) MB", $0) }).env(.textureBudget).advanced(),
     ])
 }

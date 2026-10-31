@@ -120,9 +120,9 @@ extension Renderer {
         DispatchQueue.main.async { NSApp.terminate(nil) }   // drawFrame draws no more frames
     }
 
-    /// Virtual geometry has what the view asks for: no group waiting to stream in, no BLAS being built over a cut.
+    /// Virtual geometry has what the view asks for: no BLAS being built over a cut.
     private var streamingSettled: Bool {
-        (virtualTracing?.clusters?.streamer.isSettled ?? true) && !(virtualTracing?.blas?.isBusy ?? false)
+        !(virtualTracing?.blas.isBusy ?? false)
     }
 
     /// How long after a scene is installed its texture levels and virtual geometry pages may show as loading at most
@@ -172,11 +172,6 @@ extension Renderer {
                     settlers.append(Stream(name: "Texture levels", done: p.done, total: p.total,
                                            detail: String(format: "%.0f MB resident", ts.stats.residentMB)))
                 }
-            }
-            if let streamer = virtualTracing?.clusters?.streamer, !streamer.isSettled {
-                let st = streamer.stats
-                settlers.append(Stream(name: "Virtual geometry pages", done: st.residentGroups, total: st.residentGroups + st.pending,
-                                       detail: String(format: "%d waiting, %.0f MB resident", st.pending, streamer.residentMB)))
             }
             if let blas = virtualTracing?.blas, blas.isBusy {
                 settlers.append(Stream(name: "Virtual geometry BLAS", done: 0, total: 0,
@@ -458,9 +453,6 @@ extension Renderer {
         var sceneName = s.scene.kind.definition.detail.map { " — \($0(s.scene))" } ?? ""
         if scene.lights.count > 4 { sceneName += " — direct: \(activeDirectMode.title)" }
         if let loading { sceneName += " — loading \(loading.kind.title)…" }
-        if let vg = virtualTracing?.clusters {
-            sceneName += String(format: " — %d clusters, %.0f MB", vg.stats.selected, vg.residentMB)
-        }
         if let vg = virtualTracing?.blas {
             sceneName += String(format: " — VG %.1fM triangles, %.0f MB", Double(vg.stats.triangles) / 1e6, vg.stats.megabytes)
         }
@@ -649,11 +641,6 @@ extension Renderer {
                          triangles: vg.stats.triangles, clusters: vg.stats.clusters, megabytes: vg.stats.megabytes,
                          rebuilds: vg.stats.rebuilds, lastBuildMs: vg.stats.lastBuildMs, lastCutMs: vg.stats.lastCutMs,
                          skipped: vg.stats.skippedInstances, busy: vg.isBusy)
-        } else if let vg = virtualTracing?.clusters {
-            d.vg = .clusters(meshes: vg.meshCount, instances: vg.instanceCount, clusters: vg.clusterCount, groups: vg.groupCount,
-                             sourceTriangles: vg.sourceTriangles, triangles: vg.stats.triangles, selected: vg.stats.selected, capacity: VirtualGeometry.capacity, overflow: vg.stats.overflow,
-                             residentGroups: vg.stats.residentGroups, residentMB: vg.residentMB, poolMB: vg.poolBytes >> 20,
-                             pending: vg.stats.pending, loadedThisFrame: vg.stats.loadedThisFrame)
         }
         d.vgPixelError = settings.virtualGeometry.pixelError
         d.vgFrozen = frozenLOD != nil && lodFreezes

@@ -339,7 +339,7 @@ extension Renderer {
         let live = (camera.position, Float(height) / (2 * tan(camera.fovY / 2)))
         if !settings.virtualGeometry.freeze { frozenLOD = nil } else if frozenLOD == nil { frozenLOD = live }
         let lod = frozenLOD ?? live
-        return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError, frame: frameIndex)
+        return VGView(camPos: lod.0, pixelScale: lod.1, tau: settings.virtualGeometry.pixelError)
     }
 
     /// Where the far baked plants' voxel levels are (VoxelLOD). A rebuild runs on `voxelQueue` and

@@ -14,8 +14,7 @@ import simd
 /// CPU, and every instance whose cut changed gets a fresh BLAS over exactly the cut's triangles, made in the background
 /// from the memory-mapped cache (the OS streams the pages it touches from disk; they are prefetched with madvise first):
 /// the triangles are gathered into a buffer, and Metal builds its structure over them on a queue of its own. The top-level
-/// structure has each virtual instance at its current BLAS (VirtualTracing), instead of a structure over clusters
-/// spanning every model (VirtualGeometry, METALRENDERER_VG_MODE=clusters).
+/// structure has each virtual instance at its current BLAS (VirtualTracing).
 ///
 /// GPU memory holds only the current cuts: about one triangle per traced pixel at the default error of 1 px.
 final class VirtualBLAS {
@@ -31,7 +30,12 @@ final class VirtualBLAS {
         package var pad2: UInt32 = 0
     }
 
-    static let sync = VirtualGeometry.sync
+    /// Cuts and builds on the calling thread (deterministic): benchmarks, or METALRENDERER_VG_SYNC=1; =0 forces the
+    /// background path even in benchmarks.
+    static let sync: Bool = {
+        let env = ProcessInfo.processInfo.environment["METALRENDERER_VG_SYNC"]
+        return env == "1" || (Benchmark.isEnabled && env != "0")
+    }()
     /// A changed cut waits while under this share of its triangles differ, for at most this many of the worker's passes:
     /// every cut is free of cracks, so one a little out of date only has slightly the wrong detail, and a BLAS and the
     /// top-level structure over it aren't built for a few clusters.

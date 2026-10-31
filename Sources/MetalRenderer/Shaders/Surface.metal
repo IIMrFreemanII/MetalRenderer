@@ -345,19 +345,6 @@ inline HitVertices fetchHitVertices(Hit res, InstanceData inst, SCENE_ACCEL acce
     v.weights = nullptr;
     v.leaf = v.sways = false;
     uint meshIndex = inst.meshIndex;
-    if (res.cluster != HIT_NO_CLUSTER) {
-        // Virtual geometry: the hit cluster's vertices, in the streaming pool.
-        VGClusterView view = vgClusterView(accel.pool + accel.clusters[res.cluster].y);
-        uint packed = view.tris[res.primitive];
-        uint3 i = uint3(packed & 0xFFu, (packed >> 8) & 0xFFu, (packed >> 16) & 0xFFu);
-        for (uint k = 0; k < 3; ++k) {
-            float4 q = view.positions[i[k]];
-            v.p[k] = q.xyz;
-            v.n[k] = octDecode(as_type<uint>(q.w));
-            v.t[k] = float2(as_type<half2>(view.uvs[i[k]]));
-        }
-        return v;
-    }
     if (inst.pad1 != 0) {
         // Virtual geometry, per-instance BLAS over the cut: positions from its triangles, attributes alongside.
         VGBlas e = accel.vgBlas[inst.pad1 - 1];

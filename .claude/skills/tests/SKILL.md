@@ -113,10 +113,9 @@ name first, then by its folder (`by_name`, `by_folder`).
 | `Showcase.swift`, `Scene+Showcase` | ShowcaseTests |
 | `VirtualGeometryBuilder` (its cache file) | CacheTests, VGStreamerTests |
 | `MeshSimplifier`, `MeshClusterizer` (the builder's steps; characters' LODs) | CacheTests, VGStreamerTests, CharacterBaseTests |
-| `VGStreamer`, `VirtualGeometry` (streaming, the DAG's group records) | VGStreamerTests, VGCutTests |
 | `VirtualTracing` (virtual geometry in Metal's structures) | VGCutTests, VGStreamerTests (+ prove with images: no suite traces it) |
 | `TraceScene`, `Renderer`, `RenderTargets`, `Renderer+*` (but the ones in a feature folder: theirs) | none: prove with images (the offscreen skill) |
-| `VirtualBLAS` (its cut), `Shaders/VirtualGeometry.metal` | VGCutTests (the shaders: plus the shader pair) |
+| `VirtualBLAS` (its cut) | VGCutTests |
 | `Tests/MetalRendererTests/<Folder>/XTests.swift` | XTests |
 | `Package.swift`, a shared test helper | all suites: the one case where the full run is right |
 

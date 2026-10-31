@@ -68,8 +68,7 @@ the `metal-shaders` skill.
     `passOn` in Shaders/Types.metal with `Kernel.fixedFlags` / `fixedPassFlags` in Pipelines.swift), the `LIGHT_SPEC`
     function constant and the `RT_STATS` macro (`Pipelines.compile`).
 * **Branch on uniforms, not on pixels.** Keep loop trip counts uniform across a simdgroup. Make one memory fetch serve
-  one decision: the 64-byte two-child node of a cluster's tree (`BVHNode`, BVH.swift) tests both children with one
-  load.
+  one decision: a 64-byte tree node that holds both children's boxes (`BVHNode`, BVH.swift) tests both with one load.
 * **Reduce before atomics** where a pass is dominated by them: simdgroup (`simd_sum`) → threadgroup → one
   `atomic_fetch_add_explicit(…, memory_order_relaxed)` per group. (Measure: four atomics per probe in `rcSHKernel`
   turned out not to matter.)

@@ -15,7 +15,6 @@ package struct VGView {
     var camPos: SIMD3<Float>
     var pixelScale: Float       // traced height / (2 tan(fovY / 2))
     var tau: Float              // allowed error in traced pixels
-    var frame: UInt32
 }
 
 /// The wind this frame (Shaders/Foliage.metal): where it blows to, how hard, how gusty; the animation time now and a frame ago.
@@ -88,7 +87,7 @@ package struct TraversalStats {
 /// top-level structure and what a hit reads besides the instance records. One per frame slot, written every frame
 /// (`write`), as its top-level structure and its virtual geometry's tables are the slot's own.
 package final class TraceSceneArgs {
-    static let size = 224
+    static let size = 208
     /// The ray queries' counters (RT_STATS: METALRENDERER_RT_STATS=1, or the Debug window's toggle, which recompiles
     /// the shaders): see TraversalStats.
     static var statsEnabled = ProcessInfo.processInfo.environment["METALRENDERER_RT_STATS"] == "1"
@@ -118,21 +117,17 @@ package final class TraceSceneArgs {
         (buffers, self.stats, self.dummy) = (made, stats, dummy)
     }
 
-    /// What `slot`'s frame reads besides the structures: virtual geometry's tables (the cut's clusters, their
-    /// pool), the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
+    /// What `slot`'s frame reads besides the structures: virtual geometry's table, the plants' parts, the wind, and what a leaf card's alpha test reads (the mesh table and
     /// the arrays, the alpha layers).
     struct Content {
         package var tlas: MTLAccelerationStructure
         package var vgTable: MTLBuffer?
-        package var clusters: MTLBuffer?
-        package var pool: MTLBuffer?
         package var parts: MTLBuffer?
         package var meshes: MTLBuffer?
         package var indices: MTLBuffer?
         package var uvs: MTLBuffer?
         package var wind = WindFrame()
         package var cutouts: MTLBuffer?
-        package var clusterInstance = UInt32.max
         /// The particles' structures this slot (the shadow casters', the others'), their records and flipbooks
         /// (ParticlesGPU), and how many slots each covers.
         package var particleCasters: MTLAccelerationStructure?
@@ -158,30 +153,27 @@ package final class TraceSceneArgs {
         func address(_ b: MTLBuffer?) -> UInt64 { (b ?? dummy).gpuAddress }
         p.storeBytes(of: c.tlas.gpuResourceID, toByteOffset: 0, as: MTLResourceID.self)
         p.storeBytes(of: address(c.vgTable), toByteOffset: 8, as: UInt64.self)
-        p.storeBytes(of: address(c.clusters), toByteOffset: 16, as: UInt64.self)
-        p.storeBytes(of: address(c.pool), toByteOffset: 24, as: UInt64.self)
-        p.storeBytes(of: address(c.parts), toByteOffset: 32, as: UInt64.self)
-        p.storeBytes(of: address(c.meshes), toByteOffset: 40, as: UInt64.self)
-        p.storeBytes(of: c.wind.wind, toByteOffset: 48, as: SIMD4<Float>.self)
-        p.storeBytes(of: SIMD4(c.wind.time, c.wind.previousTime, 0, c.wind.leafFall), toByteOffset: 64, as: SIMD4<Float>.self)
-        p.storeBytes(of: address(c.cutouts), toByteOffset: 80, as: UInt64.self)
-        p.storeBytes(of: c.clusterInstance, toByteOffset: 88, as: UInt32.self)
-        p.storeBytes(of: stats.gpuAddress, toByteOffset: 96, as: UInt64.self)
-        p.storeBytes(of: address(c.indices), toByteOffset: 104, as: UInt64.self)
-        p.storeBytes(of: address(c.uvs), toByteOffset: 112, as: UInt64.self)
-        p.storeBytes(of: c.frame, toByteOffset: 120, as: UInt32.self)
-        p.storeBytes(of: c.particleCasters?.gpuResourceID ?? MTLResourceID(), toByteOffset: 128, as: MTLResourceID.self)
-        p.storeBytes(of: c.particleOthers?.gpuResourceID ?? MTLResourceID(), toByteOffset: 136, as: MTLResourceID.self)
-        p.storeBytes(of: address(c.particleRender), toByteOffset: 144, as: UInt64.self)
-        p.storeBytes(of: c.particleAtlas?.gpuResourceID ?? MTLResourceID(), toByteOffset: 152, as: MTLResourceID.self)
-        p.storeBytes(of: c.particleCounts, toByteOffset: 160, as: SIMD2<UInt32>.self)
-        p.storeBytes(of: c.particleFlags, toByteOffset: 168, as: UInt32.self)
-        p.storeBytes(of: c.particleTrails?.gpuResourceID ?? MTLResourceID(), toByteOffset: 176, as: MTLResourceID.self)
-        p.storeBytes(of: address(c.trailPoints), toByteOffset: 184, as: UInt64.self)
-        p.storeBytes(of: address(c.trailRecords), toByteOffset: 192, as: UInt64.self)
-        p.storeBytes(of: c.trailShape, toByteOffset: 200, as: SIMD2<UInt32>.self)
-        p.storeBytes(of: address(c.opacity), toByteOffset: 208, as: UInt64.self)
-        p.storeBytes(of: address(c.textures), toByteOffset: 216, as: UInt64.self)
+        p.storeBytes(of: address(c.parts), toByteOffset: 16, as: UInt64.self)
+        p.storeBytes(of: address(c.meshes), toByteOffset: 24, as: UInt64.self)
+        p.storeBytes(of: c.wind.wind, toByteOffset: 32, as: SIMD4<Float>.self)
+        p.storeBytes(of: SIMD4(c.wind.time, c.wind.previousTime, 0, c.wind.leafFall), toByteOffset: 48, as: SIMD4<Float>.self)
+        p.storeBytes(of: address(c.cutouts), toByteOffset: 64, as: UInt64.self)
+        p.storeBytes(of: stats.gpuAddress, toByteOffset: 72, as: UInt64.self)
+        p.storeBytes(of: address(c.indices), toByteOffset: 80, as: UInt64.self)
+        p.storeBytes(of: address(c.uvs), toByteOffset: 88, as: UInt64.self)
+        p.storeBytes(of: c.frame, toByteOffset: 96, as: UInt32.self)
+        p.storeBytes(of: c.particleCasters?.gpuResourceID ?? MTLResourceID(), toByteOffset: 104, as: MTLResourceID.self)
+        p.storeBytes(of: c.particleOthers?.gpuResourceID ?? MTLResourceID(), toByteOffset: 112, as: MTLResourceID.self)
+        p.storeBytes(of: address(c.particleRender), toByteOffset: 120, as: UInt64.self)
+        p.storeBytes(of: c.particleAtlas?.gpuResourceID ?? MTLResourceID(), toByteOffset: 128, as: MTLResourceID.self)
+        p.storeBytes(of: c.particleCounts, toByteOffset: 136, as: SIMD2<UInt32>.self)
+        p.storeBytes(of: c.particleFlags, toByteOffset: 144, as: UInt32.self)
+        p.storeBytes(of: c.particleTrails?.gpuResourceID ?? MTLResourceID(), toByteOffset: 152, as: MTLResourceID.self)
+        p.storeBytes(of: address(c.trailPoints), toByteOffset: 160, as: UInt64.self)
+        p.storeBytes(of: address(c.trailRecords), toByteOffset: 168, as: UInt64.self)
+        p.storeBytes(of: c.trailShape, toByteOffset: 176, as: SIMD2<UInt32>.self)
+        p.storeBytes(of: address(c.opacity), toByteOffset: 184, as: UInt64.self)
+        p.storeBytes(of: address(c.textures), toByteOffset: 192, as: UInt64.self)
     }
 
     /// What the frames finished since the last read added (in-flight ones in part): read while frames run.

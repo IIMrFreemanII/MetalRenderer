@@ -1,12 +1,11 @@
 import Foundation
 import simd
 
-/// GPU record of one virtual-geometry cluster (MSL `VGCluster`), shared by the cut kernel and the cache file.
+/// The record of one virtual-geometry cluster, in the cache file.
 ///
 /// The cut follows Nanite's rule. A cluster is drawn when its group's simplification (the coarser version that
 /// replaces it, `parentError` over `parentSphere`) is too coarse on screen, and its own simplification error
-/// (`selfError` over `selfSphere`, from the finer group it was made from, `childGroup`) is fine enough, or that finer
-/// group isn't resident. Siblings share both tests and errors grow monotonically up the DAG, so the cut is
+/// (`selfError` over `selfSphere`, from the finer group it was made from, `childGroup`) is fine enough. Siblings share both tests and errors grow monotonically up the DAG, so the cut is
 /// consistent: no cluster appears twice, no gap opens, and locked group borders keep it free of cracks.
 package struct VGCluster {
     package var selfSphere = SIMD4<Float>()     // xyz = centre, w = radius (object space)
@@ -44,7 +43,7 @@ package struct VirtualMesh {
 /// Builds virtual meshes (our own clustering, simplification and DAG; see MeshClusterizer and MeshSimplifier) and
 /// reads / writes their cache files.
 package enum VirtualGeometryBuilder {
-    /// Page (streaming unit) size: every group's clusters must fit, and the GPU pool has slots of this size.
+    /// Page size: every group's clusters must fit.
     package static let pageBytes = 65536
     /// Meshes with at least this many triangles become virtual; smaller ones stay ordinary.
     package static let minTriangles = 65536
@@ -52,7 +51,7 @@ package enum VirtualGeometryBuilder {
     // MARK: Cluster pages
 
     /// Serializes one cluster: header, BVH nodes, vertices (position + octahedral normal), UVs (half2), triangles
-    /// (three 8-bit local indices, in BVH leaf order). Layout matches the shaders' `vgCluster*` accessors:
+    /// (three 8-bit local indices, in BVH leaf order). Layout, as `VirtualBLAS.gather` reads it:
     ///   u32 nodeCount, vertexCount, triangleCount, 0, nodeOffset, positionOffset, uvOffset, triangleOffset (bytes).
     package static func clusterBlob(triangles: [UInt32], positions: UnsafeBufferPointer<SIMD3<Float>>,
                             normals: UnsafeBufferPointer<SIMD3<Float>>, uvs: UnsafeBufferPointer<SIMD2<Float>>) -> (blob: [UInt8], bounds: AABB) {

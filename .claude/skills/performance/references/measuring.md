@@ -99,7 +99,7 @@ pure speed change.
   reads them and reports unknown keys:
   * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,on=0,…"`;
   * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
-* Plain defaults: `METALRENDERER_DIRECT`, `_VG`, `_VG_TAU`, `_VG_POOL`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
+* Plain defaults: `METALRENDERER_DIRECT`, `_VG`, `_VG_TAU`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
   (Every frame is Metal 4's: there is no API to pick. `METALRENDERER_MFX4=1` tries MetalFX's Metal 4 scaler.)
 * Performance knobs:
   * `METALRENDERER_TG="trace=16x8,atrous=16x16"` sets threadgroup sizes (a kernel by its `Kernel` case in

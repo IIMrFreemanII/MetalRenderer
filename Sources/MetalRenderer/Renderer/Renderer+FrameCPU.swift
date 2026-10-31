@@ -50,7 +50,7 @@ extension Renderer {
         writeInstanceEdits(slot: slot, still: still)   // (after: it may make the slot's structure stale)
         // Virtual geometry's instances name their cuts' structures: a new one means a new top-level structure, not a refit.
         if let virtualTracing, virtualTracing.writeDescriptors(slot: slot, into: instanceDescBuffers[slot], stride: instanceDescriptorStride,
-                                                               first: sceneBuffers.instanceCount, scene: scene) {
+                                                               scene: scene) {
             instanceASBuilt.remove(slot)
         }
         // The plants and the ground cover in the wind, and the plants' variants for the season: every frame it blows.

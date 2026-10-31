@@ -50,16 +50,12 @@ extension Renderer {
             enc.useResource(textureStreamer.feedbackBuffer(slot: slot), usage: [.read, .write])
         }
     }
-    /// `slot`'s TraceScene: the top-level structure the frame traces, virtual geometry's tables (the cut's clusters),
-    /// the wind.
+    /// `slot`'s TraceScene: the top-level structure the frame traces, virtual geometry's table, the wind.
     package func writeTraceScene(slot: Int) {
-        let clusters = virtualTracing?.selected(slot: slot)
         let plants = sceneBuffers.plants
         traceScene.write(slot: slot, TraceSceneArgs.Content(
-            tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), clusters: clusters,
-            pool: virtualTracing?.pool, parts: plants?.parts, meshes: sceneBuffers.meshes,
+            tlas: instanceAS[slot], vgTable: virtualTracing?.vgTable(slot), parts: plants?.parts, meshes: sceneBuffers.meshes,
             indices: sceneBuffers.indices, uvs: sceneBuffers.uvs, wind: windFrame, cutouts: plants?.cutouts,
-            clusterInstance: scene.tracesClusters ? UInt32(sceneBuffers.instanceCount) : .max,
             particleCasters: particlesGPU?.parts[slot].casters?.structure, particleOthers: particlesGPU?.parts[slot].others?.structure,
             particleRender: particlesGPU?.render[slot], particleAtlas: particlesGPU?.atlas,
             particleCounts: particlesGPU?.traceCounts(slot: slot) ?? .zero,

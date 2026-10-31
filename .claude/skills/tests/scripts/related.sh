@@ -94,7 +94,6 @@ by_name() {
     Showcase.swift|Scene+Showcase.swift) add ShowcaseTests ;;
     VirtualGeometryBuilder.swift) add CacheTests VGStreamerTests ;;
     MeshSimplifier.swift|MeshClusterizer.swift) add CacheTests VGStreamerTests CharacterBaseTests ;;   # and the builder's output (images)
-    VGStreamer.swift|VirtualGeometry.swift) add VGStreamerTests VGCutTests ;;
     VirtualBLAS.swift) add VGCutTests ;;
     VirtualTracing.swift) add VGCutTests VGStreamerTests ;;   # and images: no suite traces it
     TraceScene.swift|RenderTargets.swift|Renderer.swift|Renderer+*.swift) return 1 ;;   # the folder's, or images (the offscreen skill)
@@ -164,7 +163,6 @@ if [[ $suites == " " ]]; then
       Sources/MetalRenderer/Shaders/Water.metal|Sources/MetalRenderer/Shaders/WaterCommon.metal) add WaterTests ShaderSourceTests KernelVariantsTests ;;   # and images (waterKernel: the offscreen skill)
       Sources/MetalRenderer/Shaders/Hair.metal) add HairTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/Shaders/ParticleSim.metal|Sources/MetalRenderer/Shaders/ParticleLight.metal|Sources/MetalRenderer/Shaders/ParticleTrace.metal) add ParticleTests VFXTests ShaderSourceTests KernelVariantsTests ;;
-      Sources/MetalRenderer/Shaders/VirtualGeometry.metal) add VGCutTests ShaderSourceTests KernelVariantsTests ;;
       Sources/MetalRenderer/ShadersVFX.metal) add VFXTests ShaderSourceTests ;;
       Sources/Modeling/Shaders/*.metal) add ModelingViewportTests ModelingEditorTests ;;
       Sources/MetalRenderer/Shaders/Procedural.metal|Sources/MetalRenderer/Shaders/Pick.metal) add ShaderSourceTests KernelVariantsTests MaterialGraphTests ;;

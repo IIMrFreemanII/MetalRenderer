@@ -13,7 +13,7 @@ import simd
 @testable import Physics
 @testable import Plants
 
-/// Virtual geometry's streaming (VGStreamer) and what the cuts assume of the DAG.
+/// What virtual geometry's cuts assume of the DAG.
 final class VGStreamerTests: XCTestCase {
     /// A bumpy grid of `n` x `n` quads, made into a cluster DAG of a few levels (also VGCutTests').
     static let mesh: VirtualMesh = {
@@ -45,42 +45,5 @@ final class VGStreamerTests: XCTestCase {
             }
             XCTAssertEqual(first.hi.w, g.error)
         }
-    }
-
-    /// Roots are resident from the start; a requested group comes in with every group above it, and nothing is left
-    /// to do afterwards.
-    func testARequestBringsItsAncestors() throws {
-        guard let device = MTLCreateSystemDefaultDevice() else { throw XCTSkip("no Metal device") }
-        let m = VGStreamerTests.mesh
-        let streamer = try VGStreamer(device: device, meshes: [m], poolMB: 64, slots: 1)
-        func resident() -> [Bool] {
-            let table = streamer.bindPages(slot: 0).contents().bindMemory(to: UInt32.self, capacity: m.groups.count)
-            return (0..<m.groups.count).map { table[$0] != .max }
-        }
-        XCTAssertEqual(resident(), m.groups.map(\.isRoot))
-        XCTAssertTrue(streamer.isSettled)
-
-        // A finest-level group (one no cluster was simplified from) that isn't a root.
-        guard let leaf = m.groups.indices.first(where: { m.groups[$0].level == 0 && !m.groups[$0].isRoot }) else {
-            throw XCTSkip("the DAG has one level")
-        }
-        var request = SIMD2<UInt32>(UInt32(leaf), Float(2).bitPattern)
-        streamer.addRequests(&request, count: 1, frame: 1)
-        XCTAssertFalse(streamer.isSettled)
-        streamer.update(frame: 1, framesInFlight: 1)
-        streamer.waitForCopies()
-        streamer.update(frame: 2, framesInFlight: 1)
-        XCTAssertTrue(streamer.isSettled)
-
-        var wanted = Set([leaf]), stack = [leaf]
-        while let g = stack.popLast() {
-            let rec = m.groups[g]
-            for p in m.parents[Int(rec.parentStart)..<Int(rec.parentStart + rec.parentCount)] where wanted.insert(Int(p)).inserted {
-                stack.append(Int(p))
-            }
-        }
-        let now = resident()
-        for g in wanted { XCTAssertTrue(now[g], "group \(g), above the requested one, isn't resident") }
-        XCTAssertEqual(streamer.stats.residentGroups, now.filter { $0 }.count)
     }
 }

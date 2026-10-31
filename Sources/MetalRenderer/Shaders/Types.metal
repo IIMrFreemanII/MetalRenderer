@@ -238,9 +238,6 @@ constant bool VOXELS = VOXEL_BOXES;
 // Bit 22 = SDF_SHAPES: some instances are SDF shapes (Shaders/SDF.metal), which the ray queries sphere-trace in
 // their intersection queries' loop (their boxes).
 constant bool SDF_SHAPES = (LIGHT_SPEC & 0x00400000u) != 0;
-// Bit 21 = VG_CLUSTERS: virtual geometry is traced as this frame's cut of clusters (METALRENDERER_VG_MODE=clusters,
-// VirtualGeometry.swift): boxes whose rays the ray queries walk through the cluster's own BVH.
-constant bool VG_CLUSTERS = (LIGHT_SPEC & 0x00200000u) != 0;
 // Bit 20 = HAIR_CURVES: some meshes are strands, round Catmull-Rom curves (Scene.addCurves) that the ray queries meet
 // (MSL 3.1 and later; before that none are drawn).
 #if __METAL_VERSION__ < 310
