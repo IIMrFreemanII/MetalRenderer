@@ -199,20 +199,6 @@ final class DebugPanel: NSObject {
                 ("Last cut", String(format: "%.1f ms, %d of %d instances unchanged", lastCutMs, skipped, instances), nil),
                 ("Last build", String(format: "%.1f ms", lastBuildMs) + (busy ? ", building" : ""), nil),
             ]
-        case let .clusters(meshes, instances, clusters, groups, source, triangles, selected, capacity, overflow, residentGroups, residentMB, poolMB, pending, loaded):
-            vgRows = [
-                ("Mode", "clusters (streamed pool)", nil),
-                ("Meshes", "\(meshes) in \(instances) instances", nil),
-                ("Clusters drawn", "\(Self.count(selected)) of \(Self.count(capacity))" + (overflow ? ", capacity reached" : ""),
-                 overflow ? .systemRed : nil),
-                ("Traced triangles", Self.count(triangles), nil),
-                ("Finest level", Self.finest(source, cut: triangles), nil),
-                ("Clusters total", "\(Self.count(clusters)) in \(Self.count(groups)) groups", nil),
-                ("Groups resident", "\(Self.count(residentGroups)) of \(Self.count(groups))", nil),
-                ("Pool", String(format: "%.0f of %d MB", residentMB, poolMB), residentMB > 0.95 * Double(poolMB) ? .systemOrange : nil),
-                ("Requests waiting", "\(pending)", nil),
-                ("Loaded this frame", "\(loaded) groups", nil),
-            ]
         }
         if !vgRows.isEmpty {
             vgRows += [("Pixel error", String(format: "%g px", d.vgPixelError), nil),

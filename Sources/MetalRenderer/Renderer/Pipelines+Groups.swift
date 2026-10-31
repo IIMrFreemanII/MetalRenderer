@@ -14,5 +14,4 @@ extension Pipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], filter: self[.rcFilter], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])
     }
-    var vg: VGPipelines { VGPipelines(reset: self[.vgReset], cut: self[.vgCut], boxes: self[.vgBoxes]) }
 }

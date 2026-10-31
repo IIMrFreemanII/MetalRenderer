@@ -104,9 +104,8 @@ fewer threads run at once and memory latency stops being hidden.
 * A simdgroup runs as slowly as its slowest lane. Keep loop trip counts uniform: fixed sample counts per pixel, and
   bounded traversal stacks. Variable-length work (traversal, many-light loops) is where divergence lives.
 * Branch on data that's uniform across the simdgroup (`Uniforms`, the scene config) where possible.
-* **Lay data out for one fetch per decision.** The node of a cluster's tree (`BVHNode`, BVH.swift), which the ray
-  queries walk in `METALRENDERER_VG_MODE=clusters` (`clusterWalk`), is 64 bytes and holds both children's boxes, so
-  one load tests two. Instance masks let Metal's traversal skip whole instances. Apply the same thinking to new
+* **Lay data out for one fetch per decision.** A tree node that holds both children's boxes (`BVHNode`, BVH.swift, 64
+  bytes) tests two with one load. Instance masks let Metal's traversal skip whole instances. Apply the same thinking to new
   structures: pack what's tested together, and keep cold data elsewhere.
 * Access 2D textures in 2D tiles (`dispatchThreads` with 2D threadgroups) for cache locality. Avoid scattered reads
   driven by per-pixel indirection unless that is the algorithm (ReSTIR spatial neighbours: few, bounded).
@@ -161,9 +160,10 @@ fewer threads run at once and memory latency stops being hidden.
   rare (`slack` in VirtualBLAS.swift): every rebuild costs CPU, GPU and memory churn, and an uncompacted BLAS is about
   twice the custom tracer's old tree (107 vs 53 MB for 418k triangles).
 * What Metal's traversal hands back to the shader is the cost to watch in software: bounding boxes (far plants'
-  voxels, SDF shapes, `VG_MODE=clusters`' cluster boxes) and non-opaque triangles (leaf cards, alpha-tested by
+  voxels, SDF shapes) and non-opaque triangles (leaf cards, alpha-tested by
   `rtCutout`) turn the queries into intersection-query loops. On the M1 Max leaf cards take the forest from 70 to
-  223 ms, and clusters mode is ~6× the BLAS mode. Re-measure on hardware RT before drawing conclusions.
+  223 ms. Virtual geometry's clusters mode (a box per cluster, removed in October 2026) was 7–9× the BLAS mode on the
+  M4 Max too. Re-measure on hardware RT before drawing conclusions.
 * Shadow rays: they are any-hit and terminate early. Many-light sampling replaces one ray per light; ReSTIR reuses
   samples. Ray count is the main budget on M1/M2.
 

@@ -193,15 +193,6 @@ extension Renderer {
             }
             passes.updatePrimitives(plants.refit(slot: slot), pass: "wind")
         }
-        // Virtual geometry as clusters: this frame's cut and its boxes, then the structure over them.
-        if let clusters = virtualTracing?.clusters {
-            if let enc = passes.compute("vg", serial: true) {
-                clusters.encode(enc, slot: slot, vg: pipelines.vg, instanceData: instanceDataBuffers[slot], camPos: lod.camPos,
-                                pixelScale: lod.pixelScale, tau: lod.tau, frame: lod.frame)
-                passes.endCompute()
-            }
-            passes.updatePrimitives(clusters.build(slot: slot), pass: "vg")
-        }
         // 1. Update the top-level acceleration structure with this frame's instance transforms. A refit (new bounds,
         //    same tree) costs a quarter of a rebuild, but the tree degrades as objects drift from where they were when
         //    it was built: in the old stress hall (400 moving objects) rays got 35% slower after 256 refits. A rebuild
@@ -210,10 +201,9 @@ extension Renderer {
         //    A still scene's was built with its buffers, and stays.
         if !sceneBuffers.still, instanceASStale[slot] || !instanceASBuilt.contains(slot) {
             if Int(frameIndex) % Renderer.tlasRebuildInterval < Renderer.maxFramesInFlight { instanceASBuilt.remove(slot) }
-            if virtualTracing?.clusters != nil { instanceASBuilt.remove(slot) }   // its boxes' structure is new every frame
             let refit = instanceASBuilt.contains(slot)
             passes.updateTLAS(TLASUpdate(structure: instanceAS[slot], scratch: instanceScratch[slot], refit: refit,
-                                         instanceCount: sceneBuffers.structureInstances, usage: Renderer.tlasUsage,
+                                         instanceCount: sceneBuffers.instanceCount, usage: Renderer.tlasUsage,
                                          instances: instanceDescBuffers[slot], instanceStride: instanceDescriptorStride,
                                          primitives: primitiveAS + (virtualTracing?.structures(slot: slot) ?? [])
                                             + (sceneBuffers.plants?.structures(slot: slot) ?? []),
@@ -603,7 +593,7 @@ extension Renderer {
         let semaphore = frameSemaphore
         let bench = benchmark, benchConfig = benchmark?.configIndex ?? 0
         let recordFrame = benchmark?.isMeasuring ?? false
-        let vg = virtualTracing?.clusters, vgFrame = frameIndex, streamer = textureStreamer
+        let streamer = textureStreamer
         let cpuInterval = frameIntervalMs
         let encodeNow = (CACurrentMediaTime() - encodeStart) * 1000
         encodeSum += encodeNow
@@ -626,7 +616,6 @@ extension Renderer {
                 if let presenter { presenter.present(handOver, slot: slot, withBetween: withBetween, hold: hold) } else { handOver.release(slot) }
             }
             if !Benchmark.isEnabled {
-                vg?.collect(slot: slot, frame: vgFrame)
                 streamer?.collect(slot: slot)
             }
             if let bench, recordFrame {
@@ -671,8 +660,7 @@ extension Renderer {
         }
         sceneDeclaredIn = nil
         if benchmark != nil {
-            vg?.collect(slot: slot, frame: vgFrame)   // here, not in the handler: the next frame must see the requests
-            streamer?.collect(slot: slot)
+            streamer?.collect(slot: slot)   // here, not in the handler: the next frame must see the requests
         }
         if checkCrowd, let crowdSkinner {   // the frame is done (benchmarks wait for it)
             let skin = crowdSkinner.check(positions: positionBuffer, normals: normalBuffer)

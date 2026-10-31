@@ -38,7 +38,6 @@ using namespace metal::raytracing;
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain
 #include "Shaders/RadianceCascades.metal"  // the radiance cascades GI mode
-#include "Shaders/VirtualGeometry.metal"   // virtual geometry: the frame's cut and its clusters' boxes (vg* kernels)
 #include "Shaders/Crowd.metal"             // skinned characters: pose slots' matrices and vertices (crowd* kernels)
 #include "Shaders/Physics.metal"           // rigid bodies: broad and narrow phase, the XPBD substeps, poses (physics* kernels)
 #include "Shaders/PhysicsCars.metal"       // node-beam cars: a threadgroup a car, its substeps in one dispatch (physicsCar* kernels)

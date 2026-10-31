@@ -11,39 +11,23 @@ import Plants
 import simd
 
 /// Virtual geometry in the top-level structure: what the virtual instances' descriptors point at, and what the ray
-/// queries and hits read of it (TraceScene.vgBlas, .clusters, .pool). Either
-/// * a BLAS per virtual instance over its current cut (VirtualBLAS, the default): the instance's descriptor names it,
-///   and a new cut rebuilds the top-level structure over it; or
-/// * this frame's cut of clusters as boxes (VirtualGeometry, `METALRENDERER_VG_MODE=clusters`): one instance of their
-///   own after the scene's (`extraInstances`), whose structure the frame builds; the virtual instances are masked out.
+/// queries and hits read of it (TraceScene.vgBlas): a BLAS per virtual instance over its current cut (VirtualBLAS). The
+/// instance's descriptor names it, and a new cut rebuilds the top-level structure over it.
 package final class VirtualTracing {
-    let blas: VirtualBLAS?
-    let clusters: VirtualGeometry?
+    let blas: VirtualBLAS
     /// The virtual instances, in their rank (GPUInstanceData.pad1 - 1).
     private let virtualInstances: [Int]
-    /// The cluster instance's mask: every virtual instance's.
-    private let clusterMask: UInt32
     /// A structure for a descriptor that has none yet (masked out: no ray meets it).
     private let placeholder: MTLAccelerationStructure
     private let placeholderBuffer: MTLBuffer
     /// Per slot: the VirtualBLAS version its descriptors were written for (-1: none yet).
     private var written: [Int]
 
-    /// Instances the top-level structure has after the scene's own.
-    var extraInstances: Int { clusters == nil ? 0 : 1 }
-
-    package init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, poolMB: Int, slots: Int) throws {
+    package init(device: MTLDevice, queue: MTLCommandQueue, scene: Scene, slots: Int) throws {
         let virtual = scene.instances.indices.filter { scene.instances[$0].virtualMesh >= 0 }
         let pairs = virtual.map { ($0, scene.instances[$0].virtualMesh) }
         virtualInstances = virtual
-        clusterMask = virtual.reduce(0) { $0 | scene.instances[$1].mask }
-        if VirtualGeometry.clusterMode {
-            clusters = try VirtualGeometry(device: device, meshes: scene.virtualMeshes, instances: pairs, poolMB: poolMB, slots: slots)
-            blas = nil
-        } else {
-            blas = try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: pairs, slots: slots)
-            clusters = nil
-        }
+        blas = try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: pairs, slots: slots)
         written = [Int](repeating: -1, count: slots)
         // One inactive triangle (NaN), for the descriptors that point at nothing yet. (Not one far away: its instance
         // would stretch the top-level structure to it, which hardware traversal pays for at every ray.)
@@ -73,55 +57,44 @@ package final class VirtualTracing {
         (placeholder, placeholderBuffer) = (structure, vertices)
     }
 
-    /// The structures the descriptors of `slot` name (the top-level structure's build reads them).
+    /// The structures the descriptors name (the top-level structure's build reads them).
     func structures(slot: Int) -> [MTLAccelerationStructure] {
-        if let clusters { return [clusters.structures[slot], placeholder] }
-        return [placeholder] + (blas?.structures.compactMap { $0 } ?? [])
+        [placeholder] + blas.structures.compactMap { $0 }
     }
 
     /// What `slot`'s ray queries and hits read through TraceScene.
     func resources(slot: Int) -> [MTLResource] {
-        (blas?.resources(slot: slot) ?? []) + (clusters?.resources(slot: slot) ?? []) + [placeholder]
+        blas.resources(slot: slot) + [placeholder]
     }
 
-    var vgTable: (Int) -> MTLBuffer? { { [blas] slot in blas?.table(slot: slot) } }
-    func selected(slot: Int) -> MTLBuffer? { clusters?.selectedBuffers[slot] }
-    var pool: MTLBuffer? { clusters?.pool }
+    func vgTable(_ slot: Int) -> MTLBuffer { blas.table(slot: slot) }
 
     /// What the per-instance BLASes retired since the last call (VirtualBLAS.takeReleased).
-    func takeReleased() -> [MTLResource] { blas?.takeReleased() ?? [] }
+    func takeReleased() -> [MTLResource] { blas.takeReleased() }
 
     /// Render thread, before encoding `frame`: the next cut (VirtualBLAS swaps in the BLASes it has finished).
     func update(frame: UInt32, slot: Int, framesInFlight: Int, view: VGView, scene: Scene) {
-        clusters?.update(frame: frame, framesInFlight: framesInFlight)
-        blas?.update(frame: frame, slot: slot, framesInFlight: framesInFlight, camPos: view.camPos, pixelScale: view.pixelScale,
-                     tau: view.tau, sceneInstances: scene.instances)
+        blas.update(frame: frame, slot: slot, framesInFlight: framesInFlight, camPos: view.camPos, pixelScale: view.pixelScale,
+                    tau: view.tau, sceneInstances: scene.instances)
     }
 
-    /// Writes the virtual instances' descriptors into `slot`'s (and the cluster instance's, at `first`): true if the
-    /// structures they name changed since the slot's last ones, when the top-level structure must be built again
-    /// rather than refitted. `stride`: an indirect descriptor's (they name their structures by resource ID).
-    func writeDescriptors(slot: Int, into buffer: MTLBuffer, stride: Int, first: Int, scene: Scene) -> Bool {
+    /// Writes the virtual instances' descriptors into `slot`'s: true if the structures they name changed since the
+    /// slot's last ones, when the top-level structure must be built again rather than refitted. `stride`: an indirect
+    /// descriptor's (they name their structures by resource ID).
+    func writeDescriptors(slot: Int, into buffer: MTLBuffer, stride: Int, scene: Scene) -> Bool {
         let base = buffer.contents()
         let options = MTLAccelerationStructureInstanceOptions([.opaque, .disableTriangleCulling]).rawValue
-        let current = blas?.structures
+        let current = blas.structures
         for (rank, i) in virtualInstances.enumerated() {
-            let structure = current?[rank]
+            let structure = current[rank]
             SceneBuffers.writeDescriptor(base + i * stride, transform: scene.instances[i].transform, options: options,
                                          mask: structure == nil ? 0 : scene.instances[i].mask, userID: UInt32(i),
                                          structure: structure ?? placeholder)
         }
-        if let clusters {
-            // Its boxes are in world space: the identity. Not opaque: the queries' loop walks the clusters they meet.
-            let boxOptions = MTLAccelerationStructureInstanceOptions([.nonOpaque, .disableTriangleCulling]).rawValue
-            SceneBuffers.writeDescriptor(base + first * stride, transform: matrix_identity_float4x4, options: boxOptions,
-                                         mask: clusterMask, userID: UInt32(first), structure: clusters.structures[slot])
-        }
-        let version = blas?.version ?? 0
-        defer { written[slot] = version }
-        return written[slot] != version
+        defer { written[slot] = blas.version }
+        return written[slot] != blas.version
     }
 
     /// Stats for the benchmark log.
-    var summary: String? { blas?.summary ?? clusters?.summary }
+    var summary: String { blas.summary }
 }

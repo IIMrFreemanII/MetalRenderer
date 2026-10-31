@@ -3,8 +3,8 @@
 // ---------------------------------------------------------------------------------------------
 
 // Ray queries. Every kernel reaches the scene through these functions: Metal's instance acceleration structure and
-// intersector, or its intersection queries where the traversal hands boxes (far plants' voxels, SDF shapes, virtual
-// geometry's clusters) to a loop of ours.
+// intersector, or its intersection queries where the traversal hands boxes (far plants' voxels, SDF shapes) to a loop
+// of ours.
 struct Ray {
     float3 origin;
     float3 direction;   // need not be normalized; distances are in units of its length
@@ -17,7 +17,6 @@ inline Ray makeRay(float3 origin, float3 direction, float tmin, float tmax) {
     return r;
 }
 
-constant uint HIT_NO_CLUSTER = 0xFFFFFFFFu;
 constant uint HIT_NO_PART = 0xFFFFFFFFu;
 constant uint HIT_VOXEL   = 0xFFFFFFFEu;   // Hit.part: a voxel of a far plant's grid; `primitive` is then its cell's
                                            // low 24 bits (leaf share, normal: FoliageVoxels.swift), barycentrics.x
@@ -33,8 +32,7 @@ struct Hit {
     float  distance;
     float2 barycentrics;   // weights of the triangle's 2nd and 3rd vertices
     uint   instance;
-    uint   primitive;      // triangle index within the instance's mesh (or within its virtual-geometry cluster)
-    uint   cluster;        // this frame's selected virtual-geometry cluster (TraceScene.clusters), or HIT_NO_CLUSTER
+    uint   primitive;      // triangle index within the instance's mesh (or within a virtual instance's cut)
     uint   part;           // the part of the instance's assembly (TraceScene.parts), or HIT_NO_PART; `primitive` is
                            // then a triangle of the part's mesh
 };
@@ -101,7 +99,6 @@ inline bool rtVoxels(device const uint* voxels, RTVoxels g, uint level, float3 o
                 h.distance = t;
                 h.barycentrics = float2(float(level), 0.0f);
                 h.primitive = cell & 0x00FFFFFFu;
-                h.cluster = HIT_NO_CLUSTER;
                 h.part = HIT_VOXEL;
                 return true;
             }
@@ -132,9 +129,6 @@ static_assert(sizeof(VGBlas) == 32, "VGBlas: VirtualBLAS.Entry");
 struct TraceScene {
     instance_acceleration_structure tlas;
     device const VGBlas*          vgBlas;     // per virtual instance: its current cut's BLAS (VirtualBLAS.swift)
-    device const uint2*           clusters;   // this frame's selected virtual-geometry clusters: (instance, pool
-                                              // offset), the cut's (VG_CLUSTERS)
-    device const float4*          pool;       // streamed virtual-geometry pages (VGStreamer.swift)
     device const struct RTPart*   parts;      // every assembly's parts (ASSEMBLIES): a part instance's user id names it
     device const MeshData*        meshes;     // the mesh table, and the arrays below: what a leaf card's alpha test
                                               // reads (ALPHA_TEST)
@@ -143,8 +137,6 @@ struct TraceScene {
     float4                        windTime;   // x = this frame's time (s), y = the last frame's, w = the share of the
                                               // leaves that have fallen (the season)
     device const uchar*           cutouts;    // leaf cards' alpha layers, CUTOUT_SIZE squared each (ALPHA_TEST)
-    uint                          clusterInstance;   // VG_CLUSTERS: the instance whose boxes are the cut's clusters
-    uint                          pad;
     device atomic_uint*           stats;      // RT_STATS builds, per ray class: rays, triangle candidates, box candidates
     device const uint*            indices;
     device const float2*          uvs;
@@ -165,10 +157,11 @@ struct TraceScene {
                                                   // cutoff and UV scale (floats' bits; Scene.opacityRecords)
     device const MaterialTexture* textures;       // OPACITY: the material textures (SceneShading's table)
 };
-static_assert(sizeof(TraceScene) == 224 && __builtin_offsetof(TraceScene, opacity) == 208 && __builtin_offsetof(TraceScene, particleTrails) == 176
-              && __builtin_offsetof(TraceScene, trailShape) == 200 && __builtin_offsetof(TraceScene, stats) == 96 && __builtin_offsetof(TraceScene, uvs) == 112
-              && __builtin_offsetof(TraceScene, particleCasters) == 128 && __builtin_offsetof(TraceScene, particleAtlas) == 152
-              && __builtin_offsetof(TraceScene, particleCounts) == 160,
+static_assert(sizeof(TraceScene) == 208 && __builtin_offsetof(TraceScene, wind) == 32 && __builtin_offsetof(TraceScene, opacity) == 184
+              && __builtin_offsetof(TraceScene, particleTrails) == 152 && __builtin_offsetof(TraceScene, trailShape) == 176
+              && __builtin_offsetof(TraceScene, stats) == 72 && __builtin_offsetof(TraceScene, uvs) == 88
+              && __builtin_offsetof(TraceScene, particleCasters) == 104 && __builtin_offsetof(TraceScene, particleAtlas) == 128
+              && __builtin_offsetof(TraceScene, particleCounts) == 136,
               "TraceScene: TraceSceneArgs.write writes these offsets");
 
 // RT_STATS (Pipelines.compile, the Debug window's counters): every query counts its ray and the candidates Metal's
@@ -179,110 +172,11 @@ static_assert(sizeof(TraceScene) == 224 && __builtin_offsetof(TraceScene, opacit
 
 #define SCENE_ACCEL constant TraceScene&
 
-// A virtual-geometry cluster's data in the pool (VirtualGeometryBuilder.clusterBlob): header (2 x uint4), BVH
-// nodes, vertices (position + octahedral normal), UVs (half2), triangles (three 8-bit local indices).
-// A node holds both children's boxes; a child ref with bit 31 set is a leaf: (count - 1) << 28 | first triangle.
-struct BVHNode {
-    float4 lo0;   // xyz = child 0 box min, w = child 0 ref (bits)
-    float4 hi0;   // xyz = child 0 box max
-    float4 lo1;
-    float4 hi1;
-};
-constant uint BVH_LEAF = 0x80000000u;
-constant uint BVH_NONE = 0xFFFFFFFFu;
-
-struct VGClusterView {
-    device const BVHNode* nodes;
-    device const float4*  positions;   // xyz, w = octahedral normal bits
-    device const uint*    uvs;
-    device const uint*    tris;
-};
-inline VGClusterView vgClusterView(device const float4* blob) {
-    uint4 offsets = ((device const uint4*)blob)[1];   // bytes: nodes, positions, UVs, triangles
-    device const uchar* base = (device const uchar*)blob;
-    VGClusterView v;
-    v.nodes = (device const BVHNode*)(base + offsets.x);
-    v.positions = (device const float4*)(base + offsets.y);
-    v.uvs = (device const uint*)(base + offsets.z);
-    v.tris = (device const uint*)(base + offsets.w);
-    return v;
-}
 inline float3 octDecode(uint bits) {
     float2 e = float2(as_type<short2>(bits)) / 32767.0f;
     float3 n = float3(e, 1.0f - abs(e.x) - abs(e.y));
     if (n.z < 0.0f) n.xy = (1.0f - abs(n.yx)) * select(float2(-1.0f), float2(1.0f), n.xy >= 0.0f);
     return normalize(n);
-}
-
-// Slab test of a box against [tmin, tmax]; tnear = entry distance.
-inline bool rtSlab(float3 lo, float3 hi, float3 inv, float3 oi, float tmin, float tmax, thread float& tnear) {
-    float3 t0 = fma(lo, inv, oi), t1 = fma(hi, inv, oi);
-    float3 tn = min(t0, t1), tf = max(t0, t1);
-    tnear = max(max(tn.x, tn.y), max(tn.z, tmin));
-    return tnear <= min(min(tf.x, tf.y), min(tf.z, tmax));
-}
-
-// Möller-Trumbore, both faces: true on a hit nearer than `tmax`, at `t` with barycentrics `uv`.
-inline bool rtTriangle(float3 o, float3 d, float3 p0, float3 p1, float3 p2, float tmin, float tmax, thread float& t, thread float2& uv) {
-    float3 e1 = p1 - p0, e2 = p2 - p0;
-    float3 pv = cross(d, e2);
-    float det = dot(e1, pv);
-    if (det == 0.0f) return false;
-    float inv = 1.0f / det;
-    float3 tv = o - p0;
-    float u = dot(tv, pv) * inv;
-    if (u < 0.0f || u > 1.0f) return false;
-    float3 qv = cross(tv, e1);
-    float v = dot(d, qv) * inv;
-    if (v < 0.0f || u + v > 1.0f) return false;
-    float h = dot(e2, qv) * inv;
-    if (h < tmin || h > tmax) return false;
-    t = h;
-    uv = float2(u, v);
-    return true;
-}
-
-// The nearest hit with a cluster's triangles, through its own small BVH (object space): its triangle in `h`.
-inline bool clusterWalk(VGClusterView view, float3 o, float3 d, float tmin, bool any, thread Hit& h) {
-    float3 inv = rtSafeInverse(d), oi = -o * inv;
-    uint stack[16];
-    uint sp = 0, ref = 0;
-    bool found = false;
-    while (true) {
-        if ((ref & BVH_LEAF) == 0) {
-            BVHNode n = view.nodes[ref];
-            float t0, t1;
-            bool b0 = rtSlab(n.lo0.xyz, n.hi0.xyz, inv, oi, tmin, h.distance, t0);
-            bool b1 = rtSlab(n.lo1.xyz, n.hi1.xyz, inv, oi, tmin, h.distance, t1);
-            uint c0 = as_type<uint>(n.lo0.w), c1 = as_type<uint>(n.lo1.w);
-            if (b0 && b1) {
-                bool swap = t1 < t0;
-                if (sp < 16) stack[sp++] = swap ? c0 : c1;
-                ref = swap ? c1 : c0;
-                continue;
-            }
-            if (b0 || b1) { ref = b0 ? c0 : c1; continue; }
-        } else if (ref != BVH_NONE) {   // BVH_NONE: the empty child of a single-leaf cluster
-            uint first = ref & 0x0FFFFFFFu, end = first + ((ref >> 28) & 7u) + 1u;
-            for (uint t = first; t < end; ++t) {
-                uint packed = view.tris[t];
-                float3 p0 = view.positions[packed & 0xFFu].xyz, p1 = view.positions[(packed >> 8) & 0xFFu].xyz;
-                float3 p2 = view.positions[(packed >> 16) & 0xFFu].xyz;
-                float tt;
-                float2 uv;
-                if (rtTriangle(o, d, p0, p1, p2, tmin, h.distance, tt, uv)) {
-                    h.hit = true;
-                    h.distance = tt;
-                    h.barycentrics = uv;
-                    h.primitive = t;
-                    found = true;
-                    if (any) return true;
-                }
-            }
-        }
-        if (sp == 0) return found;
-        ref = stack[--sp];
-    }
 }
 
 // VOXEL_BOXES: a far plant's wood instance is a box, one per grid and level (VoxelGrids.swift), whose primitive data
@@ -311,21 +205,9 @@ struct SDFBox {
 };
 static_assert(sizeof(SDFBox) == 32 && __builtin_offsetof(SDFBox, tag) == __builtin_offsetof(VoxelBox, level), "SDFBox: SDFBuffers.BoxData");
 
-// VG_CLUSTERS: this frame's selected clusters, each a box in world space (vgBoxesKernel), all in one instance
-// (TraceScene.clusterInstance): the loop walks the cluster's own BVH in its instance's space.
-struct ClusterBox {
-    float4 row0;   // world -> object rows of the cluster's instance
-    float4 row1;
-    float4 row2;
-    uint   index;  // into TraceScene.clusters
-    uint   mask;   // its instance's
-    uint   pad0, pad1;
-};
-static_assert(sizeof(ClusterBox) == 64, "ClusterBox: VirtualGeometry.boxDataStride");
-
-// The scene has boxes (far plants' voxels, SDF shapes, the cut's clusters) or leaf cards: the ray queries are
+// The scene has boxes (far plants' voxels, SDF shapes) or leaf cards: the ray queries are
 // intersection queries, whose loop gets them.
-constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES || VG_CLUSTERS || ALPHA_TEST;
+constant bool QUERY_LOOP = VOXEL_BOXES || SDF_SHAPES || ALPHA_TEST;
 
 // The instance mask a ray is traced with: its class's bits taken off (rayMask). Rays that meet the scene's geometry meet
 // the voxel boxes too.
@@ -472,7 +354,6 @@ template <> struct Levels<false> {
     typedef intersector<triangle_data, instancing> ClosestIntersector;
     typedef intersector<instancing> PlainIntersector;
     template <typename Q> static uint candidate(thread Q& q) { return TILED ? q.get_candidate_user_instance_id() : q.get_candidate_instance_id(); }
-    template <typename Q> static uint candidateIndex(thread Q& q) { return q.get_candidate_instance_id(); }
     template <typename Q> static uint candidatePart(thread Q& q) { return HIT_NO_PART; }
     template <typename Q> static uint committed(thread Q& q) { return TILED ? q.get_committed_user_instance_id() : q.get_committed_instance_id(); }
     template <typename Q> static uint committedPart(thread Q& q) { return HIT_NO_PART; }
@@ -486,7 +367,6 @@ template <> struct Levels<true> {
     typedef intersector<triangle_data, instancing, max_levels<3>> ClosestIntersector;
     typedef intersector<instancing, max_levels<3>> PlainIntersector;
     template <typename Q> static uint candidate(thread Q& q) { return TILED ? q.get_candidate_user_instance_id(0) : q.get_candidate_instance_id(0); }
-    template <typename Q> static uint candidateIndex(thread Q& q) { return q.get_candidate_instance_id(0); }
     template <typename Q> static uint candidatePart(thread Q& q) {
         return q.get_candidate_instance_count() > 1 ? q.get_candidate_user_instance_id(1) : HIT_NO_PART;
     }
@@ -529,30 +409,13 @@ struct CurveLevels {
 };
 #endif
 
-// The query's candidate box: marched (or walked) as far as the nearest hit so far, `v`'s or the triangle the query
+// The query's candidate box: marched as far as the nearest hit so far, `v`'s or the triangle the query
 // has committed. True if the ray stops in it: `v` is then that hit (its distance, instance, and a voxel's cell and
-// level, a shape's material and, with `normal`, normal, or a cluster's triangle).
+// level, a shape's material and, with `normal`, normal).
 template <bool PLANTS, typename Q>
 inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL sc, thread Hit& v) {
     float3 o = q.get_candidate_ray_origin(), d = q.get_candidate_ray_direction();
     float tmax = q.get_committed_intersection_type() == intersection_type::none ? v.distance : min(v.distance, q.get_committed_distance());
-    if (VG_CLUSTERS && Levels<PLANTS>::candidateIndex(q) == sc.clusterInstance) {
-        device const ClusterBox& box = *(device const ClusterBox*)q.get_candidate_primitive_data();
-        if ((box.mask & mask) == 0) return false;
-        uint2 rc = sc.clusters[box.index];
-        float4 o4 = float4(o, 1.0f), d4 = float4(d, 0.0f);   // the instance is the identity: o, d are the world's
-        float3 oo = float3(dot(box.row0, o4), dot(box.row1, o4), dot(box.row2, o4));
-        float3 od = float3(dot(box.row0, d4), dot(box.row1, d4), dot(box.row2, d4));
-        Hit c;
-        c.hit = false;
-        c.distance = tmax;
-        if (!clusterWalk(vgClusterView(sc.pool + rc.y), oo, od, r.tmin, !normal, c)) return false;
-        v = c;
-        v.instance = rc.x;
-        v.cluster = box.index;
-        v.part = HIT_NO_PART;
-        return true;
-    }
     device const VoxelBox& box = *(device const VoxelBox*)q.get_candidate_primitive_data();
     uint id = Levels<PLANTS>::candidate(q);
     if (SDF_SHAPES && box.level == SDF_BOX_TAG) {
@@ -565,7 +428,6 @@ inline bool boxCandidate(thread Q& q, Ray r, uint mask, bool normal, SCENE_ACCEL
         v.distance = t;
         v.barycentrics = n;
         v.primitive = material;
-        v.cluster = HIT_NO_CLUSTER;
         v.part = HIT_SDF;
         v.instance = id;
         return true;
@@ -603,14 +465,13 @@ inline Hit queryHit(thread Q& q, Hit v) {
     // committed by then, but a nearer triangle may have come after it).
     intersection_type type = q.get_committed_intersection_type();
     bool triangle = type == intersection_type::triangle, curve = isCurveHit(type);
-    if (v.hit && !((triangle || curve) && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL, HIT_SDF or a cluster
+    if (v.hit && !((triangle || curve) && q.get_committed_distance() < v.distance)) return v;   // HIT_VOXEL or HIT_SDF
     Hit h;
     h.hit = triangle || curve;
     h.distance = h.hit ? q.get_committed_distance() : INFINITY;
     h.barycentrics = triangle ? q.get_committed_triangle_barycentric_coord() : float2(curve ? committedCurve(q) : 0.0f, 0.0f);
     h.instance = Levels<PLANTS>::committed(q);
     h.primitive = q.get_committed_primitive_id();
-    h.cluster = HIT_NO_CLUSTER;
     h.part = triangle ? Levels<PLANTS>::committedPart(q) : curve ? HIT_CURVE : HIT_NO_PART;
     return h;
 }
@@ -696,7 +557,6 @@ inline Hit closestHit(Ray r, uint mask, SCENE_ACCEL sc) {
     h.barycentrics = curve ? float2(resultCurve(res), 0.0f) : res.triangle_barycentric_coord;
     h.instance = Levels<PLANTS>::instance(res);   // TILED: its id (SceneBuffers' descriptors)
     h.primitive = res.primitive_id;
-    h.cluster = HIT_NO_CLUSTER;
     h.part = curve ? HIT_CURVE : h.hit ? Levels<PLANTS>::part(res) : HIT_NO_PART;
     return h;
 }

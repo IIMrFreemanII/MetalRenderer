@@ -52,8 +52,6 @@ package enum Kernel: Int, CaseIterable {
     case particleInject         // destruction's dust: the physics' breaks as a proxy emitter's events
     case particleLight, particleLayer   // their light, once a particle; the camera's layer of them (FramePlan.particles)
     case particleDistortDiscs, particleDistort   // the heat haze's discs, its bend of the frame's light (ParticleEmitter.distortion)
-    // Virtual geometry: the per-frame cut, and its clusters' boxes (METALRENDERER_VG_MODE=clusters).
-    case vgReset, vgCut, vgBoxes
     case gizmoLines             // the VFX editor's gizmos (Shaders/Gizmo.metal)
     case pick                   // the Material Designer's click-to-pick (Shaders/Pick.metal)
 

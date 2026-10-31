@@ -14,16 +14,12 @@ package struct DebugInfo {
         /// Per-instance BLAS over each instance's cut (VirtualBLAS, the default).
         case blas(meshes: Int, instances: Int, sourceTriangles: Int, triangles: Int, clusters: Int, megabytes: Double,
                   rebuilds: Int, lastBuildMs: Double, lastCutMs: Double, skipped: Int, busy: Bool)
-        /// One structure over the frame's cut of clusters, streamed into a pool (VirtualGeometry, METALRENDERER_VG_MODE=clusters).
-        case clusters(meshes: Int, instances: Int, clusters: Int, groups: Int, sourceTriangles: Int, triangles: Int, selected: Int,
-                      capacity: Int, overflow: Bool, residentGroups: Int, residentMB: Double, poolMB: Int, pending: Int, loadedThisFrame: Int)
 
         /// Triangles traced this frame (the cut).
         package var triangles: Int {
             switch self {
             case .off: 0
             case let .blas(_, _, _, triangles, _, _, _, _, _, _, _): triangles
-            case let .clusters(_, _, _, _, _, triangles, _, _, _, _, _, _, _, _): triangles
             }
         }
     }

@@ -61,11 +61,10 @@ extension Renderer {
         }
     }
 
-    /// The virtual-geometry switch or pool size changed for a scene with glTF models (the cut threshold needs no rebuild).
+    /// The virtual-geometry switch changed for a scene with glTF models (the cut threshold needs no rebuild).
     package var virtualGeometryChanged: Bool {
         let hasModels = scene.settings.kind.definition.loadsModels || !scene.settings.extraModels.isEmpty
-        let poolChanged = virtualTracing?.clusters.map { $0.poolBytes != max(settings.virtualGeometry.poolMB, 64) << 20 } ?? false
-        return hasModels && (scene.usesVirtualGeometry != settings.virtualGeometry.enabled || poolChanged)
+        return hasModels && scene.usesVirtualGeometry != settings.virtualGeometry.enabled
     }
 
     /// A still scene's plants (the open world's) name the variants of the season they were built for: another season
@@ -82,7 +81,6 @@ extension Renderer {
     /// the panel and the keyboard keep changing `settings` and a shader reload may replace the pipelines.
     package struct LoadOptions {
         var virtualGeometry: Bool
-        var poolMB: Int
         var textureBudgetMB: Int
         var pipelines: Pipelines
         var shaderGeneration: Int
@@ -98,7 +96,7 @@ extension Renderer {
         var worldTextures: (identities: [String], textures: [MTLTexture], streamer: TextureStreamer?)?
     }
     package var loadOptions: LoadOptions {
-        LoadOptions(virtualGeometry: settings.virtualGeometry.enabled, poolMB: settings.virtualGeometry.poolMB,
+        LoadOptions(virtualGeometry: settings.virtualGeometry.enabled,
                     textureBudgetMB: settings.textureBudgetMB, pipelines: pipelines, shaderGeneration: shaderGeneration,
                     traversalStats: TraceSceneArgs.statsEnabled, compiler: compiler,
                     primitives: namedPrimitives, blocks: namedBlocks,
@@ -112,10 +110,10 @@ extension Renderer {
 
     private func bufferOptions(known: [String: MTLAccelerationStructure], blocks: [String: MeshBlock],
                                instanceBlocks: [String: InstanceBlock], voxelGrids: VoxelGrids? = nil,
-                               extraInstances: Int = 0, leafFall: Float) -> SceneBuffers.Options {
+                               leafFall: Float) -> SceneBuffers.Options {
         SceneBuffers.Options(slots: Renderer.maxFramesInFlight, fastIntersection: Renderer.fastIntersectionBLAS,
                              compact: Renderer.compactBLAS, instanceUsage: Renderer.tlasUsage, known: known, blocks: blocks,
-                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, extraInstances: extraInstances, leafFall: leafFall)
+                             instanceBlocks: instanceBlocks, voxelGrids: voxelGrids, leafFall: leafFall)
     }
 
     /// The pipelines for `stats` and `lightTypes` of shader generation `generation`, unless `current` already fits:
@@ -145,9 +143,9 @@ extension Renderer {
     }
 
     /// The scene's virtual geometry for the tracer, if it has virtual meshes (any thread).
-    private func makeVirtualTracing(_ scene: Scene, poolMB: Int) throws -> VirtualTracing? {
+    private func makeVirtualTracing(_ scene: Scene) throws -> VirtualTracing? {
         scene.virtualMeshes.isEmpty ? nil
-            : try VirtualTracing(device: device, queue: buildQueue, scene: scene, poolMB: poolMB, slots: Renderer.maxFramesInFlight)
+            : try VirtualTracing(device: device, queue: buildQueue, scene: scene, slots: Renderer.maxFramesInFlight)
     }
 
     /// `current`: the scene being drawn, reused when only what it is drawn with changes; `instances` is then the render thread's copy
@@ -176,14 +174,14 @@ extension Renderer {
         let buffers = reused != nil ? nil : try autoreleasepool {
             var made = bufferOptions(known: options.primitives, blocks: options.blocks,
                                      instanceBlocks: options.instanceBlocks, voxelGrids: options.voxelGrids,
-                                     extraInstances: newScene.tracesClusters ? 1 : 0, leafFall: options.leafFall)
+                                     leafFall: options.leafFall)
             made.load = load
             return try SceneBuffers(device: device, queue: buildQueue, scene: newScene, options: made)
         }
         if buffers != nil && !newScene.virtualMeshes.isEmpty {
             load?.step("Virtual geometry", detail: "\(newScene.virtualMeshes.count) meshes")
         }
-        let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene, poolMB: options.poolMB)
+        let virtualTracing = buffers == nil ? nil : try makeVirtualTracing(newScene)
         // The shaders too, when the new scene has other light types.
         let pipelines = try makePipelines(compiler: options.compiler, lightTypes: newScene.lightTypeMask,
                                           stats: options.traversalStats, generation: options.shaderGeneration,
@@ -305,7 +303,6 @@ extension Renderer {
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,
                                                             options: bufferOptions(known: namedPrimitives, blocks: namedBlocks,
                                                                                    instanceBlocks: namedInstanceBlocks,
-                                                                                   extraInstances: scene.tracesClusters ? 1 : 0,
                                                                                    leafFall: Scene.leafFall(season: settings.foliage.season)))
         sceneBuffers = buffers
         makeLightProxies()
@@ -362,7 +359,7 @@ extension Renderer {
             scene.replayParticles()
         }
         try createLightBuffers()
-        virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene, poolMB: settings.virtualGeometry.poolMB)
+        virtualTracing = try prepared?.virtualTracing ?? makeVirtualTracing(scene)
         let lmd = MTLTextureDescriptor()
         lmd.textureType = .type2DArray
         lmd.pixelFormat = .r32Float

@@ -271,17 +271,15 @@ package struct SolidLook: Equatable, Codable {
     static let aoRadiusRange: ClosedRange<Float> = 0.1...4
 }
 
-/// Virtual geometry: big glTF meshes as streamed cluster DAGs with a per-frame level-of-detail cut.
+/// Virtual geometry: big glTF meshes as cluster DAGs with a level-of-detail cut.
 package struct VirtualGeometrySettings: Equatable, Codable {
     package var enabled = ProcessInfo.processInfo.environment["METALRENDERER_VG"] != "0"
     package var pixelError: Float = Float(ProcessInfo.processInfo.environment["METALRENDERER_VG_TAU"] ?? "") ?? 1   // traced pixels
-    var poolMB = Int(ProcessInfo.processInfo.environment["METALRENDERER_VG_POOL"] ?? "") ?? 768
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     package var freeze = false
 
     static let pixelErrorRange: ClosedRange<Float> = 0.25...8
-    static let poolOptions = [256, 512, 768, 1024, 2048]
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's

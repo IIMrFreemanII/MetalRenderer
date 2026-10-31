@@ -14,7 +14,7 @@ Renderer.writeFrameData(slot:lod:)
 
 # The systems' writers the frame calls per instance or slot.
 PlantTracing.writeDescriptors(slot:into:stride:scene:wind:view:)
-VirtualTracing.writeDescriptors(slot:into:stride:first:scene:)
+VirtualTracing.writeDescriptors(slot:into:stride:scene:)
 VoxelLOD.rebuild(for:queue:)
 static VoxelLOD.entry(descriptor:transform:mesh:mask:meshVoxels:grids:)
 static VoxelLOD.level(distance:size:view:jitter:)

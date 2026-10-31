@@ -253,12 +253,10 @@ package final class Scene {
     package var normals: [SIMD3<Float>] = []
     package var uvs: [SIMD2<Float>] = []                 // per vertex (zeros for the generated meshes)
     package var textures: [TextureSource] = []
-    /// Large glTF meshes as streamed, level-of-detail cluster DAGs (VirtualTracing: VirtualBLAS, VirtualGeometry).
+    /// Large glTF meshes as level-of-detail cluster DAGs (VirtualTracing, VirtualBLAS).
     package var virtualMeshes: [VirtualMesh] = []
     package var virtualMeshNames: [String] = []
     package let usesVirtualGeometry: Bool
-    /// Virtual geometry is traced as this frame's cut of clusters (VirtualGeometry), not a BLAS per instance.
-    package var tracesClusters: Bool { !virtualMeshes.isEmpty && VirtualGeometry.clusterMode }
     /// Generated plants as assemblies of shared parts (PlantTracing), unless baked into meshes of their own (bakedPlants).
     package var assemblies: [Assembly] = []
     package let usesAssemblies: Bool

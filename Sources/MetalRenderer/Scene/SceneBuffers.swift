@@ -199,9 +199,6 @@ package struct SceneBuffers {
         var instanceBlocks: [String: InstanceBlock] = [:]
         /// Its plants' voxel grids, which a scene of the same plants takes as they are.
         var voxelGrids: VoxelGrids?
-        /// Instances the top-level structure has after the scene's (virtual geometry's cut of clusters: VirtualTracing),
-        /// whose descriptors their owner writes.
-        var extraInstances = 0
         /// The share of the leaves that have fallen (Scene.leafFall): which variants a still scene's plants name.
         var leafFall: Float = 0
         /// The load to report the buffers and the structures' batches to; the batches stop when it is cancelled.
@@ -235,8 +232,6 @@ package struct SceneBuffers {
     let instanceBlocks: [InstanceBlock]
     private(set) var namedInstanceBlocks: [String: InstanceBlock] = [:]
     let instanceCount: Int
-    /// What the top-level structure is built over: `instanceCount`, and `Options.extraInstances` after them.
-    let structureInstances: Int
     /// With blocks (TILED): the table a hit finds a record through, the records' addresses by block number (the
     /// scene's own, `instanceData`, at 0), and what it points at.
     let instanceTable: MTLBuffer?
@@ -391,7 +386,6 @@ package struct SceneBuffers {
             total += group.count
         }
         instanceCount = total
-        structureInstances = total + options.extraInstances
         leafFall = options.leafFall
         let recordStride = MemoryLayout<GPUInstanceData>.stride
         var data = try (0..<sets).map { try empty(count * recordStride, "instanceData\($0)") }
@@ -428,7 +422,7 @@ package struct SceneBuffers {
         }
 
         precondition(MemoryLayout<MTLIndirectAccelerationStructureInstanceDescriptor>.stride == SceneBuffers.indirectStride)
-        let stride = SceneBuffers.indirectStride, descriptorCount = structureInstances
+        let stride = SceneBuffers.indirectStride, descriptorCount = instanceCount
         var descriptors = try (0..<sets).map { try empty(descriptorCount * stride, "instanceDescriptors\($0)") }
         if still { descriptors = [MTLBuffer](repeating: descriptors[0], count: options.slots) }
         instanceDescriptors = descriptors
@@ -459,7 +453,7 @@ package struct SceneBuffers {
         // (A still scene's is built once, for tracing; with a terrain the brushes reshape, it is refitted after them.)
         if still { usage.remove(editableStill ? [.preferFastBuild] : [.refit, .preferFastBuild]) }
         func update(_ structure: MTLAccelerationStructure, _ scratch: MTLBuffer, slot: Int) -> TLASUpdate {
-            TLASUpdate(structure: structure, scratch: scratch, refit: false, instanceCount: structureInstances, usage: usage,
+            TLASUpdate(structure: structure, scratch: scratch, refit: false, instanceCount: instanceCount, usage: usage,
                        instances: descriptors[slot], instanceStride: stride, primitives: primitives, indirect: indirect)
         }
         let layout = update(placeholder, descriptors[0], slot: 0)
