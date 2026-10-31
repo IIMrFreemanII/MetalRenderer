@@ -32,6 +32,34 @@ final class VirtualBLAS {
     }
 
     static let sync = VirtualGeometry.sync
+    /// A changed cut waits while under this share of its triangles differ, for at most this many of the worker's passes:
+    /// every cut is free of cracks, so one a little out of date only has slightly the wrong detail, and a BLAS and the
+    /// top-level structure over it aren't built for a few clusters.
+    static let waitShare: Float = 0.1
+    static let waitPasses = 16
+
+    /// Triangles in one of two cuts of `mesh` but not the other (both in ascending order, as `selection` makes them).
+    static func changedTriangles(mesh: VirtualMesh, from a: [UInt32], to b: [UInt32]) -> Int {
+        var i = 0, j = 0, changed = 0
+        while i < a.count || j < b.count {
+            if j == b.count || (i < a.count && a[i] < b[j]) {
+                changed += Int(mesh.clusters[Int(a[i])].triangles)
+                i += 1
+            } else if i == a.count || b[j] < a[i] {
+                changed += Int(mesh.clusters[Int(b[j])].triangles)
+                j += 1
+            } else {
+                i += 1
+                j += 1
+            }
+        }
+        return changed
+    }
+
+    /// Whether a cut with `changed` of its `triangles` different is built now, having waited `waited` passes.
+    static func buildsNow(changed: Int, triangles: Int, waited: Int) -> Bool {
+        waited >= waitPasses || Float(changed) >= waitShare * Float(triangles)
+    }
 
     /// What an instance's last cut was made for, and how far the camera can move before any of its tests could change.
     private struct CutInput {
@@ -66,6 +94,7 @@ final class VirtualBLAS {
     private var finished: [(index: Int, built: Built)] = []
     private var workerSelection: [[UInt32]]              // the worker's own copy of what it last built
     private var lastCut: [CutInput?]                     // the worker's
+    private var waited: [Int]                            // the worker's: passes a changed cut has waited
     private var started = false
     /// Bumped whenever an instance's structure changes: the top-level structure is rebuilt over the new ones.
     private(set) var version = 0
@@ -82,6 +111,7 @@ final class VirtualBLAS {
         current = Array(repeating: Built(), count: instances.count)
         workerSelection = Array(repeating: [], count: instances.count)
         lastCut = Array(repeating: nil, count: instances.count)
+        waited = Array(repeating: 0, count: instances.count)
         for slot in 0..<slots {
             guard let t = device.makeBuffer(length: max(instances.count, 1) * MemoryLayout<Entry>.stride, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer vgBlasTable")
@@ -242,9 +272,20 @@ final class VirtualBLAS {
                     i += 1
                 }
                 lastCut[k] = CutInput(transform: transforms[k], camPos: camPos, pixelScale: pixelScale, tau: tau, slack: slack)
-                if sel != workerSelection[k] {
-                    changed.append((k, sel))
-                    workerSelection[k] = sel
+                if sel == workerSelection[k] {
+                    waited[k] = 0
+                } else {
+                    let mesh = meshes[instances[k].mesh]
+                    let triangles = sel.reduce(0) { $0 + Int(mesh.clusters[Int($1)].triangles) }
+                    if VirtualBLAS.buildsNow(changed: VirtualBLAS.changedTriangles(mesh: mesh, from: workerSelection[k], to: sel),
+                                             triangles: triangles, waited: waited[k]) {
+                        changed.append((k, sel))
+                        workerSelection[k] = sel
+                        waited[k] = 0
+                    } else {
+                        waited[k] += 1
+                        lastCut[k] = nil   // looked at again next pass, or a camera now at rest would never build it
+                    }
                 }
             }
         }
@@ -265,7 +306,7 @@ final class VirtualBLAS {
     }
 
     /// New BLASes for `changed` (instance, selection): their triangles gathered in parallel, then Metal's structures
-    /// built over them in one command buffer, which this waits for (the worker's, or a benchmark's frame).
+    /// built over them in one command buffer and compacted, which this waits for (the worker's, or a benchmark's frame).
     private func build(_ changed: [(Int, [UInt32])]) -> [(index: Int, built: Built)] {
         var gathered = [Built](repeating: Built(), count: changed.count)
         gathered.withUnsafeMutableBufferPointer { out in
@@ -309,7 +350,11 @@ final class VirtualBLAS {
                 enc.endEncoding()
                 cmd.commit()
                 cmd.waitUntilCompleted()
-                if cmd.status != .completed { for job in jobs { gathered[job.j].structure = nil } }
+                if cmd.status != .completed {
+                    for job in jobs { gathered[job.j].structure = nil }
+                } else if let small = try? SceneBuffers.copyAndCompact(jobs.map(\.structure), device: device, queue: queue) {
+                    for (job, structure) in zip(jobs, small) { gathered[job.j].structure = structure }
+                }
             }
         }
         for j in gathered.indices where gathered[j].structure == nil {

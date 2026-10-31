@@ -45,4 +45,58 @@ final class VGCutTests: XCTestCase {
         XCTAssertEqual(clusters, Set(selection), "every triangle names its cluster, and every cluster of the cut is there")
         XCTAssertEqual(entry.attrs, entry.tris + UInt64(48 * expected))
     }
+
+    func testChangedTrianglesCountsWhatOnlyOneCutHas() {
+        let mesh = VGStreamerTests.mesh
+        func triangles(_ c: Int) -> Int { Int(mesh.clusters[c].triangles) }
+        XCTAssertEqual(VirtualBLAS.changedTriangles(mesh: mesh, from: [0, 1, 2], to: [0, 1, 2]), 0)
+        XCTAssertEqual(VirtualBLAS.changedTriangles(mesh: mesh, from: [0, 1, 2], to: [1, 2, 3]), triangles(0) + triangles(3))
+        XCTAssertEqual(VirtualBLAS.changedTriangles(mesh: mesh, from: [], to: [4]), triangles(4))
+        XCTAssertEqual(VirtualBLAS.changedTriangles(mesh: mesh, from: [4], to: []), triangles(4))
+    }
+
+    func testASmallChangeWaitsAndALargeOneDoesNot() {
+        XCTAssertFalse(VirtualBLAS.buildsNow(changed: 9, triangles: 100, waited: 0))
+        XCTAssertFalse(VirtualBLAS.buildsNow(changed: 9, triangles: 100, waited: VirtualBLAS.waitPasses - 1))
+        XCTAssertTrue(VirtualBLAS.buildsNow(changed: 9, triangles: 100, waited: VirtualBLAS.waitPasses))
+        XCTAssertTrue(VirtualBLAS.buildsNow(changed: 10, triangles: 100, waited: 0))
+        XCTAssertTrue(VirtualBLAS.buildsNow(changed: 3, triangles: 0, waited: 0), "a cut gone empty")
+    }
+
+    /// A cut that waits isn't lost: with the camera then at rest (no pass would look at the instance again if its last
+    /// cut still counted), it is built within `waitPasses`.
+    func testACutThatWaitedIsBuiltWithTheCameraAtRest() throws {
+        let device = try XCTUnwrap(MTLCreateSystemDefaultDevice())
+        try XCTSkipUnless(device.supportsRaytracing, "no ray tracing on this GPU")
+        let mesh = VGStreamerTests.mesh
+        let transform = float4x4(diagonal: [1, 1, 1, 1])
+        func cut(_ z: Float) -> [UInt32] {
+            VirtualBLAS.selection(mesh: mesh, groups: 0..<mesh.groups.count, transform: transform, camPos: SIMD3(0, 2, z),
+                                  pixelScale: 4000, tau: 1).selection
+        }
+        func triangles(_ s: [UInt32]) -> Int { s.reduce(0) { $0 + Int(mesh.clusters[Int($1)].triangles) } }
+        // A camera whose cut differs from the first one's, by little enough to wait.
+        let start: Float = 30
+        let first = cut(start)
+        let near = try XCTUnwrap(stride(from: start - 0.01, to: 1, by: -0.01).first { z in
+            let s = cut(z)
+            return s != first && !VirtualBLAS.buildsNow(changed: VirtualBLAS.changedTriangles(mesh: mesh, from: first, to: s),
+                                                        triangles: triangles(s), waited: 0)
+        }, "no camera with a small change of the cut")
+        let blas = try VirtualBLAS(device: device, meshes: [mesh], instances: [(0, 0)], slots: 1)
+        let instance = Scene.Instance(mesh: -1, material: 0, mask: Scene.maskGeometry, transform: transform, prevTransform: transform,
+                                      animation: nil, normalMatrix: transform)
+        func pass(_ z: Float, _ frame: UInt32) {
+            blas.update(frame: frame, slot: 0, framesInFlight: 1, camPos: SIMD3(0, 2, z), pixelScale: 4000, tau: 1, sceneInstances: [instance])
+            while blas.isBusy { usleep(100) }
+        }
+        pass(start, 1)
+        XCTAssertEqual(blas.stats.rebuilds, 1)
+        pass(near, 2)
+        XCTAssertEqual(blas.stats.rebuilds, 1, "a small change waits")
+        for i in 0...VirtualBLAS.waitPasses { pass(near, UInt32(3 + i)) }
+        XCTAssertEqual(blas.stats.rebuilds, 2, "built, once, when it has waited long enough")
+        pass(near, 100)   // (swaps it in)
+        XCTAssertEqual(Int(blas.table(slot: 0).contents().load(as: VirtualBLAS.Entry.self).triangles), triangles(cut(near)))
+    }
 }
