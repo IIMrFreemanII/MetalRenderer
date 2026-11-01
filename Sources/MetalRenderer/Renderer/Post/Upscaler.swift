@@ -22,6 +22,8 @@ package final class Upscaler {
     /// The scaler's output, linear and unbounded, for tonemapKernel (MetalFX needs a private output texture, so it
     /// can't write the drawable).
     let hdrOutput: MTLTexture
+    /// Whether MetalFX's exposure is the meter's (RenderSettings.denoiserMetered): fixed when a scaler is made.
+    let metered: Bool
     /// MetalFX's exposure (AutoExposure.denoiserExposure), a texture of one texel, one for each frame in flight and one more.
     private let exposures: [MTLTexture]
     private var frame = 0
@@ -51,7 +53,8 @@ package final class Upscaler {
     /// tried, only 960x540 and 960x544 to twice that worked); on macOS 27.0.1 every size tried is made. Otherwise Metal
     /// 3's runs, on a Metal 3 command buffer between two of the frame's (Metal4Frame.interlude).
     package init(device: MTLDevice, inputWidth: Int, inputHeight: Int, outputWidth: Int, outputHeight: Int,
-         synchronous: Bool = false, compiler: MTL4Compiler? = nil) throws {
+         metered: Bool, synchronous: Bool = false, compiler: MTL4Compiler? = nil) throws {
+        self.metered = metered
         self.inputWidth = inputWidth
         self.inputHeight = inputHeight
         self.outputWidth = outputWidth
@@ -76,8 +79,9 @@ package final class Upscaler {
         // exposure of its own. It takes light off what is brighter than its surroundings, the more the higher that exposure
         // (as if it filtered on a tone curve): by the forest's sunlit surfaces over the reference, fixed exposures of 100,
         // 10, 1, 0.3 read 0.71, 0.90, 0.95, 1.00, and its automatic one 0.90 where the raw frame reads 1.05. So it has its
-        // exposure from the frame's meter, at a low key (AutoExposure.denoiserKey).
-        d.isAutoExposureEnabled = false
+        // exposure from the frame's meter, at a low key (AutoExposure.denoiserKey). The classic look's frames find their
+        // own, for their scores' history (RenderSettings.denoiserMetered).
+        d.isAutoExposureEnabled = !metered
         let made: MTLFXTemporalDenoisedScalerBase?
         if let compiler, Upscaler.metal4Available, #available(macOS 27.0, *) {
             made = d.makeTemporalDenoisedScaler(device: device, compiler: compiler)
@@ -145,11 +149,13 @@ package final class Upscaler {
         scaler.roughnessTexture = t.roughness
         scaler.specularHitDistanceTexture = t.specularHitDistance   // how far the reflection ray went (Reflections.metal)
         scaler.outputTexture = hdrOutput
-        frame += 1
-        var exposure = Float16(inputs.exposure)   // (from the frame before: this frame's light hasn't been measured)
-        let exposureTexture = exposures[frame % exposures.count]
-        exposureTexture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &exposure, bytesPerRow: 2)
-        scaler.exposureTexture = exposureTexture
+        if metered {
+            frame += 1
+            var exposure = Float16(inputs.exposure)   // (from the frame before: this frame's light hasn't been measured)
+            let exposureTexture = exposures[frame % exposures.count]
+            exposureTexture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &exposure, bytesPerRow: 2)
+            scaler.exposureTexture = exposureTexture
+        }
         // MetalFX wants the offset that takes a sample back to the pixel center: the negated ray jitter.
         // (Measured with MetalFX's temporal scaler: the wrong sign cost ~5 dB PSNR against a native-resolution render.)
         scaler.jitterOffsetX = -inputs.jitter.x

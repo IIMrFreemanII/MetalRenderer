@@ -585,6 +585,7 @@ package enum SettingsTable {
             S.check("Reflections see the sky", \.reflectionSkyRays).env(.gi, "reflectionsky").advanced(),
             S.check("Energy conservation", \.energyConservation).env(.gi, "energy").advanced(),
             S.check("Tinted shadows", \.tintedShadows).env(.gi, "tintedshadows").advanced(),
+            S.check("MetalFX's exposure from the meter", \.denoiserMetered).env(.gi, "denoisermetered").advanced(),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },

@@ -687,6 +687,9 @@ package struct RenderSettings: Equatable, Codable {
     package var energyConservation = true
     /// The sun through a window, or through solid glass, takes its colour (Lights.metal glassShadowTint), on what the camera sees.
     package var tintedShadows = true
+    /// MetalFX's denoiser has its exposure from the frame's meter and a deep shadow guide (Upscaler, Output.metal
+    /// SUN_GUIDE_SHADE), which keeps the light it takes off what is brighter than its surroundings.
+    package var denoiserMetered = true
 
     /// The benchmarks' look for their scores' history: the tone curve and lens from before, none of the passes since.
     package mutating func useClassicLook() {
@@ -697,6 +700,7 @@ package struct RenderSettings: Equatable, Codable {
         reflectionSkyRays = false
         energyConservation = false
         tintedShadows = false
+        denoiserMetered = false
         cascades.hiddenLight = 1
         cascades.hitRays = false
         cascades.shNormal = false
@@ -713,6 +717,7 @@ package struct RenderSettings: Equatable, Codable {
         reflectionSkyRays = app.reflectionSkyRays
         energyConservation = app.energyConservation
         tintedShadows = app.tintedShadows
+        denoiserMetered = app.denoiserMetered
         cascades.hiddenLight = app.cascades.hiddenLight
         cascades.hitRays = app.cascades.hitRays
         cascades.shNormal = app.cascades.shNormal

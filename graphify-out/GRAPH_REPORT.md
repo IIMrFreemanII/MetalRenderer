@@ -1,7 +1,7 @@
 # Graph Report - wizardly-hawking-e1e473  (2026-11-01)
 
 ## Corpus Check
-- 917 files · ~20,756,077 words
+- 917 files · ~20,756,249 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 69 file(s) not represented in the graph (top: .exr 25, .glb 15, .fbx 12)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `c0b0fd61`
+- Built from commit: `9621e60c`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
