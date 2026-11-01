@@ -22,7 +22,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         float3 hng, hn;
         orientNormals(h, dir, hng, hn);
         float3 hp = h.position + hng * RAY_EPSILON;
-        float3 albedo = hitAlbedo(h);
+        float3 albedo = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));
         L += throughput * (b == 0 ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
         if (LIGHT_TABLE) {
             Rng r;
@@ -90,6 +90,8 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              texture3d<float>                 fogNoiseTex [[texture(7)]],   // with FOG_REFLECTIONS
                              texture2d<float, access::read>   restirSpecular [[texture(8)]],  // with FLAG_RESTIR
                              texture2d<float, access::write>  outHitDistance [[texture(9)]],  // MetalFX's guide (see below)
+                             texture2d<float, access::read>   sheenTex   [[texture(10)]],  // MATERIAL_LOBES
+                             texture2d<float, access::read>   anisotropyTex [[texture(11)]],
                              constant FogParams&              fog        [[buffer(9)]],
                              constant uint*                   roomAmbient [[buffer(10)]],   // the cascades' mean probe light (rgb x1024, count)
                              uint2 tid [[thread_position_in_grid]])
@@ -118,8 +120,12 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float3 f0 = m.rgb;
     float roughness = m.a, a = roughness * roughness;
     float NoV = max(dot(n, v), 1e-4f);
-    float3 albedo = specularAlbedo(f0, 1.0f, roughness, NoV);
+    float f90 = specularF90(f0);
+    float3 albedo = specularShare(f0, f90, roughness, NoV, flagOn(u.flags, FLAG_ENERGY));
     float3 result = float3(0.0f), direct = float3(0.0f);
+    float4 lobeAniso = MATERIAL_LOBES ? anisotropyTex.read(tid) : float4(0.0f);
+    float anisotropy = lobeAniso.w;
+    float3 lobeTangent = anisotropy > 0.0f ? normalize(lobeAniso.xyz - n * dot(n, lobeAniso.xyz)) : float3(0.0f);
 
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
     if (flagOn(u.flags, FLAG_RESTIR)) {
@@ -135,8 +141,14 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // with the shadow denoiser) x the ray's visibility is the sample: only the pick and the shadow are noisy.
             float3 unshadowed;
             uint li = pickLightSpecular(lights, analyticLights, p, n, ng, v, f0, roughness, uPick, uSubset, pdf, unshadowed);
-            if (li < analyticLights && isVisible(p, lightShadowTarget(lights[li], p, r), accel))
-                direct += unshadowed * (sunVisibilityScale(lights[li], p, s) / pdf);
+            if (li < analyticLights && isVisible(p, lightShadowTarget(lights[li], p, r), accel)) {
+                if (MATERIAL_LOBES) {   // (The pick is by the plain highlight's light; the sample is the lobes'.)
+                    if (anisotropy > 0.0f) unshadowed = lightSpecularLobe(lights[li], p, n, ng, v, f0, roughness, lobeTangent, anisotropy);
+                    float4 sheen = sheenTex.read(tid);
+                    if (any(sheen.rgb > 0.0f)) unshadowed += lightSheen(lights[li], p, n, ng, v, sheen);
+                }
+                direct += unshadowed * (sunVisibilityScale(lights[li], p, s) / pdf) * glassShadowTint(p, lightShadowTarget(lights[li], p, r), accel, s, u.flags);
+            }
         } else {
             // References: the light is picked by its diffuse light here; spheres and spots exactly, a uniform point
             // on the sphere; other lights their analytic specular x the visibility of a random point of them.
@@ -156,7 +168,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                         float3 Le = light.color.rgb / (M_PI_F * rad * rad);
                         if (type == LIGHT_SPOT) Le *= spotFactor(light, -l);
                         float3 h = normalize(l + v);
-                        float3 F = schlick(f0, 1.0f, dot(v, h));
+                        float3 F = schlick(f0, f90, dot(v, h));
                         float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
                         direct += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
                     }
@@ -176,7 +188,14 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     } else if (roughness < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE)) {
         float3 t, b;
         tangentFrame(n, t, b);
-        float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), NoV), a, rng.next2());
+        float at = a;
+        if (anisotropy > 0.0f) {
+            t = lobeTangent;
+            b = cross(n, t);
+            at = anisotropicAlpha(a, anisotropy);
+        }
+        float3 vt = float3(dot(v, t), dot(v, b), NoV);
+        float3 hl = sampleGGXVNDF(vt, at, a, rng.next2());
         float3 h = t * hl.x + b * hl.y + n * hl.z;
         float3 l = reflect(-v, h);
         float NoL = dot(n, l);
@@ -185,7 +204,12 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             float a2 = a * a;
             float g1 = 2.0f * NoV / (NoV + sqrt(a2 + (1.0f - a2) * NoV * NoV));
             float g2 = smithVisibility(NoV, NoL, a) * 4.0f * NoL * NoV;
-            float3 weight = schlick(f0, 1.0f, dot(v, h)) * (g2 / max(g1, 1e-6f));
+            if (anisotropy > 0.0f) {
+                float3 lt = float3(dot(l, t), dot(l, b), NoL);
+                g1 = 2.0f * NoV / (NoV + length(float3(at * vt.x, a * vt.y, vt.z)));
+                g2 = 2.0f * NoL * NoV / max(NoL * length(float3(at * vt.x, a * vt.y, vt.z)) + NoV * length(float3(at * lt.x, a * lt.y, lt.z)), 1e-7f);
+            }
+            float3 weight = schlick(f0, f90, dot(v, h)) * (g2 / max(g1, 1e-6f));
             float spread = mix(2.0f * u.camUp.w / float(u.height), GI_RAY_SPREAD * 4.0f, roughness);
             // No texture feedback from reflections: their footprint ignores curvature, so self-reflections at close
             // range would ask for the finest mips.

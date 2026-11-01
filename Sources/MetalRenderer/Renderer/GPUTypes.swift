@@ -143,7 +143,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUJointMatrix>.stride == 48, "GPUJointMatrix layout mismatch")
     precondition(MemoryLayout<GPUPoseSlot>.stride == 32, "GPUPoseSlot layout mismatch")
     precondition(MemoryLayout<GPUMaterial>.stride == 64, "GPUMaterial layout mismatch")
-    precondition(MemoryLayout<GPUMaterialExtra>.stride == 32, "GPUMaterialExtra layout mismatch")
+    precondition(MemoryLayout<GPUMaterialExtra>.stride == 64, "GPUMaterialExtra layout mismatch")
     precondition(MemoryLayout<GPULight>.stride == 64, "GPULight layout mismatch")
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")

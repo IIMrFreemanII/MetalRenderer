@@ -8,7 +8,8 @@
 //     and the first pane's reflection is added to the emission. A kernel of its own because traceKernel is short of
 //     registers: with the panes' rays in it, every pixel of a scene with glass traced at a third of the speed, and
 //     with only the ray through the panes in it (one call in a loop) the two kernels together were still slower.
-//     Not here: refraction, tinted shadows, and a filter for the reflection's one light sample (the upscaler averages it).
+//     Not here: refraction (solid glass bends light: Liquid.metal) and a filter for the reflection's one light sample (the
+//     upscaler averages it). Light reaching what the camera sees takes a pane's tint in Lights.metal's glassShadowTint.
 // ---------------------------------------------------------------------------------------------
 
 // What a pane reflects along `dir` from `p` on it: the sky, or the surface its mirror ray hits, with that surface's
@@ -20,7 +21,7 @@ float3 glassReflection(constant Uniforms& u, SCENE_ACCEL accel, thread const Sce
     float3 hng, hn;
     orientNormals(h, dir, hng, hn);
     float3 hp = h.position + hng * RAY_EPSILON;
-    float3 albedo = hitAlbedo(h);
+    float3 albedo = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));
     float3 L = albedo * skyAmbient(u, s) * 0.3f;
     if (LIGHT_TABLE) {
         Rng r;

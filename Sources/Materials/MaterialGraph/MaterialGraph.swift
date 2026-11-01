@@ -132,6 +132,14 @@ package struct MatSurface: Codable, Equatable {
     package var alphaCutoff: Float = 0.5
     package var aoStrength: Float = 1
     package var normalStrength: Float = 1
+    /// A cloth's sheen over it (colour, 0: none) and its roughness; how far its highlight stretches along the UVs' U (0...1)
+    /// and how far that is turned from U (radians).
+    package var sheenRed: Float = 0
+    package var sheenGreen: Float = 0
+    package var sheenBlue: Float = 0
+    package var sheenRoughness: Float = 0.5
+    package var anisotropy: Float = 0
+    package var anisotropyRotation: Float = 0
     /// The emissive output's radiance at white (0: not emissive).
     package var emissiveIntensity: Float = 4
     /// The normal output's convention: OpenGL (+Y up, the renderer's) or DirectX (green flipped).
@@ -157,7 +165,8 @@ package struct MatSurface: Codable, Equatable {
 
     // Decoded field by field, each with its default: a file of an older version (fewer fields) still reads.
     private enum Key: String, CodingKey { case heightDepth, uvScale, alphaCutoff, aoStrength, normalStrength, emissiveIntensity, normalDirectX, shaderMode
-        case displacement, displacementMid, displacementDetail }
+        case displacement, displacementMid, displacementDetail
+        case sheenRed, sheenGreen, sheenBlue, sheenRoughness, anisotropy, anisotropyRotation }
     package init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let d = MatSurface()
@@ -172,6 +181,12 @@ package struct MatSurface: Codable, Equatable {
         displacement = try c.decodeIfPresent(Float.self, forKey: .displacement) ?? d.displacement
         displacementMid = try c.decodeIfPresent(Float.self, forKey: .displacementMid) ?? d.displacementMid
         displacementDetail = try c.decodeIfPresent(Float.self, forKey: .displacementDetail) ?? d.displacementDetail
+        sheenRed = try c.decodeIfPresent(Float.self, forKey: .sheenRed) ?? d.sheenRed
+        sheenGreen = try c.decodeIfPresent(Float.self, forKey: .sheenGreen) ?? d.sheenGreen
+        sheenBlue = try c.decodeIfPresent(Float.self, forKey: .sheenBlue) ?? d.sheenBlue
+        sheenRoughness = try c.decodeIfPresent(Float.self, forKey: .sheenRoughness) ?? d.sheenRoughness
+        anisotropy = try c.decodeIfPresent(Float.self, forKey: .anisotropy) ?? d.anisotropy
+        anisotropyRotation = try c.decodeIfPresent(Float.self, forKey: .anisotropyRotation) ?? d.anisotropyRotation
     }
 }
 

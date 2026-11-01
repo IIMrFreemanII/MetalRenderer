@@ -235,6 +235,8 @@ extension Renderer {
         e.textures = SIMD4(has(.height) && depth > 0 ? pm.slots[ProcSlot.height.rawValue] : .max,
                            pm.channels.contains(.opacity) ? pm.slots[ProcSlot.opacity.rawValue] : .max, 1, pm.program.map(UInt32.init) ?? .max)
         e.surface = SIMD4(depth, s.uvScale, s.alphaCutoff, pm.channels.contains(.ambientOcclusion) ? s.aoStrength : 0)
+        e.sheen = SIMD4(s.sheenRed, s.sheenGreen, s.sheenBlue, s.sheenRoughness)
+        e.anisotropy = SIMD4(s.anisotropy, s.anisotropyRotation, 0, 0)
         if let h = o.height, scene.displaced.contains(where: { $0.material == pm.material }) {
             let was = displaceSource[pm.material]
             if was?.height !== h || was?.surface.displacement != s.displacement || was?.surface.displacementMid != s.displacementMid
@@ -246,6 +248,12 @@ extension Renderer {
         if scene.materialExtras[pm.material] != e {
             scene.materialExtras[pm.material] = e
             scene.extrasVersion += 1
+            // Its first sheen or anisotropy: the shaders compile them in now, not at the scene's next load.
+            if scene.lightTypeMask != pipelines.lightTypes,
+               let made = try? makePipelines(compiler: compiler, lightTypes: scene.lightTypeMask, stats: TraceSceneArgs.statsEnabled,
+                                             generation: shaderGeneration, procedural: scene.proceduralCode, current: pipelines) {
+                pipelines = made
+            }
         }
         proceduralApplied[pm.material] = key
     }

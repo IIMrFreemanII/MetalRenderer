@@ -43,10 +43,59 @@ extension Benchmark {
         return [Config("shot", scale: 0.75, upscale: 2, gi: .radianceCascades).still().frames(frames).appLook()]
     }
 
+    /// The furnace, its light as it is (no curve, no lens), for Tools/eval/furnace.py: with and without energy conservation.
+    static func furnace() -> [Config] {
+        let base = Config("furnace", scale: 0.75, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: .furnace)).appLook()
+            .from(Scene.camera([0, 0, 14], pitch: 0)).still().frames(90).with {
+                $0.toneMap = .none
+                $0.post = PostSettings()
+                $0.contactAO = 0
+            }
+        return [base, base.named("furnace no energy").with { $0.energyConservation = false },
+                Config("furnace traced", scale: 0.75, scene: SceneSettings(kind: .furnace)) { $0.reference.mode = .pathTraced }.appLook()
+                    .from(Scene.camera([0, 0, 14], pitch: 0)).still().frames(512).with {
+                        $0.toneMap = .none
+                        $0.post = PostSettings()
+                        $0.contactAO = 0
+                    }]
+    }
+
+    /// The radiance cascades' light against the reference path tracer's, the light as it is (no curve, no lens, no fog or
+    /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky.
+    static func gilevels() -> [Config] {
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress].flatMap { kind -> [Config] in
+            func plain(_ c: Config) -> Config {
+                c.appLook().still().fog { $0.enabled = false }.with {
+                    $0.toneMap = .none
+                    $0.post = PostSettings()
+                    $0.aerialPerspective = false
+                    $0.contactAO = 0
+                }
+            }
+            let scene = SceneSettings(kind: kind)
+            let cascades = plain(Config("\(kind) cascades", scale: 0.75, upscale: 2, gi: .radianceCascades, scene: scene)).frames(60)
+            return [cascades,
+                    plain(Config("\(kind) cascades raw", scale: 0.75, upscale: 0, gi: .radianceCascades, scene: scene)).frames(60),
+                    cascades.named("\(kind) cascades gaps").with { $0.cascades.skyGaps = true },
+                    cascades.named("\(kind) cascades contact").with { $0.contactAO = 1 },
+                    cascades.named("\(kind) cascades before").with { $0.cascades.hiddenLight = 1 },
+                    cascades.named("\(kind) normals").with { $0.viewMode = 3 }.frames(8),
+                    cascades.named("\(kind) direct").with { $0.viewMode = 1 }.frames(30),
+                    plain(Config("\(kind) traced", scale: 0.75, scene: scene) { $0.reference.mode = .pathTraced }).frames(1024)]
+        }
+    }
+
+    /// The Material lobes scene as the app shows it, and path traced to compare.
+    static func lobes() -> [Config] {
+        [Config("lobes", scale: 0.75, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: .lobes)).appLook().still().frames(60),
+         Config("lobes traced", scale: 0.75, upscale: 0, gi: .pathTraced, scene: SceneSettings(kind: .lobes)).appLook().still().frames(400)]
+            .map { $0.from(Scene.camera([0, 1.3, 1], pitch: -0.1)) }
+    }
+
     /// The app's look and each of its passes turned off, on the default level, the courtyard and the forest, still (the
     /// images and the contact shade, air and reflections' cost) and moving (the motion blur's).
     static func look() -> [Config] {
-        [SceneKind.level, .sun, .forest].flatMap { kind -> [Config] in
+        [SceneKind.level, .sun, .forest, .stress].flatMap { kind -> [Config] in
             let name = kind.name
             let base = Config(name, scale: 0.75, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: kind)).appLook()
             let still = base.still().frames(60)
@@ -55,6 +104,8 @@ extension Benchmark {
                 still.named("\(name) no contact").with { $0.contactAO = 0 },
                 still.named("\(name) no air").with { $0.aerialPerspective = false },
                 still.named("\(name) no sky rays").with { $0.reflectionSkyRays = false },
+                still.named("\(name) no energy").with { $0.energyConservation = false },
+                still.named("\(name) no tint").with { $0.tintedShadows = false },
                 base.named("\(name) moving").cameraMove(),
                 base.named("\(name) moving no blur").cameraMove().with { $0.post.motionBlur = 0 },
             ]

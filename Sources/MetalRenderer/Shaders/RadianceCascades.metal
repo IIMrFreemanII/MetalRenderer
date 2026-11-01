@@ -18,7 +18,8 @@ struct RCParams {
     uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
     uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = bit 0: last cascade,
                        // bit 1: open sky through the gaps (RC_SKY_GAPS)
-    float4 interval;   // x = start, y = end (meters), z = 1 to use last frame's indirect light at hits, w = 1 if there
+    float4 interval;   // x = start, y = end (meters), z = 0, or to use last frame's indirect light at hits 1 + the share of
+                       // the probes' mean a hit takes where it isn't known (RadianceCascades.hiddenLight), w = 1 if there
                        // is a last frame (the resolve's history in the interiors' box)
 };
 
@@ -169,9 +170,10 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
             bool found = lastFramePixel(u, h.prevPosition, hns, prevND, q);
             if (found) light += prevIndirect.read(q).rgb;
             if (!found && prevAmbient[3] > 0)
-                light += float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
+                light += (inInteriorBox(u.interiorLo, u.interiorHi, h.position) ? 1.0f : p.interval.z - 1.0f)
+                       * float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
         }
-        radiance = hitAlbedo(h) * light;
+        radiance = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY)) * light;
     } else if (last) {
         radiance = skyRadiance(u, s, dir, 2.0f);
     } else {

@@ -15,7 +15,10 @@ extension MaterialGraph {
                                      ("normalStrength", surface.normalStrength, d.normalStrength),
                                      ("emissiveIntensity", surface.emissiveIntensity, d.emissiveIntensity),
                                      ("displacement", surface.displacement, d.displacement), ("displacementMid", surface.displacementMid, d.displacementMid),
-                                     ("displacementDetail", surface.displacementDetail, d.displacementDetail)] where value != base {
+                                     ("displacementDetail", surface.displacementDetail, d.displacementDetail),
+                                     ("sheenRed", surface.sheenRed, d.sheenRed), ("sheenGreen", surface.sheenGreen, d.sheenGreen),
+                                     ("sheenBlue", surface.sheenBlue, d.sheenBlue), ("sheenRoughness", surface.sheenRoughness, d.sheenRoughness),
+                                     ("anisotropy", surface.anisotropy, d.anisotropy), ("anisotropyRotation", surface.anisotropyRotation, d.anisotropyRotation)] where value != base {
             lines.append("g.surface.\(label) = \(MatSwift.float(value))")
         }
         if surface.normalDirectX { lines.append("g.surface.normalDirectX = true") }

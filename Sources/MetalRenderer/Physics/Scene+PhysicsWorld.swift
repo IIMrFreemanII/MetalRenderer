@@ -263,6 +263,19 @@ extension Scene {
         return materials.count - 1
     }
 
+    /// A PBR material with a cloth's sheen (`sheen`: its colour, Charlie's lobe of `sheenRoughness`) or a brushed
+    /// highlight (`anisotropy`, 0...1: stretched along the UVs' U, turned by `anisotropyRotation` radians), as glTF's
+    /// KHR_materials_sheen and KHR_materials_anisotropy have them.
+    package func addPBRMaterial(baseColor: SIMD3<Float>, metallic: Float, roughness: Float, sheen: SIMD3<Float>, sheenRoughness: Float = 0.5,
+                                anisotropy: Float = 0, anisotropyRotation: Float = 0) -> Int {
+        let index = addPBRMaterial(baseColor: baseColor, metallic: metallic, roughness: roughness)
+        var extra = GPUMaterialExtra()
+        extra.sheen = SIMD4(sheen, sheenRoughness)
+        extra.anisotropy = SIMD4(anisotropy, anisotropyRotation, 0, 0)
+        materialExtras[index] = extra
+        return index
+    }
+
     /// Car paint: a clear coat (a dielectric's 4%, of `coatRoughness`) over paint of `colour` with metallic flakes
     /// (`metallic` of it, their own lobe of `flakeRoughness`): Surface.metal's surfaceSpecular. The coat is what reflects
     /// the scene sharply; the paint is what it lets through.
@@ -277,6 +290,18 @@ extension Scene {
     package func addLiquidMaterial(_ look: LiquidKind.Look) -> Int {
         hasLiquid = true
         return addMaterial(GPUMaterial(albedo: SIMD4(look.absorption, look.ior), emission: SIMD4(.zero, look.roughness), params: SIMD4(0, 1, 0, 0)))
+    }
+
+    /// Solid glass, for closed meshes with `maskLiquid` (Shaders/Liquid.metal): bends light by `ior`, lets through `tint`
+    /// of it a metre, and with `roughness` scatters it as frosted glass does. (A thin frosted pane: a thin closed box.)
+    package func addSolidGlassMaterial(tint: SIMD3<Float> = [1, 1, 1], ior: Float = 1.5, roughness: Float = 0) -> Int {
+        hasLiquid = true
+        return addMaterial(glassBody(tint: tint, ior: ior, roughness: roughness))
+    }
+
+    func glassBody(tint: SIMD3<Float>, ior: Float, roughness: Float) -> GPUMaterial {
+        let absorption = -log(simd_max(tint, SIMD3(repeating: 1e-3)))
+        return GPUMaterial(albedo: SIMD4(absorption, ior), emission: SIMD4(.zero, roughness), params: SIMD4(0, 1, 0, 1))
     }
 
     /// Window glass tinted `tint` (white = clear), for instances with `maskGlass`.

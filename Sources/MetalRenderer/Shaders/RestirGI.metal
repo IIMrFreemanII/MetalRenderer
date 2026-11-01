@@ -196,7 +196,7 @@ kernel void restirGIInitialKernel(constant Uniforms&               u          [[
         uint bounces = passOn(own, RGI_ONE_BOUNCE) ? 1u : gp.extra.y;
         for (uint b = 0; ; ++b) {
             Lo += throughput * giEmission(h);
-            throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
+            throughput *= hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
             float3 hp = h.position + hng * RAY_EPSILON;
             if (LIGHT_TABLE) {
                 Rng lr;

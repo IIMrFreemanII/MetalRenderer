@@ -386,7 +386,7 @@ extension Renderer {
             inputs += [output, compositeIndirect, t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect]
             inputs += [plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness]
             inputs += [plan.particles?.color ?? dummy2D, plan.particles?.depth ?? dummy2D, t.visibility, t.diffuseGuide, t.specularHitDistance]
-            inputs += [plan.contactAO ? t.contactAO : dummy2D, plan.aerial ? aerialLUT ?? dummy3D : dummy3D]
+            inputs += [plan.contactAO ? t.contactAO : dummy2D, plan.aerial ? aerialLUT ?? dummy3D : dummy3D, t.sheen, t.anisotropy]
             setTextures(enc, inputs)
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams

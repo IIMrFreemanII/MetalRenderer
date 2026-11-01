@@ -246,17 +246,56 @@ inline float3 lightShadowTarget(Light light, float3 p, float2 u) {
     return light.positionRadius.xyz + light.positionRadius.w * float3(rr * cos(phi), rr * sin(phi), z);
 }
 
+// What the glass between a surface and a light lets through (FLAG_TINTED_SHADOWS; to every other ray it isn't there): a
+// pane's tint, a solid body's absorption over its chord, at most SHADOW_GLASS surfaces on the way, each losing a little to
+// its reflection. For what the camera sees: GI's rays still go through it clear.
+constant uint SHADOW_GLASS = 6;
+inline float3 glassShadowTint(float3 from, float3 to, SCENE_ACCEL accel, thread const SceneData& s, uint flags, uint mask = MASK_GLASS | MASK_LIQUID) {
+    if (!(GLASS || LIQUID) || !flagOn(flags, FLAG_TINTED_SHADOWS)) return float3(1.0f);
+    float3 d = to - from;
+    float dist = length(d);
+    d /= max(dist, 1e-6f);
+    float3 tint = float3(1.0f);
+    float t = 0.0f, entered = -1.0f;
+    for (uint i = 0; i < SHADOW_GLASS && t < dist; ++i) {
+        Hit h = intersectClosest(makeRay(from + d * t, d, 0.0f, dist - t), rayMask(mask, RAY_SHADOW), accel);
+        if (!h.hit) break;
+        t += h.distance + RAY_EPSILON;
+        InstanceData inst = instanceRecord(s.instances, h.instance);
+        Material m = s.materials[inst.materialIndex];
+        if ((inst.pad0 & MASK_LIQUID) != 0u) {
+            if (entered >= 0.0f) {
+                tint *= exp(-m.albedo.rgb * (t - entered));
+                entered = -1.0f;
+            } else {
+                entered = t;
+            }
+            tint *= 0.96f;
+        } else {
+            tint *= m.albedo.rgb * 0.92f;
+        }
+    }
+    return tint;
+}
+
 // GGX light from one direction l carrying illuminance E, widened by Karis's energy normalisation.
-inline float3 ggxFromDirection(float3 E, float3 l, float normalisation, float3 n, float3 v, float3 f0, float a) {
+inline float3 ggxFromDirection(float3 E, float3 l, float normalisation, float3 n, float3 v, float3 f0, float a,
+                               float3 tangent, float anisotropy) {
     float3 h = normalize(l + v);
     float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
     float3 F = schlick(f0, specularF90(f0), VoH);
+    if (MATERIAL_LOBES && anisotropy > 0.0f) {
+        float3 b = cross(n, tangent);
+        float3 vt = float3(dot(v, tangent), dot(v, b), NoV), lt = float3(dot(l, tangent), dot(l, b), NoL), ht = float3(dot(h, tangent), dot(h, b), NoH);
+        return E * (ggxAnisotropic(vt, lt, ht, anisotropicAlpha(a, anisotropy), a) * NoL * normalisation) * F;
+    }
     return E * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation) * F;
 }
 
 // Specular light from a light, unshadowed: GGX with the representative point (Karis 2013, the point of the light
 // closest to the reflection ray) and its energy normalisation. Radiance, Fresnel included, albedo-free.
-inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness) {
+inline float3 lightSpecularLobe(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness,
+                                float3 tangent, float anisotropy) {
     uint type = lightType(light);
     float a = max(roughness, MIN_ROUGHNESS); a *= a;
     float3 r = reflect(-v, n);
@@ -271,7 +310,7 @@ inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v
             if (len > 1e-6f) l = w * cos(theta) + perp * (sin(theta) / len);
         }
         float aPrime = saturate(a + 0.5f * theta);
-        return ggxFromDirection(light.color.rgb, l, (a / aPrime) * (a / aPrime), n, v, f0, a);
+        return ggxFromDirection(light.color.rgb, l, (a / aPrime) * (a / aPrime), n, v, f0, a, tangent, anisotropy);
     }
     if (type == LIGHT_RECT) {
         float3 c = light.positionRadius.xyz, N = light.axis.xyz;
@@ -292,7 +331,7 @@ inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v
         float area = 4.0f * hw * hh;
         float solidAngle = min(area * max(-dot(N, l), 0.0f) / max(dist2, 1e-6f), 2.0f * M_PI_F);
         float aPrime = saturate(a + sqrt(area / M_PI_F) / (2.0f * max(dist, 1e-3f)));
-        return ggxFromDirection(light.color.rgb * solidAngle, l, (a / aPrime) * (a / aPrime), n, v, f0, a);
+        return ggxFromDirection(light.color.rgb * solidAngle, l, (a / aPrime) * (a / aPrime), n, v, f0, a, tangent, anisotropy);
     }
     if (type == LIGHT_TUBE) {
         float radius = light.positionRadius.w;
@@ -309,7 +348,7 @@ inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v
         float aSphere = saturate(a + radius / (2.0f * dist));
         float aLine = saturate(a + sqrt(len2) / (4.0f * dist));
         float normalisation = (a / aSphere) * (a / aSphere) * (a / aLine);
-        return ggxFromDirection(light.color.rgb / dist2, l, normalisation, n, v, f0, a);
+        return ggxFromDirection(light.color.rgb / dist2, l, normalisation, n, v, f0, a, tangent, anisotropy);
     }
     if (type == LIGHT_MESH) return float3(0.0f);   // reflection rays see mesh lights themselves
     // Sphere and spot.
@@ -321,12 +360,28 @@ inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v
     float3 l = normalize(L + toRay * saturate(radius / max(length(toRay), 1e-6f)));
     float aPrime = saturate(a + radius / (2.0f * dist));
     float normalisation = (a / aPrime) * (a / aPrime);
+    if (MATERIAL_LOBES && anisotropy > 0.0f) {
+        float3 s = ggxFromDirection(light.color.rgb / dist2, l, normalisation, n, v, f0, a, tangent, anisotropy);
+        return type == LIGHT_SPOT ? s * spotFactor(light, -normalize(L)) : s;
+    }
     float3 h = normalize(l + v);
     float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f), NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
     float3 F = schlick(f0, specularF90(f0), VoH);
     float3 s = light.color.rgb * (ggxD(NoH, a) * smithVisibility(NoV, NoL, a) * NoL * normalisation / dist2) * F;
     if (type == LIGHT_SPOT) s *= spotFactor(light, -normalize(L));
     return s;
+}
+inline float3 lightSpecular(Light light, float3 p, float3 n, float3 ng, float3 v, float3 f0, float roughness) {
+    return lightSpecularLobe(light, p, n, ng, v, f0, roughness, float3(0.0f), 0.0f);
+}
+
+// A cloth's sheen in a light, unshadowed (MATERIAL_LOBES): its lobe toward the light's middle, by the light that reaches
+// the surface there. (`sheen`: colour, roughness.)
+inline float3 lightSheen(Light light, float3 p, float3 n, float3 ng, float3 v, float4 sheen) {
+    float3 l = lightType(light) == LIGHT_SUN ? light.axis.xyz : normalize(light.positionRadius.xyz - p);
+    float3 h = normalize(l + v);
+    float NoL = saturate(dot(n, l)), NoV = max(dot(n, v), 1e-4f);
+    return sheen.rgb * lightUnshadowed(light, p, n, ng) * (M_PI_F * sheenLobe(sheen.a, saturate(dot(n, h)), NoV, NoL));
 }
 
 // Emissive-mesh lights: one point on one triangle, the triangle picked by its emitted power (binary search of the

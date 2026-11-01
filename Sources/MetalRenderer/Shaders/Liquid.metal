@@ -10,6 +10,9 @@
 //     (Fresnel's share at each crossing, the absorption) and what the entry reflects (the scene in its mirror
 //     direction, the lights' highlights) liquidApplyKernel folds into the G-buffer, as glassKernel does a pane's.
 //     To shadow and GI rays the liquid isn't there (as window glass isn't): no caustics, no light absorbed on its way in.
+//
+//     Solid glass goes the same way (Scene.addSolidGlassMaterial): its params.w = 1 scatters the ray by its roughness
+//     at each crossing, one microfacet a frame, which the upscaler averages into frosted glass.
 // ---------------------------------------------------------------------------------------------
 
 // The share a dielectric surface reflects (unpolarized): cosI from the side the ray comes from, eta = n_from / n_to.
@@ -86,6 +89,14 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
         float3 n = normalize(h.normal);        // outward (FluidSurface: the field falls outward)
         bool entering = dot(dir, n) < 0.0f;
         float3 facing = entering ? n : -n;     // toward where the ray comes from
+        if (roughness > 0.0f && s.materials[instanceRecord(s.instances, h.instanceId).materialIndex].params.w > 0.0f) {
+            Rng grain;
+            grain.state = pixelSeed(tid, u.frameIndex + crossing * 131u, SEED_GLASS);
+            float3 t, b;
+            tangentFrame(facing, t, b);
+            float3 hl = sampleGGXVNDF(float3(dot(-dir, t), dot(-dir, b), max(dot(-dir, facing), 1e-4f)), roughness * roughness, grain.next2());
+            facing = normalize(t * hl.x + b * hl.y + facing * hl.z);
+        }
         float eta = entering ? 1.0f / m.a : m.a;
         float cosI = saturate(dot(-dir, facing));
         float fresnel = liquidFresnel(cosI, eta);
