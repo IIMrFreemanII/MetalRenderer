@@ -151,6 +151,32 @@ extension Renderer {
         return []
     }
 
+    /// 1c. The air along the camera's rays, before the composite reads it.
+    package func aerialStages(_ plan: FramePlan) -> [ComputeStage] {
+        guard plan.aerial, let lut = aerialLUT, let tLUT = transmittanceLUT, let msLUT = multiScatterLUT else { return [] }
+        let uniforms = plan.uniforms
+        var params = skyParams
+        return [ComputeStage(pass: "aerial") { [self] enc in
+            bind(enc, .aerial, uniforms)
+            enc.setBytes(&params, length: MemoryLayout<GPUSkyParams>.stride, index: 1)
+            setTextures(enc, [tLUT, msLUT, lut])
+            dispatch(enc, .aerial, width: lut.width, height: lut.height)
+        }]
+    }
+
+    /// 2c'. The contact rays: on the G-buffer, for the composite.
+    package func contactAOStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        guard plan.contactAO else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        var tuning = SIMD2<Float>(RenderSettings.contactAORange.clamp(settings.contactAO), RenderSettings.contactAOReachRange.clamp(settings.contactAOReach))
+        return [ComputeStage(pass: "contact AO") { [self] enc in
+            bind(enc, .contactAO, uniforms, sceneSlot: slot)
+            enc.setBytes(&tuning, length: MemoryLayout<SIMD2<Float>>.stride, index: 9)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.contactAO])
+            dispatch(enc, .contactAO, width: size.width, height: size.height)
+        }]
+    }
+
     /// 2d. Reflections (glTF specular materials): after the GI (they read its result), before the denoisers. The second
     /// group is their own denoiser.
     package func reflectionStages(_ plan: FramePlan, targets t: RenderTargets,

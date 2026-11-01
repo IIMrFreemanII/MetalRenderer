@@ -381,12 +381,13 @@ extension Renderer {
             var uniforms = c.uniforms
             if (plan.post != nil || plan.taa != nil) && !size.upscaling { uniforms.flags |= UniformFlags.post }
             bind(enc, .composite, uniforms)
-            setTextures(enc, [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur],
-                              plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur], output, compositeIndirect,
-                              t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect,
-                              plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness,
-                              plan.particles?.color ?? dummy2D,
-                              plan.particles?.depth ?? dummy2D, t.visibility, t.diffuseGuide, t.specularHitDistance])
+            var inputs: [MTLTexture] = [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur]]
+            inputs.append(plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur])
+            inputs += [output, compositeIndirect, t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect]
+            inputs += [plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness]
+            inputs += [plan.particles?.color ?? dummy2D, plan.particles?.depth ?? dummy2D, t.visibility, t.diffuseGuide, t.specularHitDistance]
+            inputs += [plan.contactAO ? t.contactAO : dummy2D, plan.aerial ? aerialLUT ?? dummy3D : dummy3D]
+            setTextures(enc, inputs)
             enc.setBuffer(lightBuffers[plan.slot], offset: 0, index: 1)
             var fp = plan.fogParams
             enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 2)
@@ -422,7 +423,7 @@ extension Renderer {
             passes.endCompute()
             let light = encodeHaze(plan, input: resolved, normalDepth: t.normalDepth[cur], passes: passes)
             if let post = plan.post {
-                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], motion: size.upscaling ? t.pixelMotion : t.motion, uniforms: c.uniforms,
                            output: drawable.texture, passes: passes)
             } else if let enc = passes.compute("taa") {
                 bind(enc, .tonemap, c.uniforms)
@@ -433,7 +434,7 @@ extension Renderer {
             }
         } else if let drawable, let post = plan.post, !size.upscaling {
             let light = encodeHaze(plan, input: post.color, normalDepth: t.normalDepth[cur], passes: passes)
-            encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+            encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], motion: size.upscaling ? t.pixelMotion : t.motion, uniforms: c.uniforms,
                        output: drawable.texture, passes: passes)
         }
         // Frame interpolation: the picture goes to the interpolator's texture, and from there into its slot.
@@ -458,7 +459,7 @@ extension Renderer {
             let light = encodeHaze(plan, input: upscaler.hdrOutput, normalDepth: t.normalDepth[cur], passes: passes)
             let picture = interpolation?.color ?? drawable.texture
             if let post = plan.post {
-                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], uniforms: c.uniforms,
+                encodePost(plan, post: post, input: light, normalDepth: t.normalDepth[cur], motion: size.upscaling ? t.pixelMotion : t.motion, uniforms: c.uniforms,
                            output: picture, passes: passes)
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
@@ -511,7 +512,7 @@ extension Renderer {
     /// 6. The lens and the finish (Shaders/Post.metal): `input`, the frame's linear light at the output size, through the
     /// depth of field and the glow, then exposed, tone mapped, vignetted and grained into `output`. In order, in one
     /// serial pass.
-    private func encodePost(_ plan: FramePlan, post: PostTargets, input: MTLTexture, normalDepth: MTLTexture, uniforms: Uniforms,
+    private func encodePost(_ plan: FramePlan, post: PostTargets, input: MTLTexture, normalDepth: MTLTexture, motion: MTLTexture, uniforms: Uniforms,
                             output: MTLTexture, passes: FrameEncoder) {
         guard let enc = passes.compute("post", serial: true) else { return }
         var params = plan.postParams
@@ -521,6 +522,19 @@ extension Renderer {
             enc.setBuffer(post.focus, offset: 0, index: 2)
         }
         var light = input
+        // (Not across a cut: the upscaler's reset says the motion doesn't belong to this picture. It was cleared by now.)
+        if params.motion.x > 0, !plan.cameraCut {
+            start(.motionTiles)
+            setTextures(enc, [motion, post.tiles])
+            dispatch(enc, .motionTiles, width: post.tiles.width, height: post.tiles.height)
+            enc.setComputePipelineState(pipelines[.motionNeighbours])
+            setTextures(enc, [post.tiles, post.neighbours])
+            dispatch(enc, .motionNeighbours, width: post.neighbours.width, height: post.neighbours.height)
+            start(.motionBlur)
+            setTextures(enc, [light, motion, normalDepth, post.neighbours, post.blur])
+            dispatch(enc, .motionBlur, width: post.blur.width, height: post.blur.height)
+            light = post.blur
+        }
         if params.lens.x > 0 {
             start(.focus)
             enc.setTexture(normalDepth, index: 0)

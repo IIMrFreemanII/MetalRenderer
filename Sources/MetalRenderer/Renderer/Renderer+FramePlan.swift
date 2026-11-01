@@ -106,9 +106,10 @@ extension Renderer {
             stages.head = pathTraceStages(plan)
         } else if !plan.solid {   // (solid shading: encodeOutput draws it)
             stages.lightGrid = lightGridStages(plan)
-            stages.head = headStages(plan, targets: t)
+            stages.head = aerialStages(plan) + headStages(plan, targets: t)
             stages.gi = giStages(plan, targets: t)
             (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
+            stages.reflections = contactAOStages(plan, targets: t) + stages.reflections
             stages.restir = restirStages(plan, targets: t)
             stages.denoise = sampledLightStages(plan, targets: t)
             stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
@@ -433,6 +434,9 @@ extension Renderer {
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
         var specular = false                    // reflections (glTF specular materials)
+        var contactAO = false                   // the contact rays (RenderSettings.contactAO)
+        var aerial = false                      // the air in front of the picture (RenderSettings.aerialPerspective)
+        var cameraCut = false                   // the upscaler's history resets this frame: last frame's motion means nothing
         var glass = false                       // window panes over the traced G-buffer (glassKernel)
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
         var water = false                       // ...and into water (waterKernel; in the liquids' targets)
@@ -593,6 +597,13 @@ extension Renderer {
         p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
         // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
         if p.cascades || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
+        // References show the light's own paths: neither the contact shade nor the air, which they don't trace.
+        p.cameraCut = upscalerReset
+        p.contactAO = settings.contactAO > 0 && settings.giEnabled && !accumulating && !p.solid
+        if p.contactAO { p.uniforms.flags |= UniformFlags.contactAO }
+        p.aerial = settings.aerialPerspective && skyActive && settings.sky.mode == .atmosphere && !accumulating && !p.solid && aerialLUT != nil
+        if p.aerial { p.uniforms.flags |= UniformFlags.aerial }
+        if settings.reflectionSkyRays && !accumulating { p.uniforms.flags |= UniformFlags.reflectSky }
 
         // Denoising (SVGF-style): temporal accumulation + edge-aware a-trous wavelet filter.
         //   Path-traced light is denoised either as one signal or as direct and indirect separately (sharper
@@ -659,7 +670,11 @@ extension Renderer {
                 lens: SIMD4(PostSettings.apertureRange.clamp(lens.aperture), lens.focus, PostSettings.maxBlur, 0.1),
                 finish: SIMD4(lens.vignette, lens.grain, lens.aberration, lens.classic ? 1 : 0),
                 size: SIMD4(UInt32(size.outWidth), UInt32(size.outHeight), UInt32(width), UInt32(height)),
-                frame: SIMD4(frameIndex, 0, 0, 0))
+                frame: SIMD4(frameIndex, 0, 0, 0),
+                // A frame's motion, as the shutter's share of a 30 fps frame sees it (Unreal's target rate).
+                motion: SIMD4(frameDt > 0 ? PostSettings.motionBlurRange.clamp(lens.motionBlur) / (30 * frameDt) : 0,
+                              PostSettings.motionBlurMaxRange.clamp(lens.motionBlurMax) * 0.01 * Float(size.outWidth), 0,
+                              size.upscaling ? 0 : 1))
         }
         return p
     }

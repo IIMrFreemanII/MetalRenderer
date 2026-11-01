@@ -44,6 +44,7 @@ package final class RenderTargets {
     let upscaleColor: MTLTexture    // tonemapped linear color at render resolution
     let deviceDepth: MTLTexture     // reversed-Z depth (near / viewDepth)
     let pixelMotion: MTLTexture     // previous pixel position - this pixel position, unjittered
+    let contactAO: MTLTexture       // what the contact rays saw of the open (contactAOKernel)
     // More guides for MetalFX's denoising scaler (written by the composite while it is the upscaler)
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
     let diffuseGuide: MTLTexture    // the albedo, darkened where the sun's raw shadow falls (Output.metal sunShadowGuide)
@@ -82,6 +83,7 @@ package final class RenderTargets {
         upscaleColor = try make(RenderTargets.upscaleColorFormat, "upscaleColor")
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
+        contactAO = try make(.r16Float, "contactAO")
         specularAlbedo = try make(RenderTargets.gBufferFormat, "specularAlbedo")
         diffuseGuide = try make(RenderTargets.gBufferFormat, "diffuseGuide")
         roughness = try make(RenderTargets.roughnessFormat, "roughness")
@@ -208,6 +210,9 @@ package final class PostTargets {
     let down: [MTLTexture]      // bloom's halvings, from half the output size...
     let up: [MTLTexture]        // ...and the way back up: up[i] = down[i] + up[i + 1] filtered (one fewer)
     let focus: MTLBuffer        // the autofocus distance, eased from frame to frame (0 = none yet)
+    let blur: MTLTexture        // after the motion blur
+    let tiles: MTLTexture       // ...its tiles' fastest motions (output pixels)
+    let neighbours: MTLTexture  // ...and each tile's and its neighbours' fastest
 
     package init(device: MTLDevice, width: Int, height: Int) throws {
         self.width = width
@@ -222,6 +227,10 @@ package final class PostTargets {
         }
         color = try make("post color", width, height)
         dof = try make("post dof", width, height)
+        blur = try make("post blur", width, height)
+        let tile = PostSettings.motionTile
+        tiles = try make("motion tiles", (width + tile - 1) / tile, (height + tile - 1) / tile)
+        neighbours = try make("motion neighbours", (width + tile - 1) / tile, (height + tile - 1) / tile)
         var down: [MTLTexture] = [], (w, h) = (width, height)
         while down.count < PostSettings.bloomLevels && min(w, h) >= 16 {
             (w, h) = ((w + 1) / 2, (h + 1) / 2)

@@ -179,6 +179,44 @@ float3 atmosphereRadiance(float3 v, constant SkyParams& sp, texture2d<float> tra
     return L;
 }
 
+// The air in front of what the camera sees (RenderSettings.aerialPerspective): along the rays through a grid of the
+// frame, what the atmosphere scatters in (rgb) and lets through (a, its mean) up to each of AERIAL_SIZE distances, closer
+// together near the camera. The same light as the sky's (atmosphereLit), so what is far off fades into it. Sky pixels
+// have it already.
+constant uint AERIAL_SIZE = 32;
+constant float AERIAL_REACH = 32000.0f;   // m
+kernel void aerialKernel(constant Uniforms&               u             [[buffer(0)]],
+                         constant SkyParams&              sp            [[buffer(1)]],
+                         texture2d<float>                 transmittance [[texture(0)]],
+                         texture2d<float>                 multiScatter  [[texture(1)]],
+                         texture3d<float, access::write>  output        [[texture(2)]],
+                         uint2 tid [[thread_position_in_grid]])
+{
+    float3 v = normalize(viewDirection(u, (float2(tid) + 0.5f) / float(AERIAL_SIZE)));
+    float3 o = float3(0.0f, ATMO_GROUND + sp.ground.w + max(u.camPos.y, 0.0f), 0.0f);
+    float cSun = dot(v, sp.sun.xyz), cGlow = dot(v, sp.glow.xyz);
+    float pSun = miePhase(cSun, MIE_G), rSun = rayleighPhase(cSun), pGlow = miePhase(cGlow, MIE_G), rGlow = rayleighPhase(cGlow);
+    bool glow = any(sp.glowTop.rgb > 0.0f);
+    float3 L = float3(0.0f), T = float3(1.0f);
+    float t0 = 0.0f;
+    for (uint slice = 0; slice < AERIAL_SIZE; ++slice) {
+        float x = (float(slice) + 0.5f) / float(AERIAL_SIZE), t1 = AERIAL_REACH * x * x, dt = t1 - t0;
+        float3 p = o + v * (0.5f * (t0 + t1));
+        float r = length(p), h = r - ATMO_GROUND;
+        float3 sR; float sM;
+        float3 ext = atmosphereExtinction(h, sR, sM);
+        float3 S = ((sR * rSun + sM * pSun) * atmosphereTransmittance(transmittance, p, sp.sun.xyz)
+                    + (sR + sM) * multipleScattering(multiScatter, h, dot(p, sp.sun.xyz) / r)) * sp.sunTop.rgb;
+        if (glow) S += ((sR * rGlow + sM * pGlow) * atmosphereTransmittance(transmittance, p, sp.glow.xyz)
+                        + (sR + sM) * multipleScattering(multiScatter, h, dot(p, sp.glow.xyz) / r)) * sp.glowTop.rgb;
+        float3 tr = exp(-ext * dt);
+        L += T * S * (1.0f - tr) / max(ext, float3(1e-12f));
+        T *= tr;
+        t0 = t1;
+        output.write(float4(L, (T.x + T.y + T.z) / 3.0f), uint3(tid, slice));
+    }
+}
+
 inline float remap(float x, float a, float b, float c, float d) { return c + (x - a) * (d - c) / (b - a); }
 
 // Cloud density (extinction, 1/m) at world point p (metres, y up), h01 = height within the layer. fine = false

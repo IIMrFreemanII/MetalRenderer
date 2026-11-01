@@ -93,6 +93,9 @@ package enum UniformFlags {
     package static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
     package static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
     package static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
+    package static let contactAO: UInt32 = 1048576
+    package static let aerial: UInt32 = 2097152
+    package static let reflectSky: UInt32 = 4194304
     package static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 

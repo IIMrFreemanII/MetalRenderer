@@ -489,11 +489,18 @@ package struct PostSettings: Equatable, Codable {
     /// The look from before the film look, which the benchmarks keep so that their scores stay comparable with their
     /// history: bloom mixed in rather than added, the vignette on the display's values, the old exposure meter.
     package var classic = false
+    /// The motion blur (after the upscaler, on the light): the share of a 30 fps frame the shutter is open, as Unreal's,
+    /// whose default is 0.5; and its longest blur, as a percentage of the width.
+    package var motionBlur: Float = 0
+    var motionBlurMax: Float = 5
 
-    var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
+    var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 || motionBlur > 0 }
 
     static let bloomRange: ClosedRange<Float> = 0...2
     static let filmRange: ClosedRange<Float> = 0...1
+    static let motionBlurRange: ClosedRange<Float> = 0...1
+    static let motionTile = 20          // output pixels (MSL MOTION_TILE)
+    static let motionBlurMaxRange: ClosedRange<Float> = 0...20
     /// Classic bloom's strength, as a share mixed in, for the same glow as this much of the added one.
     static let classicBloomScale: Float = 7.5
     static let classicBloomLevels = 6
@@ -517,6 +524,7 @@ package struct PostSettings: Equatable, Codable {
         p.bloom = 0.675
         p.bloomThreshold = 0
         p.vignette = 0.4
+        p.motionBlur = 0.5
         return p
     }
 
@@ -650,6 +658,36 @@ package struct RenderSettings: Equatable, Codable {
     /// The saved settings' look (SettingsStore): one older than `RenderSettings.currentLook` is reset once, to show a new default look.
     package var lookVersion = RenderSettings.currentLook
     package static let currentLook = 1
+    /// Short rays for the contact shade the GI's probes miss (contactAOKernel), on the indirect light: how much of it (0 = off).
+    package var contactAO: Float = 1
+    /// How far those rays go (m).
+    package var contactAOReach: Float = 0.5
+    /// The atmosphere's air in front of what the camera sees (aerialKernel). With an atmosphere sky only.
+    package var aerialPerspective = true
+    /// A reflection's hit off screen sees the sky through a ray, not a dim mean of it (reflectionHitRadiance).
+    package var reflectionSkyRays = true
+
+    /// The benchmarks' look for their scores' history: the tone curve and lens from before, none of the passes since.
+    package mutating func useClassicLook() {
+        toneMap = .aces
+        post = PostSettings.classicPreset(for: scene)
+        contactAO = 0
+        aerialPerspective = false
+        reflectionSkyRays = false
+    }
+
+    /// The app's look.
+    package mutating func useAppLook() {
+        let app = RenderSettings()
+        toneMap = app.toneMap
+        post = PostSettings.preset(for: scene)
+        contactAO = app.contactAO
+        aerialPerspective = app.aerialPerspective
+        reflectionSkyRays = app.reflectionSkyRays
+    }
+
+    package static let contactAORange: ClosedRange<Float> = 0...1
+    package static let contactAOReachRange: ClosedRange<Float> = 0.05...2
     package var fovDegrees: Float = 60         // vertical field of view
     package var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     package var timeScale: Float = 1           // animation speed (Pause stops it too)

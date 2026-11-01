@@ -8,6 +8,8 @@
 //     here instead (it is glossy for its highlights only).
 // ---------------------------------------------------------------------------------------------
 
+constant float REFLECTION_SKY_REACH = 200.0f;   // m: how far a hit off screen looks for what hides the sky
+
 // Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
 float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
                              thread Sampler& rng, texture2d<float, access::read> normalDepth,
@@ -39,12 +41,20 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
             // sky ambient, or in the walkable interiors' box the radiance cascades' mean probe light (last frame's, the
             // light of the rooms in view): a closed room's shiny shelves and door handles reflected the daylight sky and
             // glowed in the dark.
+            bool inRoom = roomAmbient[3] > 0 && inInteriorBox(u.interiorLo, u.interiorHi, hp);
             float3 gi = skyAmbient(u, s) * 0.3f;
-            if (roomAmbient[3] > 0 && inInteriorBox(u.interiorLo, u.interiorHi, hp))
-                gi = float3(roomAmbient[0], roomAmbient[1], roomAmbient[2]) / (1024.0f * float(roomAmbient[3]));
+            if (inRoom) gi = float3(roomAmbient[0], roomAmbient[1], roomAmbient[2]) / (1024.0f * float(roomAmbient[3]));
             uint2 q;
             if (surfacePixel(h.position - u.camPos.xyz, hn, u.camRight, u.camUp, u.camForward, u, normalDepth,
-                             REFLECTION_DEPTH, REFLECTION_NORMAL, q)) gi = indirect.read(q).rgb;
+                             REFLECTION_DEPTH, REFLECTION_NORMAL, q)) {
+                gi = indirect.read(q).rgb;
+            } else if (!inRoom && flagOn(u.flags, FLAG_REFLECT_SKY)) {
+                // Off screen, one ray about its normal says what of the sky the hit sees; a little comes round what it meets.
+                float3 up = sampleBounce(hn, hng, rng.next2());
+                float met;
+                gi = intersectAny(makeRay(hp, up, 0.0f, REFLECTION_SKY_REACH), MASK_GEOMETRY, accel, met)
+                    ? skyAmbient(u, s) * 0.1f : skyRadiance(u, s, up, 2.0f);
+            }
             return L + throughput * albedo * gi;
         }
         if (b >= bounces) return L;
@@ -203,4 +213,32 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     result *= fireflyScale(u, luminance(result / max(albedo, float3(1e-3f))));
     outSpecular.write(roundToHalf(float4((result + direct) / max(albedo, float3(1e-3f)), 1.0f)), tid);
     outHitDistance.write(float4(hitDistance), tid);
+}
+
+// Contact shade (RenderSettings.contactAO): one short ray a pixel about the normal. The GI's probes are too coarse for the
+// shade where things meet, so the composite takes this off the indirect light. Noisy, and MetalFX's denoiser or the
+// temporal AA averages it. What a ray meets near shades more than what it meets near its reach.
+kernel void contactAOKernel(constant Uniforms&              u          [[buffer(0)]],
+                            SCENE_ACCEL                     accel      [[buffer(1)]],
+                            constant float2&                tuning     [[buffer(9)]],   // x = how much, y = reach (m)
+                            texture2d<float, access::read>  surfacePos [[texture(0)]],
+                            texture2d<float, access::read>  normalDepth [[texture(1)]],
+                            texture2d<float, access::read>  geoNormal  [[texture(2)]],
+                            texture2d<float, access::write> output     [[texture(3)]],
+                            uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    float4 nd = normalDepth.read(tid);
+    if (!(nd.w > 0.0f)) {
+        output.write(float4(1.0f), tid);
+        return;
+    }
+    float3 ng = geoNormal.read(tid).xyz;
+    Rng rng;
+    rng.state = pixelSeed(tid, u.frameIndex, SEED_CONTACT_AO);
+    float3 d = sampleBounce(nd.xyz, ng, rng.next2());
+    float t, open = 1.0f;
+    if (intersectAny(makeRay(surfacePos.read(tid).xyz + ng * RAY_EPSILON, d, 0.0f, tuning.y), MASK_GEOMETRY, accel, t))
+        open = smoothstep(0.0f, tuning.y, t);
+    output.write(float4(mix(1.0f, open, tuning.x)), tid);
 }
