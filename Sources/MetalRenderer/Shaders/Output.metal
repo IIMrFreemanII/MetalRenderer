@@ -541,6 +541,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> outHitDistance [[texture(24)]],  // ...its reflections' hit distance, without FLAG_SPECULAR
                             texture2d<float, access::read>  contactAO  [[texture(25)]],  // with FLAG_CONTACT_AO
                             texture3d<float>                aerial     [[texture(26)]],  // with FLAG_AERIAL
+                            texture2d<float, access::read>  sheenTex   [[texture(27)]],  // MATERIAL_LOBES
+                            texture2d<float, access::read>  anisotropyTex [[texture(28)]],
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
@@ -589,8 +591,16 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             float4 m = material.read(tid);
             if (any(m.rgb > 0.0f)) {
                 float3 v = normalize(u.camPos.xyz - sp.xyz);
-                for (uint l = 0; l < u.lightGroupEnd.w; ++l)
-                    directSpecular += lightSpecular(lights[l], p, n, ng, v, m.rgb, m.a) * dot(vis, groupMask(lightGroup(lights[l])));
+                float4 lobe = MATERIAL_LOBES ? anisotropyTex.read(tid) : float4(0.0f);
+                float3 tangent = lobe.w > 0.0f ? normalize(lobe.xyz - n * dot(n, lobe.xyz)) : float3(0.0f);
+                for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
+                    float3 lit = lightSpecularLobe(lights[l], p, n, ng, v, m.rgb, m.a, tangent, lobe.w);
+                    if (MATERIAL_LOBES) {
+                        float4 sheen = sheenTex.read(tid);
+                        if (any(sheen.rgb > 0.0f)) lit += lightSheen(lights[l], p, n, ng, v, sheen);
+                    }
+                    directSpecular += lit * dot(vis, groupMask(lightGroup(lights[l])));
+                }
             }
         }
         if (flagOn(u.flags, FLAG_SEPARATE)) {
@@ -641,12 +651,31 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         float4 ndc = nd.read(tid);
         if (any(m.rgb > 0.0f) && ndc.w > 0.0f) {
             float3 v = normalize(u.camPos.xyz - surfacePos.read(tid).xyz);
-            float3 sa = specularAlbedo(m.rgb, 1.0f, m.a, max(dot(ndc.xyz, v), 1e-4f));
+            float NoV = max(dot(ndc.xyz, v), 1e-4f);
+            float3 sa = specularShare(m.rgb, specularF90(m.rgb), m.a, NoV, flagOn(u.flags, FLAG_ENERGY));
             guideSpecular = sa;
             guideRoughness = m.a;
             float3 traced = specularTex.read(tid).rgb;
             bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE);
             specular += sa * (tracedAll ? traced : traced + finalIndirect * contact);   // (rough: occluded like the diffuse)
+            if (flagOn(u.flags, FLAG_ENERGY)) {
+                // The lobe gets back what it lost in its microfacets, and what it reflects isn't there for the diffuse.
+                float3 ms = specularMultiscatter(m.rgb, m.a, NoV);
+                specular *= ms;
+                guideSpecular = sa * ms;
+                albedo *= 1.0f - saturate(guideSpecular);
+            }
+            if (MATERIAL_LOBES) {
+                // A cloth's sheen lies over the rest: what it reflects doesn't reach it, and it takes the diffuse GI.
+                float4 sheen = sheenTex.read(tid);
+                if (any(sheen.rgb > 0.0f)) {
+                    float3 share = sheen.rgb * sheenAlbedo(sheen.a, NoV);
+                    float over = 1.0f - saturate(max(share.x, max(share.y, share.z)));
+                    albedo *= over;
+                    specular = specular * over + share * finalIndirect * contact;
+                    guideSpecular = guideSpecular * over + share;
+                }
+            }
         }
     }
 

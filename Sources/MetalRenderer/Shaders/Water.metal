@@ -52,7 +52,7 @@ float3 waterReflection(constant Uniforms& u, SCENE_ACCEL accel, thread const Sce
     float3 hng, hn;
     orientNormals(h, dir, hng, hn);
     float3 hp = h.position + hng * RAY_EPSILON;
-    float3 albedo = hitAlbedo(h);
+    float3 albedo = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));
     float3 L = skyAmbient(u, s) * 0.5f;
     bool near = shadows && distance(hp, p) < 150.0f;
     for (uint i = 0; i < min(u.lightCount, 8u); ++i) {

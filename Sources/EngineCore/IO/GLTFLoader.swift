@@ -27,6 +27,15 @@ package struct GLTFModel {
         package var metallicRoughnessTexture: TextureRef?   // G = roughness, B = metallic
         package var normalTexture: TextureRef?
         package var emissiveTexture: TextureRef?
+        /// KHR_materials_sheen, KHR_materials_anisotropy (their factors; their textures aren't read).
+        package var sheen = SIMD3<Float>(0, 0, 0)
+        package var sheenRoughness: Float = 0
+        package var anisotropy: Float = 0
+        package var anisotropyRotation: Float = 0
+        /// KHR_materials_transmission, _ior and _volume: above 0.5 it is solid glass (its factors; no textures).
+        package var transmission: Float = 0
+        package var ior: Float = 1.5
+        package var attenuation = SIMD3<Float>(1, 1, 1)     // what a metre of it lets through
     }
     package struct Image {
         package var data: Data                   // encoded (PNG, JPEG, ...), decoded later with ImageIO
@@ -152,8 +161,18 @@ package enum GLTFLoader {
         package var metallicRoughnessTexture: TextureInfo?
     }
     private struct EmissiveStrength: Decodable { var emissiveStrength: Float? }
+    private struct Sheen: Decodable { var sheenColorFactor: [Float]?; var sheenRoughnessFactor: Float? }
+    private struct Anisotropy: Decodable { var anisotropyStrength: Float?; var anisotropyRotation: Float? }
+    private struct Transmission: Decodable { var transmissionFactor: Float? }
+    private struct IOR: Decodable { var ior: Float? }
+    private struct Volume: Decodable { var attenuationColor: [Float]?; var attenuationDistance: Float? }
     private struct MaterialExtensions: Decodable {
         var KHR_materials_emissive_strength: EmissiveStrength?
+        var KHR_materials_sheen: Sheen?
+        var KHR_materials_anisotropy: Anisotropy?
+        var KHR_materials_transmission: Transmission?
+        var KHR_materials_ior: IOR?
+        var KHR_materials_volume: Volume?
     }
     private struct MaterialDef: Decodable {
         package var name: String?
@@ -169,7 +188,10 @@ package enum GLTFLoader {
     private struct AnyDecodable: Decodable { init(from decoder: Decoder) throws {} }
 
     /// Extensions that change how data must be read; a file that requires anything else is rejected.
-    private static let supportedRequired: Set<String> = ["KHR_materials_emissive_strength", "KHR_lights_punctual"]
+    private static let supportedRequired: Set<String> = [
+        "KHR_materials_emissive_strength", "KHR_lights_punctual", "KHR_materials_sheen", "KHR_materials_anisotropy",
+        "KHR_materials_transmission", "KHR_materials_ior", "KHR_materials_volume",
+    ]
 
     // MARK: Loading
 
@@ -250,6 +272,19 @@ package enum GLTFLoader {
             if let e = m.emissiveFactor, e.count == 3 { out.emissive = SIMD3(e[0], e[1], e[2]) }
             out.emissive *= m.extensions?.KHR_materials_emissive_strength?.emissiveStrength ?? 1
             out.normalScale = m.normalTexture?.scale ?? 1
+            if let sheen = m.extensions?.KHR_materials_sheen {
+                if let c = sheen.sheenColorFactor, c.count == 3 { out.sheen = SIMD3(c[0], c[1], c[2]) }
+                out.sheenRoughness = sheen.sheenRoughnessFactor ?? 0
+            }
+            if let a = m.extensions?.KHR_materials_anisotropy {
+                out.anisotropy = a.anisotropyStrength ?? 0
+                out.anisotropyRotation = a.anisotropyRotation ?? 0
+            }
+            out.transmission = m.extensions?.KHR_materials_transmission?.transmissionFactor ?? 0
+            out.ior = m.extensions?.KHR_materials_ior?.ior ?? 1.5
+            if let v = m.extensions?.KHR_materials_volume, let c = v.attenuationColor, c.count == 3, let d = v.attenuationDistance, d > 0 {
+                out.attenuation = SIMD3(pow(c[0], 1 / d), pow(c[1], 1 / d), pow(c[2], 1 / d))
+            }
             out.baseColorTexture = textureRef(pbr?.baseColorTexture)
             out.metallicRoughnessTexture = textureRef(pbr?.metallicRoughnessTexture)
             out.normalTexture = textureRef(m.normalTexture)

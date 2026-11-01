@@ -45,6 +45,8 @@ package final class RenderTargets {
     let deviceDepth: MTLTexture     // reversed-Z depth (near / viewDepth)
     let pixelMotion: MTLTexture     // previous pixel position - this pixel position, unjittered
     let contactAO: MTLTexture       // what the contact rays saw of the open (contactAOKernel)
+    let sheen: MTLTexture           // MATERIAL_LOBES: a cloth's sheen colour and roughness (traceKernel)
+    let anisotropy: MTLTexture      // ...a brushed highlight's tangent and how much
     // More guides for MetalFX's denoising scaler (written by the composite while it is the upscaler)
     let specularAlbedo: MTLTexture  // what the surface reflects toward the camera, 0 where nothing is specular
     let diffuseGuide: MTLTexture    // the albedo, darkened where the sun's raw shadow falls (Output.metal sunShadowGuide)
@@ -84,6 +86,8 @@ package final class RenderTargets {
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
         contactAO = try make(.r16Float, "contactAO")
+        sheen = try make(.rgba8Unorm, "sheen")
+        anisotropy = try make(.rgba8Snorm, "anisotropy")
         specularAlbedo = try make(RenderTargets.gBufferFormat, "specularAlbedo")
         diffuseGuide = try make(RenderTargets.gBufferFormat, "diffuseGuide")
         roughness = try make(RenderTargets.roughnessFormat, "roughness")

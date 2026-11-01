@@ -76,6 +76,8 @@ extension Renderer {
                 enc.setTexture(liquid.ray, index: 16)
                 enc.setTexture(liquid.direction, index: 17)
             }
+            enc.setTexture(t.sheen, index: 18)
+            enc.setTexture(t.anisotropy, index: 19)
             dispatch(enc, .trace, width: size.width, height: size.height)
         })
         // Water's surface and what it does to what is seen under it, before window panes (they are in front of it).
@@ -195,7 +197,7 @@ extension Renderer {
                 enc.setBytes(&none, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 10)
             }
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
-                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D, t.specularHitDistance])
+                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D, t.specularHitDistance, t.sheen, t.anisotropy])
             dispatch(enc, .reflection, width: size.width, height: size.height)
         }]
         guard plan.svgf else { return (trace, []) }

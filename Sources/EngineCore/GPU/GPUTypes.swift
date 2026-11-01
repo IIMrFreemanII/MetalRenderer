@@ -96,6 +96,8 @@ package enum UniformFlags {
     package static let contactAO: UInt32 = 1048576
     package static let aerial: UInt32 = 2097152
     package static let reflectSky: UInt32 = 4194304
+    package static let energy: UInt32 = 8388608
+    package static let tintedShadows: UInt32 = 16777216
     package static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
@@ -253,6 +255,10 @@ package struct GPUMaterialExtra: Equatable {
                                                     // 3: a grid floor (gridKind)
     package var surface = SIMD4<Float>(0, 1, 0.5, 0)         // x = parallax depth (UV), y = UV scale, z = opacity cutoff,
                                                      // w = AO strength (0: the R channel isn't occlusion)
+
+    package var sheen = SIMD4<Float>(repeating: 0)        // rgb = a cloth's sheen colour (0 = none), a = its roughness
+    package var anisotropy = SIMD4<Float>(repeating: 0)   // x = the highlight's stretch along the tangent (0...1), y = the
+                                                          // tangent's turn from the UVs' U (radians)
 
     /// `textures.z` of a grid floor (Scene.addGridMaterial, Surface.metal previewGrid): no textures, and `surface` its
     /// subgrid's strength, tile size (m), lines' share of its colour and crosses' strength.

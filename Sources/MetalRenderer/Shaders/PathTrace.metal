@@ -538,16 +538,36 @@ struct PTMaterial {
     float  f90;
     float  a;       // GGX alpha
     float  pSpec;   // probability of sampling the specular lobe (0: diffuse only)
+    float3 ms;      // with FLAG_ENERGY: what the lobe lost in its microfacets, given back (specularMultiscatter)
+    float4 sheen;   // MATERIAL_LOBES: colour, roughness
+    float  sheenOver;   // ...what its lobe lets through to the rest
+    float3 tangent; // MATERIAL_LOBES: a brushed highlight's
+    float  at;      // ...its alpha along the tangent (m.a across it); 0: not brushed
     HairPoint skin; // skin (Hair.metal): its diffuse wrapped, light through its thin parts
 };
 
-inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular) {
+inline PTMaterial ptMaterial(thread const Surface& h, float NoV, bool specular, bool energy) {
     PTMaterial m;
     float roughness = max(h.roughness, MIN_ROUGHNESS);
-    m.albedo = h.albedo; m.f0 = h.f0; m.f90 = h.specular; m.a = roughness * roughness; m.pSpec = 0.0f;
+    m.albedo = h.albedo; m.f0 = h.f0; m.f90 = h.specular; m.a = roughness * roughness; m.pSpec = 0.0f; m.ms = float3(1.0f);
     m.skin = SKIN && h.skin > 0.0f ? skinPoint(h.skin) : noHair();
+    m.sheen = float4(0.0f); m.sheenOver = 1.0f; m.tangent = float3(0.0f); m.at = 0.0f;
+    if (MATERIAL_LOBES && specular && !h.backlit) {
+        m.sheen = h.sheen;
+        float3 share = h.sheen.rgb * sheenAlbedo(h.sheen.a, NoV);
+        m.sheenOver = 1.0f - saturate(max(share.x, max(share.y, share.z)));
+        if (h.anisotropy > 0.0f) {
+            m.at = anisotropicAlpha(m.a, h.anisotropy);
+            m.tangent = h.lobeTangent;
+        }
+    }
     if (specular && h.specular > 0.0f && !h.backlit) {   // (a leaf lit from behind: the light through it is diffuse)
-        float ls = luminance(specularAlbedo(m.f0, m.f90, roughness, NoV)), ld = luminance(m.albedo);
+        if (energy) {   // As the composite does it, by the view's angle.
+            m.f90 = specularF90(m.f0);
+            m.ms = specularMultiscatter(m.f0, roughness, NoV);
+            m.albedo *= 1.0f - saturate(specularShare(m.f0, m.f90, roughness, NoV, true) * m.ms);
+        }
+        float ls = luminance(specularShare(m.f0, m.f90, roughness, NoV, energy)), ld = luminance(m.albedo);
         m.pSpec = ls + ld > 0.0f ? ls / (ls + ld) : 0.0f;
     }
     return m;
@@ -570,10 +590,26 @@ inline void ptEval(thread const PTMaterial& m, float3 n, float3 v, float3 l, thr
         float NoV = max(dot(n, v), 1e-4f);
         float3 h = normalize(v + l);
         float NoH = saturate(dot(n, h)), VoH = saturate(dot(v, h));
-        float D = ggxD(NoH, m.a), a2 = m.a * m.a;
-        fs = D * smithVisibility(NoV, NoL, m.a) * schlick(m.f0, m.f90, VoH) * NoL;
-        float G1 = 2.0f * NoV / (NoV + sqrt(a2 + (1.0f - a2) * NoV * NoV));
-        pdf += m.pSpec * G1 * D / (4.0f * NoV);   // visible normals, reflected
+        if (MATERIAL_LOBES && m.at > 0.0f) {
+            float3 tn = normalize(m.tangent - n * dot(n, m.tangent)), b = cross(n, tn);
+            float3 vt = float3(dot(v, tn), dot(v, b), NoV), lt = float3(dot(l, tn), dot(l, b), NoL), ht = float3(dot(h, tn), dot(h, b), NoH);
+            float d = ht.x * ht.x / (m.at * m.at) + ht.y * ht.y / (m.a * m.a) + ht.z * ht.z;
+            float D = 1.0f / (M_PI_F * m.at * m.a * d * d);
+            fs = ggxAnisotropic(vt, lt, ht, m.at, m.a) * schlick(m.f0, m.f90, VoH) * NoL * m.ms;
+            float G1 = 2.0f * NoV / (NoV + length(float3(m.at * vt.x, m.a * vt.y, vt.z)));
+            pdf += m.pSpec * G1 * D / (4.0f * NoV);
+        } else {
+            float D = ggxD(NoH, m.a), a2 = m.a * m.a;
+            fs = D * smithVisibility(NoV, NoL, m.a) * schlick(m.f0, m.f90, VoH) * NoL * m.ms;
+            float G1 = 2.0f * NoV / (NoV + sqrt(a2 + (1.0f - a2) * NoV * NoV));
+            pdf += m.pSpec * G1 * D / (4.0f * NoV);   // visible normals, reflected
+        }
+    }
+    if (MATERIAL_LOBES && any(m.sheen.rgb > 0.0f)) {
+        float NoV = max(dot(n, v), 1e-4f);
+        float3 h = normalize(v + l);
+        fd *= m.sheenOver;
+        fs = fs * m.sheenOver + m.sheen.rgb * sheenLobe(m.sheen.a, saturate(dot(n, h)), NoV, NoL) * NoL;
     }
 }
 
@@ -816,6 +852,12 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 float3 n = normalize(wet.normal);
                 bool entering = dot(dir, n) < 0.0f;
                 float3 facing = entering ? n : -n;
+                if (roughness > 0.0f && s.materials[instanceRecord(s.instances, wet.instanceId).materialIndex].params.w > 0.0f) {
+                    float3 t, b;   // Solid glass scatters (Liquid.metal), as liquidKernel does it.
+                    tangentFrame(facing, t, b);
+                    float3 hl = sampleGGXVNDF(float3(dot(-dir, t), dot(-dir, b), max(dot(-dir, facing), 1e-4f)), roughness * roughness, rng.next2());
+                    facing = normalize(t * hl.x + b * hl.y + facing * hl.z);
+                }
                 float eta = entering ? 1.0f / m.a : m.a;
                 float fresnel = liquidFresnel(saturate(dot(-dir, facing)), eta);
                 float3 bent = refract(dir, facing, eta);
@@ -920,7 +962,7 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
                 break;
             }
             float3 v = -dir;
-            PTMaterial mat = ptMaterial(h, max(dot(n, v), 1e-4f), specular);
+            PTMaterial mat = ptMaterial(h, max(dot(n, v), 1e-4f), specular, flagOn(u.flags, FLAG_ENERGY));
             float3 p = h.position + ng * RAY_EPSILON;
             PTVertex x = { p, n, ng, false };
             float2 rPick = ptRandom(smp, bounce, PT_SLOT_PICK, rng);
@@ -960,7 +1002,13 @@ kernel void pathTraceKernel(constant Uniforms&               u          [[buffer
             if (rPick.y < mat.pSpec) {
                 float3 t, b;
                 tangentFrame(n, t, b);
-                float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), max(dot(n, v), 1e-4f)), mat.a, rDir);
+                float at = mat.a;
+                if (MATERIAL_LOBES && mat.at > 0.0f) {
+                    t = normalize(mat.tangent - n * dot(n, mat.tangent));
+                    b = cross(n, t);
+                    at = mat.at;
+                }
+                float3 hl = sampleGGXVNDF(float3(dot(v, t), dot(v, b), max(dot(n, v), 1e-4f)), at, mat.a, rDir);
                 l = reflect(-v, normalize(t * hl.x + b * hl.y + n * hl.z));
             } else {
                 l = cosineSampleHemisphere(n, rDir);

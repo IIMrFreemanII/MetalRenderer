@@ -190,7 +190,7 @@ package enum ReferenceMode: Int, CaseIterable, Codable {
 /// The reference modes' parameters.
 package struct ReferenceSettings: Equatable, Codable {
     package var mode = ReferenceMode.off
-    var bounces = 8             // path length (both modes)
+    package var bounces = 8     // path length (both modes)
     var samplesPerFrame = 1     // path traced: paths per pixel per frame
     var maxSamples = 0          // stop adding samples at this many per pixel; 0 = never
 
@@ -240,12 +240,19 @@ package struct CascadeSettings: Equatable, Codable {
     package var probeSpacing = 8            // cascade-0 probe spacing in traced pixels (4 or 8)
     var cascades = 4
     package var firstInterval: Float = 0.4  // cascade-0 ray length in meters; each cascade's interval is 4x longer
-    var feedback = true             // multi-bounce: shade ray hits with last frame's indirect light where visible
+    package var feedback = true     // multi-bounce: shade ray hits with last frame's indirect light where visible
     package var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
+    package var skyGaps = false             // every scene's rays ask for the sky through the gaps (SceneDefinition.cascadeSkyGaps)
+    /// Multi-bounce, in the outdoor scenes (SceneKind.hasRealisticLook): how much of all the probes' mean light a hit
+    /// takes where last frame's light there isn't known (off screen, or hidden). Outdoors the mean is mostly sky-lit
+    /// surfaces', and such a hit is often in shade: with all of it a courtyard's shade read 20% brighter than path
+    /// traced, with a quarter 1%. Rooms take all of it: a quarter took the Cornell box's shade to 0.6 of path traced.
+    package var hiddenLight: Float = 0.25
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
     static let firstIntervalRange: ClosedRange<Float> = 0.1...1.0
+    static let hiddenLightRange: ClosedRange<Float> = 0...1
 }
 
 /// Solid shading's look (RenderSettings.solidLook): what tells things apart in it. `classic` is the old one, every
@@ -661,11 +668,15 @@ package struct RenderSettings: Equatable, Codable {
     /// Short rays for the contact shade the GI's probes miss (contactAOKernel), on the indirect light: how much of it (0 = off).
     package var contactAO: Float = 1
     /// How far those rays go (m).
-    package var contactAOReach: Float = 0.5
+    package var contactAOReach: Float = 0.2
     /// The atmosphere's air in front of what the camera sees (aerialKernel). With an atmosphere sky only.
     package var aerialPerspective = true
     /// A reflection's hit off screen sees the sky through a ray, not a dim mean of it (reflectionHitRadiance).
     package var reflectionSkyRays = true
+    /// Specular keeps its energy at any roughness, and takes what it reflects from the diffuse (Surface.metal specularMultiscatter).
+    package var energyConservation = true
+    /// The sun through a window, or through solid glass, takes its colour (Lights.metal glassShadowTint), on what the camera sees.
+    package var tintedShadows = true
 
     /// The benchmarks' look for their scores' history: the tone curve and lens from before, none of the passes since.
     package mutating func useClassicLook() {
@@ -674,6 +685,10 @@ package struct RenderSettings: Equatable, Codable {
         contactAO = 0
         aerialPerspective = false
         reflectionSkyRays = false
+        energyConservation = false
+        tintedShadows = false
+        cascades.hiddenLight = 1
+        contactAOReach = 0.5
     }
 
     /// The app's look.
@@ -684,6 +699,10 @@ package struct RenderSettings: Equatable, Codable {
         contactAO = app.contactAO
         aerialPerspective = app.aerialPerspective
         reflectionSkyRays = app.reflectionSkyRays
+        energyConservation = app.energyConservation
+        tintedShadows = app.tintedShadows
+        cascades.hiddenLight = app.cascades.hiddenLight
+        contactAOReach = app.contactAOReach
     }
 
     package static let contactAORange: ClosedRange<Float> = 0...1

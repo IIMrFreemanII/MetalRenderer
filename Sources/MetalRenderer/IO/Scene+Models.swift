@@ -69,8 +69,9 @@ extension Scene {
             let index: Int
             if let animation {
                 index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
+                if isSolidGlass(model, part.mesh) { instances[index].mask = Scene.maskLiquid }
             } else {
-                index = addInstance(mesh, material, transform * part.transform)
+                index = addInstance(mesh, material, transform * part.transform, mask: isSolidGlass(model, part.mesh) ? Scene.maskLiquid : Scene.maskGeometry)
             }
             instances[index].virtualMesh = virtual
             if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
@@ -101,8 +102,22 @@ extension Scene {
                 params: SIMD4(1, m.normalScale, 0, 0),
                 textures: SIMD4(texture(m.baseColorTexture, srgb: true), texture(m.metallicRoughnessTexture, srgb: false),
                                 texture(m.normalTexture, srgb: false), texture(m.emissiveTexture, srgb: true))))
+            let index = materials.count - 1
+            if m.transmission > 0.5 {
+                materials[index] = glassBody(tint: m.attenuation, ior: m.ior, roughness: m.roughness)
+                hasLiquid = true
+            } else if m.sheen != .zero || m.anisotropy > 0 {
+                var extra = GPUMaterialExtra()
+                extra.sheen = SIMD4(m.sheen, m.sheenRoughness)
+                extra.anisotropy = SIMD4(m.anisotropy, m.anisotropyRotation, 0, 0)
+                materialExtras[index] = extra
+            }
         }
         return firstMaterial
+    }
+
+    private func isSolidGlass(_ model: GLTFModel, _ mesh: Int) -> Bool {
+        model.meshes[mesh].material.map { model.materials[$0].transmission > 0.5 } ?? false
     }
 
     /// glTF punctual lights to this renderer's units: candela (point, spot) and lux (directional) are photometric,

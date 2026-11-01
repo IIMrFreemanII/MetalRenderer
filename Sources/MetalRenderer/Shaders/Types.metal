@@ -81,6 +81,9 @@ struct MaterialExtra {
                         // z = 2: a scan's, 3 (GRID_KIND): a grid floor, its surface previewGrid's (Surface.metal)
     float4 surface;     // x = parallax depth (UV units), y = UV scale, z = opacity cutoff, w = AO strength (the
                         //   metallic-roughness texture's R darkens the base colour by it; 0: R isn't occlusion)
+    float4 sheen;       // MATERIAL_LOBES: rgb = a cloth's sheen colour (0 = none), a = its roughness
+    float4 anisotropy;  // MATERIAL_LOBES: x = how much the highlight stretches along the tangent (0...1), y = the
+                        //   tangent's turn from the UVs' U (radians)
 };
 
 // Bindless material textures (Renderer: an array of MTLResourceIDs).
@@ -195,6 +198,9 @@ constant bool ASSEMBLIES = FOLIAGE || RIGID_ASSEMBLIES;
 // Bit 15 = MATERIAL_EXTRAS: some materials are procedural (Material Designer graphs, Scene+Procedural.swift): the
 // shading reads their extras (SceneShading.extras): a UV scale, parallax from a height, occlusion.
 constant bool MATERIAL_EXTRAS = (LIGHT_SPEC & 0x00008000u) != 0;
+// Bit 21 = MATERIAL_LOBES: some of their extras have a sheen or anisotropy (always with MATERIAL_EXTRAS): the G-buffer
+// carries them to the reflections and the composite.
+constant bool MATERIAL_LOBES = (LIGHT_SPEC & 0x00200000u) != 0;
 // Bit 14 = OPACITY: some of their instances cut holes by an opacity texture (TraceScene.opacity), which the queries
 // alpha-test (OpacityLevels, Intersect.metal); always with ALPHA_TEST (its query loop).
 constant bool OPACITY = (LIGHT_SPEC & 0x00004000u) != 0;
@@ -336,6 +342,8 @@ constant uint FLAG_POST          = 524288; // the lens effects follow (Post.meta
 constant uint FLAG_CONTACT_AO    = 1048576; // the composite takes contactAOKernel's shade off the indirect light
 constant uint FLAG_AERIAL        = 2097152; // the composite puts the atmosphere's air in front of what it sees (aerialKernel)
 constant uint FLAG_REFLECT_SKY   = 4194304; // a reflection's hit off screen asks a ray what of the sky it sees
+constant uint FLAG_TINTED_SHADOWS = 16777216; // light through glass on its way to a surface takes its colour (glassShadowTint)
+constant uint FLAG_ENERGY        = 8388608; // specular keeps its energy and takes it from the diffuse (specularMultiscatter)
 constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in

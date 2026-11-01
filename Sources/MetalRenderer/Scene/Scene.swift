@@ -396,6 +396,10 @@ package final class Scene {
     /// Procedural materials' extras (GPUMaterialExtra), by material index: height, opacity, UV scale, occlusion
     /// (Scene+Procedural.swift). A scene with any compiles MATERIAL_EXTRAS in; one whose graphs give opacity, OPACITY.
     package var materialExtras: [Int: GPUMaterialExtra] = [:]
+    /// Some material has a sheen or anisotropy: the shaders are compiled with MATERIAL_LOBES.
+    package var hasMaterialLobes: Bool {
+        materialExtras.values.contains { $0.sheen.x > 0 || $0.sheen.y > 0 || $0.sheen.z > 0 || $0.anisotropy.x > 0 }
+    }
     /// The materials a Material Designer graph bakes (Scene+Procedural.swift), and a count of their extras' edits.
     package var procedural: [ProceduralMaterial] = []
     package var extrasVersion = 0

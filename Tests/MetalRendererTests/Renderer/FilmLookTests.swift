@@ -1,5 +1,6 @@
 import XCTest
 import Metal
+import simd
 @testable import Buildings
 @testable import Characters
 @testable import Editors
@@ -151,6 +152,83 @@ final class FilmLookTests: XCTestCase {
         XCTAssertTrue(chosen.solid, "turned on by the user: theirs")
     }
 
+    /// `Surface.metal`'s lobe table against the lobe itself, and a white metal keeps its energy at any roughness and
+    /// angle: the real shader's functions.
+    func testSpecularKeepsItsEnergy() throws {
+        guard let device = MTLCreateSystemDefaultDevice(), let queue = device.makeCommandQueue() else { throw XCTSkip("no GPU") }
+        let url = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders/Surface.metal")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        let start = try XCTUnwrap(text.range(of: "// Hemispherical-directional specular albedo")), end = try XCTUnwrap(text.range(of: "// Albedo a secondary hit"))
+        let source = """
+        #include <metal_stdlib>
+        using namespace metal;
+        \(text[start.lowerBound..<end.lowerBound])
+        kernel void run(device float4* io [[buffer(0)]], uint i [[thread_position_in_grid]]) {
+            float roughness = io[i].x, NoV = io[i].y;
+            float3 e = specularShare(float3(1.0f), 1.0f, roughness, NoV, true);
+            io[i] = float4(e.x, e.x * specularMultiscatter(float3(1.0f), roughness, NoV).x, specularF90(float3(0.01f)), specularF90(float3(0.04f)));
+        }
+        """
+        let library = try device.makeLibrary(source: source, options: nil)
+        let pipeline = try device.makeComputePipelineState(function: try XCTUnwrap(library.makeFunction(name: "run")))
+        let roughness: [Float] = [0.03, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 1]
+        let angles: [Float] = [0.05, 0.1, 0.25, 0.5, 0.75, 1]
+        var data = roughness.flatMap { r in angles.map { SIMD4<Float>(r, $0, 0, 0) } }
+        let buffer = try XCTUnwrap(device.makeBuffer(bytes: &data, length: data.count * 16, options: .storageModeShared))
+        let commands = try XCTUnwrap(queue.makeCommandBuffer()), encoder = try XCTUnwrap(commands.makeComputeCommandEncoder())
+        encoder.setComputePipelineState(pipeline)
+        encoder.setBuffer(buffer, offset: 0, index: 0)
+        encoder.dispatchThreads(MTLSize(width: data.count, height: 1, depth: 1), threadsPerThreadgroup: MTLSize(width: 1, height: 1, depth: 1))
+        encoder.endEncoding()
+        commands.commit()
+        commands.waitUntilCompleted()
+        for (i, input) in data.enumerated() {
+            let out = buffer.contents().load(fromByteOffset: i * 16, as: SIMD4<Float>.self)
+            let lobe = Self.lobeAlbedo(roughness: input.x, NoV: input.y)
+            XCTAssertEqual(out.x / lobe, 1, accuracy: 0.03, "roughness \(input.x), NoV \(input.y)")
+            XCTAssertEqual(out.y, 1, accuracy: 0.001)
+            XCTAssertEqual(out.z, 0.5, accuracy: 0.001)
+            XCTAssertEqual(out.w, 1)
+        }
+    }
+
+    /// A GGX lobe's albedo at F = 1 (visible normals: the mean of G2 / G1), by stratified samples.
+    private static func lobeAlbedo(roughness: Float, NoV: Float) -> Float {
+        let a = roughness * roughness, a2 = a * a, n = 128
+        let v = SIMD3<Float>((1 - NoV * NoV).squareRoot(), 0, NoV)
+        let g1 = 2 * NoV / (NoV + (a2 + (1 - a2) * NoV * NoV).squareRoot())
+        let vh = simd_normalize(SIMD3<Float>(a * v.x, a * v.y, v.z))
+        let lensq = vh.x * vh.x + vh.y * vh.y
+        let t1 = lensq > 0 ? SIMD3<Float>(-vh.y, vh.x, 0) / lensq.squareRoot() : SIMD3<Float>(1, 0, 0)
+        let t2 = simd_cross(vh, t1)
+        var sum: Float = 0
+        for i in 0..<n {
+            for j in 0..<n {
+                let u1 = (Float(i) + 0.5) / Float(n), u2 = (Float(j) + 0.5) / Float(n)
+                let r = u1.squareRoot(), phi = 2 * Float.pi * u2
+                let s = 0.5 * (1 + vh.z)
+                let p1 = r * cos(phi), p2 = (1 - s) * max(0, 1 - p1 * p1).squareRoot() + s * r * sin(phi)
+                let nh = p1 * t1 + p2 * t2 + max(0, 1 - p1 * p1 - p2 * p2).squareRoot() * vh
+                let h = simd_normalize(SIMD3<Float>(a * nh.x, a * nh.y, max(0, nh.z)))
+                let l = 2 * simd_dot(v, h) * h - v
+                guard l.z > 0 else { continue }
+                let gv = l.z * (NoV * NoV * (1 - a2) + a2).squareRoot(), gl = NoV * (l.z * l.z * (1 - a2) + a2).squareRoot()
+                sum += (2 * l.z * NoV / max(gv + gl, 1e-7)) / g1
+            }
+        }
+        return sum / Float(n * n)
+    }
+
+    /// Only a scene with a sheen or anisotropy compiles the lobes in, and a material graph's file from before them reads.
+    func testMaterialLobes() throws {
+        let scene = Scene()
+        XCTAssertEqual(scene.lightTypeMask & 0x0020_0000, 0)
+        _ = scene.addPBRMaterial(baseColor: [1, 1, 1], metallic: 0, roughness: 0.5, sheen: [1, 0, 0])
+        XCTAssertEqual(scene.lightTypeMask & 0x0020_8000, 0x0020_8000)
+        let old = try JSONDecoder().decode(MatSurface.self, from: Data("{}".utf8))
+        XCTAssertEqual(old, MatSurface())
+    }
+
     /// The benchmarks keep the look of their scores' history unless they ask for the app's.
     func testBenchmarksKeepTheClassicLook() {
         let config = Benchmark.Config("t", scene: SceneSettings(kind: .forest))
@@ -161,12 +239,20 @@ final class FilmLookTests: XCTestCase {
         XCTAssertEqual(config.settings.contactAO, 0)
         XCTAssertFalse(config.settings.aerialPerspective)
         XCTAssertFalse(config.settings.reflectionSkyRays)
+        XCTAssertFalse(config.settings.energyConservation)
+        XCTAssertFalse(config.settings.tintedShadows)
+        XCTAssertEqual(config.settings.cascades.hiddenLight, 1)
+        XCTAssertEqual(config.settings.contactAOReach, 0.5)
         let app = config.appLook()
         XCTAssertEqual(app.settings.toneMap, .film)
         XCTAssertEqual(app.settings.post, .unreal)
         XCTAssertGreaterThan(app.settings.contactAO, 0)
         XCTAssertTrue(app.settings.aerialPerspective)
         XCTAssertTrue(app.settings.reflectionSkyRays)
+        XCTAssertTrue(app.settings.energyConservation)
+        XCTAssertTrue(app.settings.tintedShadows)
+        XCTAssertEqual(app.settings.cascades.hiddenLight, 0.25)
+        XCTAssertEqual(app.settings.contactAOReach, 0.2)
     }
 
     /// Unreal's default shutter: at 60 fps a frame's motion is blurred over its own length, at 30 fps over the same time.

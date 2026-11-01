@@ -33,6 +33,8 @@ import simd
 
 extension SceneKind {
     static let level = SceneKind("level")
+    static let furnace = SceneKind("furnace")
+    static let lobes = SceneKind("lobes")
     static let stress = SceneKind("stress")
     static let gallery = SceneKind("gallery")
     static let spots = SceneKind("spots")
@@ -346,6 +348,16 @@ extension GameScenes {
             scene(.procedural, "Procedural (assets)", "buildStage", build: { $0.buildStage() }) {
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 5, 15], pitch: -0.28)
+            },
+            // Spheres in a sky of one colour, with no lights: what shows if the materials lose or gain energy.
+            scene(.furnace, "Furnace (materials)", "buildFurnace", build: { $0.buildFurnace() }) {
+                $0.camera = Scene.camera([0, 0, 14], pitch: 0)
+            },
+            // The material lobes past plain metal and plastic, on the default level's floor under its sky.
+            scene(.lobes, "Material lobes", "buildMaterialLobes", build: { $0.buildMaterialLobes() }) {
+                $0.realisticLook = true
+                $0.sky = sky { $0.coverage = 0.25; $0.cloudBase = 1400; $0.cloudThickness = 1200; $0.cloudScale = 3000 }
+                $0.camera = Scene.camera([0, 1.3, 1], pitch: -0.1)
             },
             scene(.level, "Default level", "buildDefaultLevel", build: { $0.buildDefaultLevel() }) {
                 $0.opensFirst = true

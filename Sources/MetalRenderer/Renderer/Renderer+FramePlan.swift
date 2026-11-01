@@ -537,6 +537,9 @@ extension Renderer {
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
+        // (Before the reference's early return: the path tracer shades materials the same way.)
+        if settings.energyConservation { u.flags |= UniformFlags.energy }
+        if settings.tintedShadows { u.flags |= UniformFlags.tintedShadows }
         p.uniforms = u
 
         // Reference "Path traced": pathTraceKernel and the tone curve, nothing else.

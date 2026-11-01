@@ -63,7 +63,8 @@ extension Scene {
         // Bit 28: DEFORMING_MESHES, it has meshes that deform (a crowd's pose slots, cloths). Bit 27: GLASS. Bit 26:
         // MULTI_MATERIAL, some mesh has several materials. Bit 25: STREAMED, some meshes are borrowed, and so in
         // buffers of their own. Bit 24: GROUPED, some instances are in groups. Bit 23: VOXEL_BOXES, far plants are
-        // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. (Bit 21 is free.)
+        // voxel boxes. Bit 22: SDF_SHAPES, some instances are SDF shapes. Bit 21: MATERIAL_LOBES, some
+        // material has a sheen or anisotropy.
         // Bit 20: HAIR_CURVES, some meshes are curves.
         // Bit 19: RIGID_ASSEMBLIES, some assemblies are buildings of modules. Bit 18: LIQUID, some instances are a
         // liquid's surface. Bit 17: SKIN, some materials are skin. Bit 16: PARTICLES, it has particle effects.
@@ -74,7 +75,7 @@ extension Scene {
         let features: UInt32 = (hasFoliage ? 0x4000_0000 : 0) | (cutouts.isEmpty ? 0 : 0x2000_0000)
             | (hasDeformingMeshes ? 0x1000_0000 : 0) | (hasGlass ? 0x0800_0000 : 0) | (hasMaterialOffsets ? 0x0400_0000 : 0)
             | (hasBorrowedMeshes ? 0x0200_0000 : 0) | (hasGroups ? 0x0100_0000 : 0) | (hasVoxelBoxes ? 0x0080_0000 : 0)
-            | (hasSDFShapes ? 0x0040_0000 : 0) | (hasCurves ? 0x0010_0000 : 0)
+            | (hasSDFShapes ? 0x0040_0000 : 0) | (hasMaterialLobes ? 0x0020_8000 : 0) | (hasCurves ? 0x0010_0000 : 0)
             | (hasRigidAssemblies ? 0x0008_0000 : 0) | (hasLiquid ? 0x0004_0000 : 0) | (hasSkin ? 0x0002_0000 : 0)
             | (hasParticles ? 0x0001_0000 : 0) | (materialExtras.isEmpty ? 0 : 0x8000)
             | (hasOpacity ? 0x2000_4000 : 0)   // OPACITY, with ALPHA_TEST's query loop

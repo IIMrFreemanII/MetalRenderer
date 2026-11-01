@@ -153,6 +153,12 @@ struct MaterialInspector: View {
             VFXSliderRow(title: "UV scale", value: g.surface.uvScale, span: 0.1...16) { v in model.setSurface { $0.uvScale = v } }
             VFXSliderRow(title: "Normal strength", value: g.surface.normalStrength, span: 0...4) { v in model.setSurface { $0.normalStrength = v } }
             VFXSliderRow(title: "AO strength", value: g.surface.aoStrength, span: 0...1) { v in model.setSurface { $0.aoStrength = v } }
+            VFXSliderRow(title: "Sheen red", value: g.surface.sheenRed, span: 0...1) { v in model.setSurface { $0.sheenRed = v } }
+            VFXSliderRow(title: "Sheen green", value: g.surface.sheenGreen, span: 0...1) { v in model.setSurface { $0.sheenGreen = v } }
+            VFXSliderRow(title: "Sheen blue", value: g.surface.sheenBlue, span: 0...1) { v in model.setSurface { $0.sheenBlue = v } }
+            VFXSliderRow(title: "Sheen roughness", value: g.surface.sheenRoughness, span: 0...1) { v in model.setSurface { $0.sheenRoughness = v } }
+            VFXSliderRow(title: "Anisotropy", value: g.surface.anisotropy, span: 0...1) { v in model.setSurface { $0.anisotropy = v } }
+            VFXSliderRow(title: "Anisotropy turn", value: g.surface.anisotropyRotation, span: 0...6.283) { v in model.setSurface { $0.anisotropyRotation = v } }
             VFXSliderRow(title: "Opacity cutoff", value: g.surface.alphaCutoff, span: 0...1) { v in model.setSurface { $0.alphaCutoff = v } }
             VFXSliderRow(title: "Emissive", value: g.surface.emissiveIntensity, span: 0...64) { v in model.setSurface { $0.emissiveIntensity = v } }
             Toggle("Normal map is DirectX (green down)", isOn: Binding(get: { g.surface.normalDirectX }, set: { v in model.setSurface { $0.normalDirectX = v } }))

@@ -37,6 +37,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
                         texture2d<float, access::write>  outMaterial    [[texture(14)]],  // with FLAG_SPECULAR: rgb = F0, a = roughness
                         texture2d<float, access::read>   liquidRay      [[texture(16)]],  // LIQUID: the camera ray bent through
                         texture2d<float, access::read>   liquidDir      [[texture(17)]],  // a liquid (liquidKernel)
+                        texture2d<float, access::write>  outSheen       [[texture(18)]],  // MATERIAL_LOBES: Surface.sheen
+                        texture2d<float, access::write>  outAnisotropy  [[texture(19)]],  // ...xyz = its tangent, w = how much
                         uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -105,12 +107,20 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         outVisibility.write(float4(0.0f), tid);
         outBlocker.write(float4(0.0f), tid);
         if (specular) outMaterial.write(float4(0.0f), tid);
+        if (MATERIAL_LOBES) {
+            outSheen.write(float4(0.0f), tid);
+            outAnisotropy.write(float4(0.0f), tid);
+        }
         return;
     }
 
     float3 ng, n;
     orientNormals(sf, dir, ng, n);
     if (specular) outMaterial.write(float4(sf.f0, max(sf.roughness, MIN_ROUGHNESS)), tid);
+    if (MATERIAL_LOBES) {
+        outSheen.write(sf.sheen, tid);
+        outAnisotropy.write(float4(sf.lobeTangent, sf.anisotropy), tid);
+    }
     float viewDepth = dot(sf.position - u.camPos.xyz, u.camForward.xyz);
     outNormalDepth.write(float4(n, viewDepth), tid);
     // A strand's (Hair.metal): its tangent in the alphas. Skin: minus its strength (Hair.metal hairFromGBuffer).
@@ -186,7 +196,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 target = lightShadowTarget(lights[i], p, r);
             float3 origin = hairOrSurface(hp, sf.position, n, p, target);
             float v = isVisibleBlocker(origin, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
-            direct += unshadowed * v;
+            direct += unshadowed * v * (v > 0.0f ? glassShadowTint(origin, target, accel, s, u.flags) : float3(1.0f));
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
             unshadowedSum[g] += w;
@@ -220,7 +230,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float3 hng, hn;
             orientNormals(h, d, hng, hn);
             indirect += throughput * giEmission(h);
-            throughput *= hitAlbedo(h);   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
+            throughput *= hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));   // Lambert BRDF * cos / cosine pdf = albedo (+ specular, as diffuse)
             float3 hp = h.position + hng * RAY_EPSILON;
             if (flagOn(u.flags, FLAG_LIGHT_MAPS)) {
                 uint seed = pcgHash(tid.x + pcgHash(tid.y + pcgHash(u.frameIndex * 8u + b)));

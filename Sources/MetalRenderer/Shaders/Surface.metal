@@ -155,6 +155,9 @@ struct Surface {
     float  hairH;         // where across the strand the ray met it, -1...1 (Hair.metal's h)
     float  skin;          // skin (Material.params.w < 0): its strength, 0...1, + 2 where it is thin (ears): Hair.metal
     float  leaf;          // LEAF_TRANSMIT: a two-sided leaf's share of light through it, where the camera sees it
+    float4 sheen;         // MATERIAL_LOBES: rgb = its colour (0 = none), a = its roughness
+    float3 lobeTangent;   // MATERIAL_LOBES: which way a brushed highlight stretches
+    float  anisotropy;    // MATERIAL_LOBES: how much (0 = not)
 };
 
 // A material's specular weight (Material.params.x): as it is, but 1 for a clear coat's (2 and up: Scene.addPaintMaterial).
@@ -227,17 +230,66 @@ inline float3 specularAlbedo(float3 f0, float f90, float roughness, float NoV) {
     float2 ab = float2(-1.04f, 1.04f) * a004 + r.zw;
     return f0 * ab.x + f90 * ab.y;
 }
-inline float specularF90(float3 f0) { return any(f0 > 0.0f) ? 1.0f : 0.0f; }   // glTF materials 1, generated ones 0
-
-// Albedo a secondary hit (GI rays, path bounces, reflection hits) reflects with: diffuse plus, as a diffuse
-// approximation, the specular albedo at normal incidence, so metals don't turn black in indirect light.
-inline float3 hitAlbedo(thread const struct Surface& sf) {
-    return sf.albedo + (sf.specular > 0.0f ? specularAlbedo(sf.f0, sf.specular, max(sf.roughness, MIN_ROUGHNESS), 1.0f) : float3(0.0f));
+// Below 2% nothing real reflects: such an F0 is a surface's cavities (or no specular at all), which shade its grazing rise.
+inline float specularF90(float3 f0) { return saturate(50.0f * max(f0.x, max(f0.y, f0.z))); }
+// FLAG_ENERGY's specular albedo, the lobe's own: its share of F0 (x) and of F90 (y) on a grid of roughness and sqrt(NoV)
+// (Tools/eval/specular_lobe.py). specularAlbedo's fit is for image lighting and doesn't vary with the angle at F = 1
+// (a white rough metal: 0.45 where the lobe keeps 0.31 head on and 0.85 at a grazing angle). In the shader's constants,
+// so that every pass that needs it has it with no texture to bind.
+constant float2 SPECULAR_LOBE[17 * 17] = {
+    {0.0052f, 0.9890f}, {0.0194f, 0.9804f}, {0.0757f, 0.9243f}, {0.1639f, 0.8361f}, {0.2758f, 0.7242f}, {0.4018f, 0.5982f}, {0.5313f, 0.4687f}, {0.6543f, 0.3457f}, {0.7627f, 0.2373f}, {0.8507f, 0.1493f}, {0.9160f, 0.0840f}, {0.9592f, 0.0408f}, {0.9840f, 0.0160f}, {0.9955f, 0.0045f}, {0.9993f, 0.0007f}, {1.0000f, 0.0000f}, {1.0000f, 0.0000f},
+    {0.0706f, 0.8810f}, {0.0573f, 0.8348f}, {0.0876f, 0.8770f}, {0.1692f, 0.8236f}, {0.2785f, 0.7194f}, {0.4032f, 0.5960f}, {0.5320f, 0.4678f}, {0.6547f, 0.3452f}, {0.7628f, 0.2371f}, {0.8507f, 0.1492f}, {0.9159f, 0.0840f}, {0.9592f, 0.0408f}, {0.9839f, 0.0160f}, {0.9955f, 0.0045f}, {0.9993f, 0.0007f}, {1.0000f, 0.0000f}, {1.0000f, 0.0000f},
+    {0.2126f, 0.7742f}, {0.1983f, 0.7543f}, {0.1767f, 0.7153f}, {0.2128f, 0.7093f}, {0.3007f, 0.6638f}, {0.4148f, 0.5698f}, {0.5377f, 0.4550f}, {0.6570f, 0.3393f}, {0.7632f, 0.2347f}, {0.8502f, 0.1485f}, {0.9151f, 0.0841f}, {0.9584f, 0.0411f}, {0.9835f, 0.0163f}, {0.9952f, 0.0047f}, {0.9992f, 0.0008f}, {0.9999f, 0.0000f}, {1.0000f, 0.0000f},
+    {0.3576f, 0.6364f}, {0.3486f, 0.6286f}, {0.3231f, 0.6011f}, {0.3181f, 0.5726f}, {0.3603f, 0.5443f}, {0.4445f, 0.4929f}, {0.5507f, 0.4127f}, {0.6607f, 0.3180f}, {0.7620f, 0.2251f}, {0.8466f, 0.1451f}, {0.9108f, 0.0835f}, {0.9543f, 0.0416f}, {0.9799f, 0.0169f}, {0.9924f, 0.0050f}, {0.9969f, 0.0009f}, {0.9979f, 0.0001f}, {0.9980f, 0.0000f},
+    {0.4878f, 0.5088f}, {0.4819f, 0.5044f}, {0.4631f, 0.4873f}, {0.4482f, 0.4617f}, {0.4570f, 0.4316f}, {0.5014f, 0.3943f}, {0.5764f, 0.3424f}, {0.6671f, 0.2759f}, {0.7581f, 0.2035f}, {0.8382f, 0.1360f}, {0.9013f, 0.0809f}, {0.9456f, 0.0417f}, {0.9728f, 0.0177f}, {0.9870f, 0.0057f}, {0.9930f, 0.0012f}, {0.9950f, 0.0001f}, {0.9959f, 0.0000f},
+    {0.5969f, 0.4006f}, {0.5926f, 0.3975f}, {0.5791f, 0.3852f}, {0.5645f, 0.3653f}, {0.5599f, 0.3392f}, {0.5763f, 0.3076f}, {0.6180f, 0.2693f}, {0.6804f, 0.2232f}, {0.7526f, 0.1714f}, {0.8229f, 0.1197f}, {0.8827f, 0.0746f}, {0.9276f, 0.0404f}, {0.9573f, 0.0182f}, {0.9744f, 0.0064f}, {0.9830f, 0.0015f}, {0.9869f, 0.0002f}, {0.9889f, 0.0000f},
+    {0.6846f, 0.3133f}, {0.6809f, 0.3108f}, {0.6700f, 0.3010f}, {0.6571f, 0.2851f}, {0.6479f, 0.2638f}, {0.6495f, 0.2378f}, {0.6675f, 0.2077f}, {0.7029f, 0.1737f}, {0.7514f, 0.1366f}, {0.8055f, 0.0991f}, {0.8570f, 0.0648f}, {0.8999f, 0.0371f}, {0.9314f, 0.0180f}, {0.9521f, 0.0069f}, {0.9644f, 0.0019f}, {0.9713f, 0.0003f}, {0.9756f, 0.0000f},
+    {0.7530f, 0.2449f}, {0.7496f, 0.2428f}, {0.7392f, 0.2345f}, {0.7266f, 0.2214f}, {0.7153f, 0.2040f}, {0.7093f, 0.1830f}, {0.7127f, 0.1591f}, {0.7281f, 0.1331f}, {0.7551f, 0.1057f}, {0.7904f, 0.0785f}, {0.8287f, 0.0533f}, {0.8650f, 0.0322f}, {0.8953f, 0.0167f}, {0.9182f, 0.0070f}, {0.9341f, 0.0022f}, {0.9449f, 0.0004f}, {0.9524f, 0.0000f},
+    {0.8055f, 0.1923f}, {0.8017f, 0.1904f}, {0.7904f, 0.1833f}, {0.7768f, 0.1723f}, {0.7633f, 0.1579f}, {0.7524f, 0.1408f}, {0.7469f, 0.1217f}, {0.7488f, 0.1015f}, {0.7593f, 0.0808f}, {0.7774f, 0.0607f}, {0.8011f, 0.0422f}, {0.8269f, 0.0265f}, {0.8518f, 0.0146f}, {0.8735f, 0.0066f}, {0.8911f, 0.0023f}, {0.9049f, 0.0005f}, {0.9158f, 0.0000f},
+    {0.8451f, 0.1523f}, {0.8407f, 0.1507f}, {0.8276f, 0.1444f}, {0.8118f, 0.1349f}, {0.7954f, 0.1228f}, {0.7803f, 0.1088f}, {0.7682f, 0.0934f}, {0.7608f, 0.0775f}, {0.7592f, 0.0616f}, {0.7637f, 0.0465f}, {0.7736f, 0.0328f}, {0.7876f, 0.0212f}, {0.8038f, 0.0121f}, {0.8205f, 0.0059f}, {0.8363f, 0.0022f}, {0.8507f, 0.0005f}, {0.8635f, 0.0000f},
+    {0.8747f, 0.1222f}, {0.8694f, 0.1207f}, {0.8540f, 0.1150f}, {0.8350f, 0.1068f}, {0.8149f, 0.0964f}, {0.7954f, 0.0847f}, {0.7777f, 0.0722f}, {0.7631f, 0.0595f}, {0.7523f, 0.0471f}, {0.7461f, 0.0355f}, {0.7445f, 0.0252f}, {0.7472f, 0.0165f}, {0.7533f, 0.0098f}, {0.7621f, 0.0050f}, {0.7725f, 0.0020f}, {0.7838f, 0.0005f}, {0.7956f, 0.0000f},
+    {0.8968f, 0.0996f}, {0.8906f, 0.0981f}, {0.8720f, 0.0930f}, {0.8492f, 0.0856f}, {0.8248f, 0.0766f}, {0.8004f, 0.0667f}, {0.7772f, 0.0563f}, {0.7561f, 0.0460f}, {0.7379f, 0.0361f}, {0.7231f, 0.0271f}, {0.7119f, 0.0193f}, {0.7045f, 0.0128f}, {0.7008f, 0.0077f}, {0.7004f, 0.0040f}, {0.7029f, 0.0017f}, {0.7079f, 0.0005f}, {0.7149f, 0.0000f},
+    {0.9132f, 0.0826f}, {0.9059f, 0.0812f}, {0.8838f, 0.0763f}, {0.8566f, 0.0696f}, {0.8273f, 0.0617f}, {0.7975f, 0.0531f}, {0.7686f, 0.0444f}, {0.7414f, 0.0359f}, {0.7165f, 0.0279f}, {0.6943f, 0.0209f}, {0.6751f, 0.0148f}, {0.6590f, 0.0098f}, {0.6463f, 0.0060f}, {0.6368f, 0.0032f}, {0.6305f, 0.0014f}, {0.6273f, 0.0005f}, {0.6268f, 0.0000f},
+    {0.9255f, 0.0698f}, {0.9168f, 0.0683f}, {0.8909f, 0.0637f}, {0.8589f, 0.0574f}, {0.8242f, 0.0503f}, {0.7887f, 0.0428f}, {0.7539f, 0.0354f}, {0.7206f, 0.0283f}, {0.6893f, 0.0218f}, {0.6605f, 0.0161f}, {0.6342f, 0.0114f}, {0.6108f, 0.0075f}, {0.5903f, 0.0046f}, {0.5727f, 0.0025f}, {0.5580f, 0.0012f}, {0.5463f, 0.0004f}, {0.5374f, 0.0000f},
+    {0.9346f, 0.0600f}, {0.9244f, 0.0586f}, {0.8944f, 0.0541f}, {0.8572f, 0.0481f}, {0.8168f, 0.0417f}, {0.7754f, 0.0350f}, {0.7345f, 0.0285f}, {0.6951f, 0.0225f}, {0.6578f, 0.0171f}, {0.6228f, 0.0126f}, {0.5904f, 0.0088f}, {0.5606f, 0.0058f}, {0.5336f, 0.0035f}, {0.5093f, 0.0020f}, {0.4876f, 0.0009f}, {0.4685f, 0.0003f}, {0.4520f, 0.0000f},
+    {0.9413f, 0.0526f}, {0.9296f, 0.0511f}, {0.8952f, 0.0466f}, {0.8526f, 0.0410f}, {0.8062f, 0.0349f}, {0.7587f, 0.0289f}, {0.7117f, 0.0232f}, {0.6663f, 0.0181f}, {0.6232f, 0.0136f}, {0.5826f, 0.0098f}, {0.5448f, 0.0068f}, {0.5097f, 0.0045f}, {0.4775f, 0.0027f}, {0.4480f, 0.0015f}, {0.4210f, 0.0007f}, {0.3966f, 0.0003f}, {0.3745f, 0.0000f},
+    {0.9462f, 0.0469f}, {0.9330f, 0.0454f}, {0.8940f, 0.0409f}, {0.8457f, 0.0354f}, {0.7932f, 0.0297f}, {0.7395f, 0.0242f}, {0.6865f, 0.0191f}, {0.6354f, 0.0147f}, {0.5868f, 0.0109f}, {0.5411f, 0.0078f}, {0.4987f, 0.0053f}, {0.4594f, 0.0035f}, {0.4232f, 0.0021f}, {0.3900f, 0.0012f}, {0.3597f, 0.0006f}, {0.3320f, 0.0002f}, {0.3068f, 0.0000f},
+};
+inline float2 specularLobe(float roughness, float NoV) {
+    float2 p = float2(saturate(roughness), sqrt(saturate(NoV))) * 16.0f;
+    float2 cell = min(floor(p), float2(15.0f)), f = p - cell;
+    uint i = uint(cell.x) * 17u + uint(cell.y);
+    return mix(mix(SPECULAR_LOBE[i], SPECULAR_LOBE[i + 1u], f.y), mix(SPECULAR_LOBE[i + 17u], SPECULAR_LOBE[i + 18u], f.y), f.x);
+}
+// The specular albedo a pass shades with, the same in every pass that divides by it or multiplies by it.
+inline float3 specularShare(float3 f0, float f90, float roughness, float NoV, bool energy) {
+    if (!energy) return specularAlbedo(f0, f90, roughness, NoV);
+    float2 ab = specularLobe(roughness, NoV);
+    return f0 * ab.x + f90 * ab.y;
+}
+// What one GGX lobe loses between its microfacets comes back as more of that lobe (Turquin 2019), by how much a lobe of
+// F = 1 falls short of 1.
+inline float3 specularMultiscatter(float3 f0, float roughness, float NoV) {
+    float2 ab = specularLobe(roughness, NoV);
+    return 1.0f + f0 * (1.0f / max(ab.x + ab.y, 0.1f) - 1.0f);
 }
 
-// GGX visible-normal sampling (Heitz 2018), in the frame where the normal is +z.
-inline float3 sampleGGXVNDF(float3 ve, float a, float2 u) {
-    float3 vh = normalize(float3(a * ve.x, a * ve.y, ve.z));
+// Albedo a secondary hit (GI rays, path bounces, reflection hits) reflects with: diffuse plus, as a diffuse
+// approximation, the specular albedo at normal incidence, so metals don't turn black in indirect light. With
+// `energy` (FLAG_ENERGY) the specular takes its share from the diffuse, and gets back what it lost in its microfacets.
+inline float3 hitAlbedo(thread const struct Surface& sf, bool energy) {
+    if (sf.specular <= 0.0f) return sf.albedo;
+    float roughness = max(sf.roughness, MIN_ROUGHNESS);
+    float3 e = specularShare(sf.f0, sf.specular, roughness, 1.0f, energy);
+    if (!energy) return sf.albedo + e;
+    e *= specularMultiscatter(sf.f0, roughness, 1.0f);
+    return sf.albedo * (1.0f - saturate(e)) + e;
+}
+
+// GGX visible-normal sampling (Heitz 2018), in the frame where the normal is +z and the tangent +x, of alphas a along it
+// and b across it.
+inline float3 sampleGGXVNDF(float3 ve, float a, float b, float2 u) {
+    float3 vh = normalize(float3(a * ve.x, b * ve.y, ve.z));
     float lensq = vh.x * vh.x + vh.y * vh.y;
     float3 t1 = lensq > 0.0f ? float3(-vh.y, vh.x, 0.0f) * rsqrt(lensq) : float3(1.0f, 0.0f, 0.0f);
     float3 t2 = cross(vh, t1);
@@ -246,7 +298,43 @@ inline float3 sampleGGXVNDF(float3 ve, float a, float2 u) {
     float sv = 0.5f * (1.0f + vh.z);
     p2 = (1.0f - sv) * sqrt(max(0.0f, 1.0f - p1 * p1)) + sv * p2;
     float3 nh = p1 * t1 + p2 * t2 + sqrt(max(0.0f, 1.0f - p1 * p1 - p2 * p2)) * vh;
-    return normalize(float3(a * nh.x, a * nh.y, max(0.0f, nh.z)));
+    return normalize(float3(a * nh.x, b * nh.y, max(0.0f, nh.z)));
+}
+inline float3 sampleGGXVNDF(float3 ve, float a, float2 u) { return sampleGGXVNDF(ve, a, a, u); }
+
+// A brushed highlight (MATERIAL_LOBES): GGX stretched along the tangent `t`, as glTF's KHR_materials_anisotropy has it.
+inline float anisotropicAlpha(float a, float anisotropy) { return mix(a, 1.0f, anisotropy * anisotropy); }
+// D x V (height-correlated) of the stretched lobe, in the frame t, b, n.
+inline float ggxAnisotropic(float3 v, float3 l, float3 h, float at, float ab) {
+    float d = h.x * h.x / (at * at) + h.y * h.y / (ab * ab) + h.z * h.z;
+    float D = 1.0f / (M_PI_F * at * ab * d * d);
+    float gv = l.z * length(float3(at * v.x, ab * v.y, v.z)), gl = v.z * length(float3(at * l.x, ab * l.y, l.z));
+    return D * 0.5f / max(gv + gl, 1e-7f);
+}
+
+// A cloth's sheen (MATERIAL_LOBES): Charlie's lobe (Estevez & Kulla 2017) with Neubelt's visibility.
+inline float sheenLobe(float roughness, float NoH, float NoV, float NoL) {
+    float a = max(roughness * roughness, 0.005f), inv = 1.0f / a;
+    float D = (2.0f + inv) * pow(max(1.0f - NoH * NoH, 1e-7f), inv * 0.5f) / (2.0f * M_PI_F);
+    return D / (4.0f * max(NoL + NoV - NoL * NoV, 1e-4f));
+}
+// What that lobe reflects of light from all round, on a grid of roughness and NoV (at most 1).
+constant float SHEEN_LOBE[9 * 9] = {
+    4.8115f, 0.4390f, 0.0312f, 0.0011f, 0.0000f, 0.0000f, 0.0000f, 0.0000f, 0.0000f,
+    2.9299f, 0.7270f, 0.1918f, 0.0429f, 0.0073f, 0.0008f, 0.0000f, 0.0000f, 0.0000f,
+    1.5859f, 0.7473f, 0.3943f, 0.2040f, 0.0988f, 0.0428f, 0.0153f, 0.0037f, 0.0002f,
+    1.1292f, 0.6630f, 0.4333f, 0.2844f, 0.1818f, 0.1103f, 0.0609f, 0.0280f, 0.0077f,
+    0.9095f, 0.5955f, 0.4313f, 0.3164f, 0.2295f, 0.1616f, 0.1077f, 0.0650f, 0.0312f,
+    0.7855f, 0.5479f, 0.4209f, 0.3289f, 0.2561f, 0.1960f, 0.1449f, 0.1010f, 0.0628f,
+    0.7087f, 0.5144f, 0.4102f, 0.3335f, 0.2716f, 0.2189f, 0.1727f, 0.1313f, 0.0935f,
+    0.6579f, 0.4906f, 0.4011f, 0.3350f, 0.2811f, 0.2346f, 0.1932f, 0.1553f, 0.1198f,
+    0.6227f, 0.4732f, 0.3938f, 0.3352f, 0.2873f, 0.2458f, 0.2085f, 0.1740f, 0.1414f,
+};
+inline float sheenAlbedo(float roughness, float NoV) {
+    float2 p = saturate(float2(roughness, NoV)) * 8.0f;
+    float2 cell = min(floor(p), float2(7.0f)), f = p - cell;
+    uint i = uint(cell.x) * 9u + uint(cell.y);
+    return saturate(mix(mix(SHEEN_LOBE[i], SHEEN_LOBE[i + 1u], f.y), mix(SHEEN_LOBE[i + 9u], SHEEN_LOBE[i + 10u], f.y), f.x));
 }
 inline void tangentFrame(float3 n, thread float3& t, thread float3& b) {   // Duff et al. 2017
     float s = n.z >= 0.0f ? 1.0f : -1.0f;
@@ -877,6 +965,11 @@ inline void carDamage(thread Surface& sf, thread const HitVertices& hv, float w0
 // The surface a ray met: the hit's triangle (or voxel) rebuilt in world space, with its material and textures.
 Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData& s, float spread, bool record) {
     Surface sf;
+    if (MATERIAL_LOBES) {
+        sf.sheen = float4(0.0f);
+        sf.lobeTangent = float3(0.0f);
+        sf.anisotropy = 0.0f;
+    }
     sf.hit = false;
     sf.position = sf.prevPosition = sf.normal = sf.geomNormal = sf.albedo = sf.emission = float3(0.0f);
     sf.metallic = sf.specular = 0.0f;
@@ -1257,6 +1350,21 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
                 m.xy *= mat.params.y;
                 sf.normal = normalize(normalize(T) * m.x + normalize(B) * m.y + N * max(m.z, 1e-3f));
             }
+        }
+    }
+    if (MATERIAL_LOBES) {
+        sf.sheen = ex.sheen;
+        sf.anisotropy = ex.anisotropy.x;
+        if (sf.anisotropy > 0.0f) {
+            // Along the UVs' U (no stored tangents; a mesh without UVs: round its height), turned about the normal.
+            float3 N = sf.normal;
+            float2 d1 = t1 - t0, d2 = t2 - t0;
+            float det = d1.x * d2.y - d1.y * d2.x;
+            float3 T = abs(det) > 1e-12f ? (inst.transform * float4((p1 - p0) * d2.y - (p2 - p0) * d1.y, 0.0f)).xyz / det : cross(float3(0.0f, 1.0f, 0.0f), N);
+            T -= N * dot(N, T);
+            if (length_squared(T) < 1e-12f) T = cross(float3(1.0f, 0.0f, 0.0f), N);
+            T = normalize(T);
+            sf.lobeTangent = T * cos(ex.anisotropy.y) + cross(N, T) * sin(ex.anisotropy.y);
         }
     }
     if (MATERIAL_EXTRAS && ex.textures.z == GRID_KIND) {

@@ -583,6 +583,8 @@ package enum SettingsTable {
             S.slider("Contact reach", \.contactAOReach, RenderSettings.contactAOReachRange, step: 0.05, fmt("%.2f m"))
                 .env(.gi, "contactreach").enabled({ $0.contactAO > 0 }).advanced(),
             S.check("Reflections see the sky", \.reflectionSkyRays).env(.gi, "reflectionsky").advanced(),
+            S.check("Energy conservation", \.energyConservation).env(.gi, "energy").advanced(),
+            S.check("Tinted shadows", \.tintedShadows).env(.gi, "tintedshadows").advanced(),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },
@@ -627,6 +629,9 @@ package enum SettingsTable {
             S.slider("First interval", \.cascades.firstInterval, CascadeSettings.firstIntervalRange, step: 0.05, fmt("%.2f m"))
                 .env(.gi, "b1").when(cascades).enabled(on),
             S.check("Multi-bounce", \.cascades.feedback).env(.gi, "feedback").when(cascades).enabled(on),
+            S.slider("Hidden hits' light", \.cascades.hiddenLight, CascadeSettings.hiddenLightRange, step: 0.05, fmt("%.2f"))
+                .env(.gi, "rchidden").when(cascades).enabled({ on($0) && $0.cascades.feedback }).advanced(),
+            S.check("Sky through gaps", \.cascades.skyGaps).env(.gi, "rcskygaps").when(cascades).enabled(on).advanced(),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
             S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
                 .env(.restirGI, "quarter").when(restir).enabled(on),
