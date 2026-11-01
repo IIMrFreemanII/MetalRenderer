@@ -16,6 +16,31 @@ import Metal
 final class ShaderSourceTests: XCTestCase {
     private let entry = SourceTree.packageRoot.appendingPathComponent("Sources/MetalRenderer/Shaders.metal")
 
+    /// Each of Uniforms.flags' meanings has a bit of its own, the same in Swift and in Metal. Energy conservation and the
+    /// particles' layer once shared one, and with energy on the composite put the layer in MetalFX's input as well as over
+    /// its output.
+    func testUniformFlagsHaveABitEach() throws {
+        func values(_ text: String, _ pattern: String) throws -> [UInt32] {
+            let regex = try NSRegularExpression(pattern: pattern)
+            return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap { m in
+                Range(m.range(at: 1), in: text).flatMap { UInt32(text[$0]) }
+            }
+        }
+        let root = SourceTree.packageRoot
+        let metal = try String(contentsOf: root.appendingPathComponent("Sources/MetalRenderer/Shaders/Types.metal"), encoding: .utf8)
+        let swift = try String(contentsOf: root.appendingPathComponent("Sources/EngineCore/GPU/GPUTypes.swift"), encoding: .utf8)
+        let block = try XCTUnwrap(swift.range(of: "enum UniformFlags {"))
+        let end = try XCTUnwrap(swift.range(of: "\n}", range: block.upperBound..<swift.endIndex))
+        let inMetal = try values(metal, #"constant uint FLAG_\w+\s*=\s*(\d+);"#)
+        let inSwift = try values(String(swift[block.upperBound..<end.lowerBound]), #"static let \w+: UInt32 = (\d+)"#)
+        XCTAssertGreaterThan(inMetal.count, 20)
+        for (name, flags) in [("Metal", inMetal), ("Swift", inSwift)] {
+            XCTAssertEqual(Set(flags).count, flags.count, "\(name): two flags share a bit")
+            XCTAssertTrue(flags.allSatisfy { $0.nonzeroBitCount == 1 }, "\(name): a flag isn't one bit")
+        }
+        XCTAssertEqual(Set(inMetal), Set(inSwift))
+    }
+
     /// A scratch folder with an entry file and its pieces.
     private func scratch(entry text: String, pieces: [String: String]) throws -> URL {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ShaderSourceTests-\(UUID().uuidString)")

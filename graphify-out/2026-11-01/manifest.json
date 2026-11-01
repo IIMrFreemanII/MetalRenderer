@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793567367.6337254,
-    "seen": 1793567391.8870158,
-    "ast_hash": "4bfd7708601fa75b54668622ccad5d5b",
+    "mtime": 1793568146.8848574,
+    "seen": 1793568166.1274502,
+    "ast_hash": "9c567e92729c2d059d0cca481572747b",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -306,9 +306,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Output.metal": {
-    "mtime": 1793566831.2106574,
-    "seen": 1793567391.886813,
-    "ast_hash": "3d6581c8c9a5dad6af3056c172abddaf",
+    "mtime": 1793567542.359448,
+    "seen": 1793568166.119421,
+    "ast_hash": "c0db68b4caf97c1beb2b06a36b1b02b6",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
@@ -366,9 +366,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Types.metal": {
-    "mtime": 1793558768.7795887,
-    "seen": 1793567391.8868248,
-    "ast_hash": "14c0811c45a4d860f9a4e27aa2a95f4a",
+    "mtime": 1793567542.3592224,
+    "seen": 1793568166.119783,
+    "ast_hash": "26a62ba544645bb6800a8701be797967",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/scripts/render.sh": {
@@ -2064,9 +2064,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Post/Upscaler.swift": {
-    "mtime": 1793566831.2097516,
-    "seen": 1793567391.886775,
-    "ast_hash": "40bc0ff62a771a74641e62166c05a6ba",
+    "mtime": 1793567542.3578594,
+    "seen": 1793568166.118335,
+    "ast_hash": "7070aa2b3f68c0a7484ab393a66651e4",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderSurface.swift": {
@@ -2100,9 +2100,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+FramePlan.swift": {
-    "mtime": 1793558768.8258882,
-    "seen": 1793567391.886778,
-    "ast_hash": "56464bb78d62c7cd393cc8b86a52c93f",
+    "mtime": 1793567542.3581648,
+    "seen": 1793568166.1184452,
+    "ast_hash": "5d1ac75f74cd6ac7f41775411fd4a688",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+GI.swift": {
@@ -2118,9 +2118,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Navigation.swift": {
-    "mtime": 1793566831.2103593,
-    "seen": 1793567391.8867798,
-    "ast_hash": "bfc7d67f27d24e289176608a976b1bbd",
+    "mtime": 1793567542.3582933,
+    "seen": 1793568166.118485,
+    "ast_hash": "c1606eb931c0b32e60d54b998bc5ec79",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Setup.swift": {
@@ -2214,9 +2214,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/Settings.swift": {
-    "mtime": 1793566829.8253539,
-    "seen": 1793567391.8867998,
-    "ast_hash": "2d6828f101ef5afed5158af792ffb37f",
+    "mtime": 1793567542.3587344,
+    "seen": 1793568166.119064,
+    "ast_hash": "ba493480e687b1973e91560e133443b9",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsEnv.swift": {
@@ -2232,9 +2232,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsTable.swift": {
-    "mtime": 1793566829.8255863,
-    "seen": 1793567391.886802,
-    "ast_hash": "9ef7e18b8993990165ec56ad5a772398",
+    "mtime": 1793567542.3588789,
+    "seen": 1793568166.119103,
+    "ast_hash": "b9be860c63960e90027dce10d950b07e",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/Renderer+Terrain.swift": {
@@ -3330,9 +3330,9 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/GPUTypes.swift": {
-    "mtime": 1793558768.804605,
-    "seen": 1793567391.886636,
-    "ast_hash": "678fb120d4370ee7cc59a991a1f838dd",
+    "mtime": 1793567553.0022244,
+    "seen": 1793568166.113961,
+    "ast_hash": "e1b21534c46c0eef786079fe059b2a95",
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/Pipelines.swift": {
@@ -6348,9 +6348,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Renderer/FilmLookTests.swift": {
-    "mtime": 1793566831.2108152,
-    "seen": 1793567391.886952,
-    "ast_hash": "6af45b44563b2c8eaf825f6744a17f7d",
+    "mtime": 1793567542.3597198,
+    "seen": 1793568166.124814,
+    "ast_hash": "1c450da3d93f6a20da6bc744b15b996e",
     "semantic_hash": ""
   },
   "Tools/eval/furnace.py": {

@@ -366,9 +366,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Types.metal": {
-    "mtime": 1793567542.3592224,
-    "seen": 1793568166.119783,
-    "ast_hash": "26a62ba544645bb6800a8701be797967",
+    "mtime": 1793568845.968668,
+    "seen": 1793568866.391875,
+    "ast_hash": "18f784b61a23d9ed4ca752dbcb78aff7",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/scripts/render.sh": {
@@ -2604,9 +2604,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Renderer/ShaderSourceTests.swift": {
-    "mtime": 1793558768.8401942,
-    "seen": 1793567391.886954,
-    "ast_hash": "069d09da2f04b1c7e81942ecdf092d90",
+    "mtime": 1793568668.3548388,
+    "seen": 1793568866.39693,
+    "ast_hash": "1119a4db0146431dc40bddf3c6a67f7f",
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Renderer/TAATests.swift": {
@@ -3330,9 +3330,9 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/GPUTypes.swift": {
-    "mtime": 1793567553.0022244,
-    "seen": 1793568166.113961,
-    "ast_hash": "e1b21534c46c0eef786079fe059b2a95",
+    "mtime": 1793568653.3195627,
+    "seen": 1793568866.386241,
+    "ast_hash": "25ab011fc8ba1e1c150f8584b8ca4677",
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/Pipelines.swift": {
