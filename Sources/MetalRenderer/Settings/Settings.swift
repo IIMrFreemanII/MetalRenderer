@@ -135,9 +135,11 @@ package enum ToneMap: Int, CaseIterable, Codable {
     case agx        // AgX (Troy Sobotka), polynomial fit: softer, keeps bright saturated lights from going flat
     case reinhard   // luminance Reinhard: gentle, keeps hue
     case none       // clamp: linear up to 1
+    case film       // Unreal's default image: its filmic curve through ACES's wide working space (PostSettings' film values)
 
     var title: String {
         switch self {
+        case .film: return "Filmic (Unreal)"
         case .aces: return "ACES"
         case .agx: return "AgX"
         case .reinhard: return "Reinhard"
@@ -459,11 +461,11 @@ package struct SkySettings: Equatable, Codable {
 }
 
 /// The camera's lens and the image's finish (Shaders/Post.metal), on the light at the output resolution before and
-/// after the tone curve: depth of field, bloom, chromatic aberration, vignette and film grain. Each is off at 0, and
-/// all are off but in the showcase (`preset(for:)`), so the other scenes' frames are what they were.
+/// after the tone curve: depth of field, bloom, chromatic aberration, vignette and film grain. Each is off at 0. A
+/// scene opens with Unreal's defaults, or its own look (`preset(for:)`).
 package struct PostSettings: Equatable, Codable {
-    package var bloom: Float = 0                // the share of the light spread out as glow (0 = no bloom)
-    var bloomThreshold: Float = 1       // the brightness (after exposure) where glow starts, with a soft knee below it
+    package var bloom: Float = 0                // how much glow is added: 0.675 is Unreal's default (0 = no bloom)
+    var bloomThreshold: Float = 1       // the brightness (after exposure) where glow starts, with a soft knee below it; 0 = all of it
     package var aperture: Float = 0             // the blur circle's radius in output pixels far behind the focus (as much at half
                                         // the focus distance, more nearer, at most `maxBlur`); 0 = no depth of field
     var focus: Float = 0                // focus distance (m); 0 = autofocus on what is at the centre of the frame
@@ -478,10 +480,23 @@ package struct PostSettings: Equatable, Codable {
     var saturation: Float = 1
     var contrast: Float = 1
     var grades: Bool { warmth != 0 || saturation != 1 || contrast != 1 }
+    /// The film tone curve (ToneMap.film), at Unreal's defaults.
+    var filmSlope: Float = 0.88
+    var filmToe: Float = 0.55
+    var filmShoulder: Float = 0.26
+    var filmBlackClip: Float = 0
+    var filmWhiteClip: Float = 0.04
+    /// The look from before the film look, which the benchmarks keep so that their scores stay comparable with their
+    /// history: bloom mixed in rather than added, the vignette on the display's values, the old exposure meter.
+    package var classic = false
 
     var isOn: Bool { bloom > 0 || aperture > 0 || vignette > 0 || grain > 0 || aberration > 0 }
 
-    static let bloomRange: ClosedRange<Float> = 0...0.3
+    static let bloomRange: ClosedRange<Float> = 0...2
+    static let filmRange: ClosedRange<Float> = 0...1
+    /// Classic bloom's strength, as a share mixed in, for the same glow as this much of the added one.
+    static let classicBloomScale: Float = 7.5
+    static let classicBloomLevels = 6
     static let thresholdRange: ClosedRange<Float> = 0...8
     static let apertureRange: ClosedRange<Float> = 0...24
     static let focusRange: ClosedRange<Float> = 0...30
@@ -492,14 +507,41 @@ package struct PostSettings: Equatable, Codable {
     static let saturationRange: ClosedRange<Float> = 0...2
     static let contrastRange: ClosedRange<Float> = 0.5...1.5
     static let maxBlur: Float = 24      // the depth of field's widest blur circle (output pixels)
-    static let bloomLevels = 6          // the glow's halvings, from half the output size
+    static let bloomLevels = 7          // the glow's halvings, from half the output size
 
-    /// Off, but in a scene with its own (the showcase's model's look, the city's exposure); and with the realistic look
-    /// outdoors, a camera's: exposure that follows the light, a gentle filmic grade, a little bloom and vignette.
+    /// Unreal's default post process (5.8's Scene.cpp): histogram exposure, bloom with no threshold, a vignette and no
+    /// grade. Depth of field, grain and chromatic aberration are off there too.
+    package static var unreal: PostSettings {
+        var p = PostSettings()
+        p.autoExposure = true
+        p.bloom = 0.675
+        p.bloomThreshold = 0
+        p.vignette = 0.4
+        return p
+    }
+
+    /// A scene's own look (the showcase's model's, the city's exposure), else Unreal's defaults. Off with realism off.
     static func preset(for scene: SceneSettings) -> PostSettings {
         if let own = scene.kind.definition.post { return own(scene) }
-        guard scene.realism != .off, scene.kind.hasRealisticLook else { return PostSettings() }
+        return scene.realism == .off ? PostSettings() : .unreal
+    }
+
+    /// What `preset` gave before the film look (`classic`): off but in a scene with its own, and with the realistic look
+    /// outdoors a camera's: exposure that follows the light, a gentle filmic grade, a little bloom and vignette.
+    package static func classicPreset(for scene: SceneSettings) -> PostSettings {
+        if let own = scene.kind.definition.classicPost ?? scene.kind.definition.post {
+            var p = own(scene)
+            p.classic = true
+            p.bloom /= classicBloomScale
+            return p
+        }
+        guard scene.realism != .off, scene.kind.hasRealisticLook else {
+            var off = PostSettings()
+            off.classic = true
+            return off
+        }
         var p = PostSettings()
+        p.classic = true
         p.autoExposure = true
         p.saturation = 1.06
         p.contrast = 1.1
@@ -563,8 +605,9 @@ package struct FoliageSettings: Equatable, Codable {
 }
 
 package struct RenderSettings: Equatable, Codable {
-    package var renderScale: CGFloat = 0.5     // traced resolution, as a fraction of the window's size in points
-    package var upscaleFactor: CGFloat = 3     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
+    package var renderScale: CGFloat = 0.75    // traced resolution, as a fraction of the window's size in points
+    package var upscaleFactor: CGFloat = 2     // output / traced resolution, through MetalFX's denoising scaler; 0 = off
+                                               // (2x is the sharpest that keeps 30 fps in the heavy scenes on an M4 Max)
     /// With upscaling: MetalFX's in-between picture each frame, presented half a frame before the frame's own
     /// (FrameInterpolator). Auto only while frames take over three of the display's refreshes; never offscreen.
     package var frameInterpolation = FrameInterpolation.auto
@@ -600,10 +643,13 @@ package struct RenderSettings: Equatable, Codable {
     package var fog = FogSettings.preset(for: .cornell)
     package var sky = SkySettings.preset(for: .cornell)
     package var foliage = FoliageSettings.preset(for: .cornell)
-    package var post = PostSettings()
+    package var post = PostSettings.unreal
     // Camera and animation
     package var exposure: Float = 0            // stops (EV) before the tone curve
-    package var toneMap = ToneMap.aces
+    package var toneMap = ToneMap.film
+    /// The saved settings' look (SettingsStore): one older than `RenderSettings.currentLook` is reset once, to show a new default look.
+    package var lookVersion = RenderSettings.currentLook
+    package static let currentLook = 1
     package var fovDegrees: Float = 60         // vertical field of view
     package var moveSpeed: Float = 2.5         // WASD, m/s (Shift: 3.2x)
     package var timeScale: Float = 1           // animation speed (Pause stops it too)
@@ -631,11 +677,12 @@ package struct RenderSettings: Equatable, Codable {
         renderScale = RenderSettings.physicsScale
     }
 
-    /// What a first launch opens (nothing saved, or METALRENDERER_SETTINGS=default): the plant workshop, its look
-    /// set as a switch to it would. (`SceneSettings()` stays the Cornell room, which the benchmarks and tests start from.)
+    /// What a first launch opens (nothing saved, or METALRENDERER_SETTINGS=default): the scene that says it opens first
+    /// (with no game, the plant workshop), its look set as a switch to it would. (`SceneSettings()` stays the Cornell
+    /// room, which the benchmarks and tests start from.)
     package static func firstLaunch(_ defaults: RenderSettings) -> RenderSettings {
         var s = defaults
-        s.scene.kind = .plants
+        s.scene.kind = SceneKind.allCases.first { $0.definition.opensFirst } ?? .plants
         s.applySceneDefaults(from: defaults)
         return s
     }
@@ -694,7 +741,7 @@ package struct RenderSettings: Equatable, Codable {
     package static let geometryViews = 8...13
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(renderScale: CGFloat = 0.5, upscaleFactor: CGFloat = 3, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, restir: RestirSettings = RestirSettings(), restirGI: RestirGISettings = RestirGISettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings(), exposure: Float = 0, toneMap: ToneMap = ToneMap.aces, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
+    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, restir: RestirSettings = RestirSettings(), restirGI: RestirGISettings = RestirGISettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
         self.renderScale = renderScale
         self.upscaleFactor = upscaleFactor
         self.frameInterpolation = frameInterpolation

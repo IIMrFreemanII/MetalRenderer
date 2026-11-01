@@ -130,21 +130,22 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(SettingsEnv.export(defaults, defaults: defaults), "METALRENDERER_SCENE=\"cornell\"")
     }
 
-    /// A first launch (nothing saved) opens the plant workshop with its own look, as a switch to it would; the
+    /// A first launch (nothing saved) opens the default level with its own look, as a switch to it would; the
     /// defaults themselves stay the Cornell room.
-    func testAFirstLaunchOpensThePlantWorkshop() {
+    func testAFirstLaunchOpensTheDefaultLevel() {
         let first = RenderSettings.firstLaunch(defaults)
-        XCTAssertEqual(first.scene.kind, .plants)
-        XCTAssertEqual(first.sky, SkySettings.preset(for: .plants))
+        XCTAssertEqual(first.scene.kind, .level)
+        XCTAssertEqual(first.sky, SkySettings.preset(for: .level))
+        XCTAssertEqual(first.post, .unreal)
         XCTAssertEqual(defaults.scene.kind, .cornell)
-        XCTAssertEqual(SettingsEnv.export(first, defaults: defaults).hasPrefix("METALRENDERER_SCENE=\"plants"), true)
+        XCTAssertEqual(SettingsEnv.export(first, defaults: defaults).hasPrefix("METALRENDERER_SCENE=\"level"), true)
     }
 
     /// Each setting on its own: a change shows up in the export and reads back as the same settings. A setting added
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {
         // Session state, like the camera; and what the renderer sets by the time of day.
-        let unexported: Set<String> = ["virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
+        let unexported: Set<String> = ["lookVersion", "post.classic", "virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
                                          "scene.plants.compare", "scene.buildingCatalog", "scene.buildings.mutants", "scene.buildings.compare",
                                          "scene.interior", "scene.buildings.pinned", "solidFromScene"]
         let changes = singleChanges()

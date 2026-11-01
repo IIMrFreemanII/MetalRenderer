@@ -374,6 +374,78 @@ inline float3 agxFilm(float3 c) {
     return pow(saturate(fromAgx * x), float3(2.2f));
 }
 
+// The film look (ToneMap.film), Unreal's default image. Written from the Academy's open ACES reference (its AP0 and AP1
+// spaces, the RRT's glow, red modifier and desaturation, the blue-light fix) and a filmic curve of Unreal's documented
+// parameters, then checked against 5.8's output: over 45 greys the worst is 1.3 of 255 sRGB levels; over 108 colour
+// patches the mean is 0.6 and the worst 5.1. `filmExpand` and FILM_MIDDLE were fitted to those captures.
+constant float3x3 filmFromLinear = float3x3(float3(0.6130974f, 0.0701937f, 0.0206156f), float3(0.3395231f, 0.9163539f, 0.1095698f), float3(0.0473795f, 0.0134524f, 0.8698146f));
+constant float3x3 filmToLinear = float3x3(float3(1.7050510f, -0.1302564f, -0.0240034f), float3(-0.6217920f, 1.1408047f, -0.1289690f), float3(-0.0832590f, -0.0105483f, 1.1529724f));
+constant float3x3 filmToAP0 = float3x3(float3(0.6954522f, 0.0447946f, -0.0055259f), float3(0.1406787f, 0.8596711f, 0.0040252f), float3(0.1638691f, 0.0955343f, 1.0015007f));
+constant float3x3 filmFromAP0 = float3x3(float3(1.4514393f, -0.0765538f, 0.0083161f), float3(-0.2365107f, 1.1762297f, -0.0060324f), float3(-0.2149286f, -0.0996759f, 0.9977163f));
+constant float3x3 filmExpand = float3x3(float3(1.4073000f, -0.0781000f, -0.0254000f), float3(-0.3447000f, 1.0817000f, -0.0870000f), float3(-0.0626000f, -0.0036000f, 1.1124000f));
+constant float3x3 filmBlue = float3x3(float3(0.9386394f, 0.0f, 0.0f), float3(0.0f, 0.8307941f, 0.0f), float3(0.0613606f, 0.1692059f, 1.0f));
+constant float3x3 filmBlueBack = float3x3(float3(1.0653719f, 0.0f, 0.0f), float3(0.0f, 1.2036676f, 0.0f), float3(-0.0653719f, -0.2036676f, 1.0f));
+constant float3 FILM_LUMA = float3(0.2722287f, 0.6740818f, 0.0536895f);
+constant float FILM_BLUE_FIX = 0.6f, FILM_SAT_IN = 0.96f, FILM_SAT_OUT = 0.93f;
+constant float FILM_MIDDLE = 0.14f;   // the curve's height at middle grey
+
+/// The RRT's glow and red modifier, on AP0.
+inline float3 filmGlowAndRed(float3 c) {
+    float high = max(c.r, max(c.g, c.b)), low = min(c.r, min(c.g, c.b));
+    float sat = (max(high, 1e-10f) - max(low, 1e-10f)) / max(high, 0.01f);
+    float chroma = sqrt(max(c.b * (c.b - c.g) + c.g * (c.g - c.r) + c.r * (c.r - c.b), 0.0f));
+    float yc = (c.r + c.g + c.b + 1.75f * chroma) / 3.0f;
+    float k = 4.0f * sat - 1.0f, shape = max(1.0f - abs(k * 0.5f), 0.0f);
+    float gain = 0.05f * (1.0f + (k < 0.0f ? -1.0f : 1.0f) * (1.0f - shape * shape)) * 0.5f;
+    float glow = yc <= 0.08f * 2.0f / 3.0f ? gain : yc >= 0.16f ? 0.0f : gain * (0.08f / yc - 0.5f);
+    c *= 1.0f + glow;
+    // (A neutral colour has no hue, and atan2(0, 0) isn't a number: it takes no red modifier.)
+    float hueY = 1.7320508f * (c.g - c.b), hueX = 2.0f * c.r - c.g - c.b;
+    float hue = abs(hueX) + abs(hueY) < 1e-9f ? 180.0f : abs(atan2(hueY, hueX)) * 57.29578f;
+    float x = hue * 4.0f / 135.0f;
+    float weight = x >= 2.0f ? 0.0f : x < 1.0f ? (3.0f * x * x * x - 6.0f * x * x + 4.0f) / 6.0f : (2.0f - x) * (2.0f - x) * (2.0f - x) / 6.0f;
+    float newHigh = max(c.r, max(c.g, c.b)), newLow = min(c.r, min(c.g, c.b));
+    float newSat = (max(newHigh, 1e-10f) - max(newLow, 1e-10f)) / max(newHigh, 0.01f);
+    c.r += weight * newSat * (0.03f - c.r) * 0.18f;
+    return c;
+}
+
+/// The curve, each channel: a straight middle in log10 of the light, whose toe and shoulder each leave it for their limit
+/// (`film`: slope, toe, shoulder, black clip; `white`: white clip), blended where they overlap.
+inline float3 filmCurve(float3 c, float4 film, float white) {
+    float slope = max(film.x, 1e-3f), black = film.w;
+    float toeSpan = max(1.0f + black - film.y, 1e-3f), shoulderSpan = max(1.0f + white - film.z, 1e-3f);
+    const float grey = -0.7447275f;   // log10(0.18)
+    float toeEnd = grey + (toeSpan - black - FILM_MIDDLE) / slope;
+    float shoulderStart = grey + (1.0f + white - shoulderSpan - FILM_MIDDLE) / slope;
+    float3 x = log10(max(c, 1e-10f));
+    float3 line = slope * (x - grey) + FILM_MIDDLE;
+    float3 toe = -black + 2.0f * toeSpan / (1.0f + exp(-2.0f * slope / toeSpan * (x - toeEnd)));
+    float3 shoulder = 1.0f + white - 2.0f * shoulderSpan / (1.0f + exp(2.0f * slope / shoulderSpan * (x - shoulderStart)));
+    float3 low = select(line, toe, x < toeEnd), high = select(line, shoulder, x > shoulderStart);
+    float span = shoulderStart - toeEnd;
+    float3 t = select(float3(0.0f), float3(1.0f), x > toeEnd);
+    if (abs(span) >= 1e-5f) t = saturate((x - toeEnd) / span);
+    if (span < 0.0f) t = 1.0f - t;
+    return mix(low, high, t * t * (3.0f - 2.0f * t));
+}
+
+inline float3 filmFilm(float3 linear, float4 film, float white) {
+    float3 a = filmFromLinear * linear;
+    // Bright saturated colours move outward, so they stay colourful as they brighten (a wider gamut's).
+    float luma = max(dot(a, FILM_LUMA), 1e-9f);
+    float3 fromGrey = a / luma - 1.0f;
+    float expand = (1.0f - exp2(-4.0f * dot(fromGrey, fromGrey))) * (1.0f - exp2(-4.0f * luma * luma));
+    a = mix(a, filmExpand * a, expand);
+    a = mix(a, filmBlue * a, FILM_BLUE_FIX);
+    a = max(filmFromAP0 * filmGlowAndRed(filmToAP0 * a), 0.0f);
+    a = mix(float3(dot(a, FILM_LUMA)), a, FILM_SAT_IN);
+    float3 y = filmCurve(a, film, white);
+    y = mix(float3(dot(y, FILM_LUMA)), y, FILM_SAT_OUT);
+    y = mix(y, filmBlueBack * y, FILM_BLUE_FIX);
+    return filmToLinear * y;
+}
+
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
 inline bool viewIsHDR(uint mode) {
     return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13));
@@ -389,13 +461,14 @@ inline float3 colorGrade(float3 c, float4 g) {
 }
 
 /// Exposure, the grade if it is on, then the selected curve (RenderSettings.toneMap).
-inline float3 toneMap(float3 c, float4 post, float4 grade) {
-    c *= post.x;
-    if ((uint(post.z) & 1u) != 0u) c = colorGrade(c, grade);
-    switch (uint(post.y)) {
+inline float3 toneMap(float3 c, constant Uniforms& u) {
+    c *= u.post.x;
+    if ((uint(u.post.z) & 1u) != 0u) c = colorGrade(c, u.grade);
+    switch (uint(u.post.y)) {
         case 1: return agxFilm(c);
         case 2: return c / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f)));   // Reinhard on luminance: keeps hue
         case 3: return c;
+        case 4: return filmFilm(c, u.film, u.post.w);
         default: return acesFilm(c);
     }
 }
@@ -624,7 +697,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         return;
     }
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u);
     // Linear either way: MetalFX's input is linear, and the drawable is an sRGB format (the GPU encodes on write).
     output.write(float4(saturate(c), 1.0f), tid);
 }
@@ -641,7 +714,7 @@ kernel void tonemapKernel(constant Uniforms&              u         [[buffer(0)]
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
     float3 c = max(upscaled.read(tid).rgb, 0.0f);
     if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
-    if (viewIsHDR(u.viewMode)) c = toneMap(c, u.post, u.grade);
+    if (viewIsHDR(u.viewMode)) c = toneMap(c, u);
     output.write(float4(saturate(c), 1.0f), tid);
 }
 

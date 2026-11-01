@@ -40,7 +40,7 @@ extension Benchmark {
     /// `METALRENDERER_SHOT_FRAMES` (default 30).
     static func shot() -> [Config] {
         let frames = env["METALRENDERER_SHOT_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 30
-        return [Config("shot", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames)]
+        return [Config("shot", scale: 0.75, upscale: 2, gi: .radianceCascades).still().frames(frames).appLook()]
     }
 
     /// The dev build's hot reload, checked offscreen: `shot`'s picture again and again (`METALRENDERER_RELOAD_SHOTS`,
@@ -49,7 +49,7 @@ extension Benchmark {
     static func reload() -> [Config] {
         let shots = env["METALRENDERER_RELOAD_SHOTS"].flatMap { Int($0) }.map { max(1, $0) } ?? 6
         let frames = env["METALRENDERER_RELOAD_FRAMES"].flatMap { Int($0) }.map { max(1, $0) } ?? 600
-        return (1...shots).map { Config("reload \($0)", scale: 0.5, upscale: 3, gi: .radianceCascades).still().frames(frames) }
+        return (1...shots).map { Config("reload \($0)", scale: 0.75, upscale: 2, gi: .radianceCascades).still().frames(frames).appLook() }
     }
 
     /// Solid shading (RenderSettings.solid) against the look each scene opens with, moving: the physics scene (its

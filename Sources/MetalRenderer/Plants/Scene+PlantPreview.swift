@@ -47,11 +47,10 @@ package final class PlantPreviewPlayer: SceneBehaviour {
 }
 
 extension Scene {
-    /// Unreal's preview lighting in this renderer's units: its viewport's fixed exposure (EV100 -0.2, so ×0.957), the
-    /// 0.6 that the ACES fit here wants on its input to be ACES's curve (Narkowicz 2015), and 1.17 more, measured
-    /// against the vegetation editor's own picture (its backdrop and floor, lit and in shade, all came out that much
-    /// brighter there: Unreal's filmic curve sits above the fit in the mid-tones).
-    package static let previewUnits: Float = 0.957 * 0.6 * 1.17
+    /// Unreal's preview lighting in this renderer's units, which are its own (a sun of 1 is 1 lux): just its viewport's
+    /// fixed exposure, EV100 -0.2, so x0.957. With the film curve this gives the backdrop the same level as the
+    /// vegetation editor's picture, and the floor within 4 of 255.
+    package static let previewUnits: Float = 0.957
     /// The vegetation editor's profile, Unreal's "Grey Ambient" (AssetViewerSettings.h): a white sun of 4 lux...
     package static let previewSun = SIMD3<Float>(repeating: 4 * previewUnits)
     /// ...and a sky light of 2 times its grey studio cubemap (T_GreyAmbient), here its upper half's mean (as a floor

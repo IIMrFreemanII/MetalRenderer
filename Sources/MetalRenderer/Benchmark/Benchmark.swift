@@ -63,8 +63,9 @@ package final class Benchmark {
         package var serves = false
         // Set by `fog` / `sky`: the config's own, not the preset of whatever scene the run ends up with.
         private var ownFog = false, ownSky = false
+        private var usesAppLook = false
 
-        /// Benchmark settings differ from the app's defaults (radiance cascades, 3x from 0.5x): they path trace at 0.75x
+        /// Benchmark settings differ from the app's defaults (radiance cascades, 2x from 0.75x, the film look): they path trace at 0.75x
         /// without upscaling or temporal AA unless they say otherwise. `scale`: the traced resolution as a fraction of the window;
         /// `upscale`: the upscaling factor, 0 = off; `gi`: the GI method, nil = GI off. The scene brings its fog and sky
         /// presets (`fog` and `sky` edit them); `change` edits anything else.
@@ -80,7 +81,8 @@ package final class Benchmark {
             s.fog = FogSettings.preset(for: scene)
             s.sky = SkySettings.preset(for: scene)
             s.foliage = FoliageSettings.preset(for: scene.kind)
-            s.post = PostSettings.preset(for: scene)
+            s.toneMap = .aces   // (the look of their scores' history: `appLook` for the app's own)
+            s.post = PostSettings.classicPreset(for: scene)
             change(&s)
             self.name = name
             settings = s
@@ -88,6 +90,14 @@ package final class Benchmark {
 
         // Modifiers: each returns a changed copy.
         package func named(_ name: String) -> Config { var c = self; c.name = name; return c }
+        /// The app's look, not the classic one the benchmarks keep for their scores' history.
+        package func appLook() -> Config {
+            var c = self
+            c.usesAppLook = true
+            c.settings.toneMap = .film
+            c.settings.post = PostSettings.preset(for: settings.scene)
+            return c
+        }
         package func with(_ change: (inout RenderSettings) -> Void) -> Config { var c = self; change(&c.settings); return c }
         package func view(_ mode: Int) -> Config { with { $0.viewMode = mode } }
         /// Edits the fog (the scene's preset until then). It then stays as set, whatever scene METALRENDERER_SCENE picks.
@@ -155,8 +165,10 @@ package final class Benchmark {
             if !ownFog { s.fog = FogSettings.preset(for: s.scene) }
             if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
-            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
-                s.post = PostSettings.preset(for: s.scene)
+            let appLook = usesAppLook || env["METALRENDERER_LOOK"] == "app"
+            if appLook { s.toneMap = .film }
+            if appLook != usesAppLook || s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
+                s.post = appLook ? PostSettings.preset(for: s.scene) : PostSettings.classicPreset(for: s.scene)
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }

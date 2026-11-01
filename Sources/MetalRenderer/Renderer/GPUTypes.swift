@@ -134,7 +134,7 @@ struct GPUWaterScene {
 func validateGPULayouts() {
     precondition(MemoryLayout<GPUWaterLook>.stride == 64, "GPUWaterLook layout mismatch")
     precondition(MemoryLayout<GPUWaterScene>.stride == 256, "GPUWaterScene layout mismatch")
-    precondition(MemoryLayout<Uniforms>.stride == 320, "Uniforms layout mismatch")
+    precondition(MemoryLayout<Uniforms>.stride == 336, "Uniforms layout mismatch")
     precondition(MemoryLayout<GPUMesh>.stride == 48 && MemoryLayout<GPUMesh>.offset(of: \.block) == 24, "GPUMesh layout mismatch")
     precondition(MemoryLayout<GPUInstanceData>.stride == 208, "GPUInstanceData layout mismatch")
     precondition(MemoryLayout<GPUSkinVertex>.stride == 16, "GPUSkinVertex layout mismatch")

@@ -17,7 +17,7 @@ final class SceneRegistryTests: XCTestCase {
     func testEveryOldSceneIsRegistered() {
         let kinds = SceneRegistry.kinds
         // (Scenes added since are saved by name only: after the enum's.)
-        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered + ["modelingStage", "cars", "procedural"], "the panel lists them in the enum's order")
+        XCTAssertEqual(kinds.map(\.name), SceneKind.numbered + ["modelingStage", "cars", "procedural", "level"], "the panel lists them in the enum's order")
         XCTAssertEqual(Set(kinds.map(\.definition.envName)).count, kinds.count, "env names are unique")
         for kind in kinds { XCTAssertEqual(kind.definition.kind, kind) }
     }
@@ -62,7 +62,7 @@ final class SceneRegistryTests: XCTestCase {
                        ["physics", "ragdolls", "hair", "softBodies", "muscles", "fluids", "destruction", "demolition", "cars"])
         XCTAssertEqual(SceneRegistry.kinds.filter(\.usesPhysicsLook).count, 6)
         XCTAssertEqual(SceneRegistry.kinds.filter(\.hasRealisticLook).map(\.name),
-                       ["sun", "valley", "forest", "crowd", "world", "plants", "buildings", "terrain"])
+                       ["sun", "valley", "forest", "crowd", "world", "plants", "buildings", "terrain", "level"])
         XCTAssertEqual(SceneRegistry.kinds.filter { $0.dayCycle != nil }.map(\.name), ["sun", "valley", "forest", "city", "world", "terrain"])
         XCTAssertEqual(DayClock.of(.city)?.otherScene, .cityNight)
         XCTAssertTrue(SceneKind.demolition.definition.solid)

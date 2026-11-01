@@ -125,6 +125,9 @@ package final class SceneDefinition {
     /// The built-in effects it places (VFXLibrary), for the VFX editor to preview them there.
     package var effects: Set<String> = []
 
+    /// A first launch opens it (RenderSettings.firstLaunch).
+    package var opensFirst = false
+
     // What suits it.
     /// The fog, before METALRENDERER_FOG; off unless set.
     package var fog = FogSettings()
@@ -134,6 +137,8 @@ package final class SceneDefinition {
     package var tuneFog: ((SceneSettings, inout FogSettings) -> Void)? = nil
     /// Its own lens and finish (the showcase model's, the city's exposure); nil: off, or the realistic look's.
     package var post: ((SceneSettings) -> PostSettings)? = nil
+    /// Its own in the classic look alone (PostSettings.classic), when that isn't `post`.
+    package var classicPost: ((SceneSettings) -> PostSettings)? = nil
     /// With the realistic look: whether the distance fades (aerial perspective: the fog's), how much haze it has, how
     /// warm the grade is.
     package var realisticAir = true
@@ -239,7 +244,7 @@ package enum SceneRegistry {
             $0.post = { scene in
                 var p = PostSettings()
                 guard scene.realism != .off else { return p }
-                p.saturation = 1.03; p.contrast = 1.05; p.bloom = 0.02; p.bloomThreshold = 1.6; p.vignette = 0.16
+                p.saturation = 1.03; p.contrast = 1.05; p.bloom = 0.15; p.bloomThreshold = 1.6; p.vignette = 0.16
                 return p
             }
             $0.behaviour = { PlantPreviewPlayer($0) }

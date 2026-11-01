@@ -238,7 +238,7 @@ extension Renderer {
     }
 
     /// Auto exposure's scale for this frame (AutoExposure).
-    private func meterExposure() -> Float { exposureMeter.next(dt: frameDt) }
+    private func meterExposure() -> Float { exposureMeter.next(dt: frameDt, classic: settings.post.classic) }
 
     package func makeUniforms(width: Int, height: Int, giMode: GIMode, directMode: DirectLightMode) -> Uniforms {
         let aspect = Float(width) / Float(height)
@@ -254,8 +254,9 @@ extension Renderer {
         (u.prevCamPos, u.prevCamRight, u.prevCamUp, u.prevCamForward) = pack(prevCamera)
         u.skyColor = SIMD4<Float>(scene.skyColor, 0)
         if let backdrop = scene.backdrop { u.backdrop = SIMD4(backdrop, 1) }
-        u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, 0)
         let lens = settings.post
+        u.post = SIMD4<Float>(exp2(RenderSettings.exposureRange.clamp(settings.exposure)), Float(settings.toneMap.rawValue), 0, lens.filmWhiteClip)
+        u.film = SIMD4(lens.filmSlope, lens.filmToe, lens.filmShoulder, lens.filmBlackClip)
         if lens.grades {
             u.post.z += Uniforms.gradeOn
             let w = max(min(lens.warmth, 1), -1)

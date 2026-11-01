@@ -531,15 +531,17 @@ extension Renderer {
             light = post.dof
         }
         if params.bloom.x > 0, !post.down.isEmpty {
-            for (i, level) in post.down.enumerated() {
+            let levels = Int(params.bloom.w)
+            for (i, level) in post.down.prefix(levels).enumerated() {
                 params.frame.y = UInt32(i)
                 start(.bloomDown)
                 setTextures(enc, [i == 0 ? light : post.down[i - 1], level])
                 dispatch(enc, .bloomDown, width: level.width, height: level.height)
             }
-            for i in post.up.indices.reversed() {
+            for i in (0..<max(levels - 1, 0)).reversed() {
+                params.frame.y = UInt32(i)
                 start(.bloomUp)
-                setTextures(enc, [i == post.up.count - 1 ? post.down[i + 1] : post.up[i + 1], post.down[i], post.up[i]])
+                setTextures(enc, [i == levels - 2 ? post.down[i + 1] : post.up[i + 1], post.down[i], post.up[i]])
                 dispatch(enc, .bloomUp, width: post.up[i].width, height: post.up[i].height)
             }
         }

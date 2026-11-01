@@ -28,8 +28,9 @@ package struct Uniforms {
     package var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
     package var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
     package var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
-                                         // (gradeOn, meterOn)
+                                         // (gradeOn, meterOn), w = the film curve's white clip
     package var grade = SIMD4<Float>(1, 1, 1, 1) // the colour grade: red and blue gains, saturation, contrast (PostSettings)
+    package var film = SIMD4<Float>(0.88, 0.55, 0.26, 0)  // the film curve: slope, toe, shoulder, black clip (PostSettings)
     package var interiorLo = SIMD4<Float>(1, 1, 1, 0)     // the walkable interiors' box (Scene.interiorBox), empty: lo > hi;
     package var interiorHi = SIMD4<Float>(-1, -1, -1, 0)  // GI's hits in it see the sun through a shadow ray
     package var backdrop = SIMD4<Float>()        // xyz = what camera rays that hit nothing see, w = 1 when it is on (Scene.backdrop)
