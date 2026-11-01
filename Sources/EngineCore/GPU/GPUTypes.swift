@@ -88,10 +88,10 @@ package enum UniformFlags {
     package static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
     package static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
     package static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
-    package static let restir: UInt32 = 32768        // direct light from a pass of its own: ReSTIR DI
+    package static let sampledLights: UInt32 = 32768  // direct light from a pass of its own (sampledLightsKernel)
     package static let hdrOutput: UInt32 = 65536     // MetalFX's denoising scaler follows: the composite writes raw light and guides
     package static let wind: UInt32 = 131072         // the wind turns the plants' parts (assemblies; the ray queries' variants)
-    package static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades, ReSTIR GI)
+    package static let giDebug: UInt32 = 262144      // this frame's GI method writes the "GI debug" view (cascades)
     package static let post: UInt32 = 524288         // the lens effects follow (Post.metal): the composite writes the light as it is
     package static let contactAO: UInt32 = 1048576
     package static let aerial: UInt32 = 2097152
@@ -102,51 +102,15 @@ package enum UniformFlags {
     package static let particles: UInt32 = 67108864  // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
-/// ReSTIR DI pass parameters (MSL RestirParams).
-package struct GPURestirParams {
-    package var config = SIMD4<UInt32>()   // x = candidates, y = max M, z = GPURestirParams flags, w = spatial samples
-    package var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = spatial pass index, z = firefly clamp (0 = off)
-
-    package static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
-    package static let visibilityReuse: UInt32 = 2  // test the initial pick's visibility
-    package static let shade: UInt32 = 4            // this spatial pass is the last: shade and write the outputs
-    package static let split: UInt32 = 8            // write unshadowed light and visibility apart (the shadow denoiser filters it)
+/// Sampled direct light's parameters (MSL SampledLightParams).
+package struct GPUSampledLightParams {
+    package var config = SIMD4<UInt32>()   // x = candidates, y = rays
+    package var tuning = SIMD4<Float>()    // x = firefly clamp (0 = off)
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(config: SIMD4<UInt32> = SIMD4<UInt32>(), tuning: SIMD4<Float> = SIMD4<Float>()) {
         self.config = config
         self.tuning = tuning
-    }
-}
-
-/// ReSTIR GI pass parameters (MSL RestirGIParams).
-package struct GPURestirGIParams {
-    package var config = SIMD4<UInt32>()   // x = GPURestirGIParams flags, y = max M, z = spatial samples, w = spatial pass index
-    package var tuning = SIMD4<Float>()    // x = spatial radius (pixels), y = minimum distance in the target (m), z = firefly clamp (0 = off)
-    package var extra = SIMD4<UInt32>()    // x = 1: quarter budget, y = bounces, z = max sample age (frames)
-
-    package static let temporalValid: UInt32 = 1    // last frame's reservoirs can be reprojected
-    package static let shade: UInt32 = 2            // this spatial pass is the last: trace the visibility ray, write `indirect`
-    package static let lightMaps: UInt32 = 4        // light the paths' hits from the light maps (no shadow rays)
-    package static let feedback: UInt32 = 8         // multi-bounce: the paths' last hits add last frame's indirect light
-    package static let unbiased: UInt32 = 16        // spatial reuse traces a ray per neighbour (visibility in its MIS weight)
-    package static let keepFeedback: UInt32 = 32    // the last spatial pass also keeps its result for next frame's feedback
-    package static let fallback: UInt32 = 64        // feedback: off-screen path ends add last frame's mean indirect light
-    package static let feedbackSet: UInt32 = 128    // multi-bounce is on (`feedback` is still off on a history's first frame)
-    // Not in config.x: restirGIInitialKernel derives them from `extra`, and so does initialPassFlags, to compile them in.
-    package static let quarter: UInt32 = 256        // extra.x: quarter budget
-    package static let oneBounce: UInt32 = 512      // extra.y: the paths end at their first hit
-
-    /// restirGIInitialKernel's own flags (MSL `own` there).
-    package var initialPassFlags: UInt32 {
-        config.x | (extra.x != 0 ? GPURestirGIParams.quarter : 0) | (extra.y <= 1 ? GPURestirGIParams.oneBounce : 0)
-    }
-
-    /// (As the memberwise initializer, for the modules above this one.)
-    package init(config: SIMD4<UInt32> = SIMD4<UInt32>(), tuning: SIMD4<Float> = SIMD4<Float>(), extra: SIMD4<UInt32> = SIMD4<UInt32>()) {
-        self.config = config
-        self.tuning = tuning
-        self.extra = extra
     }
 }
 

@@ -611,7 +611,7 @@ package final class Scene {
     /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
     /// fog's sky light is occluded (Renderer.interiorBox). Nil: no interiors.
     package var interiorBox: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
-    /// Every light and emissive triangle by power, for ReSTIR DI's candidates (built once, after the lights).
+    /// Every light and emissive triangle by power, for sampled lights' candidates (built once, after the lights).
     package var lightTable = LightTable()
 
     /// `virtualGeometry`: big glTF meshes become virtual meshes (built once, then read from their cache files) instead

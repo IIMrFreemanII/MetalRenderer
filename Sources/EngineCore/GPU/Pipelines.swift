@@ -11,8 +11,7 @@ package enum Kernel: Int, CaseIterable {
     case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
     case waterNear              // the near patch's vertices, moved by the waves
     case waterCaustics          // the sun's caustics under the waves
-    case manyLights, manyLightsReuse, meshLights, regirBuild, restirTemporal, restirSpatial
-    case restirGIInitial, restirGITemporal, restirGISpatial
+    case manyLights, manyLightsReuse, meshLights, regirBuild, sampledLights
     case rcProbe, rcTraceMerge, rcFilter, rcSH, rcClearAmbient, rcResolve
     case reflection
     case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
@@ -67,27 +66,21 @@ package enum Kernel: Int, CaseIterable {
         typealias F = UniformFlags
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
-        case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.restir | F.allLights | F.wind
+        case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.sampledLights | F.allLights | F.wind
         case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
-        case .restirSpatial: return F.specular
-        case .restirGIInitial: return F.blueNoise | F.noClamp | F.skyMap | F.allLights | F.wind
-        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.restir | F.shadowDenoiser | F.skyMap | F.wind
+        case .sampledLights: return F.specular
+        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.sampledLights | F.shadowDenoiser | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .lightMap, .solid, .solidTrace: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
         }
     }
-    /// The same for the kernel's own flags: the word its `bind` passes (Uniforms.tracePassFlags, GPURestirParams'
-    /// and GPURestirGIParams' flags, GPUFogParams.reflectionPassFlags). The "last frame is valid" bits change on the
+    /// The same for the kernel's own flags: the word its `bind` passes (Uniforms.tracePassFlags,
+    /// GPUFogParams.reflectionPassFlags). The "last frame is valid" bits change on the
     /// first frame after a reset, so they stay run-time tests: a variant for that one frame would be compiled for nothing.
     package var fixedPassFlags: UInt32 {
         switch self {
         case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
-        case .restirTemporal: return GPURestirParams.visibilityReuse
-        case .restirSpatial: return GPURestirParams.shade | GPURestirParams.split
-        case .restirGIInitial:
-            return GPURestirGIParams.lightMaps | GPURestirGIParams.feedbackSet | GPURestirGIParams.fallback
-                | GPURestirGIParams.quarter | GPURestirGIParams.oneBounce
         case .reflection: return GPUFogParams.reflectionsFogged
         default: return 0
         }
@@ -95,7 +88,7 @@ package enum Kernel: Int, CaseIterable {
 }
 
 /// Variants of the big kernels with a configuration's flags compiled in (function constants 1 to 4, see flagOn and
-/// passOn in Shaders/Types.metal): a path tracer without the light-map lookup, a ReSTIR pass that only merges, reflections
+/// passOn in Shaders/Types.metal): a path tracer without the light-map lookup, reflections
 /// that never follow a second bounce. What a variant doesn't do holds no registers, which is what these kernels are
 /// short of (what pays is a variant without one of the kernel's ray casts). One is made the first time a frame asks
 /// for it, in the background: until it is ready the frame runs the kernel's general pipeline, which reads the same

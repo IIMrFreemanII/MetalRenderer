@@ -14,44 +14,26 @@ import MetalRenderer
 extension Benchmark {
     // MARK: - Correctness checks
 
-    /// ReSTIR's sampling is unbiased for every light type: accumulated direct light (GI off), every light traced
-    /// against ReSTIR's initial sampling without reuse (32 candidates, 4 chains), from the table alone and from the
+    /// Sampled lights are unbiased for every light type: accumulated direct light (GI off), every light traced
+    /// against sampled lights (32 candidates, 4 rays), from the table alone and from the
     /// light grid, in the light-check scenes (one rect / tube / sphere light, or its emissive-mesh twin) and in scenes
     /// with spots, tubes, rects, emissive meshes, a sun and every type together. Mean
-    /// luminance and PSNR should agree (Tools/eval/restir.py).
-    static func restircheck() -> [Config] {
+    /// luminance and PSNR should agree (Tools/eval/manylights.py).
+    static func sampledcheck() -> [Config] {
         var scenes: [(String, SceneSettings)] = ["rect", "tube", "sphere", "rect-mesh", "tube-mesh", "sphere-mesh"].map {
             var s = SceneSettings(); s.lightCheck = $0; return ($0, s)
         }
         scenes += [SceneKind.spots, .tubes, .area, .emissive, .mixed].map { ("\($0)", SceneSettings(kind: $0)) }
         scenes.append(("stress32", stressHall()))
         return scenes.flatMap { tag, scene -> [Config] in
-            [(DirectLightMode.exact, false), (.restir, false), (.restir, true)].map { mode, grid in
+            [(DirectLightMode.exact, false), (.sampled, false), (.sampled, true)].map { mode, grid in
                 Config("\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), gi: nil, scene: scene) {
-                    $0.restir.grid.enabled = grid
-                    $0.restir.grid.share = 32      // every candidate
+                    $0.sampledLights.grid.enabled = grid
+                    $0.sampledLights.grid.share = 32      // every candidate
                 }
                 .sky { $0 = SkySettings() }        // constant sky: the sky's own noise stays out of the comparison
                 .reference(frames: 1024).direct(mode)
             }
-        }
-    }
-
-    /// ReSTIR GI is unbiased: accumulated indirect light (the "Indirect only" view, 2 bounces, unclamped) of path
-    /// tracing against ReSTIR GI without reuse (the same paths, as reservoirs), with temporal and (unbiased) spatial
-    /// reuse, and with the quarter budget, in Cornell and the stress hall (Tools/eval/restirgi.py).
-    static func restirgicheck() -> [Config] {
-        [("cornell", SceneSettings()), ("stress", stressHall())].flatMap { tag, scene -> [Config] in
-            let pt = Config("\(tag) pt", scale: 0.5, scene: scene).sky { $0 = SkySettings() }.view(6).reference(frames: 1024)
-            // No multi-bounce feedback (it isn't in the paths).
-            var noReuse = pt.named("\(tag) restirgi noreuse").with {
-                $0.giMode = .restirGI
-                $0.restirGI.feedback = false; $0.restirGI.temporal = false; $0.restirGI.spatialPasses = 0
-            }
-            noReuse.accumulateTechnique = true
-            // Spatial reuse on is unbiased by default.
-            let reuse = noReuse.named("\(tag) restirgi reuse").with { $0.restirGI.temporal = true; $0.restirGI.spatialPasses = 1 }
-            return [pt, noReuse, reuse, reuse.named("\(tag) restirgi quarter").with { $0.restirGI.quarterBudget = true }]
         }
     }
 
@@ -62,7 +44,7 @@ extension Benchmark {
         let scene = SceneSettings(kind: .shapes)
         let base = Config("", scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene)
         var out = [base.named("cascades").still(), base.named("pt").with { $0.giMode = .pathTraced }.still(),
-                   base.named("restir").direct(.restir).still()]
+                   base.named("sampled").direct(.sampled).still()]
         for view in ["Normals", "Triangles", "Traversal cost"] {
             out.append(base.named(view.lowercased()).view(RenderSettings.viewModes.firstIndex(of: view)!).still().frames(8))
         }
@@ -785,7 +767,7 @@ extension Benchmark {
 
     /// Direct specular light is counted once: the glossy light scenes with direct light only (so the reflections see lit
     /// surfaces and nothing else), each direct-light path against the accumulated reference (Tools/eval/specular.py).
-    /// The shadow denoiser adds direct specular in the composite, SVGF and references in the reflection pass, ReSTIR
+    /// The shadow denoiser adds direct specular in the composite, SVGF and references in the reflection pass, sampled lights
     /// from its reservoirs. No tone curve and 2 stops down, so highlights compare linearly instead of clipping.
     static func speccheck() -> [Config] {
         picked([.area, .spots, .tubes]).flatMap { kind -> [Config] in
@@ -795,7 +777,7 @@ extension Benchmark {
             return references([base.named("\(kind) ref").reference(frames: 1024)]) + [
                 still.named("\(kind) shadow denoiser"),
                 still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
-                still.named("\(kind) restir").direct(.restir),
+                still.named("\(kind) sampled").direct(.sampled),
             ]
         }
     }
@@ -819,7 +801,7 @@ extension Benchmark {
     static func skycheck() -> [Config] {
         let valley = SceneSettings(kind: .valley)
         let methods: [(String, GIMode, Bool)] = [("pt", .pathTraced, false), ("pt-lightmaps", .pathTraced, true),
-                                                 ("cascades", .radianceCascades, false), ("restirgi", .restirGI, false)]
+                                                 ("cascades", .radianceCascades, false)]
         var out: [Config] = []
         for shadows in [true, false] {
             let tag = shadows ? "shadows" : "no shadows"
@@ -864,7 +846,7 @@ extension Benchmark {
     /// The generated city (Scene+City.swift, CityPlan, BuildingGenerator). First the frames to look at: the default
     /// city from above, from the road and in front of one building; a block of each style, close and whole; the same
     /// street with flat colours instead of the generated textures; the city at night, and with more rooms behind its
-    /// windows (the frame before too: the windows' light is ReSTIR's). Then frame time against the city's size, by
+    /// windows (the frame before too: the windows' light is sampled). Then frame time against the city's size, by
     /// day ("glass" is its panes' pass) and at night, and the camera moving over it.
     static func city() -> [Config] {
         func town(_ name: String, night: Bool = false, _ change: (inout CitySettings) -> Void = { _ in }) -> Config {
@@ -927,7 +909,7 @@ extension Benchmark {
             out.append(Config("open world aerial \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3,
                               gi: .radianceCascades, scene: SceneSettings(kind: .world)).view(mode).still().frames(8).from(aerial))
         }
-        for (tag, gi) in [("pt", GIMode.pathTraced), ("restir gi", .restirGI), ("cascades", .radianceCascades)] {
+        for (tag, gi) in [("pt", GIMode.pathTraced), ("cascades", .radianceCascades)] {
             for mode in [1, 2, 5, 6, 7] {
                 out.append(Config("\(tag) cornell \(RenderSettings.viewModes[mode].lowercased())", scale: 0.5, upscale: 3, gi: gi)
                     .view(mode).still().frames(8))

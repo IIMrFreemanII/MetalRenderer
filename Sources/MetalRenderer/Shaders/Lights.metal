@@ -607,6 +607,6 @@ inline uint sampleLightTable(device const LightTableEntry* table, uint count, ui
     return e.element;
 }
 
-// The stored precision of a sample's uv (ReSTIR's reservoirs, the light grid), so a sample is evaluated at the same
+// The stored precision of a sample's uv (the light grid), so a sample is evaluated at the same
 // point wherever it is reused.
 inline float2 quantizeUV(float2 uv) { return unpack_unorm2x16_to_float(pack_float_to_unorm2x16(uv)); }

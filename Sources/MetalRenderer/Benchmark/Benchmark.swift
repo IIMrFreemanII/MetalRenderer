@@ -31,7 +31,6 @@ package final class Benchmark {
         var dt: Float = 1.0 / 60.0          // the clock's step a frame (seconds)
         package var frames: Int? = nil              // measured frames, if not the default
         var accumulate = false              // reference image: average raw frames instead of denoising
-        package var accumulateTechnique = false     // with accumulate: average the GI method's frames instead of path tracing (restirgicheck)
         var supersample = false             // with accumulate: jitter every frame and average the final colour (anti-aliased reference)
         package var capturePrevious = false         // also save the second-to-last frame (for frame-to-frame flicker)
         var record = false                  // also save every other measured frame (30 fps), as JPEGs in a folder of its own
@@ -170,13 +169,13 @@ package final class Benchmark {
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.restir, .restirGI, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.sampledLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }
 
         /// (As the memberwise initializer, for the modules above this one.)
-        package init(name: String, settings: RenderSettings, directLight: DirectLightMode? = nil, startTime: Float = 0, dt: Float = 1.0 / 60.0, frames: Int? = nil, accumulate: Bool = false, accumulateTechnique: Bool = false, supersample: Bool = false, capturePrevious: Bool = false, record: Bool = false, cameraPath: Bool = false, camera: Camera? = nil, flight: SIMD3<Float>? = nil, track: CameraTrack? = nil, body: Bool = false, ride: Int? = nil, events: [(time: Float, event: Event)] = []) {
+        package init(name: String, settings: RenderSettings, directLight: DirectLightMode? = nil, startTime: Float = 0, dt: Float = 1.0 / 60.0, frames: Int? = nil, accumulate: Bool = false, supersample: Bool = false, capturePrevious: Bool = false, record: Bool = false, cameraPath: Bool = false, camera: Camera? = nil, flight: SIMD3<Float>? = nil, track: CameraTrack? = nil, body: Bool = false, ride: Int? = nil, events: [(time: Float, event: Event)] = []) {
             self.name = name
             self.settings = settings
             self.directLight = directLight
@@ -184,7 +183,6 @@ package final class Benchmark {
             self.dt = dt
             self.frames = frames
             self.accumulate = accumulate
-            self.accumulateTechnique = accumulateTechnique
             self.supersample = supersample
             self.capturePrevious = capturePrevious
             self.record = record

@@ -73,11 +73,10 @@ below were measured on an M1 Max, which it ran on until October 2026; they say s
   * The streamer maps and uploads the finest level 1.5% of the samples need and unmaps levels nobody needed lately.
   * The gallery's 2.6 GB of 4K textures need 14 MB from the overview and 46–65 MB close up.
 * **Direct light:** ray-traced soft shadows. With up to 4 lights, each light gets one shadow ray per pixel. With more, lights are split into 4 colour groups, and each pixel picks one light per group, weighted by how much light it would get from it unshadowed, then traces one shadow ray to it. That's 4 rays per pixel whatever the light count, but picking still weighs every light.
-* **ReSTIR DI for many lights (default above 256 lights):** each pixel draws a few candidate lights from a world-space light grid (ReGIR: reservoirs per cell, rebuilt on the GPU every frame from the current lights, so moving and flickering lights cost nothing) and from a power-weighted alias table in O(1), keeps one by resampling, and reuses last frame's and its neighbours' picks. GI's bounces, the reflections and the fog draw their light samples from the same grid. The cost depends on the resolution, not the light count: 16384 lights cost 17 ms where 4096 lights cost 53 ms with the grouped picker (see "Many lights" below).
-* **Global illumination, four methods** (switch with **M** or in the settings panel):
+* **Sampled lights above 256 lights (default there):** each pixel draws a few candidate lights from a world-space light grid (ReGIR: reservoirs per cell, rebuilt on the GPU every frame from the current lights, so moving and flickering lights cost nothing) and from a power-weighted alias table in O(1), keeps one by resampling, and traces one shadow ray. Nothing is reused between frames or pixels; the denoiser averages it. GI's bounces, the reflections and the fog draw their light samples from the same grid. The cost depends on the resolution, not the light count (see "Many lights" below).
+* **Global illumination, two methods** (switch with **M** or in the settings panel):
   * **Radiance cascades (default):** probes on a screen grid trace world-space rays over distance intervals that grow 4× per cascade. The cascades are merged top-down, giving each probe its incoming light without noise.
   * **Path traced:** a 1-sample-per-pixel diffuse path is traced for 1 to 8 bounces. Each bounce samples one light directly (next-event estimation), picked in proportion to its unshadowed light there, and picks up sky light. The result is denoised.
-  * **ReSTIR GI:** the same paths, but each path's first bounce is kept as a reservoir sample and resampled from frame to frame (optionally also from neighbouring pixels, unbiased). Its paths' last hits add last frame's indirect light (multi-bounce). It is the most accurate method: 42.2 dB in the Cornell room and 36.4 dB in the stress hall, against 36.1 and 25.5 dB for radiance cascades, for 2–3× their cost (see "Indirect light (ReSTIR GI)" below).
   * Radiance cascades get **multi-bounce** light, and light their ray hits from per-light **light-visibility maps**, so they need no shadow rays.
   * **A lone tree under an open sky** (the plant workshop, `SceneDefinition.cascadeSkyGaps`): a probe ray that leaves its interval with no coarser probe on its own surface asks whether it reaches the sky (one visibility query, no shading) and takes the sky's light if it does, blended out as those probes match. A crown's coarse probes sit on other leaves deeper in, whose rays see little of the sky, so its leaves had come out a third darker than path traced (mid-tones 59/62/40 sRGB against 79/82/54; now 78/81/57; the crown 24.3 → 28.8 dB against the path tracer through MetalFX). Other scenes leave it off and render bit for bit as before: the forest's crowns already matched the path tracer (the backlit view within 1% of it) and the queries cost it 0.8 ms (7.7 → 8.5); the workshop pays 0.04 ms.
 * **Light-visibility maps:** each frame, every light traces a 128×128 map of the distance to the nearest geometry in each direction (smaller beyond 16 lights, so all the maps together always cost about as much as 16). The sun's map is orthographic instead, over the scene's bounding sphere. Secondary hits look up their shadowing there: from every light with up to 8 lights, otherwise from 4 lights picked by their unshadowed light. The path tracer can also use these maps for its bounces ("light bounces from light maps"). The sun's map has texels metres wide in a big scene, too coarse to see a wall or a ceiling, so inside the walkable interiors' box (`Scene.interiorBox`, the buildings with rooms) a hit traces one ray toward the sun instead, the map taking over beyond its reach (`giSunVisibility`); there the cascades' intervals also overlap by half (no sunlit outside leaking through walls), their rays move inside their bins every frame with the resolve averaging the frames (no blotches where a small sunlit patch lights a room), and the fog's sky light is occluded by one ray up (`fogSkyAmbient`). Outside the box nothing changes, and costs nothing (rays through a forest's leaves would cost a third of its frame on the M1 Max).
@@ -214,22 +213,18 @@ For the lights:
 * `emissivelights=0`, added to `METALRENDERER_SCENE` or set as `METALRENDERER_EMISSIVE_LIGHTS=0`, turns emissive-mesh lights off.
 * `METALRENDERER_SCENE=check=empty,model=Tools/test-assets/punctual-lights.gltf` shows the glTF light test file (a point, a spot and a sun) on an empty floor.
 * `METALRENDERER_BENCH=lights` renders each demo scene paused at t = 5 s: direct light only, then each GI method, then moving. `METALRENDERER_LIGHTS_SCENES="sun|mixed"` picks scenes.
-* `METALRENDERER_BENCH=speccheck` checks that direct specular light is counted once. It renders the studio, the stage and the garage with direct light only through each direct-light path (shadow denoiser, SVGF, ReSTIR) and against an accumulated reference; `Tools/eval/specular.py` prints each image's brightness over the reference's, which should be 1.00, its PSNR and its flicker.
+* `METALRENDERER_BENCH=speccheck` checks that direct specular light is counted once. It renders the studio, the stage and the garage with direct light only through each direct-light path (shadow denoiser, SVGF, sampled lights) and against an accumulated reference; `Tools/eval/specular.py` prints each image's brightness over the reference's, which should be 1.00, its PSNR and its flicker.
 * `METALRENDERER_BENCH=lightcheck` cross-checks the closed-form area lights. A rect, a tube and a sphere light are each rendered over a floor next to an emissive-mesh twin of the same shape and radiance, converged over 1024 frames. The mesh estimator is unbiased, so the pairs should match:
   * the sphere matches its twin within 0.1%;
   * the rect within 1%;
   * the tube within 7%, which is the extra light from the capsule twin's end caps.
 
 For many lights:
-* `METALRENDERER_DIRECT=auto|exact|grouped|restir` picks the direct-light method (`METALRENDERER_LIGHTS=all` is `exact`).
-* `METALRENDERER_RESTIR="candidates=8,chains=4,temporal=1,maxm=8,spatial=1,k=4,radius=24,vis=0,split=0,sigma=3,passes=4,history=8,boost=2,grid=1,gcells=16,glevels=2,gsize=1,gscale=3,gslots=32,gk=8,gshare=6"` overrides ReSTIR's settings (these are the defaults; `g*` is the light grid: cells per axis, levels, the first level's cell size in metres, the size factor per level, reservoirs per cell, table candidates per reservoir, and how many of `candidates` come from the grid).
+* `METALRENDERER_DIRECT=auto|exact|grouped|sampled` picks the direct-light method (`METALRENDERER_LIGHTS=all` is `exact`).
+* `METALRENDERER_SAMPLED_LIGHTS="candidates=8,rays=1,grid=1,gcells=16,glevels=2,gsize=1,gscale=3,gslots=32,gk=8,gshare=6"` overrides the sampled lights' settings (these are the defaults; `g*` is the light grid: cells per axis, levels, the first level's cell size in metres, the size factor per level, reservoirs per cell, table candidates per reservoir, and how many of `candidates` come from the grid).
 * `METALRENDERER_LIGHT_TABLE=1` or `0` forces the light-table shader variant on or off (normally on above 256 lights).
-* `METALRENDERER_BENCH=restir` times the stress scene at 1 to 16384 lights with each method (exact up to 256, grouped up to 4096), then the Night market at 1024, 4096 and 16384 bulbs.
-* `METALRENDERER_BENCH=restirq` renders direct light only (640×400) at 32, 128, 1024 and 4096 lights with each method, still and moving, against accumulated references (every light traced up to 1024 lights; above that, ReSTIR without reuse, which is unbiased). `METALRENDERER_BENCH=marketq` does the same in the Night market at 4096 bulbs, with ReSTIR's candidates from the table alone and from the light grid (plus the candidates alone, 64 frames averaged, for the samplers' own variance). `METALRENDERER_BENCH=restircheck` accumulates ReSTIR without reuse, from the table and from the grid, against every light traced in each light-type scene, to check both are unbiased. `Tools/eval/restir.py` scores all three.
-
-For ReSTIR GI:
-* `METALRENDERER_RESTIR_GI="quarter=0,bounces=2,lightmaps=0,feedback=1,dfeedback=1,fallback=1,temporal=1,maxm=2,age=30,spatial=0,k=2,unbiased=1,radius=30,dmin=0.02,denoise=1,sigma=3,passes=2,history=8,boost=2,antilag=0"` overrides its settings in every benchmark setting (these are the defaults).
-* `METALRENDERER_BENCH=restirgicheck` accumulates indirect light (2 bounces, unclamped, no feedback) of path tracing against ReSTIR GI without reuse, with temporal and unbiased spatial reuse, and with the quarter budget, in the Cornell room and the stress hall. `Tools/eval/restirgi.py` scores it: the mean brightness ratios should be 1.00.
+* `METALRENDERER_BENCH=manylights` times the stress scene at 1 to 16384 lights with each method (exact up to 256, grouped up to 4096), then the Night market at 1024, 4096 and 16384 bulbs.
+* `METALRENDERER_BENCH=manylightsq` renders direct light only (640×400) at 32, 128, 1024 and 4096 lights with each method, still and moving, against accumulated references (every light traced up to 1024 lights; above that, sampled lights, which are unbiased). `METALRENDERER_BENCH=marketq` does the same in the Night market at 4096 bulbs, with candidates from the table alone and from the light grid. `METALRENDERER_BENCH=sampledcheck` accumulates sampled lights, from the table and from the grid, against every light traced in each light-type scene. `Tools/eval/manylights.py` scores all three.
 
 For the fog:
 * `METALRENDERER_FOG=0` or `1` turns it off or on in every scene's preset.
@@ -275,7 +270,7 @@ For the plants:
 
 The models in `Assets/` (596 MB) are stored with [Git LFS](https://git-lfs.com): install it before cloning (`brew install git-lfs && git lfs install`), or run `git lfs pull` afterwards. `.gitattributes` sends 3D models (`.glb`, `.fbx`, `.obj`, `.usd(z)`, `.blend`), HDR skies (`.hdr`, `.exr`) and the buffers and textures under `Assets/` to LFS. Put any glTF files there. The caches in `Assets/.metalrenderer-cache/` (4.4 GB for the 11 sample models: 1.9 GB of geometry DAGs, 2.5 GB of texture mip chains) can be deleted at any time; they're rebuilt on the next load.
 
-Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,cascades,cascades-hq,restirgi,restirgi-q`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=pt,bounces=4`, `mode=cascades,spacing=4,b1=0.25` or `mode=restir`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
+Use `METALRENDERER_BENCH=gi` to compare the GI methods. It first renders 8-bounce, unclamped path-traced references by averaging thousands of frames of the paused scene; skip them with `METALRENDERER_GI_REFS=0` once you have them. Then, for each method, it renders a static frame, the next one (for flicker), an indirect-only frame, a moving frame, a frame at the end of a scripted camera move, and a frame with MetalFX on. `METALRENDERER_GI_MODES` picks the methods, for example `pt,pt-lightmaps,cascades,cascades-hq`. `METALRENDERER_GI` overrides GI settings everywhere, for example `mode=pt,bounces=4` or `mode=cascades,spacing=4,b1=0.25`. `METALRENDERER_TG`, for example `trace=16x8`, overrides a kernel's threadgroup size.
 
 
 `Tools/eval/` scores the saved PNGs against reference images committed in `Tools/eval/refs/` (PSNR and flicker; see its README).
@@ -297,9 +292,9 @@ The benchmark renders frames back to back without vsync, so the GPU's clock stay
 | W A S D, Q E | Move, down/up (hold Shift to move 3.2× faster; the speed is in the panel) |
 | Space | Pause animation |
 | G | Toggle global illumination |
-| M | GI method: path traced, radiance cascades, ReSTIR GI |
+| M | GI method: path traced, radiance cascades |
 | N | Toggle denoiser (shows the raw 1-spp signal) |
-| [ ] | Fewer / more GI bounces (path traced, ReSTIR GI) |
+| [ ] | Fewer / more GI bounces (path traced) |
 | - = | Lower / raise render resolution |
 | U | Upscaling (MetalFX denoiser): off, 1.5×, 2×, 3× (output is capped at the window's pixel size) |
 | B | Toggle blue-noise sampling (on by default; the tile is generated once, in the background of the first launch, and kept in `~/Library/Caches/MetalRenderer`) |
@@ -335,14 +330,14 @@ The window title and the Debug window show the resolution, frame rate and GPU ti
 ### The settings panel
 
 * **Sections** fold with their triangles; the panel scrolls and can be resized, and keeps the size you drag it to. Rows that don't apply to the current mode are hidden (the stress scene's object count, each GI method's parameters, ReSTIR's, fog's while it's off).
-* **Show advanced** (at the bottom) adds every remaining setting: ReSTIR DI's chains, confidence cap, neighbours, radius, the light grid's shape, split visibility and its own denoiser; ReSTIR GI's light maps, multi-bounce sources, caps, radius, minimum distance and its own denoiser; the shadow denoiser's history, clamp and edge tolerance; fog's base height, noise tile, wind and albedo; the clouds' thickness, size, erosion, wind direction and shadow strength; an HDR sky's exposure; and a Memory section (texture budget).
+* **Show advanced** (at the bottom) adds every remaining setting: the light grid's shape; the shadow denoiser's history, clamp and edge tolerance; fog's base height, noise tile, wind and albedo; the clouds' thickness, size, erosion, wind direction and shadow strength; an HDR sky's exposure; and a Memory section (texture budget).
 * **Camera and time:** exposure (EV) and the tone curve, the field of view, the move speed, the animation's speed, and, in the scenes with a day cycle, the time of day (an offset into the cycle that moves only the sun and the sky; it works while paused). In the Open world that is the whole day: 41% is sunset, 60% midnight. At their defaults (0 EV, ACES, 60°, 1×) images are bit-identical to before.
 * **What the GPU can't run** stays listed and greyed out: the MetalFX denoiser (Rendering > Upscale) and its frame interpolator. The launch log's first line says what was found (`Metal ray tracing: hardware, MetalFX denoiser: yes, Metal 4: yes (ray tracing: yes)`). Metal ray tracing and Metal 4's are not optional: a GPU without them is refused at launch ("This GPU doesn't support Metal 4 ray tracing (an M3 or later), which the renderer needs"). Metal 4 with ray tracing needs an Apple9 GPU (M3, M4 and later); M1 and M2 have Metal 4 but not its ray tracing. A saved setting or an environment variable that asks for something missing falls back to the default with a line in the log.
-* **Denoiser:** a caption says what the generic rows (passes, σ, history, anti-lag) filter in the current mode. ReSTIR DI and ReSTIR GI filter their own signal with their own settings, under Show advanced in their sections.
+* **Denoiser:** a caption says what the generic rows (passes, σ, history, anti-lag) filter in the current mode.
 * **Remembered:** settings are saved (UserDefaults) half a second after each change and restored at the next launch, except the pause, the view, the reference picture, Freeze LOD and added models. `METALRENDERER_SETTINGS=default` starts from the defaults instead. Benchmarks never read or write them.
 * **Copy as Env** puts the `METALRENDERER_*` variables that reproduce the current settings on the clipboard, listing only what differs from the defaults (fog and sky from the scene's preset). They work in a normal launch, where they override the saved settings, and in benchmarks, where they apply to every setting. A key the app doesn't know, or a value it can't read, is reported on the console and skipped. `METALRENDERER_DUMP_SETTINGS=1` prints the settings as JSON at startup, to compare two launches. The camera pose and where added models were placed aren't included.
 
-The environment variables, in a normal launch and in benchmarks: `METALRENDERER_SCENE`, `METALRENDERER_GI` (now also `on=0` for GI off), `METALRENDERER_DENOISE`, `METALRENDERER_RESTIR`, `METALRENDERER_RESTIR_GI`, `METALRENDERER_FOG_SET` (now also `albedo=r:g:b` and `wind=x:y:z`), `METALRENDERER_SKY_SET`, and `METALRENDERER_VIEW="exposure=1,tonemap=agx,fov=70,speed=5,timescale=0.5,tod=0.25"` (plus `view=<index>` and `paused=1` outside benchmarks; `reference=off|accumulated|pt,refbounces=8,refspp=1,refmax=0` for the reference picture). The plain ones (`METALRENDERER_DIRECT`, `_API`, `_VG`, `_VG_TAU`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`) set defaults, as before.
+The environment variables, in a normal launch and in benchmarks: `METALRENDERER_SCENE`, `METALRENDERER_GI` (now also `on=0` for GI off), `METALRENDERER_DENOISE`, `METALRENDERER_SAMPLED_LIGHTS`, `METALRENDERER_FOG_SET` (now also `albedo=r:g:b` and `wind=x:y:z`), `METALRENDERER_SKY_SET`, and `METALRENDERER_VIEW="exposure=1,tonemap=agx,fov=70,speed=5,timescale=0.5,tod=0.25"` (plus `view=<index>` and `paused=1` outside benchmarks; `reference=off|accumulated|pt,refbounces=8,refspp=1,refmax=0` for the reference picture). The plain ones (`METALRENDERER_DIRECT`, `_API`, `_VG`, `_VG_TAU`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`) set defaults, as before.
 
 ### The loading overlay
 
@@ -412,11 +407,9 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 | Freeze LOD | Off | Keeps the cut chosen for the camera position at the moment it was turned on (title: "LOD frozen"). Fly up to a model to see the coarse geometry it gets from far away; turn it off and it refines within a few frames. |
 | Specular | On | GGX specular for glTF materials (direct and reflections). Off: diffuse only, and no reflection pass. |
 | Emissive surfaces are lights | On | Emissive geometry is sampled for direct light, with shadow rays, and lights GI through its light map. Off: it only lights what GI rays happen to hit, as before (radiance cascades ignore it entirely). Toggling it rebuilds the scene. |
-| Direct light | Auto | Auto: ReSTIR above 256 lights, otherwise Grouped (which traces every light up to 4). Exact: one shadow ray per light, every frame (slow beyond a few dozen). Grouped: one light per colour group, picked over all lights. ReSTIR: see "Many lights" below. |
-| Candidates | 8 per pixel | ReSTIR: light-table candidates per pixel and chain, plus one per sun. |
-| Spatial reuse | 1 pass | ReSTIR: passes over 4 neighbours' reservoirs each (off, 1 or 2). |
-| Temporal reuse | On | ReSTIR: resample last frame's reservoir (reprojected). |
-| Visibility reuse | Off | ReSTIR: test the initial pick's visibility before reuse. Less noise but about 10% darker, because the target function ignores visibility. |
+| Direct light | Auto | Auto: Sampled above 256 lights, otherwise Grouped (which traces every light up to 4). Exact: one shadow ray per light, every frame (slow beyond a few dozen). Grouped: one light per colour group, picked over all lights. Sampled: see "Many lights" below. |
+| Candidates | 8 per ray | Sampled: candidates per ray from the light grid and table, plus one per sun. |
+| Rays | 1 | Sampled: shadow rays per pixel. Four add under 1 dB for about 1 ms at 640×400. |
 | Shadow rays | 1 per group + reuse | Grouped, with more than 4 lights: shadow rays per light group and pixel. "Reuse" keeps each pixel's light picks for up to 4 frames (ReSTIR-style temporal resampling): a third less flicker on still frames for about 0.7 ms. 2 rays per group halve the flicker and are the most accurate, for about 4 ms more at 400 objects. |
 
 #### The stress test
@@ -435,9 +428,9 @@ A 40 × 8 × 40 m building in four zones round a cross-shaped aisle: a **warehou
   |---|---|---|---|---|---|---|---|
   | GPU ms | 12.24 | 13.88 | 15.35 | 15.89 | 27.35 | 35.41 | 14.18 |
 
-  Quality at 640×400 against the converged references (`METALRENDERER_BENCH=stressq`, `Tools/eval/stress.py`): direct light 29.4–29.5 dB still and moving at 32 lights, 27.4 dB at 128; the final image against an 8-bounce path-traced reference 25.7 dB with radiance cascades, 27.7 dB path traced, 31.0 dB with ReSTIR GI; MetalFX's denoiser at 3× against supersampled frames 29.3 dB (albedo) and 26.9 dB (direct light).
+  Quality at 640×400 against the converged references (`METALRENDERER_BENCH=stressq`, `Tools/eval/stress.py`): direct light 29.4–29.5 dB still and moving at 32 lights, 27.4 dB at 128; the final image against an 8-bounce path-traced reference 25.7 dB with radiance cascades, 27.7 dB path traced; MetalFX's denoiser at 3× against supersampled frames 29.3 dB (albedo) and 26.9 dB (direct light).
 
-  ReSTIR DI and its light grid, accumulated without reuse, match tracing every light here (mean brightness ratio 1.00, 47–48 dB, `METALRENDERER_BENCH=restircheck`).
+  Sampled lights and their light grid, accumulated, are checked against tracing every light with `METALRENDERER_BENCH=sampledcheck`.
 * `METALRENDERER_BENCH=stressdemo` records its demo: a 58 s tour (the overview, down a warehouse aisle, the factory's walkway, the office, the garage's upper deck) along a camera track with the showcase's lens, as a 30 fps JPEG sequence; `.claude/skills/offscreen/scripts/video.sh -m stressdemo -o demo.mp4` makes the mp4.
 * Every run builds the same building (seeded). It replaced a 20 × 6 × 20 m hall of floating and bouncing cubes and spheres lit by drifting sphere lights in October 2026: the figures in this README quoted for "the stress hall" or "the stress scene" were measured in that hall, unless a table says otherwise.
 
@@ -490,122 +483,43 @@ Costs at 960×600 on an M1 Max, measured with surfel GI (since removed):
 * **Rect lights:** four of them cost 3 ms of trace time, for their form factors and shadow rays.
 * **Mesh lights:** the mesh-light pass costs 1.5–2.4 ms, mostly its shadow ray.
 
-### Many lights (ReSTIR DI)
+### Many lights
 
-With hundreds or thousands of lights, the grouped picker still loops over every light per pixel, and the light maps trace one map per light. ReSTIR DI (Bitterli et al. 2020) replaces both with work that doesn't depend on the light count.
+With hundreds or thousands of lights, the grouped picker still loops over every light per pixel, and the light maps trace one map per light. Sampled lights (`Shaders/SampledLights.metal`) replace both with work that doesn't depend on the light count.
 
 * **Light table** (`LightTable.swift`). Built once per scene: every analytic light but the suns, plus every emissive-mesh triangle, in a Vose alias table weighted by nominal power, mixed with 10% uniform probability so a dim light close to a pixel still gets picked. It sits after the lights in the per-frame light buffer. Moving and flickering lights change only the target function, never the table. Up to 2 suns are drawn separately, one candidate each per pixel, combined by multiple importance sampling.
 * **Light grid** (ReGIR, Boksansky et al. 2021; `regirBuildKernel`). The table knows power, not position: in a 64 m street most of a pixel's table draws are bulbs tens of metres away. So every frame the GPU rebuilds a camera-centred world-space grid of light reservoirs from the current lights: 2 levels of 16³ cells (1 m and 3 m cells, 16 m and 48 m across), 32 reservoirs per cell, each the pick of 8 table draws by an orientation-free target (luminance toward the cell centre over the squared distance, clamped to the cell's half diagonal; cosines, cones and facing dropped, so it's positive for every light that could reach the cell, which keeps a draw from it unbiased), stored with its W. That's 262k reservoirs (4 MB) built in 0.65 ms, whatever the light count, and nothing on the CPU: moving, swaying and flickering lights are simply in next frame's grid. The grid's origin is jittered by up to a cell every frame. It is bound with the scene, so the secondary hits (the path tracer's next-event estimation, the cascades' and ReSTIR GI's hits, the reflections' hits) draw all but one of their RIS candidates from it, and the fog resamples 3 grid and 1 table candidates (plus the suns) by their unshadowed in-scatter in place of its weighted loop over a 32-light subset, which also made the fog pass cheaper.
-* **Sample and target.** A sample is (light element, a point on it as two 16-bit coordinates). Points move with their light, so reusing a sample needs no Jacobian. The target function is the luminance of the sample's unshadowed diffuse plus specular light at the pixel.
-* **`restirTemporalKernel`**: per pixel and chain, 8 candidates plus the suns, resampled by the target: 6 from the grid (a reservoir of the pixel's cell, the cell jittered by up to half a cell per candidate so neighbouring cells blend in, weighed target × its W / 8) and 2 from the table (target / (8 pdf)); outside the grid, all 8 from the table. The constant 1/8 for both sources keeps the mix unbiased; the table draws cover what a cell's 32 reservoirs missed. Then last frame's reservoir at the reprojected pixel (depth and normal tests), merged with the generalized balance heuristic. That uses last frame's light positions, so moving lights stay unbiased. Confidence is capped at 8 frames.
-* **`restirSpatialKernel`**: 4 neighbours in a 24 px disc rotated every frame, merged with pairwise MIS. Then one shadow ray per chain. There are 4 independent chains per pixel, each with its own share of the neighbours, so the frame traces the same 4 rays per pixel as the grouped picker.
-* **Denoising.** ReSTIR's output is radiance, not per-light visibility, so SVGF filters it (σ 3, 4 passes, 8 frames of history) with its variance doubled, because reused samples are correlated and look steadier than they are. Direct specular goes into the reflection pass's signal.
+* **Sample and target.** A sample is a light element and a point on it. The target function is the luminance of the sample's unshadowed diffuse plus specular light at the pixel.
+* **`sampledLightsKernel`**: per ray, 8 candidates plus the suns, resampled by the target: 6 from the grid, the rest from the table, each weighed by its source. Then one shadow ray. Nothing is kept between frames or pixels.
+* **Denoising.** The output is radiance, not per-light visibility, so MetalFX's denoiser or SVGF filters it. Direct specular goes into the reflection pass.
 * **Above 256 lights**, the shaders are specialised with a light-table flag (`LIGHT_TABLE`):
   * the light maps are off (one per light would cost N·32² rays, and more than 2048 can't be allocated);
   * GI's direct light at secondary hits (cascades, path-tracer bounces) and the path tracer's next-event estimation draw 8 candidates from the table, with one shadow ray;
   * the sky pixels draw only the suns' discs.
 * **Night market** (`Scene+Lights.swift`): a 64 m street with 32 festoon strings (a quarter of them chasing), 80 swaying lanterns, 40 stall canopies and about 60 windows as rect lights (some flickering), 24 neon signs as emissive meshes (10k triangles), 60 walking shoppers and a moon, in light fog.
 
-Whole-frame GPU ms on an M1 Max (stress scene, 400 objects, radiance cascades, custom upscaler 3× from 640×400; `METALRENDERER_BENCH=restir` with `METALRENDERER_BENCH_SPLIT=0`):
+Direct light in the stress hall (M4 Max, 640×400, one denoised frame against accumulated references; `METALRENDERER_BENCH=manylightsq`, `Tools/eval/manylights.py`). Times are the whole frame's GPU.
 
-| Lights | 1 | 4 | 32 | 256 | 1024 | 4096 | 16384 |
-|---|---|---|---|---|---|---|---|
-| Exact | **4.35** | **7.32** | 30.53 | 231.83 | — | — | — |
-| Grouped | 4.38 | 7.35 | **8.97** | **12.05** | 19.68 | 52.76 | — |
-| ReSTIR, table only | 8.93 | 10.23 | 11.45 | 12.55 | **13.83** | **15.46** | **17.12** |
-| ReSTIR + light grid (default) | 9.10 | 10.45 | 11.60 | 12.75 | 14.14 | 15.62 | 17.30 |
+| Lights | Method | GPU ms | Still | Flicker | Moving | Mean |
+|---|---|---|---|---|---|---|
+| 32 | Grouped (Auto) | 1.79 | 29.44 dB | 1.05 | 29.41 dB | 1.04 |
+| 32 | Sampled | 1.51 | 27.75 dB | 0.92 | 27.39 dB | 1.00 |
+| 128 | Grouped (Auto) | 2.85 | 27.39 dB | 1.33 | 27.32 dB | 1.04 |
+| 128 | Sampled | 1.56 | 26.71 dB | 1.25 | 26.38 dB | 1.00 |
+| 1024 | Grouped | 12.81 | 27.07 dB | 1.42 | 27.01 dB | 1.02 |
+| 1024 | Sampled (Auto) | 1.53 | 26.33 dB | 1.35 | 25.89 dB | 0.98 |
+| 4096 | Grouped | 50.03 | 30.72 dB | 1.40 | 30.51 dB | 1.02 |
+| 4096 | Sampled (Auto) | 1.83 | 28.50 dB | 1.46 | 28.34 dB | 0.97 |
 
-| Night market bulbs | 1024 | 4096 | 16384 |
-|---|---|---|---|
-| Grouped | 33.91 | 87.01 | — |
-| ReSTIR, table only | **18.04** | **18.46** | **18.73** |
-| ReSTIR + light grid (default) | 18.85 | 19.17 | 19.31 |
+ReSTIR DI, removed in November 2026, took 4.8–5.7 ms in the same runs, scored 27.1–30.5 dB still and had about half the flicker (0.53–0.81). More rays barely help sampled lights: four add 0.1–0.6 dB for about 1.1 ms. Measurements elsewhere in this file that name ReSTIR DI or ReSTIR GI are from before that.
 
-From 32 to 16384 lights, ReSTIR's frame grows by 5.7 ms, while the light count grows 512×. It costs about 4.4 ms more than the grouped picker at 1 light (the extra passes and their denoiser) and breaks even near 256 lights. The light grid adds 0.2–0.3 ms in the stress hall and 0.6–0.8 ms in the market (its 0.65 ms build overlaps the trace, and the fog pass gets 0.2–0.4 ms cheaper). The market rows are from after its bulbs, windows and canopies became static instances (below): that took 0.3–0.6 ms off every ReSTIR row there and left the stress hall, where every light moves, unchanged. (The ReSTIR rows are a later run than the Exact and Grouped rows, with the Debug window's counters in the build; same machine.)
-
-Quality, direct light only (640×400, PSNR against accumulated references, `METALRENDERER_BENCH=restirq`, `Tools/eval/restir.py`; flicker is the mean frame-to-frame change on a still frame, mean is brightness against the reference). References trace every light up to 1024 lights; at 4096 they are ReSTIR without reuse, accumulated, which is unbiased:
-
-| Lights | Method | Static | Flicker | Moving | Mean |
-|---|---|---|---|---|---|
-| 32 | Exact | **37.80 dB** | **0.15** | 34.87 dB | 1.00 |
-| 32 | Grouped | 36.73 dB | 0.74 | **35.28 dB** | 1.04 |
-| 32 | ReSTIR | 34.32 dB | 0.59 | 31.04 dB | 1.00 |
-| 128 | Exact | **40.11 dB** | **0.12** | 36.96 dB | 1.00 |
-| 128 | Grouped | 37.55 dB | 0.92 | **37.35 dB** | 1.04 |
-| 128 | ReSTIR | 35.35 dB | 0.61 | 32.02 dB | 1.00 |
-| 1024 | Grouped | **38.06 dB** | 0.90 | **37.90 dB** | 1.03 |
-| 1024 | ReSTIR | 35.17 dB | **0.65** | 32.19 dB | 1.00 |
-| 4096 | Grouped | **37.05 dB** | 0.93 | **36.84 dB** | 1.03 |
-| 4096 | ReSTIR | 34.34 dB | **0.68** | 31.87 dB | 1.00 |
-
-ReSTIR is 2.3–2.9 dB below the grouped picker on still frames and 4.2–5.7 dB below in motion, where SVGF's history is short. It flickers less, and its brightness is right where the grouped picker's is 3–4% high.
-
-* **The light grid in the Night market** (4096 bulbs, 640×400, against accumulated references; `METALRENDERER_BENCH=marketq`):
+* **The light grid in the Night market** (4096 bulbs, 640×400, against accumulated references; `METALRENDERER_BENCH=marketq`, measured with ReSTIR DI):
   * Direct light: the candidates alone, 64 frames averaged, score 35.3–35.8 dB from the table and 38.1–38.2 dB from the grid; after reuse and SVGF, a still frame scores 32.9–33.1 dB from the table and 33.3–33.6 dB from the grid, with the same flicker. In the stress hall, whose equal lights fill the room, the grid changes nothing (±0.1 dB).
   * Indirect light alone (view 6, against a 2048-frame path-traced reference): a denoised path-traced frame 29.6 → 30.0 dB, a cascades frame 28.7 → 29.2 dB; 256 raw path-traced frames averaged 26.4 → 27.2 dB, mean 1.03 → 1.01.
   * The fog's scattering alone (view 14, against the per-pixel reference march): the froxel grid 39.7 → 40.7 dB, the march itself over 128 frames 41.7 → 43.6 dB, mean 1.00 either way. What mattered: without the per-candidate cell jitter, every pixel of a cell drew from the same 32 reservoirs, and the grid scored 0.8–1.0 dB *below* the table in both scenes (correlated candidates reuse badly); 16 reservoirs per cell lose 0.8 dB; a third level (144 m) or 16 draws per reservoir add nothing a 640×400 frame can show for twice the build.
-* **Unbiased:** accumulated ReSTIR without reuse, from the table and from the grid, matches tracing every light in every light-type scene (rect, tube and sphere lights and their emissive-mesh twins, spots, tubes, area, emissive, mixed, the stress hall): mean brightness ratio 1.00, 39–65 dB (`METALRENDERER_BENCH=restircheck`). With reuse, it stays at 1.00 (table above).
-* **Below Grouped quality at low light counts.** Grouped's shadow denoiser filters only visibility and multiplies it back onto an exact unshadowed term, so shading stays sharp. ReSTIR's noise is in the radiance itself, and SVGF has to blur it. So Auto switches to ReSTIR only above 256 lights, where Grouped's per-pixel loop starts to dominate the frame.
-* **What lost:**
-  * Visibility reuse (testing the initial pick before reuse): about 10% darker, since the target ignores visibility.
-  * Zeroing occluded samples' weights after shading: 30% darker, because the confident zeros spread through reuse.
-  * Denoising visibility (shadow denoiser) and unshadowed light (SVGF) apart: one visibility channel can't hold coloured shadows (4% too bright).
-  * One chain instead of 4: cheaper, but visibly noisier. Sharing one set of candidates across the chains: −1.5 dB at 1024 lights.
-
-### Indirect light (ReSTIR GI)
-
-ReSTIR GI (Ouyang et al. 2021) keeps the path tracer's one path per pixel but reuses its first bounce. A sample is the path's first hit point x_s, its normal and the light L leaving it toward the pixel (everything the rest of the path gathered).
-
-* **Exact reconnection.** Secondary hits shade as diffuse here (their albedo doesn't depend on the direction), so L is the same toward any pixel, and another pixel can reconnect to x_s exactly. Samples are treated as points on surfaces (area measure), so the Jacobian of a reconnection is part of the target function: luminance(L) × the pixel's cosine lobe × cos at x_s / distance².
-* **The path tracer's own lobe.** The pixel's lobe is the path tracer's direction pdf (cosine about the shading normal, with directions below the triangle mirrored above it), not cos/π, so a fresh sample's estimate equals the path tracer's.
-* **`restirGIInitialKernel`**: the path, with the path tracer's bounces, next-event estimation and sky, as a reservoir (M = 1, W = 1/pdf). Its last hit adds last frame's denoised indirect light where that point was on screen, and last frame's mean indirect light elsewhere (as the radiance cascades do).
-* **`restirGITemporalKernel`**: last frame's reservoir at the reprojected pixel (depth and normal tests), merged by confidence, capped at M = 2. A sample older than 30 of its pixel's fresh paths is dropped, since its light was gathered under old lights.
-* **`restirGISpatialKernel`**: optional spatial reuse (off by default), then one visibility ray to the pick, skipped when it is the pixel's own fresh path. It writes the indirect light, which SVGF denoises (σ 3, 2 passes, 8 frames, variance doubled for the correlated samples).
-* **Unbiased spatial reuse.** A neighbour's samples are hit points of its own paths, so it can never produce a point it doesn't see. Weighing its technique as if it could darkened the stress hall by 8%. With unbiased reuse on, the targets include visibility: one ray from each neighbour to this pixel's sample and one from this pixel to each neighbour's. Without them it is cheaper but 8–17% darker in the stress hall.
-* **Quarter budget** (optional): one thread per 2×2 block traces a rotating pixel, so each pixel gets a fresh path every 4th frame. Sample ages count only those frames; counting every frame dropped long-lived samples, which are the bright ones, and darkened the image by 2–6%.
-* **Unbiased:** without feedback, accumulated ReSTIR GI matches accumulated path tracing in the Cornell room and the stress hall, without reuse, with temporal and spatial reuse, and with the quarter budget: mean brightness ratio 1.00 in each (`METALRENDERER_BENCH=restirgicheck`).
-
-Settings panel (Global illumination, with ReSTIR GI selected):
-
-| Setting | Default | Effect |
-|---|---|---|
-| Rays | 1 per pixel | 1 per 2×2 pixels: the quarter budget (see below). |
-| Bounces | 2 | Path length; the first bounce is the reused sample. Also `[` and `]`. |
-| Multi-bounce | On | The paths' last hits add last frame's indirect light (on screen) or its mean (off screen). |
-| Temporal reuse | On | Resample last frame's reservoir (reprojected). |
-| Spatial reuse | Off | 1 or 2 passes over 2 neighbours' reservoirs each. |
-| Unbiased spatial reuse | On | Visibility in the spatial targets: two rays per neighbour. |
-
-Quality (640×400, against the 8-bounce path-traced references; `METALRENDERER_BENCH=gi` and `stressq`, `Tools/eval/gi.py` and `stress.py`; mean is the indirect light's brightness against the reference's) and whole-frame GPU ms at the default setting (custom upscaler 3× from 640×400, `METALRENDERER_BENCH_SPLIT=0`, M1 Max):
-
-| Cornell room | GPU ms | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
-|---|---|---|---|---|---|---|---|---|
-| Path traced, 2 bounces | 8.6 | 25.7 dB | 24.4 dB | 21.1 dB | 0.76 | 25.6 dB | 25.5 dB | 0.30 |
-| Radiance cascades | **2.9** | 36.1 dB | 34.7 dB | 31.1 dB | 0.95 | 36.1 dB | 36.1 dB | **0.05** |
-| **ReSTIR GI** | 8.4 | **42.2 dB** | **43.3 dB** | **38.8 dB** | 1.01 | **41.9 dB** | **41.7 dB** | 0.45 |
-| ReSTIR GI, quarter budget | 4.8 | 41.8 dB | 42.6 dB | 38.1 dB | 1.01 | 36.7 dB | 26.5 dB | 0.37 |
-
-| Stress hall, 32 lights | GPU ms | Static | Contact crop | Indirect only | Mean | Moving | Camera move | Flicker |
-|---|---|---|---|---|---|---|---|---|
-| Path traced, 2 bounces | 19.3 | 32.5 dB | 35.1 dB | 27.0 dB | 0.81 | 31.3 dB | 31.2 dB | 0.66 |
-| Radiance cascades | **9.0** | 25.5 dB | 28.0 dB | 22.2 dB | 0.92 | 25.3 dB | 25.3 dB | 0.76 |
-| **ReSTIR GI** | 21.5 | **36.4 dB** | **38.2 dB** | **34.5 dB** | 1.02 | **35.8 dB** | **35.6 dB** | 0.71 |
-| ReSTIR GI, quarter budget | 12.4 | 35.6 dB | 37.3 dB | 33.3 dB | 1.02 | 28.6 dB | 27.1 dB | **0.60** |
-
-* **Gallery close-up** (PBR, full detail): 33.5 dB, against 31.6 dB path traced and 30.8 dB with cascades.
-* **Night market** (4096 bulbs, fog off, against an 8-bounce reference rendered for this test): 30.4 dB, against 30.0 dB path traced and 29.5 dB with cascades. Whole frame: 27.6 ms, against 26.8 and 18.7 ms (with the scene's fog).
-* **Why it isn't the default:** it costs 2–3× as much as radiance cascades (8.4 vs 2.9 ms in the Cornell room). The paths cost what the path tracer's do: 5.2 ms at 640×400 in the Cornell room and 12 ms in the stress hall.
-* **The quarter budget** is 1.7× cheaper and nearly as good on still frames (−0.4 to −0.8 dB), but a pixel that loses its history (disocclusion, camera moves) waits up to 4 frames for a fresh path: −5 to −15 dB in motion. So it's off by default.
-
-What mattered, measured with these benchmarks:
-* **Multi-bounce feedback.** With 2 bounces and nothing more, the image reaches 77–81% of the reference's brightness, and ReSTIR GI scores like the path tracer (25.9 and 31.7 dB). Last frame's indirect light where the path ends on screen raised that to 31.4 and 34.3 dB. The mean of last frame's indirect light for points off screen raised it to 42.2 and 36.4 dB.
-* **A third bounce** adds 1.4 dB in the Cornell room and 0.8 dB in the stress hall, for 2.5 and 6 ms more. So the default is 2.
-
-What didn't help:
-* **Reuse doesn't lower the error here; it lowers flicker.** On raw frames, temporal reuse is a big gain: the stress hall's indirect light goes from 13.4 to 18.1 dB and its flicker from 41 to 7.2. After SVGF, though, no reuse at all scores as well or slightly better: 43.1 and 36.6 dB still, 42.8 and 36.1 dB moving. But it flickers about 40% more (0.62 and 1.04, against 0.45 and 0.71). The denoiser already averages over time, and reused samples lag behind moving lights. That's why the confidence cap is 2: a cap of 16 costs 0.5 dB on still frames and 2–4.5 dB in motion.
-* **Spatial reuse.** Unbiased, it adds no PSNR after the denoiser, whatever the neighbour count (1 to 5), and costs 3–12 ms for its rays. Before visibility was part of the targets, it even added noise: picks a pixel couldn't see contributed nothing. So it's off by default.
-* **The denoiser's settings** (σ 2–5, 1–3 passes, history 4–16, variance boost 1–4) moved scores by at most 0.5 dB. Anti-lag never triggers: the raw signal is too noisy for its test.
-* **One bounce** with feedback costs about 5 ms in the Cornell room and scores 35.5 dB, below the cascades' 36.1 dB at 2.9 ms.
+* **Unbiased:** accumulated sampled lights, from the table and from the grid, match tracing every light in every light-type scene (rect, tube and sphere lights and their emissive-mesh twins, spots, tubes, area, emissive, mixed, the stress hall): mean brightness 1.00, 39–65 dB (`METALRENDERER_BENCH=sampledcheck`).
+* **Night market** (4096 bulbs, the default look, MetalFX 3× from 640×400): the whole frame takes 3.41 ms, against 6.51 ms with ReSTIR DI. Direct light alone against the accumulated reference (`marketq`, SVGF): 30.13 dB still with flicker 0.99, against 33.05 dB and 0.51.
+* **Below Grouped quality at low light counts.** Grouped's shadow denoiser filters only visibility and multiplies it back onto an exact unshadowed term, so shading stays sharp. Sampled lights' noise is in the radiance itself. So Auto switches only above 256 lights.
 
 ### Volumetric fog
 
@@ -1022,7 +936,7 @@ The Character Editor (H or ⌘Y, a SwiftUI panel: `Characters/Editor/`) makes pe
     diffuse light wraps past where the surface turns from the light, red furthest (blood takes the green and blue
     first), which softens and reddens the shadow's edge; the ears and the nostrils' wings glow red with light from
     behind (their shadow rays start past them, so thick parts stay dark). It is in the light term, so the denoisers,
-    ReSTIR and the composite shade it alike; the reference path tracer shades it the same.
+    Sampled lights and the composite shade it alike; the reference path tracer shades it the same.
   * **Textures drawn from the face** (`SkinTextures`, `SkinChart`): each texel of the atlas knows the point of the head
     it shows, so features are placed by the sculpt's landmarks: pores (wider on the nose and cheeks), lines across the
     lips, wrinkles with age (forehead, between the brows, crow's feet, under the eyes, beside the mouth, the neck), a
@@ -1469,7 +1383,7 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 * **A tile has its lights in its file.** What emits is not a mesh of its own: a lit blind is a triangle of its tile's chunk like any other, with an emissive material among the chunk's 256. The tile's lights are the triangles of a chunk that have one such material (a building's lit blinds, the rooms' lamps of one colour, the tile's lamp heads): the records the shaders sample, each with its share of the light's power, and the light's power, bounds and mean normal, put together once when the tile is made (`WorldTile.lights`, the same code that makes a scene's own mesh lights). A scene takes them as they are (`Scene.addMeshLight`), so a crossing copies the new tiles' records and builds the light table over them; nothing walks the tiles' triangles again.
 * **A mesh light names its material.** A mesh light was an instance with one material; now its record has the material's place from its instance's first (`Light.axis.w`, 0 for every other scene's), which the two places that read a light point's emission add. That is all the shaders needed: a hit on a lit window shades it by its triangle's material as it does any triangle of a chunk.
 * **Which lights are sampled:** everything lit in the camera's tile and its eight neighbours, and the street lamps of the tiles to 1 km, so the streets seen from above are lit as far as they have lamps. Further out, and for the windows and rooms of the tiles between, what emits is seen and lights only what a GI ray from there happens to hit. Around the first city that is 300 to 670 mesh lights of 23,000 to 56,000 triangles; in the middle of a city of 889 m (seed 3), 650 to 770 of 100,000.
-* **A crossing starts the lights' reuse again.** A pixel's light reservoir names its light by its place in the scene's table, and the next scene's table is another: ReSTIR's temporal reuse and the light picks start from nothing in the first frame of a new scene, where by day they carry over. The upscaler's and the denoisers' histories hold as by day (and so does the sky, which is not drawn again for the next scene).
+* **A crossing starts the lights' reuse again.** The light picks name a light by its place in the scene's table, and the next scene's table is another: they start from nothing in the first frame of a new scene, where by day they carry over. The upscaler's and the denoisers' histories hold as by day (and so does the sky, which is not drawn again for the next scene).
 * **Haze at night.** The fog is on at night as by day, so the far tiles fade into the night's sky as they do into the day's. It is lit by the moon and the sky alone (`Lights scatter in it` is off for this scene): with the lamps and windows in it, a froxel's one light sample a frame scatters in blotches, which is why the City at night has no fog at all. A lamp has no halo for it.
 * **Checked:** the 24 pictures of `METALRENDERER_BENCH=worlddusk` are bit-identical on Metal 3 and Metal 4 (custom tracer), the two with the clock running through the change of scene among them, and the two tracers' means agree within 0.4%. The first frame of the scene with the lights is no brighter or darker than the next (`METALRENDERER_SHOT_SWAP=0` against `=1` and `=30`: the means fall by the 0.3 a frame the setting sun takes). A flight of 3 km at 150 m/s while the dusk goes by makes 16 scenes; its longest frame is 18 ms on the custom tracer and 29 ms on Metal 4 with Metal's tracer and a resident's life of 16 frames, and none fails. (The first such flights had one frame of 0.8 and 1.5 s: a scene with other features, glass or mesh lights or neither, needs other pipelines, and the first time ever those are compiled a benchmark waits for the kernels' variants. The app makes them in the background, and Metal keeps them.) Every other scene's picture is bit-identical to the build before.
 * **Cost**, on an M4 Max at 640×400 upscaled 3×, the first city from above and from a street: by day 6.9 to 7.7 ms and 5.0 to 5.5 ms on the custom tracer, 3.5 to 3.8 and 2.8 to 3.0 on Metal's with Metal 4, as before (the day's four views and its flight are within 0.2 ms of the build before, and a crossing is its 62 ms). With the lights 12.9 to 13.7 and 10.8 to 11.3 ms, 6.7 to 7.0 and 5.7 on Metal's: every pixel draws its light from the table and traces its shadow rays (ReSTIR DI). Sunset and sunrise are 14.5 to 15.0 and 11.0 to 11.6 ms, 8.5 to 8.8 and 8.3 to 8.7 on Metal's. The change of scene at dusk is made in 31 to 45 ms (111 ms in an unoptimised build) and installed in 0.3 ms.
@@ -1479,7 +1393,7 @@ Measured on an M4 Max (`METALRENDERER_BENCH=world`, `METALRENDERER_WORLD_TEST=1`
 * The open world's plants stand still: no wind there (see "Generated plants").
 * **They are baked into meshes while no leaves have fallen** (`Scene.bakesPlants`; from autumn, when leaves fall, or with leaf cards or far voxels asked for, they are assemblies, which drop leaves). An assembly's third level of instancing made every ray that meets a plant cost about twice as much on an M4 Max's ray-tracing hardware. Baked, whole frames are 13 to 17% faster (Metal 3: the start 3.97 → 3.37 ms, a street 3.36 → 2.93, the woods 3.50 → 2.92, the flight at 3x 5.49 → 4.65; Metal 4 12 to 15%), a crossing's scene is made in 2.1 s instead of 2.8, and its longest frame is 36 ms instead of 180 to 200. It costs memory: the scene holds 1.31 GB on the GPU instead of 0.87 (geometry 575 MB instead of 389, instances 135 instead of 70, structures 602 instead of 409). The pictures are the same but for which leaves show their far side's light (it goes by the triangle's number, which baking changes; with opaque leaves the start and the aerial view are within 0.9 levels RMS, the woods 1.7, in the leaves of the hedges and crowns). Where plants move (the Forest, the valley) they stay assemblies. Baked, the Forest's still frame would be 25% faster (8.18 → 6.17 ms, its camera rays 1.33 → 0.69 ms), but of the 2 ms about 0.45 is the three-level query type itself (forced on over baked plants: 6.19 → 6.61 ms) and the rest the rays that walk a third level. So baking only the plants beyond the wind's reach would win back part of the 1.6 ms (the rays that meet far plants) while the queries keep their type, and the scene would hold both forms of every plant: not done. Nor tracing only the GI rays (the cascades, reflections) through a still, baked copy of the plants, with a structure of its own: at most what baking every plant saves those passes, 0.54 ms of the Forest's 8.18 (its cascades 1.52 → 1.10 ms, reflections 0.82 → 0.70) and 0.18 of the valley's 5.0.
 * Lights come on by material: a building's lit blinds together, and all the lit rooms of a chunk. A window that is lit is lit all night.
-* While the scene has the lights and the sun is the light, ReSTIR runs for the sun alone; and a sun near the horizon is dear on either path, its shadow rays crossing the whole scene. Sunset and sunrise are the dearest frames of the day.
+* While the scene has the lights and the sun is the light, sampled lights run for the sun alone; and a sun near the horizon is dear on either path, its shadow rays crossing the whole scene. Sunset and sunrise are the dearest frames of the day.
 * The eye's adaptation is a curve, the moon is always full, the stars don't turn, and no cloud is lit from below after the sun has set for the ground.
 * At night a street's lamps go on as its tile comes within 1 km, and the windows of the tiles beyond the camera's neighbours light nothing but by GI; ReSTIR draws lights for pixels no light reaches.
 * A road joins two cities only if their cells are next to each other: a city with no such neighbour has no road out of it. Roads meet nowhere but in a city, and there is no bridge and no tunnel: a road crosses a valley on a bank and a hill in a cutting, and is up to 19% steep. Every street is 12 m and every road between cities 8 m, with no cars, no signs and no traffic lights. A field is a colour and its rows: the wheat doesn't stand.
@@ -2673,7 +2587,7 @@ For iterating on scenes, physics and destruction, solid shading draws the frame 
 `solidclassic=1` is the old look: every surface flat grey, lit by a studio light fixed to the camera (a key light from the upper left, a weak fill from the right, and an ambient that goes from sky to ground), with the surface's smooth normal. Its images are main's to the bit. The demolition scene opens in solid shading and gives it back when you leave it. The new look costs more than the classic one: in the demolition scene at 1920×1200, 7.3 ms against 2.8 (no shadows or AO: 5.2; each AO ray about 1 ms more). Turn it on with ` (backtick), App menu → Solid Shading (⇧⌘S), the Rendering section's "Solid shading" checkbox, or `METALRENDERER_VIEW="solid=1"`, which also works in benchmarks. The setting is saved with the others, and the window title says "solid" while it is on.
 
 The classic look is one kernel (`solidKernel`, Shaders/Output.metal) that traces one camera ray per pixel and writes the drawable; the new one is two (the rays into three targets, then the picture). Nothing else runs:
-* no shadows, light grid, ReSTIR, MegaLights or many-light sampling;
+* no shadows, light grid, MegaLights or many-light sampling;
 * no GI, reflections, denoisers, fog or sky;
 * no TAA, MetalFX or lens.
 
@@ -2712,7 +2626,7 @@ Rendering > Reference (key T) replaces the realtime picture with a converged one
 
 | Mode | What it averages |
 |---|---|
-| Accumulated passes | The frame's own passes, raw: path-traced GI (Ref. bounces), exact direct light (ReSTIR's unbiased candidates above 1024 lights), the reflection pass's specular, the fog's reference march. This is what the benchmarks' references are (`METALRENDERER_BENCH=gi`). Its limits are those of the passes: bounces past the first hit are diffuse, window glass gets a fixed ambient light and no refraction, area lights are their analytic irradiance times the visibility of one point, and the averaged light is multiplied by the current frame's albedo, so edges stay aliased. |
+| Accumulated passes | The frame's own passes, raw: path-traced GI (Ref. bounces), exact direct light (sampled lights above 1024 lights), the reflection pass's specular, the fog's reference march. This is what the benchmarks' references are (`METALRENDERER_BENCH=gi`). Its limits are those of the passes: bounces past the first hit are diffuse, window glass gets a fixed ambient light and no refraction, area lights are their analytic irradiance times the visibility of one point, and the averaged light is multiplied by the current frame's albedo, so edges stay aliased. |
 | Path traced | One kernel (`Shaders/PathTrace.metal`) traces whole paths from jittered camera rays (anti-aliased), Ref. samples/frame paths per pixel per frame. The same materials as the frame (Lambert + GGX); every bounce can be glossy. Window glass is a thin dielectric (Fresnel-weighted mirror, or straight on with its tint, which shadows take too). The volumetric fog is a participating medium: the same density field (height fog, noise, local volumes, albedo, phase function), met by every ray of the path, which scatters in it as often as it happens to (free-flight sampling), with shadow rays dimmed through it. Next-event estimation samples each light by solid angle, and the bounce rays also meet the lights; multiple importance sampling (power heuristic) combines the two. Up to 32 lights each is weighed at every point; with more, the light tree draws them (`LightTree.swift`, the suns apart) and bounce rays meet them at their visible shapes. Emissive meshes are lit by next-event estimation through the diffuse lobe and met by the specular one. The first 6 bounces draw Owen-scrambled Sobol points per pixel (white noise past them; `METALRENDERER_PT_SOBOL=0` for white noise throughout). Russian roulette after 3 bounces; no firefly clamp. |
 
 Path traced's fog fills the scene's bounding sphere, the same bounds the realtime fog dims sunlight in: the sun's and the sky's light is what reaches the scene. It has no far cutoff, no haze and no ambient term (all three stand in for what the realtime fog leaves out); its light comes from the lights and the sky through the fog, scattered as often as it happens to, so it differs from the realtime picture: darker where the ambient term lit it, softer and brighter around lit shafts, and surfaces are lit through it (the realtime fog never dims a lit surface). A preset with no height falloff (the mixed room, the tubes garage, the emissive room) fills the whole sphere evenly, outdoors too: in the mixed room the dusk sun crosses some 40 m of it, and its patch on the floor is a quarter as bright as without fog. Light that gets in only through windows or gaps (the sky seen through the misty hall's windows) is found by bounce and scattered rays alone, so those scenes stay grainy longer. Camera rays see the lights' shapes as the frame does; with more than 32 lights a bounce ray that grazes a sphere light outside its shape's facets misses it. In fog, the first frames after a launch don't count until the fog's noise is made (in both modes). Ref. max samples stops adding samples once that many are in (the fog too). Costs at 640×400 on an M1 Max, one path per pixel and 8 bounces, as upper bounds (measured while another session kept the GPU busy): Cornell 13.6 ms, gallery 13.4, area lights 15.3, the stress hall 50, the emissive room 25, the mixed room 42, the misty hall 44 and the night market 55 (the last four with their fog).
@@ -3048,7 +2962,7 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
        variant or voxel level); a scene in which nothing moves has one, built with the scene
        textures: map + upload the mip levels last frame's hits asked for (sparse textures), unmap unused ones
     1a regirBuildKernel  many lights: the light grid, per cell (2 levels x 16^3) 32 reservoirs of 8 table draws by
-                       luminance toward the cell, from this frame's lights (ReSTIR DI's, GI's, the reflections' and
+                       luminance toward the cell, from this frame's lights (sampled lights', GI's, the reflections' and
                        the fog's light samples draw from it)
     1b lightMapKernel  per-light distance maps (radiance cascades, path tracer with light maps)
     2  traceKernel     primary ray -> G-buffer (normal, depth, albedo, emission, motion, world position)
@@ -3065,10 +2979,9 @@ GPU 0  the scene's structures, ahead of every ray (TraceScene: the TLAS and what
                        against last frame's picks (default)
     2e meshLightsKernel emissive meshes: 1 light by its proxy, 1 triangle by emitted power, 1 shadow ray
                        (denoised by SVGF on its own, or added to the direct light without the shadow denoiser)
-    2g restirTemporalKernel  ReSTIR DI (default above 256 lights; replaces 2, 2c and 2e's direct light): per chain
-                       (4), 8 light-table candidates + the suns resampled by unshadowed luminance, then last
-                       frame's reservoir; restirSpatialKernel: neighbours' reservoirs, 1 shadow ray per chain ->
-                       diffuse direct light (denoised by SVGF) and direct specular (added by the reflections)
+    2g sampledLightsKernel  sampled lights (default above 256 lights; replaces 2, 2c and 2e's direct light): per ray
+                       (1), 8 candidates + the suns resampled by unshadowed luminance, 1 shadow ray ->
+                       diffuse direct light (denoised by SVGF or MetalFX) and direct specular (added by the reflections)
     2b cascades        probes -> trace + merge per cascade (top down) -> SH projection -> resolve
     2d reflectionKernel glTF specular materials: 1 GGX ray per pixel, hit lit by 1 light sample + this frame's
                        diffuse GI on screen; / specular albedo; temporal + 2 a-trous passes
@@ -3139,7 +3052,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `SkeletonAtlas.swift` | The écorché's skeleton: its bones built from the rig's joints out of round cones, ellipsoids and plates, their meshes and the grid of their distance the muscles are carved from |
 | `VoxelGrids.swift`, `VoxelLOD.swift` | The grids as one-box structures per level, and a still scene's far baked plants' levels, picked as the camera moves and built into another instance structure in the background |
 | `Terrain.swift` | The forest's ground: a noise heightfield, as a mesh and as a height function |
-| `LightTable.swift` | Every light and emissive triangle as one alias table by power (ReSTIR DI's candidates; GI with many lights) |
+| `LightTable.swift` | Every light and emissive triangle as one alias table by power (sampled lights' candidates; GI with many lights) |
 | `LightTree.swift` | The path tracer's many lights (more than 32): a bounding hierarchy over every light but the suns, drawn by importance at each point (`Shaders/LightTree.metal`), refitted as lights move |
 | `FogNoise.swift` | The fog's tiling 3D density noise |
 | `Atmosphere.swift` | The atmosphere's constants and sun transmittance on the CPU (the sun light's colour); HDR sky images, with their sun found and cut out |
@@ -3169,7 +3082,7 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
-| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `LightTree` (the path tracer's many lights), `Fog`, `Sky`, `Trace`, `Glass`, `RestirDI`, `RestirGI`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
+| `Shaders/*.metal` | All GPU code, one file per subject: `Types`, `Sampling`, `Intersect`, `Surface`, `Lights`, `Regir`, `LightSampling`, `LightTree` (the path tracer's many lights), `Fog`, `Sky`, `Trace`, `Glass`, `SampledLights`, `Reflections`, `Denoise`, `Output`, `Post` (the lens and the finish), `RadianceCascades`, `VirtualGeometry`, `Foliage` (the wind, and posing the plants' variants), `Crowd` |
 
 ## M1 / M2 Macs (history)
 
@@ -3567,14 +3480,13 @@ What didn't help:
 
 ## Where to go next
 
-1. **Many lights, sharper:** ReSTIR scales flat but stays below the grouped picker's quality up to 1024 lights, because SVGF blurs noisy radiance where the shadow denoiser only blurs visibility. The light grid made the candidates 2.4 dB better in the Night market, but SVGF turns that into 0.3–0.6 dB; a denoiser built for ReSTIR (ReBLUR or ReLAX-style, with the reservoirs' confidence as input) would blur less. The grid's cell target ignores orientation (so it stays unbiased); a conservative cone and facing test over the whole cell would drop the spots and rects that can't reach it, and a per-cell normal estimate from last frame's G-buffer would do better still. With the grouped picker, still frames still flicker more than with one ray per light; a denoiser that tracks the variance of fractional visibility over time is the likelier fix there.
+1. **Many lights, sharper:** sampled lights scale flat but score below the grouped picker's quality up to 1024 lights, because the denoiser blurs noisy radiance where the shadow denoiser only blurs visibility. ReSTIR DI, removed in November 2026, closed most of the flicker gap for about ten times the cost; it can be brought back from git history if a scene needs it.
 2. **Metal's tracer, everywhere:**
    * Measure the M4 Max (hardware ray tracing, Metal 4's ray tracing): leaf cards have only been measured in software on the M1 Max.
    * The wind's refits under Metal 3: the variants the plants within the sway reach name, two to an encoder, are 2% of the moving forest's frame on the M1 Max at the default 20 m (a fifth before the reach). Fewer variants named (buckets shared by more plants), or refits spread over frames, would cut it more.
    * Leaf cards: every card triangle goes back to the shader for its alpha test (2.7 times as slow as the custom tracer's in software). Opaque card cores with only the edges alpha tested would hand back fewer.
    * With 2000 objects the frame still costs more than with 400; sorting secondary rays by direction for coherence is the thing to try.
-3. **Better GI caching:** radiance cascades and ReSTIR GI's multi-bounce feedback fall back to the scene's average indirect light at points no screen pixel covers, and cascades lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
-4. **Cheaper ReSTIR GI:** its paths cost what the path tracer's do, so it runs at 2–3× the cascades' cost. Half-resolution reservoirs (with full-resolution reuse), or paths that end in a world-space radiance cache after one bounce, would cut that. The multi-bounce feedback alone, which made most of its gain, could also be given to the plain path tracer. And a denoiser that uses the reservoirs' confidence (ReBLUR or ReLAX-style) might turn reuse's lower raw noise into a lower error, which SVGF doesn't.
+3. **Better GI caching:** radiance cascades' multi-bounce feedback falls back to the scene's average indirect light at points no screen pixel covers, and cascades lose 7 dB to the path tracer in cluttered scenes like the stress hall. A coarse world-space irradiance volume (or DDGI probes) would give those points real local values.
 5. **The crowd, further:**
    * Write the walkers' transforms on the GPU (instance data and Metal's instance descriptors), which is what the CPU still does per character and frame.
    * Metal's tracer pays per refitted structure: refit half the slots a frame, or build the poses' structures with Metal 4's own acceleration-structure encoder where it exists.

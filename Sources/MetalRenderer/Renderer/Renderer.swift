@@ -238,16 +238,13 @@ package final class Renderer: NSObject {
     package var instanceDescBuffers: [MTLBuffer] { sceneBuffers.instanceDescriptors }
     package var instanceDataBuffers: [MTLBuffer] { sceneBuffers.instanceData }
     package var lightBuffers: [MTLBuffer] = []      // per slot: the lights, then the light table (LightTable)
-    package var restirGrid: RestirTargets?
+    package var sampledSpecular: MTLTexture?        // sampledLightsKernel's specular light, for the reflection pass
     package var regirBuffer: MTLBuffer?             // the light grid's reservoirs (GPURegirReservoir), GPU only
     package var regirParams = GPURegirParams()      // this frame's grid (consume.x = 0: off), bound with the scene
-    package var restirWritten = false               // last frame's ReSTIR pass stored its reservoirs
     package var lightTree: LightTree?               // the path tracer's many lights: built on its first such frame in a scene
     package var lightTreeRefitFrame: UInt32 = 0
     package var lightTreeBuffers: [MTLBuffer?] = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
     package var lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)   // what each slot's holds
-    package var restirGIGrid: RestirGITargets?
-    package var restirGIWritten = false             // last frame's ReSTIR GI pass stored its reservoirs (and feedback)
     package var instanceAS: [MTLAccelerationStructure] {
         sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
             ?? sceneBuffers.instanceStructures
@@ -348,7 +345,6 @@ package final class Renderer: NSObject {
     package var prevJitter = SIMD2<Float>(repeating: 0)
     // Benchmark reference: average raw frames of a paused scene instead of denoising.
     package var benchmarkAccumulating = false
-    package var referenceGIMode: GIMode?                // benchmark references: accumulate this GI method instead of paths
     package var referenceDirectMode: DirectLightMode?   // benchmark references: this direct-light method instead of exact
     package var accumCount: UInt32 = 0
     package var accumTextures: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?

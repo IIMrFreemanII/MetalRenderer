@@ -19,8 +19,8 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 | Touched | Modes |
 |---|---|
 | Anything in the frame loop | `quick` |
-| GI (path traced, cascades, ReSTIR GI), the denoiser | `gi`, `denoise`, `restirgicheck` |
-| Direct light, many lights, ReSTIR DI, the light grid | `stressq`, `shadow`, `lightcheck`, `restircheck` |
+| GI (path traced, cascades), the denoiser | `gi`, `denoise` |
+| Direct light, many lights, the light grid | `stressq`, `shadow`, `lightcheck`, `sampledcheck` |
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
 | Reflections, specular light | `speccheck` |
 | The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |
@@ -43,13 +43,12 @@ What a mode costs, per run, on an M4 Max under macOS 27.0 without the references
 | `quick` | 4 | ≈4 | | `skycheck` | 20 | 28 |
 | `speccheck` | 18 | 10 | | `fogcheck` | 12 | 30 |
 | | | | | `stressq` | 39 | ≈37 |
-| | | | | `restirgicheck` | 8 | 60 |
-| | | | | `restircheck` | 36 | minutes |
+| | | | | `sampledcheck` | 36 | minutes |
 
 ≈: scaled down from the measured time when the other upscalers were removed (and, for `hwrt`, when the custom
 tracer went and its settings halved), not measured again.
 
-Narrow `restircheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
+Narrow `sampledcheck` with a filter (an unmatched `METALRENDERER_BENCH_ONLY` prints the mode's setting names). The
 other fifteen together take about five minutes per binary, so ten for a comparison.
 
 `vgdebug` and `gallery` need both binaries to read the same models *and the same caches*: pass

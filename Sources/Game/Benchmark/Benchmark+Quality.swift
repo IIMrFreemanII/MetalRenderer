@@ -33,8 +33,6 @@ extension Benchmark {
             Config("cascades", scale: 0.5, gi: .radianceCascades, scene: hall),
             Config("cascades-hq", scale: 0.5, gi: .radianceCascades, scene: hall) { $0.cascades.probeSpacing = 4; $0.cascades.firstInterval = 0.25 },
             Config("pt", scale: 0.5, scene: hall),
-            Config("restirgi", scale: 0.5, gi: .restirGI, scene: hall),
-            Config("restirgi-q", scale: 0.5, gi: .restirGI, scene: hall) { $0.restirGI.quarterBudget = true },
         ]
         for method in methods {
             let tag = method.name
@@ -55,14 +53,14 @@ extension Benchmark {
 
     /// Direct light (GI off, 640x400) in the stress scene at t = 5 s against references, for each direct-light method:
     /// static (+ previous frame, for flicker) and moving frames, at 32 to 4096 lights. References trace every light up
-    /// to Renderer.exactReferenceLights (1024), and accumulate ReSTIR's unbiased initial sampling above
-    /// (Tools/eval/restir.py).
-    static func restirq() -> [Config] {
+    /// to Renderer.exactReferenceLights (1024), and accumulate sampled lights above
+    /// (Tools/eval/manylights.py).
+    static func manylightsq() -> [Config] {
         [32, 128, 1024, 4096].flatMap { lights -> [Config] in
             let base = Config("", scale: 0.5, gi: nil, scene: stressHall(lights: lights))
             let ref = base.named("ref direct \(lights)").reference(frames: lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048)
-                .with { $0.restir.grid.enabled = false }   // the table alone
-            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .restir]
+                .with { $0.sampledLights.grid.enabled = false }   // the table alone
+            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .sampled]
             return references([ref]) + modes.flatMap { mode -> [Config] in
                 let method = base.direct(mode), tag = mode.title.lowercased()
                 return [method.named("\(tag) static \(lights)").still(previous: true), method.named("\(tag) moving \(lights)")]
@@ -71,30 +69,30 @@ extension Benchmark {
     }
 
     /// Direct light in the Night market (4096 bulbs, GI and fog off, 640x400) against an accumulated reference
-    /// (ReSTIR's unbiased initial sampling, as restirq's above 1024 lights): ReSTIR's candidates from the table alone
-    /// and from the light grid, static (+ previous frame, for flicker) and moving (Tools/eval/restir.py).
+    /// (sampled lights, as manylightsq's above 1024 lights): candidates from the table alone
+    /// and from the light grid, static (+ previous frame, for flicker) and moving (Tools/eval/manylights.py).
     static func marketq() -> [Config] {
         let market = SceneSettings(kind: .market, lights: 4096)
         let sources = [("table", false), ("grid", true)]
         // Fog off: direct light alone.
-        let base = Config("", scale: 0.5, gi: nil, scene: market).fog { $0 = FogSettings() }.direct(.restir)
-        var out = references([base.named("ref direct market").reference(frames: 2048).with { $0.restir.grid.enabled = false }])
+        let base = Config("", scale: 0.5, gi: nil, scene: market).fog { $0 = FogSettings() }.direct(.sampled)
+        var out = references([base.named("ref direct market").reference(frames: 2048).with { $0.sampledLights.grid.enabled = false }])
         for (tag, grid) in sources {
-            let st = base.named("restir \(tag) static market").still(previous: true).with { $0.restir.grid.enabled = grid }
+            let st = base.named("sampled \(tag) static market").still(previous: true).with { $0.sampledLights.grid.enabled = grid }
             // The candidates alone (no reuse, no denoiser), 64 frames averaged: the sampler's own variance.
-            let accum = st.named("restir \(tag) accum market").reference(frames: 64).with { $0.restir.grid.share = 32 }
-            out += [st, st.named("restir \(tag) moving market").moving(), accum]
+            let accum = st.named("sampled \(tag) accum market").reference(frames: 64).with { $0.sampledLights.grid.share = 32 }
+            out += [st, st.named("sampled \(tag) moving market").moving(), accum]
         }
         // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
         // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
         // per-pixel reference march, with GI's and the fog's candidates from the table and from the grid.
         let indirect = base.with { $0.giEnabled = true }.view(6).still()
         let fog = base.fog { $0 = FogSettings.preset(for: .market) }.view(14).still()
-        out += references([indirect.named("ref indirect market").reference(frames: 2048).with { $0.restir.grid.enabled = false },
-                           fog.named("ref scattering market").reference(frames: 512).with { $0.restir.grid.enabled = false }])
+        out += references([indirect.named("ref indirect market").reference(frames: 2048).with { $0.sampledLights.grid.enabled = false },
+                           fog.named("ref scattering market").reference(frames: 512).with { $0.sampledLights.grid.enabled = false }])
         for (tag, grid) in sources {
-            let pt = indirect.named("pt \(tag) indirect market").with { $0.restir.grid.enabled = grid }
-            let fg = fog.named("fog \(tag) scattering market").with { $0.restir.grid.enabled = grid }.frames(120)
+            let pt = indirect.named("pt \(tag) indirect market").with { $0.sampledLights.grid.enabled = grid }
+            let fg = fog.named("fog \(tag) scattering market").with { $0.sampledLights.grid.enabled = grid }.frames(120)
             out += [pt, pt.named("cascades \(tag) indirect market").with { $0.giMode = .radianceCascades }, fg,
                     // Accumulated (unclamped, no denoiser): the candidates' own variance and bias.
                     pt.named("pt \(tag) accum indirect market").reference(frames: 256),

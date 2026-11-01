@@ -184,7 +184,7 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
     // Analytic lights only (the first lightGroupEnd.w): meshLightsKernel samples the emissive-mesh lights.
     uint analyticLights = u.lightGroupEnd.w;
     uint own = tracePassFlags(u);
-    bool manyLights = (passOn(own, TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_RESTIR)) && !flagOn(u.flags, FLAG_ALL_LIGHTS);
+    bool manyLights = (passOn(own, TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_SAMPLED_LIGHTS)) && !flagOn(u.flags, FLAG_ALL_LIGHTS);
     if (!manyLights) {
         // One shadow ray per light. A channel shared by several lights gets their luminance-weighted visibility.
         float4 unshadowedSum = float4(0.0f), blockerWeight = float4(0.0f);
@@ -206,8 +206,8 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
         visibility = select(float4(0.0f), visibility / unshadowedSum, unshadowedSum > 0.0f);
         blocker = select(float4(0.0f), blocker / blockerWeight, blockerWeight > 0.0f);
     }
-    // With more lights, manyLightsKernel computes direct light, visibility and penumbrae after this kernel (ReSTIR:
-    // restirSpatialKernel the direct light).
+    // With more lights, manyLightsKernel computes direct light, visibility and penumbrae after this kernel (with the
+    // light table: sampledLightsKernel the direct light).
     if (!manyLights) {
         outVisibility.write(visibility, tid);
         outBlocker.write(roundToHalf(blocker), tid);
@@ -348,7 +348,7 @@ kernel void manyLightsKernel(constant Uniforms&               u          [[buffe
     outBlocker.write(roundToHalf(blocker), tid);
 }
 
-// 1d. The same with light reuse (RenderSettings.manyLightReuse, ReSTIR-style temporal resampling): each group keeps
+// 1d. The same with light reuse (RenderSettings.manyLightReuse, temporal resampling): each group keeps
 //     last frame's pick in a reservoir (light, confidence M, contribution weight W), reprojected with the motion
 //     vectors. This frame's exact pick and the reservoir's light (re-weighed here, where the lights are now) are
 //     resampled in proportion to their weights, and the winner gets the shadow ray. Every pick already follows the

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------------------------
 // Light grid (ReGIR, Boksansky et al. 2021): a camera-centred world-space grid of light reservoirs, rebuilt every frame
-// from the current lights (regirBuildKernel), so ReSTIR DI's candidates come from the lights near the pixel instead of
+// from the current lights (regirBuildKernel), so sampledLightsKernel's candidates come from the lights near the pixel instead of
 // the whole table by power. Each cell keeps `slots` reservoirs; each is the RIS pick of `candidates` table draws by an
 // orientation-free target (intensity toward the cell centre over the clamped squared distance: positive for every
 // element with power, so a cell covers the whole light domain and a draw from it stays unbiased), with W = 1 / its

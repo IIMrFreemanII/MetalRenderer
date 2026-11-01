@@ -14,8 +14,7 @@ python3 Tools/eval/shadow.py /tmp/run
 | `shadow.py` | `shadow`: Cornell direct light, static / moving / camera move | `refs/shadow/` (4096 frames) |
 | `gi.py` | `gi`: every GI method on Cornell (plus `mean`, the indirect light's brightness vs the reference) | `refs/gi/` (8-bounce path traced) |
 | `stress.py` | `stressq`: stress scene, direct light at 32 / 128 lights, each GI method's final image and indirect light, the MetalFX denoiser at 3× | `refs/stress/` |
-| `restir.py` | `restirq`: stress-scene direct light at 32 / 128 / 1024 / 4096 lights, each direct-light method; `restircheck`: ReSTIR without reuse vs every light traced, per light type (within the run) | `refs/restir/` (every light traced up to 1024; ReSTIR without reuse at 4096) |
-| `restirgi.py` | `restirgicheck`: accumulated ReSTIR GI (no reuse, reuse, quarter budget) vs accumulated path tracing, indirect light, Cornell and stress hall (within the run) | — |
+| `manylights.py` | `manylightsq`: stress-scene direct light at 32 / 128 / 1024 / 4096 lights, each direct-light method; `sampledcheck`: sampled lights vs every light traced, per light type (within the run) | `refs/manylights/` (every light traced up to 1024; sampled lights at 4096) |
 | `noise.py` | `denoise` (references from `noise`) | `refs/noise/` (render once, see below) |
 | `hwrt.py` | `hwrtq`: MetalFX's denoising scaler at 3×, final image, Cornell, stress hall and gallery (reflections) | `refs/hwrt/` (supersampled 1920×1200, path traced) |
 | `frost.py` | `frost`: the Material lobes scene's frosted sphere, still, after a camera move and raw: grain, flicker and error (within the run) | — (the run's own path-traced frame) |

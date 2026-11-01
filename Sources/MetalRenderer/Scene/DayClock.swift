@@ -67,7 +67,7 @@ package struct DayClock {
     package let otherScene: SceneKind?
 
     /// A day that jumps this much of its cycle (half an hour of the open world's) starts the light over: what the
-    /// frames before gathered of it (ReSTIR's reservoirs, the cascades, the denoiser's history) would
+    /// frames before gathered of it (the cascades, the denoiser's history) would
     /// smear the old light into the new. Less than that moves as the sun does when the day runs.
     package static let lightJump: Float = 1 / 48
 

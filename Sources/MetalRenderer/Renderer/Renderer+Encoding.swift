@@ -38,8 +38,8 @@ extension Renderer {
     package struct FrameStages {
         var lightGrid: [ComputeStage] = []           // 1a. the light grid, before everything that samples lights
         var head: [ComputeStage] = []                // 1b, 2. light maps, the trace
-        var gi: [ComputeStage] = []                  // 2b. radiance cascades or ReSTIR GI (they write t.indirect)
-        var restir: [ComputeStage] = []              // 2e. ReSTIR DI
+        var gi: [ComputeStage] = []                  // 2b. radiance cascades (they write t.indirect)
+        var sampledLights: [ComputeStage] = []       // 2e. sampled direct light
         var reflections: [ComputeStage] = []         // 2d. after the GI (they read its result)
         var fog: [ComputeStage] = []                 // 3d. first of the stages below
         var denoise: [ComputeStage] = []             // 2c, 3. sampled direct light, the denoisers
@@ -274,7 +274,7 @@ extension Renderer {
             passes.run(s.lightGrid)
             passes.run(s.head)
             passes.run(s.gi)
-            passes.run(s.restir)
+            passes.run(s.sampledLights)
             passes.run(s.reflections)
             passes.run(s.fog)
             passes.run(s.denoise)
@@ -283,14 +283,14 @@ extension Renderer {
         }
         // The light grid first (the trace's bounces read it); light map, trace and cascade probes need only the
         // TLAS; then the cascade chain and the denoiser chain advance in lock-step, one barrier per step.
-        // Reflections read the cascades' result: after both. ReSTIR leads the denoiser chain (after the fog).
+        // Reflections read the cascades' result: after both. Sampled lights lead the denoiser chain (after the fog).
         if !s.lightGrid.isEmpty {
             for stage in s.lightGrid { stage.encode(enc) }
             enc.memoryBarrier(scope: .buffers)
         }
         for stage in s.head + s.gi.prefix(1) { stage.encode(enc) }
         enc.memoryBarrier(scope: [.buffers, .textures])
-        let gi = Array(s.gi.dropFirst()), chain = s.fog + s.restir + s.denoise
+        let gi = Array(s.gi.dropFirst()), chain = s.fog + s.sampledLights + s.denoise
         for i in 0..<max(gi.count, chain.count) {
             if i < chain.count { chain[i].encode(enc) }
             if i < gi.count { gi[i].encode(enc) }

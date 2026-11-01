@@ -61,8 +61,7 @@ extension Renderer {
         case "n": settings.denoiser.enabled.toggle()
         case "[", "]":
             let step = key == "[" ? -1 : 1
-            if settings.giMode == .restirGI { settings.restirGI.bounces = RenderSettings.bounceRange.clamp(settings.restirGI.bounces + step) }
-            else { settings.bounces = RenderSettings.bounceRange.clamp(settings.bounces + step) }
+            settings.bounces = RenderSettings.bounceRange.clamp(settings.bounces + step)
         case "-": settings.renderScale = max(RenderSettings.renderScaleRange.lowerBound, settings.renderScale - RenderSettings.renderScaleStep)
         case "=", "+": settings.renderScale = min(RenderSettings.renderScaleRange.upperBound, settings.renderScale + RenderSettings.renderScaleStep)
         case "1", "2", "3", "4", "5", "6", "7", "8": settings.viewMode = Int(key)! - 1

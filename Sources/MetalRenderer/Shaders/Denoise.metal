@@ -116,7 +116,6 @@ kernel void temporalKernel(constant Uniforms&              u           [[buffer(
         variance = max(0.0f, moments.y - moments.x * moments.x);
     }
 
-    variance *= max(u.denoise.w, 1.0f);   // ReSTIR's reused samples are correlated: their variance looks too low
     // Alpha holds the standard deviation: the variance overflows the half-float texture near the lights.
     outIllum.write(roundToHalf(float4(color, sqrt(variance))), tid);
     outMoments.write(float4(moments, len, slowLum), tid);

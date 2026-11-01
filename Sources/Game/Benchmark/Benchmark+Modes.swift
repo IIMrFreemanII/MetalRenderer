@@ -17,12 +17,12 @@ extension Benchmark {
     /// Every mode by name (registered with the scenes, as `Benchmark.modes`). Any other value of METALRENDERER_BENCH
     /// (the documented one is `1`) runs `standard`.
     static let gameModes: [String: () -> [Config]] = [
-        "shot": shot, "look": look, "furnace": furnace, "lobes": lobes, "frost": frost, "gilevels": gilevels, "reload": reload, "solid": solid, "quick": quick, "stress": stress, "restir": restir, "gallery": gallery, "gi": gi,
+        "shot": shot, "look": look, "furnace": furnace, "lobes": lobes, "frost": frost, "tracecost": tracecost, "gilevels": gilevels, "reload": reload, "solid": solid, "quick": quick, "stress": stress, "manylights": manylights, "gallery": gallery, "gi": gi,
         "lights": lights, "fog": fog, "sky": sky, "forest": forest, "forestcheck": forestcheck,
-        "stressq": stressq, "restirq": restirq, "marketq": marketq, "shadow": shadow,
+        "stressq": stressq, "manylightsq": manylightsq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
         "hwrt": hwrt, "hwrtq": hwrtq, "interp": interp,
-        "restircheck": restircheck, "restirgicheck": restirgicheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
+        "sampledcheck": sampledcheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck,
         "skycheck": skycheck, "vgdebug": vgdebug, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
         "showcase": showcase, "shapes": shapes, "procedural": procedural, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,

@@ -45,26 +45,25 @@ package struct DenoiserSettings: Equatable, Codable {
     static let antiLagRange: ClosedRange<Float> = 0...4
     static let shadowClampRange: ClosedRange<Float> = 0.05...2
     static let shadowSigmaRange: ClosedRange<Float> = 0.5...8
-    static let varianceBoostRange: ClosedRange<Float> = 1...8   // ReSTIR's denoiser inputs (RestirSettings, RestirGISettings)
 }
 
 /// How direct light from the lights is computed.
 package enum DirectLightMode: Int, CaseIterable, Codable {
-    case auto       // ReSTIR with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
+    case auto       // sampled with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
     case exact      // one shadow ray per light (cost grows with the light count; references)
     case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
-    case restir     // ReSTIR DI: candidates from the light table, temporal + spatial reuse, one shadow ray (O(1))
+    case sampled    // one light per ray by RIS from the light grid and table, with no reuse (O(1))
 
     package var title: String {
         switch self {
         case .auto: return "Auto"
         case .exact: return "Exact"
         case .grouped: return "Grouped"
-        case .restir: return "ReSTIR"
+        case .sampled: return "Sampled"
         }
     }
 
-    /// `METALRENDERER_DIRECT=auto|exact|grouped|restir`; `METALRENDERER_LIGHTS=all` is exact.
+    /// `METALRENDERER_DIRECT=auto|exact|grouped|sampled`; `METALRENDERER_LIGHTS=all` is exact.
     static let initial: DirectLightMode = {
         let env = ProcessInfo.processInfo.environment
         if let v = env["METALRENDERER_DIRECT"], let m = allCases.first(where: { "\($0)" == v.lowercased() }) { return m }
@@ -72,39 +71,22 @@ package enum DirectLightMode: Int, CaseIterable, Codable {
     }()
 }
 
-/// ReSTIR DI (Shaders/RestirDI.metal): reservoir resampling of light samples, so a pixel's cost doesn't depend on the
-/// light count. Defaults from METALRENDERER_BENCH=restirq.
-package struct RestirSettings: Equatable, Codable {
-    var candidates = 8              // initial candidates per pixel from the light table (plus one per sun)
-    var chains = 4                  // independent reservoirs per pixel, one shadow ray each (4 = the grouped path's rays)
-    var temporal = true             // reuse last frame's reservoir (reprojected)
-    var maxM: Float = 8             // confidence cap (samples' worth a reservoir may stand for): higher = steadier, laggier
-    var spatialPasses = 1           // 0...2 passes of spatial reuse
-    var spatialSamples = 4          // neighbours per pass
-    var radius: Float = 24          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
-    var visibilityReuse = false     // test the initial pick's visibility, so occluded samples aren't reused: less noise but
-                                    // 10% darker (the target ignores visibility), so off
-    package var splitVisibility = false     // denoise visibility (shadow denoiser) and unshadowed light (SVGF) apart, multiply back:
-                                    // one visibility channel can't keep coloured shadows (4% too bright), so off
-    var denoiseSigma: Float = 3     // SVGF luminance edge-stopping for ReSTIR's direct light (in standard deviations)
-    var denoisePasses = 4
-    var denoiseHistory: Float = 8   // SVGF history (frames) for ReSTIR's direct light (with splitVisibility: its unshadowed light)
-    var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
+/// Direct light above the light-table threshold (Shaders/SampledLights.metal): each ray's light sample picked by RIS from
+/// the light grid and table, so a pixel's cost doesn't depend on the light count. Nothing is reused between frames.
+package struct SampledLightSettings: Equatable, Codable {
+    var candidates = 8              // candidates per ray from the grid and the table (plus one per sun)
+    var rays = 1                    // shadow rays per pixel, each with its own candidates
     package var grid = RegirSettings()      // the light grid the candidates come from (ReGIR)
 
     static let candidateRange = 1...32
-    static let chainRange = 1...4
-    static let maxMRange: ClosedRange<Float> = 1...64
-    static let spatialPassRange = 0...2
-    static let spatialSampleRange = 1...8
-    static let radiusRange: ClosedRange<Float> = 4...64
+    static let rayRange = 1...4
 }
 
 /// The light grid (Shaders/Regir.metal): a camera-centred world-space grid of light reservoirs, rebuilt every
-/// frame on the GPU, that ReSTIR DI draws most of its candidates from, so they are the lights near the pixel rather
+/// frame on the GPU, that sampled lights draw most of their candidates from, so they are the lights near the pixel rather
 /// than the whole table by power. `levels` cascaded levels of `cells`^3 cells, the first `cellSize` m wide and each
 /// next `levelScale` times wider; `slots` reservoirs per cell, each the pick of `candidates` table draws; `share` of
-/// RestirSettings.candidates come from the grid, the rest from the table.
+/// SampledLightSettings.candidates come from the grid, the rest from the table.
 package struct RegirSettings: Equatable, Codable {
     package var enabled = true
     var cells = 16
@@ -160,13 +142,11 @@ package enum Realism: Int, CaseIterable, Codable {
 package enum GIMode: Int, CaseIterable, Codable {
     case pathTraced         // per-pixel path tracing (1 spp) + SVGF denoising
     case radianceCascades   // screen-space probes with world-space ray intervals, merged across cascades
-    case restirGI           // ReSTIR GI: per-pixel paths whose first bounce is reused over time and space, + SVGF
 
     var title: String {
         switch self {
         case .pathTraced: return "Path traced"
         case .radianceCascades: return "Radiance cascades"
-        case .restirGI: return "ReSTIR GI"
         }
     }
 }
@@ -197,42 +177,6 @@ package struct ReferenceSettings: Equatable, Codable {
     static let bounceRange = 1...16
     static let samplesPerFrameRange = 1...16
     static let maxSampleOptions = [0, 64, 256, 1024, 4096, 16384]
-}
-
-/// ReSTIR GI (Shaders/RestirGI.metal): one path per pixel (or per 2x2 block) whose first bounce is resampled over
-/// time (and optionally across neighbours). Defaults from METALRENDERER_BENCH=gi and stressq (README "ReSTIR GI").
-package struct RestirGISettings: Equatable, Codable {
-    package var quarterBudget = false       // one fresh path per 2x2 block per frame (a rotating pixel): 4x cheaper paths, but
-                                    // pixels that lost their history wait up to 4 frames (-5 to -15 dB in motion), so off
-    var bounces = 2                 // path length (the first bounce is the reused sample)
-    var lightMaps = false           // light the paths' hits from the light maps instead of shadow rays
-    package var feedback = true             // multi-bounce: the paths' last hits add last frame's indirect light where on screen
-                                    // (+16 dB in Cornell with the fallback: 2 bounces miss a quarter of the light)
-    var denoisedFeedback = true     // ...the denoised indirect light (else the raw one)
-    var feedbackFallback = true     // ...and off screen, last frame's mean indirect light
-    package var temporal = true             // reuse last frame's reservoir (reprojected): half the flicker
-    var maxM: Float = 2             // confidence cap: higher = steadier, laggier (16: -0.5 dB still, -2 to -4.5 dB moving)
-    var maxAge = 30                 // the pixel's fresh paths a sample may outlive (its light is from when it was traced)
-    package var spatialPasses = 0           // 0...2 passes of spatial reuse: unbiased, but after the denoiser no better (and 2-13
-                                    // ms at 640x400), so off
-    var spatialSamples = 2          // neighbours per pass (1 scored as 5)
-    var unbiased = true             // spatial reuse: visibility in the targets, two rays per neighbour (without: cheaper,
-                                    // but 8-17% darker in the old stress hall, where neighbours saw different light)
-    var radius: Float = 30          // spatial neighbourhood radius, pixels at 960 wide (scales with the width)
-    var minDistance: Float = 0.02   // floor of the sample distance in the target (m): no spikes from very close samples
-    package var denoise = true              // SVGF on the result
-    var denoiseSigma: Float = 3     // SVGF luminance edge-stopping (in standard deviations)
-    var denoisePasses = 2
-    var denoiseHistory: Float = 8   // SVGF history (frames)
-    var varianceBoost: Float = 2    // reused samples are correlated, so their temporal variance is low: scale it up
-    var antiLag: Float = 0          // SVGF anti-lag for the result (DenoiserSettings.antiLag)
-
-    static let maxMRange: ClosedRange<Float> = 1...64
-    static let maxAgeRange = 1...255
-    static let spatialPassRange = 0...2
-    static let spatialSampleRange = 1...8
-    static let radiusRange: ClosedRange<Float> = 4...64
-    static let minDistanceRange: ClosedRange<Float> = 0.001...0.2
 }
 
 /// Radiance cascades parameters.
@@ -655,8 +599,7 @@ package struct RenderSettings: Equatable, Codable {
     package var giMode = GIMode.radianceCascades   // ~45% cheaper than path tracing here, ~11 dB closer to an 8-bounce reference, no flicker
     package var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     package var directLight = DirectLightMode.initial
-    package var restir = RestirSettings()
-    package var restirGI = RestirGISettings()
+    package var sampledLights = SampledLightSettings()
     package var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
     package var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
@@ -817,7 +760,7 @@ package struct RenderSettings: Equatable, Codable {
     package static let geometryViews = 8...13
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, restir: RestirSettings = RestirSettings(), restirGI: RestirGISettings = RestirGISettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
+    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
         self.renderScale = renderScale
         self.upscaleFactor = upscaleFactor
         self.frameInterpolation = frameInterpolation
@@ -835,8 +778,7 @@ package struct RenderSettings: Equatable, Codable {
         self.giMode = giMode
         self.lightMaps = lightMaps
         self.directLight = directLight
-        self.restir = restir
-        self.restirGI = restirGI
+        self.sampledLights = sampledLights
         self.manyLightRays = manyLightRays
         self.manyLightReuse = manyLightReuse
         self.cascades = cascades
