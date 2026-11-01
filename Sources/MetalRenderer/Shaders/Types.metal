@@ -345,7 +345,7 @@ constant uint FLAG_REFLECT_SKY   = 4194304; // a reflection's hit off screen ask
 constant uint FLAG_TINTED_SHADOWS = 16777216; // light through glass on its way to a surface takes its colour (glassShadowTint)
 constant uint FLAG_DEEP_SHADOW_GUIDE = 33554432; // MetalFX's diffuse guide takes the sun's shadow deep (SUN_GUIDE_SHADE), for its metered exposure
 constant uint FLAG_ENERGY        = 8388608; // specular keeps its energy and takes it from the diffuse (specularMultiscatter)
-constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
+constant uint FLAG_PARTICLES     = 67108864; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;

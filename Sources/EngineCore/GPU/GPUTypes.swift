@@ -99,7 +99,7 @@ package enum UniformFlags {
     package static let energy: UInt32 = 8388608
     package static let tintedShadows: UInt32 = 16777216
     package static let deepShadowGuide: UInt32 = 33554432   // MetalFX's diffuse guide takes the sun's shadow deep (SUN_GUIDE_SHADE)
-    package static let particles: UInt32 = 8388608   // the composite puts the particles' layer over the scene (particleLayerKernel)
+    package static let particles: UInt32 = 67108864  // the composite puts the particles' layer over the scene (particleLayerKernel)
 }
 
 /// ReSTIR DI pass parameters (MSL RestirParams).
