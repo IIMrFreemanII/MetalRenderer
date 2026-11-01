@@ -106,6 +106,7 @@ extension Scene {
             if m.transmission > 0.5 {
                 materials[index] = glassBody(tint: m.attenuation, ior: m.ior, roughness: m.roughness)
                 hasLiquid = true
+                if m.roughness > 0 { hasFrostedGlass = true }
             } else if m.sheen != .zero || m.anisotropy > 0 {
                 var extra = GPUMaterialExtra()
                 extra.sheen = SIMD4(m.sheen, m.sheenRoughness)

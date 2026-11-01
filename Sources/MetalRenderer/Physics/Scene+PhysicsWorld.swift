@@ -296,6 +296,7 @@ extension Scene {
     /// of it a metre, and with `roughness` scatters it as frosted glass does. (A thin frosted pane: a thin closed box.)
     package func addSolidGlassMaterial(tint: SIMD3<Float> = [1, 1, 1], ior: Float = 1.5, roughness: Float = 0) -> Int {
         hasLiquid = true
+        if roughness > 0 { hasFrostedGlass = true }
         return addMaterial(glassBody(tint: tint, ior: ior, roughness: roughness))
     }
 

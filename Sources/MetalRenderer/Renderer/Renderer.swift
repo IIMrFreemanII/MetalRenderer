@@ -367,6 +367,7 @@ package final class Renderer: NSObject {
         let direction: MTLTexture
         let through: MTLTexture
         let reflection: MTLTexture
+        let entryNormal: MTLTexture     // where a frosted surface scattered the ray (through's alpha > 0): its own normal
         let scatter: MTLTexture
         /// Water's reflections, this frame's and the last's by turns (rgb: what the surface's mirror ray found, a: the
         /// surface's distance): half of them are traced a frame, the others taken from the last frame's.

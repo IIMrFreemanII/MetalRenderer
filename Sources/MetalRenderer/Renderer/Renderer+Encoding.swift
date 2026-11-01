@@ -395,6 +395,13 @@ extension Renderer {
             if plan.water, let water { enc.useResources(water.resources(slot: plan.slot), usage: .read) }
             dispatch(enc, .composite, width: output.width, height: output.height)
         }
+        // Frosted glass: MetalFX's guides there are the glass's, not what its scattered rays happened to find.
+        if drawable != nil, upscaler != nil, scene.hasFrostedGlass, let liquid = plan.liquid, let enc = passes.compute("frosted") {
+            bind(enc, .frosted, plan.uniforms)
+            setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.entryNormal, t.normalDepth[cur], t.deviceDepth,
+                              t.diffuseGuide, t.specularAlbedo, t.roughness, t.specularHitDistance])
+            dispatch(enc, .frosted, width: size.width, height: size.height)
+        }
 
         // 4b. Supersampled reference: average the composited frames (from halfway through, once lighting has converged).
         if let drawable, supersampling, !size.upscaling, let accum = colorAccumTexture(width: size.width, height: size.height),
