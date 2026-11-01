@@ -63,7 +63,7 @@ extension Benchmark {
     /// The radiance cascades' light against the reference path tracer's, the light as it is (no curve, no lens, no fog or
     /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky.
     static func gilevels() -> [Config] {
-        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress].flatMap { kind -> [Config] in
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .world].flatMap { kind -> [Config] in
             func plain(_ c: Config) -> Config {
                 c.appLook().still().fog { $0.enabled = false }.with {
                     $0.toneMap = .none

@@ -65,6 +65,23 @@ final class WaterTests: XCTestCase {
         XCTAssertTrue(WaterMap.stale(level: 0, origin: level.origin, at: [200, 0]))
     }
 
+    func testWorldMapHasTheGroundAsBuilt() {
+        // Round the first city, whose level ground cuts through hills: the near patch sinks under the map's ground, so
+        // a map of the hills alone would hang it over the streets.
+        let world = World(seed: 1), city = world.city(cell: SIMD2(0, 0))!
+        let field = WorldWaterField(world: world, looks: (0, 1, 2))
+        let level = WaterMap.draw(field, level: 0, origin: WaterMap.origin(level: 0, at: city.center))
+        var over: Float = 0
+        for j in stride(from: 0, to: WaterMap.size, by: 37) {
+            for i in stride(from: 0, to: WaterMap.size, by: 37) {
+                let x = level.origin.x + (Double(i) + 0.5) * level.cell, z = level.origin.y + (Double(j) + 0.5) * level.cell
+                XCTAssertEqual(level.surface[j * WaterMap.size + i].y, world.height(x, z), accuracy: 1e-3)
+                over = max(over, world.water.natural(x, z) - world.height(x, z))
+            }
+        }
+        XCTAssertGreaterThan(over, 1, "no hill over the city's ground here: the test shows nothing")
+    }
+
     func testRiverKeepsItsBedOnceCarved() {
         let field = TerrainField(base: FlatTerrainBase(grid: .square(size: 256, cells: 256)))
         var river = WaterBody(name: "River", kind: .river, points: [[-100, 0], [0, 10], [100, 0]], width: 10, depth: 2)
