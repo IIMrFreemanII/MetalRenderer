@@ -242,7 +242,8 @@ final class FilmLookTests: XCTestCase {
         XCTAssertFalse(config.settings.energyConservation)
         XCTAssertFalse(config.settings.tintedShadows)
         XCTAssertEqual(config.settings.cascades.hiddenLight, 1)
-        XCTAssertFalse(config.settings.cascades.plantHits)
+        XCTAssertFalse(config.settings.cascades.hitRays)
+        XCTAssertFalse(config.settings.cascades.shNormal)
         XCTAssertEqual(config.settings.contactAOReach, 0.5)
         let app = config.appLook()
         XCTAssertEqual(app.settings.toneMap, .film)
@@ -253,7 +254,8 @@ final class FilmLookTests: XCTestCase {
         XCTAssertTrue(app.settings.energyConservation)
         XCTAssertTrue(app.settings.tintedShadows)
         XCTAssertEqual(app.settings.cascades.hiddenLight, 0.25)
-        XCTAssertTrue(app.settings.cascades.plantHits)
+        XCTAssertTrue(app.settings.cascades.hitRays)
+        XCTAssertTrue(app.settings.cascades.shNormal)
         XCTAssertEqual(app.settings.contactAOReach, 0.2)
     }
 

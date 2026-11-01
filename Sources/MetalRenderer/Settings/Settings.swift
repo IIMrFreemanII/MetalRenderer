@@ -243,18 +243,21 @@ package struct CascadeSettings: Equatable, Codable {
     package var feedback = true     // multi-bounce: shade ray hits with last frame's indirect light where visible
     package var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
     package var skyGaps = false             // every scene's rays ask for the sky through the gaps (SceneDefinition.cascadeSkyGaps)
-    /// Multi-bounce, in the outdoor scenes (SceneKind.hasRealisticLook): how much of all the probes' mean light a hit
-    /// takes where last frame's light there isn't known (off screen, or hidden). Outdoors the mean is mostly sky-lit
-    /// surfaces', and such a hit is often in shade: with all of it a courtyard's shade read 20% brighter than path
-    /// traced, with a quarter 1%. Rooms take all of it: a quarter took the Cornell box's shade to 0.6 of path traced.
+    /// Multi-bounce, with one thing on an open stage (SceneDefinition.cascadeHiddenLight): how much of all the probes'
+    /// mean light a hit takes where last frame's light there isn't known. The mean is the stage's and such a hit lies inside
+    /// the thing: with all of it a lone tree's later bounces read 2.9 of path traced in shade, with a quarter 0.88.
+    /// Elsewhere a hit takes all of it: a courtyard's later bounces read 0.88, with a quarter 0.46, and a closed room's
+    /// shade with a quarter 0.6.
     package var hiddenLight: Float = 0.25
-    /// In the scenes full of plants (SceneDefinition.cascadePlantHits): a hit sees the sun through a ray, every ray that
-    /// needs it asks for the sky through the gaps, a hit whose light isn't known takes all of the probes' mean, and a
-    /// probe's SH is true to its normal. The sun's light map, its texels a metre wide, lit the leaves and grass inside a
-    /// crown's shade at GI's hits: a forest's first bounce read 2.1 of path traced in shade and its total 1.40, 1.05 with this.
-    /// That error hid the gaps the rest close. Elsewhere it stays off: the courtyard's errors cancel (first bounce 1.39 in
-    /// shade, the rest 0.43, 1.01 in all), and the rays alone take its shade to 0.83.
-    package var plantHits = true
+    /// A hit sees the sun through a ray. The sun's light map, its texels up to a metre wide and read 1.5 of them off the
+    /// surface, lit what lies in shade at GI's hits: the first bounce in shade over path traced read 2.1 in a forest,
+    /// 1.39 in a courtyard and 1.16 in the mixed scene; with rays 0.8, 0.90 and 1.05. Scenes with plants also ask for the
+    /// sky through the gaps. Rays cost a forest about a millisecond.
+    package var hitRays = true
+    /// A probe's SH gives the cosine-weighted mean of its bins at its own normal (rcSHKernel): its plain projection
+    /// took a third off hillsides facing the camera, and sunlit walls read 0.92 of path traced in the Cornell box, 0.90
+    /// in the gallery (with this 0.97, 0.99).
+    package var shNormal = true
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
@@ -695,7 +698,8 @@ package struct RenderSettings: Equatable, Codable {
         energyConservation = false
         tintedShadows = false
         cascades.hiddenLight = 1
-        cascades.plantHits = false
+        cascades.hitRays = false
+        cascades.shNormal = false
         contactAOReach = 0.5
     }
 
@@ -710,7 +714,8 @@ package struct RenderSettings: Equatable, Codable {
         energyConservation = app.energyConservation
         tintedShadows = app.tintedShadows
         cascades.hiddenLight = app.cascades.hiddenLight
-        cascades.plantHits = app.cascades.plantHits
+        cascades.hitRays = app.cascades.hitRays
+        cascades.shNormal = app.cascades.shNormal
         contactAOReach = app.contactAOReach
     }
 

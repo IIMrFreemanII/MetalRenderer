@@ -314,8 +314,9 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
 // centre over the reach the map can't resolve (at least GI_SUN_RAY_REACH, 4 of its texels), then the map for what is
 // farther. The ray is the same every frame: radiance cascades average only a few frames (in the interiors' box), so
 // a jittered one would show as blotches.
-// Only in the box and among plants (RC_PLANT_HITS): the map, its texels a metre wide and offset by 1.5 of them, sees no leaf
-// in a crown's shade; the rays cost a forest about a millisecond on the M4 Max.
+// In the box and wherever radiance cascades ask (RC_HIT_RAYS): the map, its texels up to a metre wide and offset by 1.5
+// of them, sees no leaf in a crown's shade and no wall's foot in a courtyard's; the rays cost a forest about a millisecond
+// on the M4 Max.
 constant float GI_SUN_RAY_REACH = 32.0f;
 inline float giSunVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng,
                              bool sunRay, SCENE_ACCEL accel) {
