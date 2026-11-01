@@ -23,6 +23,9 @@ package enum Kernel: Int, CaseIterable {
     case composite, accumulateColor, tonemap
     case taaResolve             // temporal AA without upscaling (Post.metal)
     case focus, dof, bloomDown, bloomUp, finish   // the lens and the finish (Post.metal)
+    case motionTiles, motionNeighbours, motionBlur   // the motion blur (Post.metal)
+    case contactAO              // short rays for the shade the GI's probes miss (Reflections.metal)
+    case aerial                 // the atmosphere's air along the camera's rays (Sky.metal)
     case crowdPose, crowdSkin, crowdHair   // the crowd's pose slots: skinning matrices, vertices, hair (CrowdSkinner)
     // Rigid bodies (PhysicsGPU): a step's stages, then the frame's poses.
     case physicsReset, physicsClear, physicsInsert, physicsPairs, physicsLink, physicsNarrow

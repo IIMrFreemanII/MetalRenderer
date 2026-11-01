@@ -215,6 +215,7 @@ package final class Renderer: NSObject {
     package var cloudDetail: MTLTexture?        // 32^3 Worley octaves
     package var cloudNoiseReady = false         // the noise and the atmosphere's tables have been drawn
     package var transmittanceLUT: MTLTexture?   // atmosphere transmittance to its top, by height and angle
+    package var aerialLUT: MTLTexture?          // the air along the camera's rays (aerialKernel), remade every frame
     package var multiScatterLUT: MTLTexture?    // atmosphere multiple scattering, by height and sun angle
     package var skyMean: MTLBuffer?             // the sky's mean radiance per hemisphere (skyMeanKernel), for the next frame
     package var skyImage: (path: String, exposure: Float, image: SkyImage, texture: MTLTexture)?

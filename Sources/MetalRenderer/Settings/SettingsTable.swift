@@ -503,6 +503,9 @@ package enum SettingsTable {
             S.slider("Film grain", \.post.grain, PostSettings.grainRange, step: 0.005, fmt("%.3f")).env(.post, "grain"),
             S.slider("Chromatic aberration", \.post.aberration, PostSettings.aberrationRange, step: 0.0005) { String(format: "%.2f%%", $0 * 100) }
                 .env(.post, "ca"),
+            S.slider("Motion blur", \.post.motionBlur, PostSettings.motionBlurRange, step: 0.05, fmt("%.2f")).env(.post, "motionblur"),
+            S.slider("Motion blur limit", \.post.motionBlurMax, PostSettings.motionBlurMaxRange, step: 0.5, fmt("%.1f%%"))
+                .env(.post, "motionmax").enabled({ $0.post.motionBlur > 0 }).advanced(),
             S.slider("Film slope", \.post.filmSlope, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "slope").enabled(film).advanced(),
             S.slider("Film toe", \.post.filmToe, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "toe").enabled(film).advanced(),
             S.slider("Film shoulder", \.post.filmShoulder, PostSettings.filmRange, step: 0.01, fmt("%.2f")).env(.post, "shoulder").enabled(film).advanced(),
@@ -576,6 +579,10 @@ package enum SettingsTable {
                 .when { $0.upscaleFactor > 1 }
                 .available { FrameInterpolation.allCases[$0] == .off || Capabilities.current.frameInterpolator },
             S.check("Temporal AA", \.taa).env(.gi, "taa").when { $0.upscaleFactor <= 1 },
+            S.slider("Contact shade", \.contactAO, RenderSettings.contactAORange, step: 0.05, fmt("%.2f")).env(.gi, "contactao"),
+            S.slider("Contact reach", \.contactAOReach, RenderSettings.contactAOReachRange, step: 0.05, fmt("%.2f m"))
+                .env(.gi, "contactreach").enabled({ $0.contactAO > 0 }).advanced(),
+            S.check("Reflections see the sky", \.reflectionSkyRays).env(.gi, "reflectionsky").advanced(),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },
@@ -690,6 +697,7 @@ package enum SettingsTable {
             S.check("Clouds", \.sky.cloudsShown).when(hasClouds),
             S.value(\.sky.clouds).env(.skySet, "clouds"),
             S.value(\.sky.cloudsOverImage).env(.skySet, "over"),
+            S.check("Aerial perspective", \.aerialPerspective).env(.skySet, "aerial").when { $0.sky.mode == .atmosphere },
             S.slider("Coverage", \.sky.coverage, SkySettings.coverageRange, step: 0.01, fmt("%.2f")).env(.skySet, "coverage").when(hasClouds).enabled(cloudy),
             S.slider("Cloud density", \.sky.density, SkySettings.densityRange, step: 0.001, fmt("%.3f /m")).env(.skySet, "density").when(hasClouds).enabled(cloudy),
             S.slider("Cloud height", \.sky.cloudBase, SkySettings.cloudBaseRange, step: 50, fmt("%.0f m")).env(.skySet, "base").when(hasClouds).enabled(cloudy),

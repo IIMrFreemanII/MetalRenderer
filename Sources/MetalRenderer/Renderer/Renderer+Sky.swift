@@ -50,6 +50,14 @@ extension Renderer {
             return false
         }
         memset(mean.contents(), 0, 32)
+        let air = MTLTextureDescriptor()
+        air.textureType = .type3D
+        air.pixelFormat = .rgba16Float
+        air.width = 32; air.height = 32; air.depth = 32   // (MSL AERIAL_SIZE)
+        air.usage = [.shaderRead, .shaderWrite]
+        air.storageMode = .private
+        aerialLUT = device.makeTexture(descriptor: air)
+        aerialLUT?.label = "aerial perspective"
         transmittanceLUT = tLUT
         multiScatterLUT = msLUT
         skyMean = mean

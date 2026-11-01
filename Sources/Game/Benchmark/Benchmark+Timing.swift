@@ -43,6 +43,24 @@ extension Benchmark {
         return [Config("shot", scale: 0.75, upscale: 2, gi: .radianceCascades).still().frames(frames).appLook()]
     }
 
+    /// The app's look and each of its passes turned off, on the default level, the courtyard and the forest, still (the
+    /// images and the contact shade, air and reflections' cost) and moving (the motion blur's).
+    static func look() -> [Config] {
+        [SceneKind.level, .sun, .forest].flatMap { kind -> [Config] in
+            let name = kind.name
+            let base = Config(name, scale: 0.75, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: kind)).appLook()
+            let still = base.still().frames(60)
+            return [
+                still,
+                still.named("\(name) no contact").with { $0.contactAO = 0 },
+                still.named("\(name) no air").with { $0.aerialPerspective = false },
+                still.named("\(name) no sky rays").with { $0.reflectionSkyRays = false },
+                base.named("\(name) moving").cameraMove(),
+                base.named("\(name) moving no blur").cameraMove().with { $0.post.motionBlur = 0 },
+            ]
+        }
+    }
+
     /// The dev build's hot reload, checked offscreen: `shot`'s picture again and again (`METALRENDERER_RELOAD_SHOTS`,
     /// default 6, each after `METALRENDERER_RELOAD_FRAMES`, default 600), with METALRENDERER_HOTRELOAD=1 so the
     /// watcher runs. A save between two shows in the next ones (DevReload).

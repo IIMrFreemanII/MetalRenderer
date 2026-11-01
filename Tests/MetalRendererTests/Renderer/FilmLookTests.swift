@@ -125,14 +125,55 @@ final class FilmLookTests: XCTestCase {
         XCTAssertEqual(again.scene.kind, .forest)
     }
 
+    /// The old default resolution moves to the new one with the look; one the user chose stays. A scene's solid look
+    /// ends with the scene.
+    func testAnOldSavedResolutionAndSolidLook() throws {
+        let defaults = RenderSettings()
+        var old = defaults
+        old.renderScale = 0.5
+        old.upscaleFactor = 3
+        old.solid = true
+        old.solidFromScene = true
+        func migrated(_ s: RenderSettings) throws -> RenderSettings {
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any])
+            json["lookVersion"] = nil
+            return try XCTUnwrap(SettingsStore.decode(saved: JSONSerialization.data(withJSONObject: json), over: defaults))
+        }
+        let moved = try migrated(old)
+        XCTAssertEqual(moved.renderScale, defaults.renderScale)
+        XCTAssertEqual(moved.upscaleFactor, defaults.upscaleFactor)
+        XCTAssertFalse(moved.solid)
+        old.renderScale = 1
+        old.solidFromScene = false
+        let chosen = try migrated(old)
+        XCTAssertEqual(chosen.renderScale, 1)
+        XCTAssertEqual(chosen.upscaleFactor, 3)
+        XCTAssertTrue(chosen.solid, "turned on by the user: theirs")
+    }
+
     /// The benchmarks keep the look of their scores' history unless they ask for the app's.
     func testBenchmarksKeepTheClassicLook() {
         let config = Benchmark.Config("t", scene: SceneSettings(kind: .forest))
         XCTAssertEqual(config.settings.toneMap, .aces)
         XCTAssertTrue(config.settings.post.classic)
         XCTAssertEqual(config.settings.post.bloom, 0.035)
+        XCTAssertEqual(config.settings.post.motionBlur, 0)
+        XCTAssertEqual(config.settings.contactAO, 0)
+        XCTAssertFalse(config.settings.aerialPerspective)
+        XCTAssertFalse(config.settings.reflectionSkyRays)
         let app = config.appLook()
         XCTAssertEqual(app.settings.toneMap, .film)
         XCTAssertEqual(app.settings.post, .unreal)
+        XCTAssertGreaterThan(app.settings.contactAO, 0)
+        XCTAssertTrue(app.settings.aerialPerspective)
+        XCTAssertTrue(app.settings.reflectionSkyRays)
+    }
+
+    /// Unreal's default shutter: at 60 fps a frame's motion is blurred over its own length, at 30 fps over the same time.
+    func testMotionBlurDefaults() {
+        XCTAssertEqual(PostSettings.unreal.motionBlur, 0.5)
+        XCTAssertEqual(PostSettings.unreal.motionBlurMax, 5)
+        XCTAssertEqual(PostSettings().motionBlur, 0, "off in a bare lens")
+        XCTAssertTrue(PostSettings.unreal.isOn)
     }
 }

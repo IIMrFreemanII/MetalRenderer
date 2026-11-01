@@ -66,9 +66,9 @@
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1793486331.2253313,
-    "seen": 1793486354.025406,
-    "ast_hash": "c70eab5dc0c3b937b2a8203117375a45",
+    "mtime": 1793489426.120621,
+    "seen": 1793494074.18414,
+    "ast_hash": "37edda864b76702b56285e1d12081555",
     "semantic_hash": ""
   },
   "Tools/eval/README.md": {
@@ -306,9 +306,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Output.metal": {
-    "mtime": 1793484912.1586034,
-    "seen": 1793486354.017621,
-    "ast_hash": "2887b73c86f35fd66ef088b880a6c94b",
+    "mtime": 1793487349.9309642,
+    "seen": 1793494074.176001,
+    "ast_hash": "9084747884a40dfc4b63acbeff9328bc",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
@@ -318,9 +318,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Reflections.metal": {
-    "mtime": 1793471800.7936726,
-    "seen": 1793474040.429095,
-    "ast_hash": "49676b3f2f6a82a674c206ae9128f1f7",
+    "mtime": 1793487326.604787,
+    "seen": 1793494074.176204,
+    "ast_hash": "f3810cbf089fbda5d69e6fa9d33a78b3",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Regir.metal": {
@@ -342,15 +342,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Sampling.metal": {
-    "mtime": 1793471800.7998562,
-    "seen": 1793474040.429098,
-    "ast_hash": "818e3187592c21434c920cb768921418",
+    "mtime": 1793487349.9395754,
+    "seen": 1793494074.1762838,
+    "ast_hash": "92b3d249d2c8540e7f0e08418c09ef58",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Sky.metal": {
-    "mtime": 1793471800.80081,
-    "seen": 1793474040.429098,
-    "ast_hash": "5aeea84081293805a09da71f756b08df",
+    "mtime": 1793487326.6049309,
+    "seen": 1793494074.1762838,
+    "ast_hash": "32dbd8b332575fc6ae0c56e44413a39a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Surface.metal": {
@@ -366,9 +366,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Types.metal": {
-    "mtime": 1793484596.1110914,
-    "seen": 1793486354.017965,
-    "ast_hash": "0efbf3771f8bb69750b6d2926aebbc1d",
+    "mtime": 1793487240.584275,
+    "seen": 1793494074.176325,
+    "ast_hash": "820153c6ce4535f1393fb6294c128d6b",
     "semantic_hash": ""
   },
   ".claude/skills/offscreen/scripts/render.sh": {
@@ -492,9 +492,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Post.metal": {
-    "mtime": 1793484596.2891672,
-    "seen": 1793486354.0177548,
-    "ast_hash": "bb642d49c18c872de1a6dd30bebe2fdd",
+    "mtime": 1793487349.9314148,
+    "seen": 1793494074.17616,
+    "ast_hash": "ad4c342132ff4aeefb3c86754bb7fe07",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/SDF.metal": {
@@ -1836,9 +1836,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark/Benchmark.swift": {
-    "mtime": 1793485642.1532238,
-    "seen": 1793486354.0151548,
-    "ast_hash": "7232a91ab5c474778a5c40b828272fab",
+    "mtime": 1793487240.5859468,
+    "seen": 1793494074.17332,
+    "ast_hash": "e911b932055c24350c25bd989551e751",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Benchmark/Renderer+Benchmark.swift": {
@@ -1998,9 +1998,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/GPUTypes.swift": {
-    "mtime": 1793484596.1377501,
-    "seen": 1793486354.016372,
-    "ast_hash": "e60df0036fea6843268404d85c9edb7d",
+    "mtime": 1793487240.5846577,
+    "seen": 1793494074.1745899,
+    "ast_hash": "8dbfbdfae17c744d46756c9b3ac1bed5",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Lighting/Atmosphere.swift": {
@@ -2076,9 +2076,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderTargets.swift": {
-    "mtime": 1793471800.6951756,
-    "seen": 1793474040.4290612,
-    "ast_hash": "d2bdfe7697373a3baa8781616593ec3a",
+    "mtime": 1793487349.932216,
+    "seen": 1793494074.174957,
+    "ast_hash": "e8833d2ffd3ebd95980f2ef17bbfac26",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderThread.swift": {
@@ -2088,9 +2088,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Encoding.swift": {
-    "mtime": 1793484596.237854,
-    "seen": 1793486354.016659,
-    "ast_hash": "d49474a518532f5840270354c5bbf997",
+    "mtime": 1793487435.2318237,
+    "seen": 1793494074.174978,
+    "ast_hash": "c920a7c13c98f35a4b92179528c6b134",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+FrameCPU.swift": {
@@ -2100,9 +2100,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+FramePlan.swift": {
-    "mtime": 1793484596.2131412,
-    "seen": 1793486354.01668,
-    "ast_hash": "825bbcda7c5154e0de13ce9b8ba88bc6",
+    "mtime": 1793487349.933323,
+    "seen": 1793494074.175,
+    "ast_hash": "1f9ec4df5a875b698495a5afa549e5a1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+GI.swift": {
@@ -2130,9 +2130,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Sky.swift": {
-    "mtime": 1793471800.7043228,
-    "seen": 1793474040.429065,
-    "ast_hash": "b44aad4444d75149651199b0c586af4d",
+    "mtime": 1793487349.9337842,
+    "seen": 1793494074.175085,
+    "ast_hash": "06a1245a15dd2c360a0eefe98b33af22",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Solid.swift": {
@@ -2142,15 +2142,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Stages.swift": {
-    "mtime": 1793471800.707512,
-    "seen": 1793474040.429066,
-    "ast_hash": "be684fa252e5bf14bbfaa180d3f5f64c",
+    "mtime": 1793487349.9329243,
+    "seen": 1793494074.1751082,
+    "ast_hash": "ef06cda64dba78ec12b75a220fdcb3f2",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer.swift": {
-    "mtime": 1793471800.7097976,
-    "seen": 1793474040.429067,
-    "ast_hash": "650d8122ed6176f769be368e922beac7",
+    "mtime": 1793487349.933571,
+    "seen": 1793494074.1751082,
+    "ast_hash": "74ff1ad2b5b1640098b7d1554321e186",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/TraceScene.swift": {
@@ -2214,9 +2214,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/Settings.swift": {
-    "mtime": 1793485584.0711324,
-    "seen": 1793486354.017291,
-    "ast_hash": "36df704f0d6b87059d0b3f098e473f99",
+    "mtime": 1793487349.9315464,
+    "seen": 1793494074.175652,
+    "ast_hash": "ebae7a36d8e113c53ffb97f7e912521d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsEnv.swift": {
@@ -2226,15 +2226,15 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsStore.swift": {
-    "mtime": 1793484710.79136,
-    "seen": 1793486354.0173109,
-    "ast_hash": "ffea493ec64fb825a2aab51067f6ed19",
+    "mtime": 1793494038.6545107,
+    "seen": 1793494074.1756742,
+    "ast_hash": "621914aa5bb39178a26105ee9fd2b72d",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Settings/SettingsTable.swift": {
-    "mtime": 1793484596.5316293,
-    "seen": 1793486354.0173109,
-    "ast_hash": "9f9e944a9abbeea654d81d034be3ab69",
+    "mtime": 1793487349.933924,
+    "seen": 1793494074.175675,
+    "ast_hash": "f1cadb3d448bebc59c25eaec190a4d75",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Terrain/Renderer+Terrain.swift": {
@@ -2760,9 +2760,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Modes.swift": {
-    "mtime": 1793471800.826334,
-    "seen": 1793474040.42897,
-    "ast_hash": "4a7832309b6badc683fdbe8480dfa663",
+    "mtime": 1793487349.9342272,
+    "seen": 1793494074.171314,
+    "ast_hash": "2d0d275b17a85859350de5c1ca8cfc7b",
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Quality.swift": {
@@ -2778,9 +2778,9 @@
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Timing.swift": {
-    "mtime": 1793485584.071312,
-    "seen": 1793486354.013324,
-    "ast_hash": "49ebd89358ac724b3d720ffde2b0d351",
+    "mtime": 1793487349.934031,
+    "seen": 1793494074.171377,
+    "ast_hash": "7ad8f40dd0bc97acbc69cdc72527ee1e",
     "semantic_hash": ""
   },
   "Sources/Game/Buildings/Benchmark+BuildingsDemo.swift": {
@@ -3330,15 +3330,15 @@
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/GPUTypes.swift": {
-    "mtime": 1793484596.0866466,
-    "seen": 1793486354.0124319,
-    "ast_hash": "0f5a9847ceb17fe4d70496eb2b0e7bed",
+    "mtime": 1793487240.5844145,
+    "seen": 1793494074.1704671,
+    "ast_hash": "3d4c1bbc940dbf1e2bed88e549e6de5a",
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/Pipelines.swift": {
-    "mtime": 1793476690.9949229,
-    "seen": 1793479423.0531478,
-    "ast_hash": "63f5dd2a94f7911cac9b5c6ac8af5aac",
+    "mtime": 1793487240.585107,
+    "seen": 1793494074.170491,
+    "ast_hash": "e17dd5bf113ddc947e98a8ae88c9f427",
     "semantic_hash": ""
   },
   "Sources/EngineCore/GPU/RendererError.swift": {
@@ -6348,9 +6348,9 @@
     "semantic_hash": ""
   },
   "Tests/MetalRendererTests/Renderer/FilmLookTests.swift": {
-    "mtime": 1793484835.9635954,
-    "seen": 1793486354.022974,
-    "ast_hash": "57c93feffb0d5c6e8769c38d86cdec55",
+    "mtime": 1793494038.6732237,
+    "seen": 1793494074.1815832,
+    "ast_hash": "e4f9cce7d8dd0e69cef3d802532ed2f1",
     "semantic_hash": ""
   }
 }

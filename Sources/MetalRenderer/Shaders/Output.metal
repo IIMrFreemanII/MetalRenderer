@@ -539,6 +539,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::read>  visibilityTex [[texture(22)]], // with FLAG_HDR_OUTPUT: the lights' raw visibility
                             texture2d<float, access::write> outDiffuseGuide [[texture(23)]], // ...and MetalFX's diffuse guide
                             texture2d<float, access::write> outHitDistance [[texture(24)]],  // ...its reflections' hit distance, without FLAG_SPECULAR
+                            texture2d<float, access::read>  contactAO  [[texture(25)]],  // with FLAG_CONTACT_AO
+                            texture3d<float>                aerial     [[texture(26)]],  // with FLAG_AERIAL
                             device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
@@ -626,6 +628,10 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         return;
     }
 
+    // The contact shade is the indirect light's: the lights' shadows have their own rays.
+    float contact = flagOn(u.flags, FLAG_CONTACT_AO) ? contactAO.read(tid).r : 1.0f;
+    illumination -= finalIndirect * (1.0f - contact);
+
     // Indirect specular: the reflection pass's result (or, on rough surfaces, the diffuse GI) x specular albedo.
     float3 specular = directSpecular;
     float3 guideSpecular = float3(0.0f);   // what MetalFX's denoiser is told the surface reflects, and how sharply
@@ -640,7 +646,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             guideRoughness = m.a;
             float3 traced = specularTex.read(tid).rgb;
             bool tracedAll = m.a < REFLECTION_MAX_ROUGHNESS || flagOn(u.flags, FLAG_REFERENCE);
-            specular += sa * (tracedAll ? traced : traced + finalIndirect);
+            specular += sa * (tracedAll ? traced : traced + finalIndirect * contact);   // (rough: occluded like the diffuse)
         }
     }
 
@@ -674,7 +680,19 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
-        default: c = (albedo * illumination + specular + emission) * fogged.a + fogged.rgb; break;
+        default: {
+            c = albedo * illumination + specular + emission;
+            float depth = nd.read(tid).w;
+            if (flagOn(u.flags, FLAG_AERIAL) && depth > 0.0f) {
+                // The air's distances are its grid's: square roots of the share of its reach.
+                float3 dir = primaryDirection(u, tid);
+                float at = sqrt(depth / dot(dir, u.camForward.xyz) / AERIAL_REACH);
+                float4 air = aerial.sample(fogGridSampler, float3((float2(tid) + 0.5f) / float2(u.width, u.height), at));
+                c = c * air.a + air.rgb;
+            }
+            c = c * fogged.a + fogged.rgb;
+            break;
+        }
     }
     if (flagOn(u.flags, FLAG_PARTICLES) && u.viewMode == 0) {   // in front of it all (fogged already, particleLayerKernel)
         // (The frame's size, as it is without upscaling unless it is smaller: read as it is.)

@@ -32,6 +32,7 @@ struct GPUPostParams {
     var finish = SIMD4<Float>()    // x = vignette, y = grain, z = chromatic aberration
     var size = SIMD4<UInt32>()     // xy = output size, zw = traced size
     var frame = SIMD4<UInt32>()    // x = frame index, y = bloom level being made
+    var motion = SIMD4<Float>()    // x = motion blur's length per frame's motion, y = its longest (output pixels), w = 1: positions
 }
 
 /// The light grid's parameters (MSL RegirParams): per level its jittered origin (xyz) and cell size (w).
@@ -151,7 +152,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPURestirGIParams>.stride == 48, "GPURestirGIParams layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")
-    precondition(MemoryLayout<GPUPostParams>.stride == 80, "GPUPostParams layout mismatch")
+    precondition(MemoryLayout<GPUPostParams>.stride == 96, "GPUPostParams layout mismatch")
     precondition(MemoryLayout<GPUPathTraceParams>.stride == 48, "GPUPathTraceParams layout mismatch")
     precondition(MemoryLayout<GPUSDFNode>.stride == 96, "GPUSDFNode layout mismatch")
     precondition(MemoryLayout<GPUSDFShape>.stride == 48, "GPUSDFShape layout mismatch")

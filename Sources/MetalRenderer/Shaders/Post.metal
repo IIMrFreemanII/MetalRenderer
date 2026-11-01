@@ -111,6 +111,8 @@ inline float3 postTap(texture2d<float, access::sample> src, float2 uv, float2 te
 
 inline float karisWeight(float3 c) { return 1.0f / (1.0f + dot(c, float3(0.2126f, 0.7152f, 0.0722f))); }
 
+constant uint MOTION_TILE = 20;   // output pixels (PostSettings.motionTile)
+
 /// How much light each of the glow's levels adds, per unit of PostSettings.bloom: fitted so that a bright patch's glow
 /// follows Unreal's default bloom at 0.675, from 10 pixels out to about 450 at 1920x1200 (median error 11%; its far tail
 /// is the worst). They sum to 0.1324: at 0.675 a uniform frame gains 9%, as there.
@@ -170,6 +172,101 @@ kernel void bloomUpKernel(constant Uniforms&               u      [[buffer(0)]],
     bool classic = p.finish.w > 0.0f, lowest = at + 2u == uint(p.bloom.w);
     float mine = classic ? 1.0f : bloomWeights[min(at, 6u)], below = classic || !lowest ? 1.0f : bloomWeights[min(at + 1u, 6u)];
     dst.write(float4(level.read(tid).rgb * mine + tent / 16.0f * below, 1.0f), tid);
+}
+
+// The motion blur (PostSettings.motionBlur), after the upscaler, as a tile's fastest motion and a reconstruction along it
+// (McGuire et al. 2012): what is fast smears over what is behind it, and what is still stays sharp in front.
+inline float2 blurMotion(texture2d<float, access::read> motion, uint2 q, constant PostParams& p) {
+    float4 m = motion.read(q);
+    float2 d = p.motion.w > 0.0f ? (m.w > 0.0f ? m.xy - float2(q) : float2(0.0f)) : m.xy;
+    d *= p.motion.x * float2(p.size.xy) / float2(p.size.zw);   // in output pixels
+    float l = length(d);
+    return l > p.motion.y ? d * p.motion.y / l : d;
+}
+
+kernel void motionTilesKernel(constant Uniforms&              u      [[buffer(0)]],
+                              constant PostParams&            p      [[buffer(1)]],
+                              texture2d<float, access::read>  motion [[texture(0)]],
+                              texture2d<float, access::write> tiles  [[texture(1)]],
+                              uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= tiles.get_width() || tid.y >= tiles.get_height()) return;
+    float2 span = float2(p.size.zw) / float2(tiles.get_width(), tiles.get_height());
+    uint2 lo = uint2(float2(tid) * span), hi = min(uint2(float2(tid + 1u) * span + 0.999f), uint2(p.size.zw));
+    float2 fastest = float2(0.0f);
+    float most = 0.0f;
+    for (uint y = lo.y; y < hi.y; y += 2u) {   // (every other pixel of it: motion is smooth)
+        for (uint x = lo.x; x < hi.x; x += 2u) {
+            float2 d = blurMotion(motion, uint2(x, y), p);
+            float l = dot(d, d);
+            if (l > most) { most = l; fastest = d; }
+        }
+    }
+    tiles.write(float4(fastest, 0.0f, 0.0f), tid);
+}
+
+kernel void motionNeighboursKernel(texture2d<float, access::read>  tiles      [[texture(0)]],
+                                   texture2d<float, access::write> neighbours [[texture(1)]],
+                                   uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= neighbours.get_width() || tid.y >= neighbours.get_height()) return;
+    int2 top = int2(tiles.get_width(), tiles.get_height()) - 1;
+    float2 fastest = float2(0.0f);
+    float most = 0.0f;
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            float2 d = tiles.read(uint2(clamp(int2(tid) + int2(x, y), int2(0), top))).xy;
+            float l = dot(d, d);
+            if (l > most) { most = l; fastest = d; }
+        }
+    }
+    neighbours.write(float4(fastest, 0.0f, 0.0f), tid);
+}
+
+inline float blurCone(float distance, float length) { return saturate(1.0f - distance / max(length, 1.0f)); }
+inline float blurCylinder(float distance, float length) { return 1.0f - smoothstep(0.95f * length, 1.05f * length, distance); }
+
+kernel void motionBlurKernel(constant Uniforms&               u          [[buffer(0)]],
+                             constant PostParams&             p          [[buffer(1)]],
+                             texture2d<float, access::sample> input      [[texture(0)]],
+                             texture2d<float, access::read>   motion     [[texture(1)]],
+                             texture2d<float, access::read>   normalDepth [[texture(2)]],
+                             texture2d<float, access::read>   neighbours [[texture(3)]],
+                             texture2d<float, access::write>  output     [[texture(4)]],
+                             uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
+    float2 size = float2(p.size.xy), toTraced = float2(p.size.zw) / size, centre = float2(tid) + 0.5f;
+    float3 own = input.sample(postSampler, centre / size).rgb;
+    float2 fastest = neighbours.read(tid / MOTION_TILE).xy;
+    float reach = length(fastest);
+    if (reach < 0.5f) {
+        output.write(float4(own, 1.0f), tid);
+        return;
+    }
+    uint2 last = uint2(p.size.zw) - 1u;
+    uint2 q0 = min(uint2(centre * toTraced), last);
+    float depth0 = abs(normalDepth.read(q0).w), length0 = length(blurMotion(motion, q0, p)) * 0.5f;
+    float soft = 0.05f + 0.02f * depth0;
+    uint seed = pixelSeed(tid, p.frame.x, 0x4D424C55u);
+    float jitter = float(seed & 0xFFFFu) / 65536.0f;
+    float3 sum = own / max(length0, 1.0f);
+    float weight = 1.0f / max(length0, 1.0f);
+    constexpr int taps = 10;
+    for (int i = 0; i < taps; ++i) {
+        float t = (float(i) + jitter) / float(taps) - 0.5f;
+        float2 at = centre + fastest * t;
+        if (any(at < 0.0f) || any(at >= size)) continue;
+        uint2 q = min(uint2(at * toTraced), last);
+        float depth = abs(normalDepth.read(q).w), lengthAt = length(blurMotion(motion, q, p)) * 0.5f;
+        float distance = reach * abs(t);
+        float front = saturate(1.0f + (depth0 - depth) / soft), back = saturate(1.0f + (depth - depth0) / soft);
+        float w = front * blurCone(distance, lengthAt) + back * blurCone(distance, length0)
+                + 2.0f * blurCylinder(distance, lengthAt) * blurCylinder(distance, length0);
+        sum += input.sample(postSampler, at / size).rgb * w;
+        weight += w;
+    }
+    output.write(float4(sum / max(weight, 1e-4f), 1.0f), tid);
 }
 
 kernel void finishKernel(constant Uniforms&               u      [[buffer(0)]],

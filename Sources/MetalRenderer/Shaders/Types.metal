@@ -282,8 +282,10 @@ struct PostParams {
     float4 finish;          // x = vignette, y = grain, z = chromatic aberration (share of the width at the corners)
     uint4  size;            // xy = output size, zw = traced size (normalDepth's)
     uint4  frame;           // x = frame index (the grain), y = bloom level being made (bloomDown / bloomUp)
+    float4 motion;          // the motion blur: x = its length per frame's motion (0 = none), y = the longest (output pixels),
+                            // w = 1: its texture holds previous positions (RenderTargets.motion), 0: motions (pixelMotion)
 };
-static_assert(sizeof(PostParams) == 80, "PostParams: GPUPostParams");
+static_assert(sizeof(PostParams) == 96, "PostParams: GPUPostParams");
 
 constant uint FOG_MAX_VOLUMES = 8;
 
@@ -331,6 +333,9 @@ constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows:
 constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (TraceScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
 constant uint FLAG_POST          = 524288; // the lens effects follow (Post.metal): the composite writes the light as it is
+constant uint FLAG_CONTACT_AO    = 1048576; // the composite takes contactAOKernel's shade off the indirect light
+constant uint FLAG_AERIAL        = 2097152; // the composite puts the atmosphere's air in front of what it sees (aerialKernel)
+constant uint FLAG_REFLECT_SKY   = 4194304; // a reflection's hit off screen asks a ray what of the sky it sees
 constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in

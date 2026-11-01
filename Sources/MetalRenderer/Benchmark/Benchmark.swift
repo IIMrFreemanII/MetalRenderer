@@ -81,8 +81,7 @@ package final class Benchmark {
             s.fog = FogSettings.preset(for: scene)
             s.sky = SkySettings.preset(for: scene)
             s.foliage = FoliageSettings.preset(for: scene.kind)
-            s.toneMap = .aces   // (the look of their scores' history: `appLook` for the app's own)
-            s.post = PostSettings.classicPreset(for: scene)
+            s.useClassicLook()   // (of their scores' history: `appLook` for the app's own)
             change(&s)
             self.name = name
             settings = s
@@ -94,8 +93,7 @@ package final class Benchmark {
         package func appLook() -> Config {
             var c = self
             c.usesAppLook = true
-            c.settings.toneMap = .film
-            c.settings.post = PostSettings.preset(for: settings.scene)
+            c.settings.useAppLook()
             return c
         }
         package func with(_ change: (inout RenderSettings) -> Void) -> Config { var c = self; change(&c.settings); return c }
@@ -166,8 +164,8 @@ package final class Benchmark {
             if !ownSky { s.sky = SkySettings.preset(for: s.scene) }
             if s.scene.kind != settings.scene.kind { s.foliage = FoliageSettings.preset(for: s.scene.kind) }
             let appLook = usesAppLook || env["METALRENDERER_LOOK"] == "app"
-            if appLook { s.toneMap = .film }
-            if appLook != usesAppLook || s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
+            if appLook != usesAppLook { s.useAppLook() }
+            if s.scene.kind != settings.scene.kind || s.scene.showcase != settings.scene.showcase || s.scene.realism != settings.scene.realism {
                 s.post = appLook ? PostSettings.preset(for: s.scene) : PostSettings.classicPreset(for: s.scene)
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
