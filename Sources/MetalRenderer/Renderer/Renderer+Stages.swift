@@ -54,7 +54,7 @@ extension Renderer {
         if let liquid = plan.liquid, scene.hasLiquid {
             stages.append(ComputeStage(pass: "liquid") { [self] enc in
                 bind(enc, .liquid, uniforms, sceneSlot: slot)
-                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture])
+                setTextures(enc, [liquid.ray, liquid.direction, liquid.through, liquid.reflection, blueNoiseTexture, liquid.entryNormal])
                 dispatch(enc, .liquid, width: size.width, height: size.height)
             })
         }

@@ -282,10 +282,10 @@ extension Renderer {
         }
         guard let ray = make(.rgba32Float, "liquidRay"), let direction = make(.rgba32Float, "liquidDirection"),
               let through = make(.rgba16Float, "liquidThrough"), let reflection = make(.rgba16Float, "liquidReflection"),
-              let scatter = make(.rgba16Float, "waterScatter"),
+              let entryNormal = make(.rgba16Float, "liquidEntryNormal"), let scatter = make(.rgba16Float, "waterScatter"),
               let r0 = make(.rgba16Float, "waterReflections0"), let r1 = make(.rgba16Float, "waterReflections1") else { return nil }
-        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection, scatter: scatter,
-                                       reflections: [r0, r1])
+        liquidTextures = LiquidTargets(ray: ray, direction: direction, through: through, reflection: reflection, entryNormal: entryNormal,
+                                       scatter: scatter, reflections: [r0, r1])
         return liquidTextures
     }
 

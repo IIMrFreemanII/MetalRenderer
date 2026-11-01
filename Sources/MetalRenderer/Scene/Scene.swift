@@ -761,6 +761,8 @@ package final class Scene {
     package var rebuiltOnDemand: Set<Int> = []
     /// Some instance is a liquid's surface (maskLiquid). Set by `addLiquidMaterial`.
     package var hasLiquid = false
+    /// Some of that is solid glass with a roughness: frostedKernel steadies MetalFX's guides over it.
+    package var hasFrostedGlass = false
     /// It has water (Scene+Water.swift). Set by `addWaterLook`.
     package var hasWater = false
     /// Some material is skin (GPUMaterial.params.w < 0): the shaders are compiled with SKIN.

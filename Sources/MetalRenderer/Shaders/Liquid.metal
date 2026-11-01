@@ -12,7 +12,8 @@
 //     To shadow and GI rays the liquid isn't there (as window glass isn't): no caustics, no light absorbed on its way in.
 //
 //     Solid glass goes the same way (Scene.addSolidGlassMaterial): its params.w = 1 scatters the ray by its roughness
-//     at each crossing, one microfacet a frame, which the upscaler averages into frosted glass.
+//     at each crossing, one microfacet a frame, which the upscaler averages into frosted glass: frostedKernel gives it
+//     the glass's own guides to do it with.
 // ---------------------------------------------------------------------------------------------
 
 // The share a dielectric surface reflects (unpolarized): cosI from the side the ray comes from, eta = n_from / n_to.
@@ -55,6 +56,7 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
                          texture2d<float, access::write>  outThrough  [[texture(2)]],   // rgb = what comes through
                          texture2d<float, access::write>  outReflect  [[texture(3)]],   // rgb = the entry's reflection
                          texture2d<float, access::read>   blueNoise   [[texture(4)]],
+                         texture2d<float, access::write>  outEntry    [[texture(5)]],   // where it scatters: the surface's normal
                          uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -73,7 +75,7 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
         return;
     }
     float3 through = float3(1.0f), reflected = float3(0.0f);
-    float entry = first.distance;
+    float entry = first.distance, frosted = 0.0f;
     bool inside = false;
     float4 medium = float4(0.0f);   // the liquid the ray is in: absorption, index
     for (uint crossing = 0; crossing < 4; ++crossing) {
@@ -89,13 +91,17 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
         float3 n = normalize(h.normal);        // outward (FluidSurface: the field falls outward)
         bool entering = dot(dir, n) < 0.0f;
         float3 facing = entering ? n : -n;     // toward where the ray comes from
+        const float3 smooth = facing;
         if (roughness > 0.0f && s.materials[instanceRecord(s.instances, h.instanceId).materialIndex].params.w > 0.0f) {
-            Rng grain;
-            grain.state = pixelSeed(tid, u.frameIndex + crossing * 131u, SEED_GLASS);
+            Sampler grain = makeSampler(blueNoise, u, tid, 120u + crossing * 2u, pixelSeed(tid, u.frameIndex + crossing * 131u, SEED_GLASS));
             float3 t, b;
             tangentFrame(facing, t, b);
             float3 hl = sampleGGXVNDF(float3(dot(-dir, t), dot(-dir, b), max(dot(-dir, facing), 1e-4f)), roughness * roughness, grain.next2());
             facing = normalize(t * hl.x + b * hl.y + facing * hl.z);
+            if (crossing == 0) {
+                frosted = roughness;
+                outEntry.write(float4(smooth, 0.0f), tid);
+            }
         }
         float eta = entering ? 1.0f / m.a : m.a;
         float cosI = saturate(dot(-dir, facing));
@@ -106,7 +112,7 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
             float3 p = h.position + facing * RAY_EPSILON, mirror = reflect(dir, facing);
             float f0 = (m.a - 1.0f) * (m.a - 1.0f) / ((m.a + 1.0f) * (m.a + 1.0f));
             reflected = fresnel * glassReflection(u, accel, s, p, mirror, rng)
-                      + liquidHighlights(s, p, facing, -dir, f0, roughness);
+                      + liquidHighlights(s, p, smooth, -dir, f0, roughness);   // (their lobe is already the roughness')
         }
         float3 bent = refract(dir, facing, eta);
         if (fresnel >= 1.0f || length_squared(bent) == 0.0f) {
@@ -123,8 +129,37 @@ kernel void liquidKernel(constant Uniforms&               u          [[buffer(0)
     }
     outRay.write(float4(origin, 1.0f), tid);
     outDir.write(float4(dir, entry), tid);
-    outThrough.write(float4(through, 0.0f), tid);
+    outThrough.write(float4(through, frosted), tid);
     outReflect.write(float4(reflected, 0.0f), tid);
+}
+
+// After the composite, where the camera's ray entered frosted glass (Scene.hasFrostedGlass): MetalFX's guides are the
+// glass's surface. What the trace wrote is what each scattered ray happened to find, a different thing every frame, which
+// the denoiser would keep as detail. Motion needs nothing: it is the entry's already (traceKernel). In the normals only
+// xyz changes, for what reads the depth after the composite; next frame's history sees those normals on these pixels.
+kernel void frostedKernel(constant Uniforms&                   u           [[buffer(0)]],
+                          texture2d<float, access::read>       ray         [[texture(0)]],
+                          texture2d<float, access::read>       direction   [[texture(1)]],
+                          texture2d<float, access::read>       through     [[texture(2)]],
+                          texture2d<float, access::read>       entryNormal [[texture(3)]],
+                          texture2d<float, access::read_write> normalDepth [[texture(4)]],
+                          texture2d<float, access::write>      outDepth    [[texture(5)]],
+                          texture2d<float, access::write>      outDiffuse  [[texture(6)]],
+                          texture2d<float, access::write>      outSpecular [[texture(7)]],
+                          texture2d<float, access::write>      outRoughness [[texture(8)]],
+                          texture2d<float, access::write>      outHit      [[texture(9)]],
+                          uint2 tid [[thread_position_in_grid]])
+{
+    if (tid.x >= u.width || tid.y >= u.height || ray.read(tid).w != 1.0f) return;
+    float roughness = through.read(tid).a;
+    if (roughness <= 0.0f) return;
+    float viewDepth = direction.read(tid).w * dot(primaryDirection(u, tid), u.camForward.xyz);
+    outDepth.write(float4(NEAR_PLANE / max(viewDepth, NEAR_PLANE)), tid);
+    normalDepth.write(float4(entryNormal.read(tid).xyz, normalDepth.read(tid).w), tid);
+    outDiffuse.write(float4(1.0f), tid);
+    outSpecular.write(float4(0.0f, 0.0f, 0.0f, 1.0f), tid);
+    outRoughness.write(float4(roughness), tid);
+    outHit.write(float4(0.0f), tid);
 }
 
 // What came through the liquid and its reflection, into the G-buffer of what the trace found behind it.

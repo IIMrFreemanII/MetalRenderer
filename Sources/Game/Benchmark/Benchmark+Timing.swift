@@ -92,6 +92,29 @@ extension Benchmark {
             .map { $0.from(Scene.camera([0, 1.3, 1], pitch: -0.1)) }
     }
 
+    /// The Material lobes scene's frosted sphere up close, a post behind it, for Tools/eval/frost.py: held still, at the
+    /// end of a camera move, one raw frame, and the reference path tracer. No lens, fog or air, which would hide grain
+    /// or differ from the reference's.
+    static func frost() -> [Config] {
+        let scene = SceneSettings(kind: .lobes)
+        let eye: SIMD3<Float> = [3.75, 1, -3.6], sphere: SIMD3<Float> = [3.75, 0.5, -6]
+        let view = Scene.camera(eye, pitch: -atan(0.5 / 2.4))
+        func plain(_ c: Config) -> Config {
+            c.appLook().fog { $0.enabled = false }.with {
+                $0.post = PostSettings()
+                $0.aerialPerspective = false
+                $0.contactAO = 0
+            }
+        }
+        let shown = plain(Config("frost", scale: 0.75, upscale: 2, gi: .radianceCascades, scene: scene))
+        let move = CameraTrack([.init(time: 0, position: eye + [-0.6, 0.15, 0.3], target: sphere),
+                                .init(time: 1, position: eye, target: sphere)])
+        return [shown.still(previous: true).from(view).frames(60),
+                shown.named("frost moving").track(move),
+                plain(Config("frost raw", scale: 1.5, gi: .radianceCascades, scene: scene)).still(previous: true).from(view).frames(8),
+                plain(Config("frost traced", scale: 1.5, scene: scene) { $0.reference.mode = .pathTraced }).still().from(view).frames(1024)]
+    }
+
     /// The app's look and each of its passes turned off, on the default level, the courtyard and the forest, still (the
     /// images and the contact shade, air and reflections' cost) and moving (the motion blur's).
     static func look() -> [Config] {

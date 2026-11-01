@@ -4,7 +4,7 @@ import QuartzCore
 
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 package enum Kernel: Int, CaseIterable {
-    case trace, glass, liquid, liquidApply, geometryDebug, lightMap
+    case trace, glass, liquid, liquidApply, frosted, geometryDebug, lightMap
     case solid                  // solid shading: the whole frame (RenderSettings.solid, Output.metal), the classic look
     case solidTrace, solidResolve   // ...the look that tells things apart (RenderSettings.solidLook): its rays, then its picture
     case water, waterApply   // water's surface over the trace (Shaders/Water.metal)

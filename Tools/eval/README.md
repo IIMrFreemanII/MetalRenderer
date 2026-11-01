@@ -18,6 +18,7 @@ python3 Tools/eval/shadow.py /tmp/run
 | `restirgi.py` | `restirgicheck`: accumulated ReSTIR GI (no reuse, reuse, quarter budget) vs accumulated path tracing, indirect light, Cornell and stress hall (within the run) | — |
 | `noise.py` | `denoise` (references from `noise`) | `refs/noise/` (render once, see below) |
 | `hwrt.py` | `hwrtq`: MetalFX's denoising scaler at 3×, final image, Cornell, stress hall and gallery (reflections) | `refs/hwrt/` (supersampled 1920×1200, path traced) |
+| `frost.py` | `frost`: the Material lobes scene's frosted sphere, still, after a camera move and raw: grain, flicker and error (within the run) | — (the run's own path-traced frame) |
 | `pngdiff.py` | any two runs: per-image differences (did a refactor change the frames?) | — |
 | `columns.py` | pipe a benchmark table in to pull out named columns | — |
 
