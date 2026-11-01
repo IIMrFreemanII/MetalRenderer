@@ -64,7 +64,7 @@ extension Benchmark {
     /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky, and the first bounce of
     /// each apart (`first`, `traced one`).
     static func gilevels() -> [Config] {
-        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .gallery].flatMap { kind -> [Config] in
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .gallery, .world].flatMap { kind -> [Config] in
             func plain(_ c: Config) -> Config {
                 c.appLook().still().fog { $0.enabled = false }.with {
                     $0.toneMap = .none

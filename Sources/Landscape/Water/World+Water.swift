@@ -344,7 +344,8 @@ package final class WorldWaterField: WaterField {
     package let world: World
     package let looks: (sea: Int, lake: Int, river: Int)
     package init(world: World, looks: (sea: Int, lake: Int, river: Int)) { (self.world, self.looks) = (world, looks) }
-    package func ground(_ x: Double, _ z: Double) -> Float { world.water.carve(x, z, world.water.natural(x, z)) }
+    /// The ground as it is built, a city's level ground and the roads' beds over the hills: the near patch sinks under it.
+    package func ground(_ x: Double, _ z: Double) -> Float { world.height(x, z) }
     package func water(_ x: Double, _ z: Double, ground: Float) -> WaterSample? {
         let (edges, ponds) = world.water.near(lo: SIMD2(x, z), hi: SIMD2(x, z))
         return WorldWater.sample(x, z, ground: ground, edges: edges, ponds: ponds, seaLevel: world.water.seaLevel, looks: looks)
@@ -357,6 +358,8 @@ package final class WorldWaterField: WaterField {
         let (allEdges, allPonds) = w.near(lo: lo, hi: hi)
         // (Per 64 texels of a row, the ones near them.)
         let chunk = 64
+        // (The city of the place's 4 km cell, found again only where that cell changes.)
+        var cityCell = World.cell(origin.x, lo.y), city = world.city(cell: cityCell)
         for j in rows {
             let z = origin.y + (Double(j) + 0.5) * cell
             for c0 in stride(from: 0, to: n, by: chunk) {
@@ -372,7 +375,10 @@ package final class WorldWaterField: WaterField {
                 for i in c0..<min(c0 + chunk, n) {
                     let x = origin.x + (Double(i) + 0.5) * cell
                     let natural = w.natural(x, z)
-                    let g = edges.isEmpty && ponds.isEmpty ? natural : WorldWater.shape(x, z, natural, edges: edges, ponds: ponds)
+                    let carved = edges.isEmpty && ponds.isEmpty ? natural : WorldWater.shape(x, z, natural, edges: edges, ponds: ponds)
+                    let here = World.cell(x, z)
+                    if here != cityCell { cityCell = here; city = world.city(cell: here) }
+                    let g = world.height(x, z, carved: carved, city: city)
                     guard let s = WorldWater.sample(x, z, ground: g, edges: edges, ponds: ponds, seaLevel: sea, looks: looks) else {
                         surface[j * n + i] = SIMD2(WaterMap.dry, g)
                         continue
