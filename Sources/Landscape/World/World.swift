@@ -175,7 +175,11 @@ package struct World {
     /// The ground's height. `city`: the one of the place's 4 km cell (`city(near:)`), found once for many places.
     /// The hills, the rivers' beds carved into them (World+Water.swift), the city's level ground, the roads' beds.
     package func height(_ x: Double, _ z: Double, city: City?) -> Float {
-        let natural = water.carve(x, z, water.natural(x, z))
+        height(x, z, carved: water.carve(x, z, water.natural(x, z)), city: city)
+    }
+
+    /// ...from the hills with the rivers' beds in them, when those are known (`carved`).
+    package func height(_ x: Double, _ z: Double, carved natural: Float, city: City?) -> Float {
         guard let city else { return natural }
         let mask = cityMask(city, x, z)
         var h = mask <= 0 ? natural : mask >= 1 ? city.level : natural + (city.level - natural) * mask
