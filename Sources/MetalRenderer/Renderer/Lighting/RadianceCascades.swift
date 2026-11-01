@@ -11,7 +11,7 @@ import Plants
 /// Matches `RCParams` in Shaders/RadianceCascades.metal.
 struct RCParams {
     var grids: SIMD4<UInt32>      // xy = this cascade's probe grid, zw = the next cascade's
-    var layout: SIMD4<UInt32>     // x = probe spacing (px), y = direction tile side, z = cascade, w = 1 if last
+    var layout: SIMD4<UInt32>     // x = probe spacing (px), y = direction tile side, z = cascade, w = 1 if last, | 2 sky gaps, | 4 among plants
     var interval: SIMD4<Float>    // x = start, y = end (m), z = 1 + hiddenLight for multi-bounce feedback (else 0), w = 1 with a last frame
 }
 
@@ -54,7 +54,7 @@ package final class RadianceCascades {
     /// pass's light at its hits off screen in the interiors' box (a room's, where the sky's was).
     private(set) var lastAmbient: MTLBuffer?
     private var historyReady = false    // textures start undefined: no feedback until one frame has been resolved
-    /// The scene's `SceneDefinition.cascadeSkyGaps`: a ray with no next-cascade probe on its surface asks for the sky.
+    /// The scene's plants or `SceneDefinition.cascadeSkyGaps`: a ray with no next-cascade probe on its surface asks for the sky.
     var skyGaps = false
     /// The scene's share of the probes' mean light at a hit whose own isn't known (CascadeSettings.hiddenLight).
     var hiddenLight: Float = 1
@@ -103,7 +103,7 @@ package final class RadianceCascades {
     private func params(_ c: Int) -> RCParams {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
-                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0)),
+                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0)),
                         interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 + hiddenLight : 0,
                                         historyReady ? 1 : 0))
     }
@@ -187,7 +187,7 @@ package final class RadianceCascades {
             enc.setComputePipelineState(pipelines.sh)
             enc.setBytes(&p, length: MemoryLayout<RCParams>.stride, index: 9)
             enc.setBuffer(ambient[cur], offset: 0, index: 10)
-            enc.setTextures([cascades[0].probePos, cascades[0].merged, sh[0], sh[1], sh[2]], range: 0..<5)
+            enc.setTextures([cascades[0].probePos, cascades[0].merged, sh[0], sh[1], sh[2], cascades[0].probeNs], range: 0..<6)
             enc.dispatchThreads(MTLSize(width: cascades[0].grid.x, height: cascades[0].grid.y, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
         })

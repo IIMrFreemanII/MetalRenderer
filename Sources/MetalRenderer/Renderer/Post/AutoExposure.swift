@@ -33,10 +33,18 @@ package final class AutoExposure {
     static let filmClose: Float = 3, filmOpen: Float = 1, filmEase: Float = 1.5
     static let filmLimits: ClosedRange<Float> = -21.6...8.4
 
+    /// Where MetalFX's denoiser gets the frame's middle (`denoiserExposure`, Upscaler). Lower keeps more of the light in
+    /// sub-pixel highlights and blurs a little more: the forest's sunlit surfaces read 0.93 of the reference at 0.07, 0.96
+    /// at 0.05, 0.99 at 0.04 and 1.03 at 0.025, and the stress hall loses 0.3 dB from 0.07 to 0.025 (with SUN_GUIDE_SHADE).
+    static let denoiserKey: Float = 0.04
+
     private let buffers: [MTLBuffer]
     private var frame = 0
     private var exposure: Float = 1
     private var settled = false
+    /// What MetalFX's denoiser multiplies the frame's light by: the same middle as the film look's, at `denoiserKey`,
+    /// whatever the look's own exposure.
+    private(set) var denoiserExposure: Float = 1
     /// Histograms still to come from frames before the reset: not measured, or the new scene would start from the old one's.
     private var stale = 0
 
@@ -58,6 +66,7 @@ package final class AutoExposure {
     func reset() {
         settled = false
         exposure = 1
+        denoiserExposure = 1
         stale = buffers.count
     }
 
@@ -75,33 +84,39 @@ package final class AutoExposure {
         }
         let total = counts.reduce(0, +)
         guard total >= 16 else { return exposure }
-        let lo = total * (classic ? 0.4 : AutoExposure.filmLow), hi = total * (classic ? 0.92 : AutoExposure.filmHigh)
-        var seen: Float = 0, sum: Float = 0, weight: Float = 0
-        let step = (AutoExposure.logMax - AutoExposure.logMin) / Float(AutoExposure.bins)
-        for i in 0..<AutoExposure.bins {
-            let a = max(seen, lo), z = min(seen + counts[i], hi)
-            if z > a {
-                sum += (z - a) * (AutoExposure.logMin + (Float(i) + 0.5) * step)
-                weight += z - a
+        /// The mean log2 light between two shares of the histogram.
+        func middle(_ low: Float, _ high: Float) -> Float {
+            let lo = total * low, hi = total * high
+            var seen: Float = 0, sum: Float = 0, weight: Float = 0
+            let step = (AutoExposure.logMax - AutoExposure.logMin) / Float(AutoExposure.bins)
+            for i in 0..<AutoExposure.bins {
+                let a = max(seen, lo), z = min(seen + counts[i], hi)
+                if z > a {
+                    sum += (z - a) * (AutoExposure.logMin + (Float(i) + 0.5) * step)
+                    weight += z - a
+                }
+                seen += counts[i]
             }
-            seen += counts[i]
+            return sum / max(weight, 1)
         }
-        guard weight > 0 else { return exposure }
-        // (The light was measured before the exposure: the target is absolute.)
+        /// `from` a step of the film look's easing toward `target`, both in log2.
+        func filmStep(_ from: Float, _ target: Float) -> Float {
+            let away = target - from, far = abs(away)
+            let stops = (away < 0 ? AutoExposure.filmClose : AutoExposure.filmOpen) * max(dt, 0)
+            let move = far > AutoExposure.filmEase ? stops : far * (1 - exp(-stops / AutoExposure.filmEase))
+            return from + (away < 0 ? -1 : 1) * min(move, far)
+        }
+        // (The light was measured before the exposure: the targets are absolute.)
+        let film = middle(AutoExposure.filmLow, AutoExposure.filmHigh)
+        let denoiserTarget = AutoExposure.filmLimits.clamp(log2(AutoExposure.denoiserKey) - film)
+        denoiserExposure = exp2(settled ? filmStep(log2(denoiserExposure), denoiserTarget) : denoiserTarget)
         guard classic else {
-            let target = AutoExposure.filmLimits.clamp(log2(AutoExposure.filmKey) - sum / weight)
-            if settled {
-                let now = log2(exposure), away = target - now, far = abs(away)
-                let stops = (away < 0 ? AutoExposure.filmClose : AutoExposure.filmOpen) * max(dt, 0)
-                let move = far > AutoExposure.filmEase ? stops : far * (1 - exp(-stops / AutoExposure.filmEase))
-                exposure = exp2(now + (away < 0 ? -1 : 1) * min(move, far))
-            } else {
-                exposure = exp2(target)
-            }
+            let target = AutoExposure.filmLimits.clamp(log2(AutoExposure.filmKey) - film)
+            exposure = exp2(settled ? filmStep(log2(exposure), target) : target)
             settled = true
             return exposure
         }
-        var target = log2(AutoExposure.key) - sum / weight
+        var target = log2(AutoExposure.key) - middle(0.4, 0.92)
         if target > AutoExposure.fullLimit { target = AutoExposure.fullLimit + (target - AutoExposure.fullLimit) * 0.5 }
         target = min(max(target, -6), AutoExposure.limit)
         let share = 1 - pow(1 - (target < log2(exposure) ? AutoExposure.easeDown : AutoExposure.ease), max(dt, 0) * 60)

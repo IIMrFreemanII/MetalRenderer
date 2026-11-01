@@ -144,8 +144,11 @@ package final class SceneDefinition {
     package var realisticAir = true
     /// Radiance cascades: whether a probe ray that misses, with no coarser probe on its surface to take light from,
     /// asks whether it reaches the sky (RadianceCascades.metal RC_SKY_GAPS). A lone tree under an open sky needs it
-    /// (its crown's leaves came out a third darker than path traced); a forest's crowns don't, and it costs them ~0.8 ms.
+    /// (its crown's leaves came out a third darker than path traced). It costs a forest ~0.8 ms.
     package var cascadeSkyGaps = false
+    /// Radiance cascades: a hit whose own light isn't known takes CascadeSettings.hiddenLight of the probes' mean rather
+    /// than all of it. For one thing on an open stage: the mean is the stage's, and such hits lie inside the thing.
+    package var cascadeHiddenLight = false
     package var realisticHaze: Float = 0.55
     package var realisticWarmth: Float = 0.06
     /// Its default camera, unless the scene says (`cameraFromScene`).
@@ -240,7 +243,7 @@ package enum SceneRegistry {
         var previewSky = SkySettings()
         previewSky.mode = .constant; previewSky.clouds = false; previewSky.coverage = 0; previewSky.shadows = false
         register(SceneDefinition(.plants, "Plant workshop", builder: "buildPlantWorkshop") { $0.buildPlantWorkshop() }.with {
-            $0.hasPlants = true; $0.sky = previewSky; $0.realisticAir = false; $0.cascadeSkyGaps = true
+            $0.hasPlants = true; $0.sky = previewSky; $0.realisticAir = false; $0.cascadeSkyGaps = true; $0.cascadeHiddenLight = true
             $0.post = { scene in
                 var p = PostSettings()
                 guard scene.realism != .off else { return p }
@@ -250,7 +253,7 @@ package enum SceneRegistry {
             $0.behaviour = { PlantPreviewPlayer($0) }
         })
         register(SceneDefinition(.buildings, "Building workshop", builder: "buildBuildingWorkshop") { $0.buildBuildingWorkshop() }.with {
-            $0.realisticLook = true; $0.sky = studioSky
+            $0.realisticLook = true; $0.sky = studioSky; $0.cascadeHiddenLight = true
         })
         register(SceneDefinition(.characters, "Character workshop", builder: "buildCharacterWorkshop", envName: "people") {
             $0.buildCharacterWorkshop()

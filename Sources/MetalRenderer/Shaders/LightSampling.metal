@@ -314,7 +314,9 @@ float lightMapVisibility(Light light, uint l, texture2d_array<float, access::rea
 // centre over the reach the map can't resolve (at least GI_SUN_RAY_REACH, 4 of its texels), then the map for what is
 // farther. The ray is the same every frame: radiance cascades average only a few frames (in the interiors' box), so
 // a jittered one would show as blotches.
-// Only in the box: through a forest's leaves the rays cost a third of the frame on the M1 Max.
+// In the box and wherever radiance cascades ask (RC_HIT_RAYS): the map, its texels up to a metre wide and offset by 1.5
+// of them, sees no leaf in a crown's shade and no wall's foot in a courtyard's; the rays cost a forest about a millisecond
+// on the M4 Max.
 constant float GI_SUN_RAY_REACH = 32.0f;
 inline float giSunVisibility(Light light, uint l, texture2d_array<float, access::read> lightMap, float3 p, float3 ng,
                              bool sunRay, SCENE_ACCEL accel) {
@@ -406,7 +408,8 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
 // GI's direct light at a secondary hit: the light maps' cached visibility (no rays), or in scenes with many lights
 // (LIGHT_TABLE, no light maps) one light sample picked by RIS from the light table, with one shadow ray.
 inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, texture2d_array<float, access::read> lightMap,
-                           float3 p, float3 n, float3 ng, uint seed, SCENE_ACCEL accel, thread const SceneData& s) {
+                           float3 p, float3 n, float3 ng, uint seed, SCENE_ACCEL accel, thread const SceneData& s,
+                           bool sunRay = false) {
     if (LIGHT_TABLE) {
         // Clamped: cascades average few rays per frame, and their anti-lag takes a rare bright sample (a
         // surface right beside a bulb) for a change in the lighting, so it would stay as a coloured blotch.
@@ -416,7 +419,7 @@ inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, tex
         float l = luminance(e);
         return l > 2.0f ? e * (2.0f / l) : e;
     }
-    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, inInteriorBox(u.interiorLo, u.interiorHi, p), accel, s);
+    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, sunRay || inInteriorBox(u.interiorLo, u.interiorHi, p), accel, s);
 }
 
 // View direction through screen position uv (0...1, y down), scaled so that its view depth is 1.

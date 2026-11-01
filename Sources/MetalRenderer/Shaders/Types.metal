@@ -343,6 +343,7 @@ constant uint FLAG_CONTACT_AO    = 1048576; // the composite takes contactAOKern
 constant uint FLAG_AERIAL        = 2097152; // the composite puts the atmosphere's air in front of what it sees (aerialKernel)
 constant uint FLAG_REFLECT_SKY   = 4194304; // a reflection's hit off screen asks a ray what of the sky it sees
 constant uint FLAG_TINTED_SHADOWS = 16777216; // light through glass on its way to a surface takes its colour (glassShadowTint)
+constant uint FLAG_DEEP_SHADOW_GUIDE = 33554432; // MetalFX's diffuse guide takes the sun's shadow deep (SUN_GUIDE_SHADE), for its metered exposure
 constant uint FLAG_ENERGY        = 8388608; // specular keeps its energy and takes it from the diffuse (specularMultiscatter)
 constant uint FLAG_PARTICLES     = 8388608; // the composite puts the particles' layer over the scene (particleLayerKernel)
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the

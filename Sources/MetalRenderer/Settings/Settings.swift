@@ -243,11 +243,21 @@ package struct CascadeSettings: Equatable, Codable {
     package var feedback = true     // multi-bounce: shade ray hits with last frame's indirect light where visible
     package var denoiseIndirect = false     // smooth the result with the SVGF temporal pass
     package var skyGaps = false             // every scene's rays ask for the sky through the gaps (SceneDefinition.cascadeSkyGaps)
-    /// Multi-bounce, in the outdoor scenes (SceneKind.hasRealisticLook): how much of all the probes' mean light a hit
-    /// takes where last frame's light there isn't known (off screen, or hidden). Outdoors the mean is mostly sky-lit
-    /// surfaces', and such a hit is often in shade: with all of it a courtyard's shade read 20% brighter than path
-    /// traced, with a quarter 1%. Rooms take all of it: a quarter took the Cornell box's shade to 0.6 of path traced.
+    /// Multi-bounce, with one thing on an open stage (SceneDefinition.cascadeHiddenLight): how much of all the probes'
+    /// mean light a hit takes where last frame's light there isn't known. The mean is the stage's and such a hit lies inside
+    /// the thing: with all of it a lone tree's later bounces read 2.9 of path traced in shade, with a quarter 0.88.
+    /// Elsewhere a hit takes all of it: a courtyard's later bounces read 0.88, with a quarter 0.46, and a closed room's
+    /// shade with a quarter 0.6.
     package var hiddenLight: Float = 0.25
+    /// A hit sees the sun through a ray. The sun's light map, its texels up to a metre wide and read 1.5 of them off the
+    /// surface, lit what lies in shade at GI's hits: the first bounce in shade over path traced read 2.1 in a forest,
+    /// 1.39 in a courtyard and 1.16 in the mixed scene; with rays 0.8, 0.90 and 1.05. Scenes with plants also ask for the
+    /// sky through the gaps. Rays cost a forest about a millisecond.
+    package var hitRays = true
+    /// A probe's SH gives the cosine-weighted mean of its bins at its own normal (rcSHKernel): its plain projection
+    /// took a third off hillsides facing the camera, and sunlit walls read 0.92 of path traced in the Cornell box, 0.90
+    /// in the gallery (with this 0.97, 0.99).
+    package var shNormal = true
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
@@ -677,6 +687,9 @@ package struct RenderSettings: Equatable, Codable {
     package var energyConservation = true
     /// The sun through a window, or through solid glass, takes its colour (Lights.metal glassShadowTint), on what the camera sees.
     package var tintedShadows = true
+    /// MetalFX's denoiser has its exposure from the frame's meter and a deep shadow guide (Upscaler, Output.metal
+    /// SUN_GUIDE_SHADE), which keeps the light it takes off what is brighter than its surroundings.
+    package var denoiserMetered = true
 
     /// The benchmarks' look for their scores' history: the tone curve and lens from before, none of the passes since.
     package mutating func useClassicLook() {
@@ -687,7 +700,10 @@ package struct RenderSettings: Equatable, Codable {
         reflectionSkyRays = false
         energyConservation = false
         tintedShadows = false
+        denoiserMetered = false
         cascades.hiddenLight = 1
+        cascades.hitRays = false
+        cascades.shNormal = false
         contactAOReach = 0.5
     }
 
@@ -701,7 +717,10 @@ package struct RenderSettings: Equatable, Codable {
         reflectionSkyRays = app.reflectionSkyRays
         energyConservation = app.energyConservation
         tintedShadows = app.tintedShadows
+        denoiserMetered = app.denoiserMetered
         cascades.hiddenLight = app.cascades.hiddenLight
+        cascades.hitRays = app.cascades.hitRays
+        cascades.shNormal = app.cascades.shNormal
         contactAOReach = app.contactAOReach
     }
 

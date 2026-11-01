@@ -97,9 +97,11 @@ final class FilmLookTests: XCTestCase {
         func centre(_ l: Float) -> Float { AutoExposure.logMin + (floor((l - AutoExposure.logMin) / step) + 0.5) * step }
         let first = meter(at: -2)
         XCTAssertEqual(log2(first), log2(AutoExposure.filmKey) - centre(-2), accuracy: 1e-3)
+        XCTAssertEqual(log2(m.denoiserExposure), log2(AutoExposure.denoiserKey) - centre(-2), accuracy: 1e-3)
         // Far from the target it moves at a constant speed: 3 stops a second closing down, 1 opening up.
         let down = log2(meter(at: 4, dt: 0.1)) - log2(first)
         XCTAssertEqual(down, -AutoExposure.filmClose * 0.1, accuracy: 1e-3)
+        XCTAssertEqual(log2(m.denoiserExposure) - log2(AutoExposure.denoiserKey / AutoExposure.filmKey), log2(first) + down, accuracy: 1e-3)
         let before = log2(meter(at: -8, dt: 0))
         XCTAssertEqual(log2(meter(at: -8, dt: 0.1)) - before, AutoExposure.filmOpen * 0.1, accuracy: 1e-3)
     }
@@ -241,7 +243,10 @@ final class FilmLookTests: XCTestCase {
         XCTAssertFalse(config.settings.reflectionSkyRays)
         XCTAssertFalse(config.settings.energyConservation)
         XCTAssertFalse(config.settings.tintedShadows)
+        XCTAssertFalse(config.settings.denoiserMetered)
         XCTAssertEqual(config.settings.cascades.hiddenLight, 1)
+        XCTAssertFalse(config.settings.cascades.hitRays)
+        XCTAssertFalse(config.settings.cascades.shNormal)
         XCTAssertEqual(config.settings.contactAOReach, 0.5)
         let app = config.appLook()
         XCTAssertEqual(app.settings.toneMap, .film)
@@ -251,7 +256,10 @@ final class FilmLookTests: XCTestCase {
         XCTAssertTrue(app.settings.reflectionSkyRays)
         XCTAssertTrue(app.settings.energyConservation)
         XCTAssertTrue(app.settings.tintedShadows)
+        XCTAssertTrue(app.settings.denoiserMetered)
         XCTAssertEqual(app.settings.cascades.hiddenLight, 0.25)
+        XCTAssertTrue(app.settings.cascades.hitRays)
+        XCTAssertTrue(app.settings.cascades.shNormal)
         XCTAssertEqual(app.settings.contactAOReach, 0.2)
     }
 

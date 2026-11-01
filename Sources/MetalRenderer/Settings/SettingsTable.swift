@@ -585,6 +585,7 @@ package enum SettingsTable {
             S.check("Reflections see the sky", \.reflectionSkyRays).env(.gi, "reflectionsky").advanced(),
             S.check("Energy conservation", \.energyConservation).env(.gi, "energy").advanced(),
             S.check("Tinted shadows", \.tintedShadows).env(.gi, "tintedshadows").advanced(),
+            S.check("MetalFX's exposure from the meter", \.denoiserMetered).env(.gi, "denoisermetered").advanced(),
             S.check("Blue-noise sampling", \.blueNoise).env(.gi, "blue"),
             S.check("Solid shading (`)", \.solid).env(.view, "solid"),
             S.check("Classic grey", \.solidLook.classic).env(.view, "solidclassic").when { $0.solid },
@@ -632,6 +633,8 @@ package enum SettingsTable {
             S.slider("Hidden hits' light", \.cascades.hiddenLight, CascadeSettings.hiddenLightRange, step: 0.05, fmt("%.2f"))
                 .env(.gi, "rchidden").when(cascades).enabled({ on($0) && $0.cascades.feedback }).advanced(),
             S.check("Sky through gaps", \.cascades.skyGaps).env(.gi, "rcskygaps").when(cascades).enabled(on).advanced(),
+            S.check("Sun rays at hits", \.cascades.hitRays).env(.gi, "rchits").when(cascades).enabled(on).advanced(),
+            S.check("SH true to the normal", \.cascades.shNormal).env(.gi, "rcsh").when(cascades).enabled(on).advanced(),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
             S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
                 .env(.restirGI, "quarter").when(restir).enabled(on),

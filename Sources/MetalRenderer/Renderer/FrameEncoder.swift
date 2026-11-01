@@ -16,6 +16,7 @@ package struct UpscaleInputs {
     let view: Upscaler.View
     let jitter: SIMD2<Float>
     let reset: Bool
+    let exposure: Float
 }
 
 /// When a frame's GPU work ran: the whole frame, and with a benchmark's split passes each pass's command buffer.
