@@ -14481,7 +14481,7 @@
             "callee": "environment",
             "receiver_type": "ProcessInfo",
             "lang": "swift",
-            "line": "L35"
+            "line": "L38"
           }
         ]
       },
@@ -14500,7 +14500,7 @@
       "file_type": "code",
       "norm_label": "view",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L143"
+      "source_location": "L163"
     },
     {
       "id": "sources_metalrenderer_shaders_lightsampling_lightcandidate",
@@ -16241,7 +16241,7 @@
       "file_type": "code",
       "norm_label": "frametimes",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L22"
+      "source_location": "L23"
     },
     {
       "id": "sources_metalrenderer_renderer_lighting_fognoise_fognoise",
@@ -17483,7 +17483,7 @@
       "file_type": "code",
       "norm_label": "frameencoder",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L31"
+      "source_location": "L32"
     },
     {
       "id": "sources_metalrenderer_renderer_rendersurface_frameoutput",
@@ -37397,7 +37397,7 @@
       "file_type": "code",
       "norm_label": ".testbenchmarkskeeptheclassiclook()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L233"
+      "source_location": "L235"
     },
     {
       "id": "sources_characters_characterdna_characterdna_fingerprint",
@@ -55929,7 +55929,7 @@
       "file_type": "code",
       "norm_label": ".interpolate()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51"
+      "source_location": "L52"
     },
     {
       "id": "sources_metalrenderer_renderer_metal4backend_metal4frame_interpolate",
@@ -57427,19 +57427,19 @@
             "callee": "jsonObject",
             "receiver_type": "JSONSerialization",
             "lang": "swift",
-            "line": "L116"
+            "line": "L118"
           },
           {
             "callee": "data",
             "receiver_type": "JSONSerialization",
             "lang": "swift",
-            "line": "L118"
+            "line": "L120"
           }
         ]
       },
       "norm_label": ".testanoldsavedlookisresetonce()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L109"
+      "source_location": "L111"
     },
     {
       "id": "tests_metalrenderertests_renderer_taatests_taatests_testitrunsonlywithoutupscalingorreferences",
@@ -76125,13 +76125,13 @@
             "callee": "makeBuffer",
             "receiver_type": "MTLDevice",
             "lang": "swift",
-            "line": "L45"
+            "line": "L53"
           }
         ]
       },
       "norm_label": ".init()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L43"
+      "source_location": "L51"
     },
     {
       "id": "sources_metalrenderer_renderer_post_autoexposure_autoexposure_next",
@@ -76143,7 +76143,7 @@
       "file_type": "code",
       "norm_label": ".next()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L66"
+      "source_location": "L75"
     },
     {
       "id": "sources_metalrenderer_renderer_post_autoexposure_autoexposure_peeknext",
@@ -76155,7 +76155,7 @@
       "file_type": "code",
       "norm_label": ".peeknext()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L55"
+      "source_location": "L63"
     },
     {
       "id": "sources_metalrenderer_renderer_post_autoexposure_autoexposure_reset",
@@ -76167,7 +76167,7 @@
       "file_type": "code",
       "norm_label": ".reset()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L58"
+      "source_location": "L66"
     },
     {
       "id": "tests_metalrenderertests_renderer_filmlooktests_filmlooktests_film",
@@ -76203,7 +76203,7 @@
       "file_type": "code",
       "norm_label": ".lobealbedo()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L196"
+      "source_location": "L198"
     },
     {
       "id": "tests_metalrenderertests_renderer_filmlooktests_filmlooktests_testanoldsavedresolutionandsolidlook",
@@ -76215,7 +76215,7 @@
       "file_type": "code",
       "norm_label": ".testanoldsavedresolutionandsolidlook()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L131"
+      "source_location": "L133"
     },
     {
       "id": "tests_metalrenderertests_renderer_filmlooktests_filmlooktests_testcoloursmatchunreal",
@@ -76295,7 +76295,7 @@
       "file_type": "code",
       "norm_label": ".testmotionblurdefaults()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L261"
+      "source_location": "L263"
     },
     {
       "id": "tests_metalrenderertests_renderer_filmlooktests_filmlooktests_testspecularkeepsitsenergy",
@@ -76307,7 +76307,7 @@
       "file_type": "code",
       "norm_label": ".testspecularkeepsitsenergy()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L157"
+      "source_location": "L159"
     },
     {
       "id": "tests_metalrenderertests_terrain_realismtests_realismtests_meter",
@@ -83309,7 +83309,7 @@
       "file_type": "code",
       "norm_label": ".upscale()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L48"
+      "source_location": "L49"
     },
     {
       "id": "sources_metalrenderer_renderer_metal4backend_metal4frame_upscale",
@@ -83343,7 +83343,7 @@
       "file_type": "code",
       "norm_label": ".encode()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L101"
+      "source_location": "L116"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_halton",
@@ -83355,7 +83355,7 @@
       "file_type": "code",
       "norm_label": ".halton()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L156"
+      "source_location": "L176"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_init",
@@ -83371,31 +83371,31 @@
             "callee": "makeTemporalDenoisedScaler",
             "receiver_type": "MTLFXTemporalDenoisedScalerDescriptor",
             "lang": "swift",
-            "line": "L77"
+            "line": "L83"
           },
           {
             "callee": "texture2DDescriptor",
             "receiver_type": "MTLTextureDescriptor",
             "lang": "swift",
-            "line": "L91"
-          },
-          {
-            "callee": "union",
-            "receiver_type": "MTLFXTemporalDenoisedScalerBase",
-            "lang": "swift",
-            "line": "L93"
+            "line": "L97"
           },
           {
             "callee": "makeTexture",
             "receiver_type": "MTLDevice",
             "lang": "swift",
-            "line": "L95"
+            "line": "L101"
+          },
+          {
+            "callee": "union",
+            "receiver_type": "MTLFXTemporalDenoisedScalerBase",
+            "lang": "swift",
+            "line": "L108"
           }
         ]
       },
       "norm_label": ".init()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50"
+      "source_location": "L53"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_jitter",
@@ -83407,7 +83407,7 @@
       "file_type": "code",
       "norm_label": ".jitter()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L150"
+      "source_location": "L170"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_maxscale",
@@ -83423,13 +83423,13 @@
             "callee": "supportedInputContentMaxScale",
             "receiver_type": "MTLFXTemporalDenoisedScalerDescriptor",
             "lang": "swift",
-            "line": "L41"
+            "line": "L44"
           }
         ]
       },
       "norm_label": ".maxscale()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L40"
+      "source_location": "L43"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_resources",
@@ -83441,7 +83441,7 @@
       "file_type": "code",
       "norm_label": ".resources()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L116"
+      "source_location": "L131"
     },
     {
       "id": "sources_metalrenderer_renderer_post_upscaler_upscaler_set",
@@ -83453,7 +83453,7 @@
       "file_type": "code",
       "norm_label": ".set()",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L122"
+      "source_location": "L137"
     },
     {
       "id": "tests_metalrenderertests_renderer_taatests_taatests_testjitteratthetracedresolution",
@@ -84405,7 +84405,7 @@
       "file_type": "code",
       "norm_label": ".testmateriallobes()",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L223"
+      "source_location": "L225"
     },
     {
       "id": "sources_materials_materialssettings_materialworkshopsettings_init",
@@ -88261,7 +88261,7 @@
       "file_type": "code",
       "norm_label": ".commit()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55"
+      "source_location": "L56"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_release",
@@ -88273,7 +88273,7 @@
       "file_type": "code",
       "norm_label": ".release()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L57"
+      "source_location": "L58"
     },
     {
       "id": "sources_metalrenderer_renderer_lighting_fognoise_fognoise_generate",
@@ -89565,7 +89565,7 @@
       "file_type": "code",
       "norm_label": "accumulatecolorkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799"
+      "source_location": "L801"
     },
     {
       "id": "sources_metalrenderer_shaders_output_accumulatekernel",
@@ -89577,7 +89577,7 @@
       "file_type": "code",
       "norm_label": "accumulatekernel()",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773"
+      "source_location": "L775"
     },
     {
       "id": "sources_metalrenderer_shaders_output_acesfilm",
@@ -89625,7 +89625,7 @@
       "file_type": "code",
       "norm_label": "compositekernel()",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516"
+      "source_location": "L518"
     },
     {
       "id": "sources_metalrenderer_shaders_output_debughashcolor",
@@ -89793,7 +89793,7 @@
       "file_type": "code",
       "norm_label": "sunshadowguide()",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495"
+      "source_location": "L497"
     },
     {
       "id": "sources_metalrenderer_shaders_output_tonemap",
@@ -89817,7 +89817,7 @@
       "file_type": "code",
       "norm_label": "tonemapkernel()",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755"
+      "source_location": "L757"
     },
     {
       "id": "sources_metalrenderer_shaders_output_viewishdr",
@@ -95355,7 +95355,7 @@
       "file_type": "code",
       "norm_label": ".capture()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L53"
+      "source_location": "L54"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_compute",
@@ -95367,7 +95367,7 @@
       "file_type": "code",
       "norm_label": ".compute()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L35"
+      "source_location": "L36"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_copybuffers",
@@ -95379,7 +95379,7 @@
       "file_type": "code",
       "norm_label": ".copybuffers()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L44"
+      "source_location": "L45"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_endcompute",
@@ -95391,7 +95391,7 @@
       "file_type": "code",
       "norm_label": ".endcompute()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L37"
+      "source_location": "L38"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_generatemipmaps",
@@ -95403,7 +95403,7 @@
       "file_type": "code",
       "norm_label": ".generatemipmaps()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L38"
+      "source_location": "L39"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_signal",
@@ -95415,7 +95415,7 @@
       "file_type": "code",
       "norm_label": ".signal()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L61"
+      "source_location": "L62"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_streamtextures",
@@ -95427,7 +95427,7 @@
       "file_type": "code",
       "norm_label": ".streamtextures()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L46"
+      "source_location": "L47"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_updateprimitives",
@@ -95439,7 +95439,7 @@
       "file_type": "code",
       "norm_label": ".updateprimitives()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L42"
+      "source_location": "L43"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_updatetlas",
@@ -95451,7 +95451,7 @@
       "file_type": "code",
       "norm_label": ".updatetlas()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L39"
+      "source_location": "L40"
     },
     {
       "id": "sources_metalrenderer_renderer_frameencoder_frameencoder_wait",
@@ -95463,7 +95463,7 @@
       "file_type": "code",
       "norm_label": ".wait()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L60"
+      "source_location": "L61"
     },
     {
       "id": "sources_metalrenderer_renderer_metal4backend_metal4frame_updatetlas",
@@ -120947,7 +120947,7 @@
       "file_type": "code",
       "norm_label": ".run()",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L69"
+      "source_location": "L70"
     },
     {
       "id": "sources_metalrenderer_renderer_metal4backend_metal4frame_settextures",
@@ -181876,7 +181876,7 @@
       "file_type": "code",
       "norm_label": ".current",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L53"
+      "source_location": "L61"
     },
     {
       "id": "sources_metalrenderer_renderer_post_autoexposure_swift_float",
@@ -313773,7 +313773,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L65",
+      "source_location": "L66",
       "weight": 1.0
     },
     {
@@ -313785,7 +313785,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L73",
+      "source_location": "L74",
       "weight": 1.0
     },
     {
@@ -314961,7 +314961,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L104",
+      "source_location": "L119",
       "weight": 1.0
     },
     {
@@ -314973,7 +314973,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L153",
+      "source_location": "L173",
       "weight": 1.0
     },
     {
@@ -315789,7 +315789,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/Renderer+Navigation.swift",
-      "source_location": "L288",
+      "source_location": "L289",
       "weight": 1.0
     },
     {
@@ -322209,7 +322209,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L738",
+      "source_location": "L740",
       "weight": 1.0
     },
     {
@@ -322221,7 +322221,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L747",
+      "source_location": "L749",
       "weight": 1.0
     },
     {
@@ -322233,7 +322233,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L747",
+      "source_location": "L749",
       "weight": 1.0
     },
     {
@@ -322377,7 +322377,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L763",
+      "source_location": "L765",
       "weight": 1.0
     },
     {
@@ -322389,7 +322389,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L764",
+      "source_location": "L766",
       "weight": 1.0
     },
     {
@@ -322401,7 +322401,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L764",
+      "source_location": "L766",
       "weight": 1.0
     },
     {
@@ -379053,7 +379053,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L118",
+      "source_location": "L120",
       "weight": 1.0
     },
     {
@@ -379065,7 +379065,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L121",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -379077,7 +379077,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L122",
+      "source_location": "L124",
       "weight": 1.0
     },
     {
@@ -379137,7 +379137,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L187",
+      "source_location": "L189",
       "weight": 1.0
     },
     {
@@ -388593,7 +388593,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L84",
+      "source_location": "L90",
       "weight": 1.0
     },
     {
@@ -388797,7 +388797,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Renderer/Renderer+Navigation.swift",
-      "source_location": "L291",
+      "source_location": "L292",
       "weight": 1.0
     },
     {
@@ -391377,7 +391377,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L234",
+      "source_location": "L236",
       "weight": 1.0
     },
     {
@@ -391389,7 +391389,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L159",
+      "source_location": "L161",
       "weight": 1.0
     },
     {
@@ -440685,7 +440685,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L25",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -440697,7 +440697,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L25",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -440758,6 +440758,18 @@
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
       "source_location": "L18",
+      "weight": 1.0
+    },
+    {
+      "source": "sources_metalrenderer_renderer_frameencoder_upscaleinputs",
+      "target": "sources_metalrenderer_renderer_frameencoder_swift_float",
+      "relation": "references",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "context": "field",
+      "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
+      "source_location": "L19",
       "weight": 1.0
     },
     {
@@ -441549,7 +441561,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L38",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -441561,7 +441573,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L53",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -441753,7 +441765,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L24",
+      "source_location": "L26",
       "weight": 1.0
     },
     {
@@ -441765,7 +441777,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L25",
+      "source_location": "L28",
       "weight": 1.0
     },
     {
@@ -441777,7 +441789,7 @@
       "confidence_score": 1.0,
       "context": "field",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L33",
+      "source_location": "L36",
       "weight": 1.0
     },
     {
@@ -477649,18 +477661,6 @@
       "weight": 1.0
     },
     {
-      "source": "sources_metalrenderer_renderer_frameencoder_upscaleinputs",
-      "target": "sources_metalrenderer_renderer_frameencoder_swift_float",
-      "relation": "references",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "context": "generic_arg",
-      "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L17",
-      "weight": 1.0
-    },
-    {
       "source": "sources_metalrenderer_renderer_gputypes_gpusolidparams",
       "target": "sources_metalrenderer_renderer_gputypes_swift_float",
       "relation": "references",
@@ -477861,7 +477861,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L150",
+      "source_location": "L170",
       "weight": 1.0
     },
     {
@@ -479421,7 +479421,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -479433,7 +479433,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -479445,7 +479445,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -479457,7 +479457,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -479469,7 +479469,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -479481,7 +479481,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -479493,7 +479493,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -479565,7 +479565,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -479577,7 +479577,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -479589,7 +479589,7 @@
       "confidence_score": 1.0,
       "context": "generic_arg",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -618717,7 +618717,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L53",
+      "source_location": "L54",
       "weight": 1.0
     },
     {
@@ -618729,7 +618729,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L53",
+      "source_location": "L54",
       "weight": 1.0
     },
     {
@@ -618741,7 +618741,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -618753,7 +618753,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -618765,7 +618765,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -618777,7 +618777,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -618789,7 +618789,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L66",
+      "source_location": "L67",
       "weight": 1.0
     },
     {
@@ -618801,7 +618801,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L66",
+      "source_location": "L67",
       "weight": 1.0
     },
     {
@@ -618813,7 +618813,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L44",
+      "source_location": "L45",
       "weight": 1.0
     },
     {
@@ -618825,7 +618825,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L44",
+      "source_location": "L45",
       "weight": 1.0
     },
     {
@@ -618837,7 +618837,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L38",
+      "source_location": "L39",
       "weight": 1.0
     },
     {
@@ -618849,7 +618849,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L38",
+      "source_location": "L39",
       "weight": 1.0
     },
     {
@@ -618861,7 +618861,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
@@ -618873,7 +618873,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
@@ -618885,7 +618885,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
@@ -618897,7 +618897,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
@@ -618909,7 +618909,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L57",
+      "source_location": "L58",
       "weight": 1.0
     },
     {
@@ -618921,7 +618921,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L69",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -618933,7 +618933,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L61",
+      "source_location": "L62",
       "weight": 1.0
     },
     {
@@ -618945,7 +618945,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L61",
+      "source_location": "L62",
       "weight": 1.0
     },
     {
@@ -618957,7 +618957,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L46",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -618969,7 +618969,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L46",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -618981,7 +618981,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L46",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -618993,7 +618993,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L42",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -619005,7 +619005,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L42",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -619017,7 +619017,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L39",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -619029,7 +619029,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L39",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -619041,7 +619041,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L48",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -619053,7 +619053,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L48",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -619065,7 +619065,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L48",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -619077,7 +619077,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L60",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -619089,7 +619089,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L60",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -620277,7 +620277,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L43",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -620289,7 +620289,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L43",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -620301,7 +620301,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L66",
+      "source_location": "L75",
       "weight": 1.0
     },
     {
@@ -620553,7 +620553,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L101",
+      "source_location": "L116",
       "weight": 1.0
     },
     {
@@ -620565,7 +620565,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L108",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -620577,7 +620577,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L108",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -620589,7 +620589,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L108",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -620601,7 +620601,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L156",
+      "source_location": "L176",
       "weight": 1.0
     },
     {
@@ -620613,7 +620613,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50",
+      "source_location": "L53",
       "weight": 1.0
     },
     {
@@ -620625,7 +620625,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50",
+      "source_location": "L53",
       "weight": 1.0
     },
     {
@@ -620637,7 +620637,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50",
+      "source_location": "L53",
       "weight": 1.0
     },
     {
@@ -620649,7 +620649,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50",
+      "source_location": "L53",
       "weight": 1.0
     },
     {
@@ -620661,7 +620661,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L150",
+      "source_location": "L170",
       "weight": 1.0
     },
     {
@@ -620673,7 +620673,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L40",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -620685,7 +620685,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -620697,7 +620697,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L122",
+      "source_location": "L137",
       "weight": 1.0
     },
     {
@@ -620709,7 +620709,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L122",
+      "source_location": "L137",
       "weight": 1.0
     },
     {
@@ -634065,7 +634065,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -634077,7 +634077,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -634089,7 +634089,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -634101,7 +634101,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -634113,7 +634113,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -634125,7 +634125,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -634185,7 +634185,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -634197,7 +634197,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -634209,7 +634209,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -634221,7 +634221,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -634233,7 +634233,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -634581,7 +634581,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -634593,7 +634593,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -634605,7 +634605,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -634617,7 +634617,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -634653,7 +634653,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -634665,7 +634665,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -634677,7 +634677,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -634689,7 +634689,7 @@
       "confidence_score": 1.0,
       "context": "parameter_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -706092,7 +706092,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L66",
+      "source_location": "L75",
       "weight": 1.0
     },
     {
@@ -706107,7 +706107,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L55",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
@@ -706182,7 +706182,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L156",
+      "source_location": "L176",
       "weight": 1.0
     },
     {
@@ -706197,7 +706197,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L150",
+      "source_location": "L170",
       "weight": 1.0
     },
     {
@@ -706212,7 +706212,7 @@
         "swift_plain_return": true
       },
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L40",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -720417,7 +720417,7 @@
         "swift_plain_return": true
       },
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L196",
+      "source_location": "L198",
       "weight": 1.0
     },
     {
@@ -733497,7 +733497,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L66",
+      "source_location": "L67",
       "weight": 1.0
     },
     {
@@ -733641,7 +733641,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -735921,7 +735921,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -735933,7 +735933,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -735945,7 +735945,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -736053,7 +736053,7 @@
       "confidence_score": 1.0,
       "context": "return_type",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -790822,7 +790822,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L22",
+      "source_location": "L23",
       "weight": 1.0
     },
     {
@@ -790833,7 +790833,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L64",
+      "source_location": "L65",
       "weight": 1.0
     },
     {
@@ -791251,7 +791251,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L143",
+      "source_location": "L163",
       "weight": 1.0
     },
     {
@@ -796806,7 +796806,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L495",
+      "source_location": "L497",
       "weight": 1.0
     },
     {
@@ -796817,7 +796817,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L516",
+      "source_location": "L518",
       "weight": 1.0
     },
     {
@@ -796828,7 +796828,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L755",
+      "source_location": "L757",
       "weight": 1.0
     },
     {
@@ -796839,7 +796839,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L773",
+      "source_location": "L775",
       "weight": 1.0
     },
     {
@@ -796850,7 +796850,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L799",
+      "source_location": "L801",
       "weight": 1.0
     },
     {
@@ -829850,7 +829850,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L31",
+      "source_location": "L32",
       "weight": 1.0
     },
     {
@@ -883673,7 +883673,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L37",
+      "source_location": "L38",
       "weight": 1.0
     },
     {
@@ -883684,7 +883684,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L38",
+      "source_location": "L39",
       "weight": 1.0
     },
     {
@@ -883695,7 +883695,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L39",
+      "source_location": "L40",
       "weight": 1.0
     },
     {
@@ -883706,7 +883706,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L42",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -883717,7 +883717,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L44",
+      "source_location": "L45",
       "weight": 1.0
     },
     {
@@ -883728,7 +883728,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L46",
+      "source_location": "L47",
       "weight": 1.0
     },
     {
@@ -883739,7 +883739,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L48",
+      "source_location": "L49",
       "weight": 1.0
     },
     {
@@ -883750,7 +883750,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L51",
+      "source_location": "L52",
       "weight": 1.0
     },
     {
@@ -883761,7 +883761,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L53",
+      "source_location": "L54",
       "weight": 1.0
     },
     {
@@ -883772,7 +883772,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L55",
+      "source_location": "L56",
       "weight": 1.0
     },
     {
@@ -883783,7 +883783,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L57",
+      "source_location": "L58",
       "weight": 1.0
     },
     {
@@ -883794,7 +883794,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L60",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -883805,7 +883805,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L61",
+      "source_location": "L62",
       "weight": 1.0
     },
     {
@@ -883816,7 +883816,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L66",
+      "source_location": "L67",
       "weight": 1.0
     },
     {
@@ -883827,7 +883827,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/FrameEncoder.swift",
-      "source_location": "L69",
+      "source_location": "L70",
       "weight": 1.0
     },
     {
@@ -884630,7 +884630,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L43",
+      "source_location": "L51",
       "weight": 1.0
     },
     {
@@ -884641,7 +884641,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L53",
+      "source_location": "L61",
       "weight": 1.0
     },
     {
@@ -884652,7 +884652,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L55",
+      "source_location": "L63",
       "weight": 1.0
     },
     {
@@ -884663,7 +884663,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L58",
+      "source_location": "L66",
       "weight": 1.0
     },
     {
@@ -884674,7 +884674,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/AutoExposure.swift",
-      "source_location": "L66",
+      "source_location": "L75",
       "weight": 1.0
     },
     {
@@ -884894,7 +884894,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L108",
+      "source_location": "L123",
       "weight": 1.0
     },
     {
@@ -884905,7 +884905,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L116",
+      "source_location": "L131",
       "weight": 1.0
     },
     {
@@ -884916,7 +884916,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L122",
+      "source_location": "L137",
       "weight": 1.0
     },
     {
@@ -884927,7 +884927,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L150",
+      "source_location": "L170",
       "weight": 1.0
     },
     {
@@ -884938,7 +884938,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L156",
+      "source_location": "L176",
       "weight": 1.0
     },
     {
@@ -884949,7 +884949,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L40",
+      "source_location": "L43",
       "weight": 1.0
     },
     {
@@ -884960,7 +884960,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Sources/MetalRenderer/Renderer/Post/Upscaler.swift",
-      "source_location": "L50",
+      "source_location": "L53",
       "weight": 1.0
     },
     {
@@ -925902,7 +925902,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L109",
+      "source_location": "L111",
       "weight": 1.0
     },
     {
@@ -925913,7 +925913,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L131",
+      "source_location": "L133",
       "weight": 1.0
     },
     {
@@ -925924,7 +925924,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L157",
+      "source_location": "L159",
       "weight": 1.0
     },
     {
@@ -925935,7 +925935,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L196",
+      "source_location": "L198",
       "weight": 1.0
     },
     {
@@ -925946,7 +925946,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L223",
+      "source_location": "L225",
       "weight": 1.0
     },
     {
@@ -925957,7 +925957,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L233",
+      "source_location": "L235",
       "weight": 1.0
     },
     {
@@ -925968,7 +925968,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L261",
+      "source_location": "L263",
       "weight": 1.0
     },
     {
@@ -1015626,7 +1015626,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L791",
+      "source_location": "L793",
       "weight": 1.0
     },
     {
@@ -1015638,7 +1015638,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L565",
+      "source_location": "L567",
       "weight": 1.0
     },
     {
@@ -1015650,7 +1015650,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L577",
+      "source_location": "L579",
       "weight": 1.0
     },
     {
@@ -1015662,7 +1015662,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L580",
+      "source_location": "L582",
       "weight": 1.0
     },
     {
@@ -1015674,7 +1015674,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L580",
+      "source_location": "L582",
       "weight": 1.0
     },
     {
@@ -1015686,7 +1015686,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L580",
+      "source_location": "L582",
       "weight": 1.0
     },
     {
@@ -1015698,7 +1015698,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L583",
+      "source_location": "L585",
       "weight": 1.0
     },
     {
@@ -1015710,7 +1015710,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L584",
+      "source_location": "L586",
       "weight": 1.0
     },
     {
@@ -1015722,7 +1015722,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L597",
+      "source_location": "L599",
       "weight": 1.0
     },
     {
@@ -1015734,7 +1015734,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L600",
+      "source_location": "L602",
       "weight": 1.0
     },
     {
@@ -1015746,7 +1015746,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L655",
+      "source_location": "L657",
       "weight": 1.0
     },
     {
@@ -1015758,7 +1015758,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L655",
+      "source_location": "L657",
       "weight": 1.0
     },
     {
@@ -1015770,7 +1015770,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L663",
+      "source_location": "L665",
       "weight": 1.0
     },
     {
@@ -1015782,7 +1015782,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L672",
+      "source_location": "L674",
       "weight": 1.0
     },
     {
@@ -1015794,7 +1015794,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L691",
+      "source_location": "L693",
       "weight": 1.0
     },
     {
@@ -1015806,7 +1015806,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L693",
+      "source_location": "L695",
       "weight": 1.0
     },
     {
@@ -1015818,7 +1015818,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L696",
+      "source_location": "L698",
       "weight": 1.0
     },
     {
@@ -1015830,7 +1015830,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L729",
+      "source_location": "L731",
       "weight": 1.0
     },
     {
@@ -1016154,7 +1016154,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L498",
+      "source_location": "L500",
       "weight": 1.0
     },
     {
@@ -1016166,7 +1016166,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L498",
+      "source_location": "L500",
       "weight": 1.0
     },
     {
@@ -1016178,7 +1016178,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L498",
+      "source_location": "L500",
       "weight": 1.0
     },
     {
@@ -1016190,7 +1016190,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L504",
+      "source_location": "L506",
       "weight": 1.0
     },
     {
@@ -1016202,7 +1016202,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L508",
+      "source_location": "L510",
       "weight": 1.0
     },
     {
@@ -1016214,7 +1016214,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L509",
+      "source_location": "L511",
       "weight": 1.0
     },
     {
@@ -1016226,7 +1016226,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L509",
+      "source_location": "L511",
       "weight": 1.0
     },
     {
@@ -1016238,7 +1016238,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L511",
+      "source_location": "L513",
       "weight": 1.0
     },
     {
@@ -1016250,7 +1016250,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Sources/MetalRenderer/Shaders/Output.metal",
-      "source_location": "L511",
+      "source_location": "L513",
       "weight": 1.0
     },
     {
@@ -1043502,7 +1043502,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L110",
+      "source_location": "L112",
       "weight": 1.0
     },
     {
@@ -1043514,7 +1043514,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L117",
+      "source_location": "L119",
       "weight": 1.0
     },
     {
@@ -1043526,7 +1043526,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L132",
+      "source_location": "L134",
       "weight": 1.0
     },
     {
@@ -1043538,7 +1043538,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L234",
+      "source_location": "L236",
       "weight": 1.0
     },
     {
@@ -1043574,7 +1043574,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L229",
+      "source_location": "L231",
       "weight": 1.0
     },
     {
@@ -1043586,7 +1043586,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "Tests/MetalRendererTests/Renderer/FilmLookTests.swift",
-      "source_location": "L264",
+      "source_location": "L266",
       "weight": 1.0
     },
     {
@@ -1060016,5 +1060016,5 @@
       "source_file": "Tools/eval/refs/gi/ref8-0.5x.png"
     }
   ],
-  "built_at_commit": "93c0befd7ef9171862588b7df9b9a2072fa49bf8"
+  "built_at_commit": "586d38ca9e7aa4004d6e745c1d5aae7ee8198eb2"
 }

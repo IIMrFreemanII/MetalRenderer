@@ -262,9 +262,10 @@ extension Renderer {
             let w = max(min(lens.warmth, 1), -1)
             u.grade = SIMD4(1 + 0.1 * w, 1 - 0.14 * w, max(lens.saturation, 0), max(lens.contrast, 0.2))
         }
-        if lens.autoExposure {
+        if lens.autoExposure || upscaler != nil {   // (MetalFX's denoiser has its exposure from the meter too)
             u.post.z += Uniforms.meterOn
-            u.post.x *= meterExposure()
+            let metered = meterExposure()
+            if lens.autoExposure { u.post.x *= metered }
         } else {
             exposureMeter.reset()
         }
