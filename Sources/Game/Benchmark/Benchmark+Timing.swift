@@ -63,7 +63,7 @@ extension Benchmark {
     /// The radiance cascades' light against the reference path tracer's, the light as it is (no curve, no lens, no fog or
     /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky.
     static func gilevels() -> [Config] {
-        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress].flatMap { kind -> [Config] in
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants].flatMap { kind -> [Config] in
             func plain(_ c: Config) -> Config {
                 c.appLook().still().fog { $0.enabled = false }.with {
                     $0.toneMap = .none
@@ -79,6 +79,7 @@ extension Benchmark {
                     cascades.named("\(kind) cascades gaps").with { $0.cascades.skyGaps = true },
                     cascades.named("\(kind) cascades contact").with { $0.contactAO = 1 },
                     cascades.named("\(kind) cascades before").with { $0.cascades.hiddenLight = 1 },
+                    cascades.named("\(kind) cascades maps").with { $0.cascades.plantHits = false },
                     cascades.named("\(kind) normals").with { $0.viewMode = 3 }.frames(8),
                     cascades.named("\(kind) direct").with { $0.viewMode = 1 }.frames(30),
                     plain(Config("\(kind) traced", scale: 0.75, scene: scene) { $0.reference.mode = .pathTraced }).frames(1024)]

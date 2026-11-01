@@ -185,8 +185,10 @@ extension Renderer {
                 return []
             }
         }
-        radianceCascades!.skyGaps = scene.settings.kind.definition.cascadeSkyGaps || settings.cascades.skyGaps
-        radianceCascades!.hiddenLight = scene.settings.kind.hasRealisticLook ? settings.cascades.hiddenLight : 1
+        let plantHits = settings.cascades.plantHits && scene.settings.kind.definition.cascadePlantHits
+        radianceCascades!.plantHits = plantHits
+        radianceCascades!.skyGaps = plantHits || scene.settings.kind.definition.cascadeSkyGaps || settings.cascades.skyGaps
+        radianceCascades!.hiddenLight = !plantHits && scene.settings.kind.hasRealisticLook ? settings.cascades.hiddenLight : 1
         return radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
                                         bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
                                         normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)

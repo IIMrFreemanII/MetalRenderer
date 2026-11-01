@@ -248,6 +248,13 @@ package struct CascadeSettings: Equatable, Codable {
     /// surfaces', and such a hit is often in shade: with all of it a courtyard's shade read 20% brighter than path
     /// traced, with a quarter 1%. Rooms take all of it: a quarter took the Cornell box's shade to 0.6 of path traced.
     package var hiddenLight: Float = 0.25
+    /// In the scenes full of plants (SceneDefinition.cascadePlantHits): a hit sees the sun through a ray, every ray that
+    /// needs it asks for the sky through the gaps, a hit whose light isn't known takes all of the probes' mean, and a
+    /// probe's SH is true to its normal. The sun's light map, its texels a metre wide, lit the leaves and grass inside a
+    /// crown's shade at GI's hits: a forest's first bounce read 2.1 of path traced in shade and its total 1.40, 1.05 with this.
+    /// That error hid the gaps the rest close. Elsewhere it stays off: the courtyard's errors cancel (first bounce 1.39 in
+    /// shade, the rest 0.43, 1.01 in all), and the rays alone take its shade to 0.83.
+    package var plantHits = true
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
@@ -688,6 +695,7 @@ package struct RenderSettings: Equatable, Codable {
         energyConservation = false
         tintedShadows = false
         cascades.hiddenLight = 1
+        cascades.plantHits = false
         contactAOReach = 0.5
     }
 
@@ -702,6 +710,7 @@ package struct RenderSettings: Equatable, Codable {
         energyConservation = app.energyConservation
         tintedShadows = app.tintedShadows
         cascades.hiddenLight = app.cascades.hiddenLight
+        cascades.plantHits = app.cascades.plantHits
         contactAOReach = app.contactAOReach
     }
 

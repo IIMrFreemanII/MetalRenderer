@@ -17,7 +17,7 @@
 struct RCParams {
     uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
     uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = bit 0: last cascade,
-                       // bit 1: open sky through the gaps (RC_SKY_GAPS)
+                       // bit 1: open sky through the gaps (RC_SKY_GAPS), bit 2: among plants (RC_PLANT_HITS)
     float4 interval;   // x = start, y = end (meters), z = 0, or to use last frame's indirect light at hits 1 + the share of
                        // the probes' mean a hit takes where it isn't known (RadianceCascades.hiddenLight), w = 1 if there
                        // is a last frame (the resolve's history in the interiors' box)
@@ -30,6 +30,8 @@ constant float RC_CONFIDENT = 0.1f;        // a pixel's matching probes' share o
 constant uint RC_SKY_GAPS = 2u;            // layout.w: a ray that missed, with no next-cascade probe on its surface, asks
                                            // whether it reaches the sky (SceneDefinition.cascadeSkyGaps)
 constant float RC_PARENT_TRUST = 0.1f;     // ...past this share of matching parents' weight their light is taken whole
+constant uint RC_PLANT_HITS = 4u;          // layout.w: a hit sees the sun through a ray, past its light map, and a probe's SH is
+                                           // true to its own normal (CascadeSettings.plantHits)
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -162,7 +164,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         orientNormals(h, dir, hng, hns);
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 light = giLightIllum(lights, u, lightMap, hp, hns, hng,
-                                    pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), accel, s);
+                                    pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), accel, s, (p.layout.w & RC_PLANT_HITS) != 0);
         if (p.interval.z > 0.0f) {
             // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
             // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
@@ -203,8 +205,8 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         // crown, whose coarse probes sit on other leaves deeper in, saw the sky through its gaps as those leaves do,
         // mostly hidden, and its leaves came out a third darker than path traced. With RC_SKY_GAPS such a ray asks
         // whether it goes on to the sky (a visibility query, no shading): if so, the sky's light, blended out as the
-        // probes match. Only where a scene asks: a forest's crowns already matched the path tracer, and the queries
-        // cost it ~0.8 ms.
+        // probes match. Only where a scene asks (CascadeSettings.plantHits, SceneDefinition.cascadeSkyGaps): the queries
+        // cost a forest ~0.8 ms.
         float trust = wPlain > 0.0f ? saturate(wsum / (RC_PARENT_TRUST * wPlain)) : 0.0f;
         if ((p.layout.w & RC_SKY_GAPS) != 0 && trust < 1.0f
             && isVisible(pos.xyz + ng * RAY_EPSILON + dir * p.interval.y, pos.xyz + dir * 1.0e4f, accel, RAY_GI))
@@ -261,6 +263,7 @@ kernel void rcSHKernel(constant RCParams&               p        [[buffer(9)]], 
                        texture2d<float, access::write>  shR      [[texture(2)]],
                        texture2d<float, access::write>  shG      [[texture(3)]],
                        texture2d<float, access::write>  shB      [[texture(4)]],
+                       texture2d<float, access::read>   probeNs  [[texture(5)]],
                        uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= p.grids.x || tid.y >= p.grids.y) return;
@@ -269,13 +272,31 @@ kernel void rcSHKernel(constant RCParams&               p        [[buffer(9)]], 
     float dOmega = 4.0f * M_PI_F / float(dirSide * dirSide);
     float4 r = float4(0.0f), g = float4(0.0f), b = float4(0.0f);
     float3 upper = float3(0.0f);   // the L00 term of the bins above the surface alone
+    bool plants = (p.layout.w & RC_PLANT_HITS) != 0;
+    float3 n = probeNs.read(tid).xyz, seen = float3(0.0f);   // the bins above the surface, by their cosine
+    float seenWeight = 0.0f;
     for (uint k = 0; k < dirSide * dirSide; ++k) {
         uint2 bc = uint2(k % dirSide, k / dirSide);
         float3 dir = equalAreaOctDecode((float2(bc) + 0.5f) / float(dirSide) * 2.0f - 1.0f);
         float4 basis = float4(0.282095f, 0.488603f * dir.y, 0.488603f * dir.z, 0.488603f * dir.x) * dOmega;
         float4 L = merged.read(tid * dirSide + bc);   // w = 1: below the surface (rcTraceMergeKernel)
-        if (L.w == 0.0f) upper += L.rgb * basis.x;
+        if (L.w == 0.0f) {
+            upper += L.rgb * basis.x;
+            if (plants) { float c = saturate(dot(dir, n)); seen += L.rgb * c; seenWeight += c; }
+        }
         r += L.r * basis; g += L.g * basis; b += L.b * basis;
+    }
+    // Sixteen bins are few for L1. A probe facing along z has eight of them exactly in its surface's plane, with half of
+    // L00's weight and no cosine, and the light it gives off (the bins below) comes off its own: walls and hillsides
+    // facing the camera took a third too little. Among plants its SH gives the bins' cosine-weighted mean at its own
+    // normal (a valley's shade 0.83 of path traced, then 0.98). Elsewhere other errors lean on this one: with it the
+    // Cornell box's sunlit walls go from 0.92 to 0.97 of path traced, but the courtyard's shade from 1.01 to 1.15.
+    if (plants && seenWeight > 0.0f) {
+        float4 eval = float4(0.282095f, (2.0f / 3.0f) * 0.488603f * n.y, (2.0f / 3.0f) * 0.488603f * n.z, (2.0f / 3.0f) * 0.488603f * n.x);
+        seen /= seenWeight;
+        r.x += (seen.r - dot(r, eval)) / eval.x;
+        g.x += (seen.g - dot(g, eval)) / eval.x;
+        b.x += (seen.b - dot(b, eval)) / eval.x;
     }
     shR.write(r, tid); shG.write(g, tid); shB.write(b, tid);
     // Mean irradiance over the probe's hemisphere ~ L00 term (illumination units: E / pi = 0.282095 * L00).

@@ -144,8 +144,11 @@ package final class SceneDefinition {
     package var realisticAir = true
     /// Radiance cascades: whether a probe ray that misses, with no coarser probe on its surface to take light from,
     /// asks whether it reaches the sky (RadianceCascades.metal RC_SKY_GAPS). A lone tree under an open sky needs it
-    /// (its crown's leaves came out a third darker than path traced); a forest's crowns don't, and it costs them ~0.8 ms.
+    /// (its crown's leaves came out a third darker than path traced). It costs a forest ~0.8 ms.
     package var cascadeSkyGaps = false
+    /// Radiance cascades: CascadeSettings.plantHits applies. Not a lone tree's (cascadeSkyGaps): with little shade in its
+    /// crown the light map serves, its shade reads 1.04 of path traced, with all of it 1.09.
+    package var cascadePlantHits: Bool { hasPlants && !cascadeSkyGaps }
     package var realisticHaze: Float = 0.55
     package var realisticWarmth: Float = 0.06
     /// Its default camera, unless the scene says (`cameraFromScene`).

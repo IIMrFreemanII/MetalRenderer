@@ -632,6 +632,7 @@ package enum SettingsTable {
             S.slider("Hidden hits' light", \.cascades.hiddenLight, CascadeSettings.hiddenLightRange, step: 0.05, fmt("%.2f"))
                 .env(.gi, "rchidden").when(cascades).enabled({ on($0) && $0.cascades.feedback }).advanced(),
             S.check("Sky through gaps", \.cascades.skyGaps).env(.gi, "rcskygaps").when(cascades).enabled(on).advanced(),
+            S.check("Rays at hits among plants", \.cascades.plantHits).env(.gi, "rcplants").when(cascades).enabled(on).advanced(),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
             S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
                 .env(.restirGI, "quarter").when(restir).enabled(on),
