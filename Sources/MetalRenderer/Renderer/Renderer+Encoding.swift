@@ -450,7 +450,7 @@ extension Renderer {
         if let drawable, let upscaler {
             if upscalerReset { interpolator?.reset() }
             passes.upscale(upscaler, UpscaleInputs(targets: t, normalDepth: t.normalDepth[cur], view: plan.view, jitter: plan.jitter,
-                                                   reset: upscalerReset), pass: "upscale")
+                                                   reset: upscalerReset, exposure: exposureMeter.denoiserExposure), pass: "upscale")
             upscalerReset = false
             // The particles over what it made (it would smear them: particleOverlayKernel).
             if let layer = plan.particles, let enc = passes.compute("particle overlay") {

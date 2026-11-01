@@ -490,7 +490,9 @@ inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
 // out one soft blob. The sun's visibility is clean (a ray to a point on a disc half a degree across: 0 or 1, 0 to 1 only
 // in a penumbra a few centimetres wide), so it brings the guide no noise. Other lights' would (wide penumbrae, the
 // picks of many lights), and stay out, as does any visibility traceKernel didn't write (many lights, ReSTIR).
-constant float SUN_GUIDE_SHADE = 0.5f;
+// How deep, at the denoiser's exposure (AutoExposure.denoiserKey), the forest over the reference: 1, a flat guide, reads
+// 1.00 sunlit and 1.22 in shade with 0.57 of its local contrast; 0.5 reads 0.97, 1.07 and 0.62; 0.15 reads 0.99, 1.05 and 0.67.
+constant float SUN_GUIDE_SHADE = 0.15f;
 
 inline float sunShadowGuide(constant Uniforms& u, device const Light* lights, texture2d<float, access::read> visibility,
                             texture2d<float, access::read> surfacePos, texture2d<float, access::read> nd,

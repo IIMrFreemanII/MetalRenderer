@@ -22,6 +22,9 @@ package final class Upscaler {
     /// The scaler's output, linear and unbounded, for tonemapKernel (MetalFX needs a private output texture, so it
     /// can't write the drawable).
     let hdrOutput: MTLTexture
+    /// MetalFX's exposure (AutoExposure.denoiserExposure), a texture of one texel, one for each frame in flight and one more.
+    private let exposures: [MTLTexture]
+    private var frame = 0
     let scaler: MTLFXTemporalDenoisedScalerBase   // MTLFXTemporalDenoisedScaler, or with `metal4` MTL4FXTemporalDenoisedScaler
     /// Metal 4's scaler, encoded into the frame's own command buffer (Metal4Frame.upscale); otherwise Metal 3's.
     let metal4: Bool
@@ -69,9 +72,12 @@ package final class Upscaler {
         // (Not its transparency overlay for the particles' layer: it filters the overlay over time with the scene's
         // motion, which isn't the particles', and sparks come out as faint streaks. particleOverlayKernel puts the
         // layer over its output instead.)
-        // The light arrives before the camera's exposure (tonemapKernel applies it), so MetalFX finds its own. A fixed
-        // exposure texture, and a denoise-strength mask over the sky and the emitters, scored the same (hwrtq).
-        d.isAutoExposureEnabled = true
+        // The light arrives before the camera's exposure (tonemapKernel applies it), and MetalFX multiplies it by an
+        // exposure of its own. It takes light off what is brighter than its surroundings, the more the higher that exposure
+        // (as if it filtered on a tone curve): by the forest's sunlit surfaces over the reference, fixed exposures of 100,
+        // 10, 1, 0.3 read 0.71, 0.90, 0.95, 1.00, and its automatic one 0.90 where the raw frame reads 1.05. So it has its
+        // exposure from the frame's meter, at a low key (AutoExposure.denoiserKey).
+        d.isAutoExposureEnabled = false
         let made: MTLFXTemporalDenoisedScalerBase?
         if let compiler, Upscaler.metal4Available, #available(macOS 27.0, *) {
             made = d.makeTemporalDenoisedScaler(device: device, compiler: compiler)
@@ -87,6 +93,15 @@ package final class Upscaler {
         scaler.motionVectorScaleY = 1
         scaler.isDepthReversed = true   // traceKernel writes near / viewDepth, so 0 = far
         self.scaler = scaler
+
+        let e = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r16Float, width: 1, height: 1, mipmapped: false)
+        e.usage = .shaderRead
+        e.storageMode = .shared
+        exposures = try (0...GPUFrames.maxInFlight).map { _ in
+            guard let exposure = device.makeTexture(descriptor: e) else { throw RendererError.resourceCreation("texture denoiser exposure") }
+            exposure.label = "denoiser exposure"
+            return exposure
+        }
 
         let t = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: Upscaler.hdrFormat, width: outputWidth, height: outputHeight,
                                                          mipmapped: false)
@@ -116,7 +131,7 @@ package final class Upscaler {
     func resources(_ inputs: UpscaleInputs) -> [MTLTexture] {
         let t = inputs.targets
         return [t.upscaleColor, t.deviceDepth, t.pixelMotion, t.diffuseGuide, t.specularAlbedo, inputs.normalDepth, t.roughness,
-                t.specularHitDistance, hdrOutput]
+                t.specularHitDistance, hdrOutput] + exposures
     }
 
     private func set(_ scaler: MTLFXTemporalDenoisedScalerBase, _ inputs: UpscaleInputs) {
@@ -130,6 +145,11 @@ package final class Upscaler {
         scaler.roughnessTexture = t.roughness
         scaler.specularHitDistanceTexture = t.specularHitDistance   // how far the reflection ray went (Reflections.metal)
         scaler.outputTexture = hdrOutput
+        frame += 1
+        var exposure = Float16(inputs.exposure)   // (from the frame before: this frame's light hasn't been measured)
+        let exposureTexture = exposures[frame % exposures.count]
+        exposureTexture.replace(region: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0, withBytes: &exposure, bytesPerRow: 2)
+        scaler.exposureTexture = exposureTexture
         // MetalFX wants the offset that takes a sample back to the pixel center: the negated ray jitter.
         // (Measured with MetalFX's temporal scaler: the wrong sign cost ~5 dB PSNR against a native-resolution render.)
         scaler.jitterOffsetX = -inputs.jitter.x
