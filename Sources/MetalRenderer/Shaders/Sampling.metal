@@ -33,9 +33,7 @@ constant uint SEED_FOG_REFERENCE     = 0x5bd1e995u;
 constant uint SEED_MANY_LIGHTS       = 0x9E3779B9u;   // manyLightsKernel / manyLightsReuseKernel: one of them runs
 constant uint SEED_GLASS              = 0x7F4A7C15u;   // a rough glass's surface (liquidKernel)
 constant uint SEED_CONTACT_AO        = 0x3C6EF372u;
-constant uint SEED_RESTIR_DI         = 0x2545F491u;
-constant uint SEED_RESTIR_GI         = 0x85EBCA6Bu;
-constant uint SEED_RESTIR_GI_HISTORY = 0x7F4A7C15u;
+constant uint SEED_SAMPLED_LIGHTS    = 0x2545F491u;
 inline uint pixelSeed(uint2 pixel, uint frame, uint salt) {
     return pcgHash(pixel.x + pcgHash(pixel.y + pcgHash(frame ^ salt)));
 }
@@ -89,8 +87,8 @@ struct Sampler {
 };
 
 // A kernel's sample stream: `pixel` picks the blue-noise window, `dimension` is where the kernel's dimensions start
-// (kernels of one frame use ranges apart: trace 0, reflections 40, glass 52, the direct-light kernels 64, mesh lights 96,
-// ReSTIR GI 128), `seed` starts the white-noise stream.
+// (kernels of one frame use ranges apart: trace 0, reflections 40, glass 52, the direct-light kernels 64, mesh lights 96),
+// `seed` starts the white-noise stream.
 inline Sampler makeSampler(texture2d<float, access::read> blueNoise, constant Uniforms& u, uint2 pixel, uint dimension,
                            uint seed) {
     Sampler rng;

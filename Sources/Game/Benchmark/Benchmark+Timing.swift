@@ -120,6 +120,14 @@ extension Benchmark {
                 plain(Config("frost traced", scale: 1.5, scene: scene) { $0.reference.mode = .pathTraced }).still().from(view).frames(1024)]
     }
 
+    /// What each pass's rays cost at the app's look, still and moving, for work that traces fewer of them.
+    static func tracecost() -> [Config] {
+        [SceneKind.level, .lobes, .sun, .forest, .stress].flatMap { kind -> [Config] in
+            let base = Config(kind.name, scale: 0.75, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: kind)).appLook()
+            return [base.still().frames(120), base.named("\(kind.name) moving").cameraMove()]
+        }
+    }
+
     /// The app's look and each of its passes turned off, on the default level, the courtyard and the forest, still (the
     /// images and the contact shade, air and reflections' cost) and moving (the motion blur's).
     static func look() -> [Config] {
@@ -219,18 +227,18 @@ extension Benchmark {
     /// (cascades, MetalFX denoiser 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the
     /// night market.
     /// `METALRENDERER_BENCH_SPLIT=0` for whole-frame times.
-    static func restir() -> [Config] {
+    static func manylights() -> [Config] {
         func shown(_ name: String, _ scene: SceneSettings, _ mode: DirectLightMode) -> Config {
             Config(name, scale: 0.5, upscale: 3, gi: .radianceCascades, scene: scene).direct(mode)
         }
         var out: [Config] = []
         for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
-            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.restir]
+            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.sampled]
             out += modes.map { shown("\($0.title.lowercased()), \(lights) lights", stressHall(lights: lights), $0) }
         }
         // The night market (its defaults: cascades, fog), paused so the PNGs compare.
         for lights in [1024, 4096, 16384] {
-            for mode in lights <= 4096 ? [DirectLightMode.grouped, .restir] : [.restir] {
+            for mode in lights <= 4096 ? [DirectLightMode.grouped, .sampled] : [.sampled] {
                 out.append(shown("market \(mode.title.lowercased()), \(lights) bulbs", SceneSettings(kind: .market, lights: lights), mode).still())
             }
         }
@@ -260,7 +268,7 @@ extension Benchmark {
         }
         for detail in [full, vg1] {
             out.append(gallery("\(detail.tag) camera", detail, upscale: 3, gi: .radianceCascades).cameraMove())
-            for (tag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced), ("restirgi", .restirGI)] {
+            for (tag, mode) in [("cascades", GIMode.radianceCascades), ("pt", .pathTraced)] {
                 out.append(gallery("\(detail.tag) \(tag) closeup", detail, gi: mode).still(previous: true).from(galleryCloseup))
             }
             out.append(gallery("\(detail.tag) closeup 3x", detail, upscale: 3, gi: .radianceCascades).still().from(galleryCloseup))
@@ -275,8 +283,6 @@ extension Benchmark {
             Config("pt-lightmaps", scale: 0.5) { $0.lightMaps = true },
             Config("cascades", scale: 0.5, gi: .radianceCascades),
             Config("cascades-hq", scale: 0.5, gi: .radianceCascades) { $0.cascades.probeSpacing = 4; $0.cascades.firstInterval = 0.25 },
-            Config("restirgi", scale: 0.5, gi: .restirGI),
-            Config("restirgi-q", scale: 0.5, gi: .restirGI) { $0.restirGI.quarterBudget = true },
         ]
         guard let pick = env["METALRENDERER_GI_MODES"] else { return all }
         let tags = Set(pick.split(separator: ",").map(String.init))
@@ -951,7 +957,6 @@ extension Benchmark {
         ] + references([lit.named("backlit ref").with { $0.giMode = .pathTraced }.reference(frames: 512)]) + [
             lit.named("backlit pt").with { $0.giMode = .pathTraced },
             lit.named("backlit cascades"),
-            lit.named("backlit restirgi").with { $0.giMode = .restirGI },
             lit.named("backlit opaque").with { $0.foliage.translucency = 0 },
             // Leaves as cards: the same views as "assemblies" and "backlit cascades", to compare with them.
             still.named("cards").with { $0.scene.leafCards = true },

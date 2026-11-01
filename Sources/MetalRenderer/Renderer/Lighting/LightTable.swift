@@ -16,14 +16,14 @@ struct GPULightTableEntry {
     var element: UInt32    // LightTable.analytic | light index, or LightTable.triangle | emissive triangle index
 }
 
-/// Per emissive triangle (MSL TriangleInfo): its light and its mean emitted luminance, for ReSTIR's target function.
+/// Per emissive triangle (MSL TriangleInfo): its light and its mean emitted luminance, for sampled lights' target function.
 struct GPUTriangleInfo {
     var light: UInt32
     var radianceLum: Float
 }
 
 /// The lights as one table of *elements* (every analytic light but the suns, and every emissive-mesh triangle) to draw
-/// from in O(1), in proportion to nominal power (Vose's alias method). ReSTIR DI draws its candidates from it, so its
+/// from in O(1), in proportion to nominal power (Vose's alias method). Sampled lights draw their candidates from it, so its
 /// cost doesn't depend on the light count. Built once per scene: moving or flickering lights change only the target
 /// function, not the table. A share `epsilon` of the probability is uniform, so a dim light that happens to be close
 /// still gets candidates (no fireflies from tiny pdfs). The suns (at most `maxSuns`) are drawn separately, one candidate

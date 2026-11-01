@@ -472,8 +472,6 @@ extension Renderer {
         } else {
             if sameWorkshop { resetReference() }
             if lightsChanged {
-                restirWritten = false
-                restirGIWritten = false
                 reservoirsWritten = false
             }
         }

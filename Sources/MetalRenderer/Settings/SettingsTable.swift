@@ -72,7 +72,7 @@ extension EnvNamed {
     }
 }
 extension GIMode: EnvNamed {
-    package var envName: String { ["pt", "cascades", "restir"][rawValue] }
+    package var envName: String { ["pt", "cascades"][rawValue] }
 }
 extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
@@ -123,7 +123,7 @@ package enum EnvVariable: String, CaseIterable {
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
-    case restir = "METALRENDERER_RESTIR", restirGI = "METALRENDERER_RESTIR_GI"
+    case sampledLights = "METALRENDERER_SAMPLED_LIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
     case foliage = "METALRENDERER_FOLIAGE", post = "METALRENDERER_POST"
 
@@ -530,41 +530,25 @@ package enum SettingsTable {
     ])
 
     private static let directLight: Section = {
-        let restir: When = { $0.directLight == .restir || $0.directLight == .auto }
-        let spatial: When = { restir($0) && $0.restir.spatialPasses > 0 }
-        let grid: When = { restir($0) && $0.restir.grid.enabled }
-        let passes = [("Off", 0), ("1 pass", 1), ("2 passes", 2)]
+        let sampled: When = { $0.directLight == .sampled || $0.directLight == .auto }
+        let grid: When = { sampled($0) && $0.sampledLights.grid.enabled }
         return Section(title: "Direct light", rows: [
-            S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (ReSTIR above 256 lights)" : $0.title }).env(.direct),
+            S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (Sampled above 256 lights)" : $0.title }).env(.direct),
             S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
             S.value(\.manyLightRays).env(.gi, "lightrays"),
             S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }
                 .env(.gi, "lightreuse").advanced().when { $0.directLight == .grouped && $0.manyLightRays < 2 },
-            S.popup("Candidates", \.restir.candidates, counts: [4, 8, 16, 32]) { "\($0) per pixel" }.env(.restir, "candidates").when(restir),
-            S.popup("Spatial reuse", \.restir.spatialPasses, counts: passes.map(\.1)) { passes[$0].0 }.env(.restir, "spatial").when(restir),
-            S.check("Temporal reuse", \.restir.temporal).env(.restir, "temporal").when(restir),
-            S.check("Visibility reuse", \.restir.visibilityReuse).env(.restir, "vis").when(restir),
-            S.slider("Chains", \.restir.chains, RestirSettings.chainRange).env(.restir, "chains").advanced().when(restir),
-            S.slider("Max M", \.restir.maxM, RestirSettings.maxMRange, step: 1, log: true, fmt("%.0f")).env(.restir, "maxm").advanced().when(restir),
-            S.slider("Neighbours", \.restir.spatialSamples, RestirSettings.spatialSampleRange).env(.restir, "k").advanced().when(spatial),
-            S.slider("Radius", \.restir.radius, RestirSettings.radiusRange, step: 1, fmt("%.0f px")).env(.restir, "radius").advanced().when(spatial),
-            S.check("Light grid (ReGIR candidates)", \.restir.grid.enabled).env(.restir, "grid").when(restir),
-            S.slider("Grid share", \.restir.grid.share, RegirSettings.shareRange) { "\($0) cand." }.env(.restir, "gshare").advanced().when(grid),
-            S.slider("Grid cells", \.restir.grid.cells, RegirSettings.cellRange) { "\($0)³" }.env(.restir, "gcells").advanced().when(grid),
-            S.slider("Grid levels", \.restir.grid.levels, RegirSettings.levelRange).env(.restir, "glevels").advanced().when(grid),
-            S.slider("Cell size", \.restir.grid.cellSize, RegirSettings.cellSizeRange, step: 0.25, log: true, fmt("%.2f m"))
-                .env(.restir, "gsize").advanced().when(grid),
-            S.slider("Level scale", \.restir.grid.levelScale, RegirSettings.scaleRange, step: 0.5, fmt("%.1f×")).env(.restir, "gscale").advanced().when(grid),
-            S.slider("Grid slots", \.restir.grid.slots, RegirSettings.slotRange).env(.restir, "gslots").advanced().when(grid),
-            S.slider("Grid candidates", \.restir.grid.candidates, RegirSettings.candidateRange).env(.restir, "gk").advanced().when(grid),
-            S.check("Split visibility (shadow denoiser)", \.restir.splitVisibility).env(.restir, "split").advanced().when(restir),
-            S.slider("Filter passes", \.restir.denoisePasses, DenoiserSettings.passRange).env(.restir, "passes").advanced().when(restir),
-            S.slider("Edge tolerance (σ)", \.restir.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05, fmt("%.2f"))
-                .env(.restir, "sigma").advanced().when(restir),
-            S.slider("History length", \.restir.denoiseHistory, DenoiserSettings.maxHistoryRange, step: 1, fmt("%.0f fr"))
-                .env(.restir, "history").advanced().when(restir),
-            S.slider("Variance boost", \.restir.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25, fmt("%.2f×"))
-                .env(.restir, "boost").advanced().when(restir),
+            S.popup("Candidates", \.sampledLights.candidates, counts: [4, 8, 16, 32]) { "\($0) per ray" }.env(.sampledLights, "candidates").when(sampled),
+            S.slider("Rays", \.sampledLights.rays, SampledLightSettings.rayRange).env(.sampledLights, "rays").when(sampled),
+            S.check("Light grid (ReGIR candidates)", \.sampledLights.grid.enabled).env(.sampledLights, "grid").when(sampled),
+            S.slider("Grid share", \.sampledLights.grid.share, RegirSettings.shareRange) { "\($0) cand." }.env(.sampledLights, "gshare").advanced().when(grid),
+            S.slider("Grid cells", \.sampledLights.grid.cells, RegirSettings.cellRange) { "\($0)³" }.env(.sampledLights, "gcells").advanced().when(grid),
+            S.slider("Grid levels", \.sampledLights.grid.levels, RegirSettings.levelRange).env(.sampledLights, "glevels").advanced().when(grid),
+            S.slider("Cell size", \.sampledLights.grid.cellSize, RegirSettings.cellSizeRange, step: 0.25, log: true, fmt("%.2f m"))
+                .env(.sampledLights, "gsize").advanced().when(grid),
+            S.slider("Level scale", \.sampledLights.grid.levelScale, RegirSettings.scaleRange, step: 0.5, fmt("%.1f×")).env(.sampledLights, "gscale").advanced().when(grid),
+            S.slider("Grid slots", \.sampledLights.grid.slots, RegirSettings.slotRange).env(.sampledLights, "gslots").advanced().when(grid),
+            S.slider("Grid candidates", \.sampledLights.grid.candidates, RegirSettings.candidateRange).env(.sampledLights, "gk").advanced().when(grid),
         ])
     }()
 
@@ -614,11 +598,6 @@ package enum SettingsTable {
     private static let globalIllumination: Section = {
         let on: When = { $0.giEnabled }
         let paths: When = { $0.giMode == .pathTraced }, cascades: When = { $0.giMode == .radianceCascades }
-        let restir: When = { $0.giMode == .restirGI }
-        let spatial: When = { restir($0) && $0.restirGI.spatialPasses > 0 }
-        let feedback: When = { restir($0) && $0.restirGI.feedback }
-        let denoised: When = { restir($0) && $0.restirGI.denoise }
-        let passes = [("Off", 0), ("1 pass", 1), ("2 passes", 2)]
         return Section(title: "Global illumination", rows: [
             S.check("Enabled", \.giEnabled).env(.gi, "on"),
             S.popup("Method", \.giMode, titled(\.title)).env(.gi, "mode").enabled(on),
@@ -636,34 +615,6 @@ package enum SettingsTable {
             S.check("Sun rays at hits", \.cascades.hitRays).env(.gi, "rchits").when(cascades).enabled(on).advanced(),
             S.check("SH true to the normal", \.cascades.shNormal).env(.gi, "rcsh").when(cascades).enabled(on).advanced(),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
-            S.popup("Rays", \.restirGI.quarterBudget, [("1 per pixel", false), ("1 per 2×2 pixels", true)])
-                .env(.restirGI, "quarter").when(restir).enabled(on),
-            S.slider("Bounces", \.restirGI.bounces, RenderSettings.bounceRange).env(.restirGI, "bounces").when(restir).enabled(on),
-            S.check("Multi-bounce", \.restirGI.feedback).env(.restirGI, "feedback").when(restir).enabled(on),
-            S.check("Temporal reuse", \.restirGI.temporal).env(.restirGI, "temporal").when(restir).enabled(on),
-            S.popup("Spatial reuse", \.restirGI.spatialPasses, counts: passes.map(\.1)) { passes[$0].0 }
-                .env(.restirGI, "spatial").when(restir).enabled(on),
-            S.check("Unbiased spatial reuse", \.restirGI.unbiased).env(.restirGI, "unbiased").when(restir)
-                .enabled { $0.giEnabled && $0.restirGI.spatialPasses > 0 },
-            S.check("Light bounces from light maps", \.restirGI.lightMaps).env(.restirGI, "lightmaps").advanced().when(restir),
-            S.check("Multi-bounce from denoised light", \.restirGI.denoisedFeedback).env(.restirGI, "dfeedback").advanced().when(feedback),
-            S.check("Multi-bounce off screen (mean)", \.restirGI.feedbackFallback).env(.restirGI, "fallback").advanced().when(feedback),
-            S.slider("Max M", \.restirGI.maxM, RestirGISettings.maxMRange, step: 1, log: true, fmt("%.0f")).env(.restirGI, "maxm").advanced().when(restir),
-            S.slider("Max age", \.restirGI.maxAge, RestirGISettings.maxAgeRange) { "\($0) fr" }.env(.restirGI, "age").advanced().when(restir),
-            S.slider("Neighbours", \.restirGI.spatialSamples, RestirGISettings.spatialSampleRange).env(.restirGI, "k").advanced().when(spatial),
-            S.slider("Radius", \.restirGI.radius, RestirGISettings.radiusRange, step: 1, fmt("%.0f px")).env(.restirGI, "radius").advanced().when(spatial),
-            S.slider("Min distance", \.restirGI.minDistance, RestirGISettings.minDistanceRange, step: 0.001, log: true, fmt("%.3f m"))
-                .env(.restirGI, "dmin").advanced().when(restir),
-            S.check("Denoise ReSTIR GI", \.restirGI.denoise).env(.restirGI, "denoise").advanced().when(restir),
-            S.slider("Filter passes", \.restirGI.denoisePasses, DenoiserSettings.passRange).env(.restirGI, "passes").advanced().when(denoised),
-            S.slider("Edge tolerance (σ)", \.restirGI.denoiseSigma, DenoiserSettings.luminanceSigmaRange, step: 0.05, fmt("%.2f"))
-                .env(.restirGI, "sigma").advanced().when(denoised),
-            S.slider("History length", \.restirGI.denoiseHistory, DenoiserSettings.maxHistoryRange, step: 1, fmt("%.0f fr"))
-                .env(.restirGI, "history").advanced().when(denoised),
-            S.slider("Variance boost", \.restirGI.varianceBoost, DenoiserSettings.varianceBoostRange, step: 0.25, fmt("%.2f×"))
-                .env(.restirGI, "boost").advanced().when(denoised),
-            S.slider("Anti-lag", \.restirGI.antiLag, DenoiserSettings.antiLagRange, step: 0.1) { $0 == 0 ? "off" : String(format: "%.1f", $0) }
-                .env(.restirGI, "antilag").advanced().when(denoised),
         ])
     }()
 

@@ -279,10 +279,10 @@ extension Renderer {
         u.flags = (historyValid ? UniformFlags.historyValid : 0) | (denoiserOn ? UniformFlags.denoise : 0)
         if accumulating { u.flags |= UniformFlags.noClamp | UniformFlags.reference }
         if usesSpecular { u.flags |= UniformFlags.specular }
-        // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). ReSTIR: its own kernels.
+        // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). Sampled: a kernel of its own.
         switch directMode {
         case .exact: u.flags |= UniformFlags.allLights
-        case .restir: u.flags |= UniformFlags.restir
+        case .sampled: u.flags |= UniformFlags.sampledLights
         default: break
         }
         if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }

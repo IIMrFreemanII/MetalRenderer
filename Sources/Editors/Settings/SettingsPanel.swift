@@ -412,18 +412,16 @@ final class SettingsPanel: NSObject {
         } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {
-            let restir = renderer.status?.directMode == .restir
-            let shadow = s.denoiser.shadowDenoiser && (!restir || s.restir.splitVisibility)
+            let sampled = renderer.status?.directMode == .sampled
+            let shadow = s.denoiser.shadowDenoiser && !sampled
             var generic: [String] = [], own: [String] = []
             let combined = s.giEnabled && s.giMode == .pathTraced && !s.denoiser.separateSignals && !shadow
-            if restir { own.append("ReSTIR direct light (Direct light, advanced)") }
-            else if shadow { own.append("direct light: the shadow denoiser") }
+            if shadow { own.append("direct light: the shadow denoiser") }
             else { generic.append(combined ? "direct + indirect light, combined" : "direct light") }
             if s.giEnabled {
                 switch s.giMode {
                 case .pathTraced: if !combined { generic.append("indirect light") }
                 case .radianceCascades: if s.cascades.denoiseIndirect { generic.append("cascade GI (1 pass)") }
-                case .restirGI: if s.restirGI.denoise { own.append("ReSTIR GI (Global illumination, advanced)") }
                 }
             }
             var lines = ["Passes, σ, history and anti-lag filter: " + (generic.isEmpty ? "nothing in this mode." : generic.joined(separator: ", ") + ".")]

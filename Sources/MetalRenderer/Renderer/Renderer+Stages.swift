@@ -149,7 +149,6 @@ extension Renderer {
     /// the trace (its G-buffer) and before the reflections (they read it).
     package func giStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         if plan.cascades { return radianceCascadeStages(plan, targets: t) }
-        if let grid = plan.restirGIGrid { return restirGIStages(plan, grid: grid, targets: t) }
         return []
     }
 
@@ -185,7 +184,7 @@ extension Renderer {
                                   composite: inout CompositeInputs) -> (trace: [ComputeStage], denoise: [ComputeStage]) {
         guard plan.specular else { return ([], []) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
-        let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, restirSpecular = plan.restirGrid?.specular
+        let fogParams = plan.fogParams, fogNoise = plan.fog?.noise, sampledSpecular = plan.sampledSpecular
         let roomAmbient = plan.cascades ? radianceCascades?.lastAmbient : nil
         let trace = [ComputeStage(pass: "reflections") { [self] enc in
             bind(enc, .reflection, uniforms, pass: fogParams.reflectionPassFlags, sceneSlot: slot)
@@ -197,7 +196,7 @@ extension Renderer {
                 enc.setBytes(&none, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 10)
             }
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.material, blueNoiseTexture, t.indirect, t.specular,
-                              fogNoise ?? dummy3D, restirSpecular ?? dummy2D, t.specularHitDistance, t.sheen, t.anisotropy])
+                              fogNoise ?? dummy3D, sampledSpecular ?? dummy2D, t.specularHitDistance, t.sheen, t.anisotropy])
             dispatch(enc, .reflection, width: size.width, height: size.height)
         }]
         guard plan.svgf else { return (trace, []) }
@@ -224,54 +223,24 @@ extension Renderer {
         return (trace, denoise)
     }
 
-    /// 2e. ReSTIR DI: after the trace (its G-buffer), before the reflections (they add its direct specular) and the
-    /// denoiser.
-    package func restirStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
-        guard let rg = plan.restirGrid else { return [] }
-        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
-        let r = plan.restirSettings
-        let temporalValid = r.temporal && plan.restirHistory   // (not the denoiser's history: that follows the denoiser)
-        var flags: UInt32 = (temporalValid ? GPURestirParams.temporalValid : 0) | (r.visibilityReuse ? GPURestirParams.visibilityReuse : 0)
-            | (plan.restirSplit ? GPURestirParams.split : 0)
-        let maxM = UInt32(RestirSettings.maxMRange.clamp(r.maxM))
-        let samples = UInt32(RestirSettings.spatialSampleRange.clamp(r.spatialSamples))
-        let radius = RestirSettings.radiusRange.clamp(r.radius) * Float(size.width) / 960
+    /// 2e. Sampled direct light: after the trace (its G-buffer), before the reflections (they add its direct specular) and
+    /// the denoiser.
+    package func sampledDirectStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        guard plan.sampledLights else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        let s = plan.sampledSettings
         let clamp: Float = plan.accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as the mesh-light pass
-        let candidates = RestirSettings.candidateRange.clamp(r.candidates)
-        let params = GPURestirParams(config: SIMD4(UInt32(candidates), maxM, flags, samples),
-                                     tuning: SIMD4(radius, 0, clamp, Float(rg.chains)))
-        // Last frame's lights, for the temporal reuse: what the frame before wrote into its slot (the GPU reads that
-        // buffer for two more frames before the CPU comes back to it). This frame's on a scene's first frame.
-        let previousSlot = (slot + Renderer.maxFramesInFlight - 1) % Renderer.maxFramesInFlight
-        let previousLights = lightBuffers[frameDataWritten[previousSlot] ? previousSlot : slot]
-        var stages = [ComputeStage(pass: "restir") { [self] enc in
+        let params = GPUSampledLightParams(config: SIMD4(UInt32(SampledLightSettings.candidateRange.clamp(s.candidates)),
+                                                         UInt32(SampledLightSettings.rayRange.clamp(s.rays)), 0, 0),
+                                           tuning: SIMD4(clamp, 0, 0, 0))
+        let specular = plan.sampledSpecular ?? dummy2D!
+        return [ComputeStage(pass: "sampled lights") { [self] enc in
             var p = params
-            bind(enc, .restirTemporal, uniforms, pass: p.config.z, sceneSlot: slot)
-            enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
-            enc.setBuffer(previousLights, offset: 0, index: 10)
-            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.motion, t.normalDepth[prev],
-                              rg.reservoir[prev], rg.temporal])
-            dispatch(enc, .restirTemporal, width: size.width, height: size.height)
+            bind(enc, .sampledLights, uniforms, sceneSlot: slot)
+            enc.setBytes(&p, length: MemoryLayout<GPUSampledLightParams>.stride, index: 9)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.direct, specular])
+            dispatch(enc, .sampledLights, width: size.width, height: size.height)
         }]
-        let passes = RestirSettings.spatialPassRange.clamp(r.spatialPasses)
-        flags &= ~GPURestirParams.temporalValid
-        for i in 0..<max(passes, 1) {
-            let last = i == max(passes, 1) - 1
-            let src = i == 0 ? rg.temporal : rg.spatial, dst = last ? rg.reservoir[cur] : rg.spatial
-            var p = params
-            p.config.z = flags | (last ? GPURestirParams.shade : 0)
-            p.config.w = passes == 0 ? 0 : samples
-            p.tuning.y = Float(i)
-            stages.append(ComputeStage(pass: "restir") { [self] enc in
-                var p = p
-                bind(enc, .restirSpatial, uniforms, pass: p.config.z, sceneSlot: slot)
-                enc.setBytes(&p, length: MemoryLayout<GPURestirParams>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, src, dst, t.direct, rg.specular,
-                                  t.visibility, t.blocker])
-                dispatch(enc, .restirSpatial, width: size.width, height: size.height)
-            })
-        }
-        return stages
     }
 
     /// 2c. Direct light that is sampled per pixel: one light per group with more than 4 lights (manyLightsKernel), and
@@ -386,26 +355,11 @@ extension Renderer {
 
     /// The signals SVGF filters this frame, in the order the composite's illumination lists them.
     private func denoiseSignals(_ plan: FramePlan, targets t: RenderTargets) -> [DenoiseSignal] {
-        // ReSTIR's direct light: its own edge-stopping, and its variance scaled up (reused samples are correlated).
-        var restirUniforms = plan.uniforms
-        restirUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(settings.restir.denoiseSigma)
-        restirUniforms.denoise.w = max(settings.restir.varianceBoost, 1)
-        restirUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(settings.restir.denoiseHistory)
-        // ReSTIR GI's indirect light: the same, with its own settings.
-        let rgi = settings.restirGI
-        var restirGIUniforms = plan.uniforms
-        restirGIUniforms.denoise.x = DenoiserSettings.luminanceSigmaRange.clamp(rgi.denoiseSigma)
-        restirGIUniforms.denoise.w = max(rgi.varianceBoost, 1)
-        restirGIUniforms.denoise.y = DenoiserSettings.maxHistoryRange.clamp(rgi.denoiseHistory)
-        restirGIUniforms.denoise.z = DenoiserSettings.antiLagRange.clamp(rgi.antiLag)
         func signal(_ noisy: [MTLTexture], _ d: DenoiseTargets, _ passes: Int) -> DenoiseSignal {
-            let restirs = plan.restir && d === (plan.restirSplit ? t.denoise[3] : t.denoise[0])
-            let uniforms = plan.restirGI && d === t.denoise[1] ? restirGIUniforms : restirs ? restirUniforms : plan.uniforms
-            return DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: uniforms)
+            DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: plan.uniforms)
         }
         var signals: [DenoiseSignal] = []
-        // First, so the indirect light stays last: ReSTIR's unshadowed light (no edges to keep), or the mesh lights'.
-        if plan.restirSplit { signals.append(signal([t.direct], t.denoise[3], plan.directPasses)) }
+        // First, so the indirect light stays last: the mesh lights'.
         if plan.denoiseMeshLights { signals.append(signal([t.meshDirect], t.denoise[3], settings.denoiser.passes(for: .pathTraced))) }
         if !plan.shadowDenoiser {
             signals.append(signal(plan.separate ? [t.direct] : [t.direct, t.indirect], t.denoise[0], plan.directPasses))
@@ -449,7 +403,6 @@ extension Renderer {
             composite.meshDirect = composite.illumination[1]
             composite.uniforms.flags |= UniformFlags.meshLights
         }
-        if plan.restirSplit { composite.meshDirect = composite.illumination[1] }
         if plan.separate { composite.uniforms.flags |= UniformFlags.separateSignals }
         return stages
     }

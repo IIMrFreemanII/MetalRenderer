@@ -635,7 +635,7 @@ extension Scene {
 
     // MARK: - Night market
 
-    /// A street market at night, for many lights (ReSTIR DI): 32 festoon strings strung across a 64 m street carry
+    /// A street market at night, for many lights (sampled direct light): 32 festoon strings strung across a 64 m street carry
     /// `settings.lights` small bulbs between them (4096 by default, up to 16384; a quarter of the strings chase), with
     /// 80 swaying paper lanterns, 40 lit canopies over the stalls, about 120 lit windows (some flickering), 24 neon signs
     /// (emissive meshes, sampled per triangle) and the moon; 60 shoppers walk up and down the street.

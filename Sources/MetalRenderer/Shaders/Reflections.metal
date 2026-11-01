@@ -88,7 +88,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                              texture2d<float, access::read>   indirect   [[texture(5)]],   // this frame's diffuse GI
                              texture2d<float, access::write>  outSpecular [[texture(6)]],
                              texture3d<float>                 fogNoiseTex [[texture(7)]],   // with FOG_REFLECTIONS
-                             texture2d<float, access::read>   restirSpecular [[texture(8)]],  // with FLAG_RESTIR
+                             texture2d<float, access::read>   sampledSpecular [[texture(8)]], // with FLAG_SAMPLED_LIGHTS
                              texture2d<float, access::write>  outHitDistance [[texture(9)]],  // MetalFX's guide (see below)
                              texture2d<float, access::read>   sheenTex   [[texture(10)]],  // MATERIAL_LOBES
                              texture2d<float, access::read>   anisotropyTex [[texture(11)]],
@@ -128,8 +128,8 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     float3 lobeTangent = anisotropy > 0.0f ? normalize(lobeAniso.xyz - n * dot(n, lobeAniso.xyz)) : float3(0.0f);
 
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
-    if (flagOn(u.flags, FLAG_RESTIR)) {
-        direct += restirSpecular.read(tid).rgb;   // ReSTIR's direct specular (restirSpatialKernel)
+    if (flagOn(u.flags, FLAG_SAMPLED_LIGHTS)) {
+        direct += sampledSpecular.read(tid).rgb;   // sampledLightsKernel's direct specular
     } else if (!flagOn(u.flags, FLAG_SHADOW_DENOISER) && analyticLights > 0) {
         // Direct specular from one light, with one shadow ray to a random point of it.
         float pdf;
@@ -232,7 +232,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
         }
     }
     // The firefly clamp is for the reflection ray's light (a small bright emitter seen by few rays). The direct
-    // specular is bounded by the lights' analytic specular (ReSTIR's by its own clamp), and clamping it darkened
+    // specular is bounded by the lights' analytic specular (sampledLightsKernel's by its own clamp), and clamping it darkened
     // the highlights.
     result *= fireflyScale(u, luminance(result / max(albedo, float3(1e-3f))));
     outSpecular.write(roundToHalf(float4((result + direct) / max(albedo, float3(1e-3f)), 1.0f)), tid);

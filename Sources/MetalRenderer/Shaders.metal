@@ -30,8 +30,7 @@ using namespace metal::raytracing;
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel
 #include "Shaders/Water.metal"             // waterKernel: camera rays bent into water, its surface, waterApplyKernel
-#include "Shaders/RestirDI.metal"          // ReSTIR direct light: temporal and spatial reuse
-#include "Shaders/RestirGI.metal"          // ReSTIR GI: initial paths, temporal and spatial reuse
+#include "Shaders/SampledLights.metal"     // direct light from sampled lights (above Scene.lightTableThreshold)
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/PathTrace.metal"         // pathTraceKernel: the reference path tracer (Reference "Path traced")
 #include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser

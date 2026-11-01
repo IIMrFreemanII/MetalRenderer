@@ -333,8 +333,7 @@ constant uint FLAG_MESH_LIGHTS   = 2048; // with the shadow denoiser: the compos
 constant uint FLAG_FOG           = 4096; // the composite applies the volumetric fog
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
-constant uint FLAG_RESTIR        = 32768; // direct light from a pass of its own: ReSTIR DI (restirTemporalKernel,
-                                          // restirSpatialKernel)
+constant uint FLAG_SAMPLED_LIGHTS = 32768; // direct light from a pass of its own (sampledLightsKernel)
 constant uint FLAG_HDR_OUTPUT    = 65536; // MetalFX's denoising scaler follows: the composite writes the raw light and its guides
 constant uint FLAG_WIND          = 131072; // FOLIAGE scenes: the wind is blowing (TraceScene.wind.z > 0), the plants' parts turn
 constant uint FLAG_GI_DEBUG      = 262144; // the GI method wrote the "GI debug" view this frame (else it is black)
@@ -349,7 +348,7 @@ constant uint FLAG_PARTICLES     = 67108864; // the composite puts the particles
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
-// 3 and 4 the same for the kernel's own flags (RESTIR_*, RGI_*, TRACE_*, REFLECT_FOG). A bit outside the mask, and
+// 3 and 4 the same for the kernel's own flags (TRACE_*, REFLECT_FOG). A bit outside the mask, and
 // every bit of a pipeline made without the constants, is read from the uniform as before.
 constant uint fixedFlagsConstant    [[function_constant(1)]];
 constant uint fixedFlagMaskConstant [[function_constant(2)]];

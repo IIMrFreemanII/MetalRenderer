@@ -83,8 +83,7 @@ extension Renderer {
             ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         prevCamera = camera
         benchmarkAccumulating = c.accumulate
-        referenceGIMode = c.accumulate && c.accumulateTechnique ? c.settings.giMode : nil
-        referenceDirectMode = c.accumulate && [.exact, .restir].contains(c.directLight) ? c.directLight : nil
+        referenceDirectMode = c.accumulate && [.exact, .sampled].contains(c.directLight) ? c.directLight : nil
         supersampling = c.accumulate && c.supersample
         resetReference()
         resetGIState()
@@ -308,17 +307,17 @@ extension Renderer {
     /// sRGB, so shaders and MetalFX write linear color and the GPU encodes it.
     package static let drawableFormat = MTLPixelFormat.bgra8Unorm_srgb
     package static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALRENDERER_SHADOWS"] != "0"
-    /// References trace every light up to this many; above, they accumulate ReSTIR's unbiased initial sampling (no reuse).
+    /// References trace every light up to this many; above, they accumulate sampled lights, unbiased.
     package static let exactReferenceLights = 1024
 
-    /// This frame's direct-light method: Auto resolved (ReSTIR with many lights), references exact or sampled.
+    /// This frame's direct-light method: Auto resolved (sampled with many lights), references exact or sampled.
     package var activeDirectMode: DirectLightMode {
         if accumulating {
-            if let forced = referenceDirectMode { return forced }   // METALRENDERER_BENCH=restircheck
-            return scene.lights.count > Renderer.exactReferenceLights ? .restir : .exact
+            if let forced = referenceDirectMode { return forced }   // METALRENDERER_BENCH=sampledcheck
+            return scene.lights.count > Renderer.exactReferenceLights ? .sampled : .exact
         }
         switch settings.directLight {
-        case .auto: return scene.usesLightTable ? .restir : .grouped   // ReSTIR wins above ~256 lights (METALRENDERER_BENCH=restir)
+        case .auto: return scene.usesLightTable ? .sampled : .grouped   // nothing may loop over the lights above 256
         case let mode: return mode
         }
     }
@@ -331,11 +330,14 @@ extension Renderer {
         regirBuffer?.label = "regirGrid"
         return regirBuffer
     }
-    package func restirTargets(width: Int, height: Int, chains: Int) -> RestirTargets? {
-        if let r = restirGrid, r.width == width, r.height == height, r.chains == chains { return r }
-        restirGrid = try? RestirTargets(device: device, width: width, height: height, chains: chains)
-        restirWritten = false
-        return restirGrid
+    package func sampledSpecularTexture(width: Int, height: Int) -> MTLTexture? {
+        if let s = sampledSpecular, s.width == width, s.height == height { return s }
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .private
+        sampledSpecular = device.makeTexture(descriptor: d)
+        sampledSpecular?.label = "sampled specular"
+        return sampledSpecular
     }
     /// The light tree in this frame's slot: built from this frame's light records on the path tracer's first frame with it,
     /// refit once a frame for the lights that change, and copied into the slot's buffer when that one is behind.
@@ -386,7 +388,7 @@ extension Renderer {
     package static let compactBLAS = blasMode.contains("compact")
 
     /// Threadgroup size per kernel (8x8 unless set here), indexed by `Kernel`. `METALRENDERER_TG="trace=16x8,atrous=32x4"`
-    /// overrides it for sweeps: a kernel goes by its `Kernel` case, capitals and spaces aside ("restir gi initial").
+    /// overrides it for sweeps: a kernel goes by its `Kernel` case, capitals and spaces aside ("sampled lights").
     /// Measured on an M1 Max: trace 16x8 is ~2% faster than 8x8, atrous 16x16 ~5%; others don't care.
     /// The shadow temporal kernel's 8x8 group is its tile (it declares max_total_threads_per_threadgroup(64)): leave it.
     private static let threadgroupSizes: [MTLSize] = {
@@ -441,7 +443,7 @@ extension Renderer {
         let s = settings
         func withBounces(_ name: String, _ n: Int) -> String { "GI \(name), \(n) bounce\(n == 1 ? "" : "s")" }
         let gi = !s.giEnabled ? "GI off" : s.giMode == .pathTraced ? withBounces("path traced", s.bounces)
-            : s.giMode == .restirGI ? withBounces("ReSTIR", s.restirGI.bounces) : "GI \(s.giMode.title.lowercased())"
+            : "GI \(s.giMode.title.lowercased())"
         let res = outWidth > width ? String(format: "%ld×%ld → MetalFX denoiser %ld×%ld", width, height, outWidth, outHeight)
                                    : String(format: "%ld×%ld", width, height)
         var stats = String(format: "%@ — %.0f fps — GPU %.1f ms", res, fps, gpuMs)
@@ -596,8 +598,8 @@ extension Renderer {
             return "History length is the SVGF denoiser's: MetalFX's denoising scaler keeps its own history."
         case 5 where !denoiserOn:
             return "The denoiser is off: no history."
-        case 7 where !settings.giEnabled || ![.radianceCascades, .restirGI].contains(activeGIMode):
-            return "GI debug is drawn by radiance cascades and ReSTIR GI only."
+        case 7 where !settings.giEnabled || activeGIMode != .radianceCascades:
+            return "GI debug is drawn by radiance cascades only."
         case 9...10 where !virtual:
             return "Clusters and groups belong to virtual geometry (glTF meshes of 64K+ triangles: the gallery or added "
                 + "models). Other geometry shows its level of detail, faded."

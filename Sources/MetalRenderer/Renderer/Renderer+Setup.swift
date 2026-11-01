@@ -296,8 +296,6 @@ extension Renderer {
         lightStage = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero),
                                 count: scene.lights.count)
         stageComplete = false
-        restirWritten = false
-        restirGIWritten = false
         instanceASBuilt = []
         textureStreamer = prepared?.streamer
         let buffers = try prepared?.buffers ?? SceneBuffers(device: device, queue: buildQueue, scene: scene,

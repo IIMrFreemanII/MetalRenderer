@@ -272,6 +272,21 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertEqual(s.bounces, defaults.bounces + 1)
     }
 
+    /// Settings saved when ReSTIR was there: its direct-light number is now Sampled, its GI method takes the default, and
+    /// its own settings are ignored. The other settings stay.
+    func testSavedReSTIRSettingsLoad() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
+        saved["directLight"] = 3
+        saved["giMode"] = 2
+        saved["restir"] = ["candidates": 16, "chains": 2]
+        saved["restirGI"] = ["bounces": 3]
+        saved["bounces"] = defaults.bounces + 1
+        let s = try XCTUnwrap(SettingsStore.decode(saved: try JSONSerialization.data(withJSONObject: saved), over: defaults))
+        XCTAssertEqual(s.directLight, .sampled)
+        XCTAssertEqual(s.giMode, defaults.giMode)
+        XCTAssertEqual(s.bounces, defaults.bounces + 1)
+    }
+
     /// A saved value that no longer decodes (an enum case since removed) takes its default; the other settings stay.
     func testInvalidEnumValuesFallBackToTheirDefaults() throws {
         var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
@@ -298,14 +313,14 @@ final class SettingsTableTests: XCTestCase {
         var s = defaults
         SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
             "METALRENDERER_SCENE": "market,model=/tmp/a.glb",
-            "METALRENDERER_GI": "mode=restir, bounces = 3.7,scale=0.75",
+            "METALRENDERER_GI": "mode=cascades, bounces = 3.7,scale=0.75",
             "METALRENDERER_FOG_SET": "on=0,wind=1:0:2",
             "METALRENDERER_VIEW": "tonemap=AgX,paused=1",
         ])
         XCTAssertEqual(s.scene.kind, .market)
         XCTAssertEqual(s.scene.lights, GameScenes.marketLights)
         XCTAssertEqual(s.scene.extraModels.map(\.path), ["/tmp/a.glb"])
-        XCTAssertEqual(s.giMode, .restirGI)
+        XCTAssertEqual(s.giMode, .radianceCascades)
         XCTAssertEqual(s.bounces, 3)
         XCTAssertEqual(s.renderScale, 0.75)
         XCTAssertFalse(s.fog.enabled)

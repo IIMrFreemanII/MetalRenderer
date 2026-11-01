@@ -34,7 +34,7 @@ extension Renderer {
         // first.)
         enc.setBuffer(sceneBuffers.instanceTable ?? instanceDataBuffers[slot], offset: 0, index: 6)
         enc.setBuffer(shadingArgs[slot], offset: 0, index: 7)
-        var gp = regirParams   // the light grid (ReGIR): ReSTIR DI's, GI's, the reflections' and the fog's candidates
+        var gp = regirParams   // the light grid (ReGIR): sampled lights', GI's, the reflections' and the fog's candidates
         enc.setBuffer(regirBuffer ?? regirGrid(count: 1), offset: 0, index: 11)
         enc.setBytes(&gp, length: MemoryLayout<GPURegirParams>.stride, index: 12)
         enc.setBuffer(lightBuffers[slot], offset: 0, index: 8)
@@ -81,95 +81,18 @@ extension Renderer {
         switch activeGIMode {
         case .pathTraced: wanted = settings.lightMaps
         case .radianceCascades: wanted = true
-        case .restirGI: wanted = settings.restirGI.lightMaps
         }
         return settings.giEnabled && !accumulating && wanted && !scene.usesLightTable
     }
 
-    /// References always path trace, so they stay ground truth whatever GI mode is selected (but
-    /// METALRENDERER_BENCH=restirgicheck, which accumulates ReSTIR GI against them).
-    package var activeGIMode: GIMode { accumulating ? referenceGIMode ?? .pathTraced : settings.giMode }
+    /// References always path trace, so they stay ground truth whatever GI mode is selected.
+    package var activeGIMode: GIMode { accumulating ? .pathTraced : settings.giMode }
 
     package var techniqueDenoisesIndirect: Bool {
         switch activeGIMode {
         case .pathTraced: return true
         case .radianceCascades: return settings.cascades.denoiseIndirect
-        case .restirGI: return settings.restirGI.denoise
         }
-    }
-
-    package func restirGITargets(width: Int, height: Int) -> RestirGITargets? {
-        if let r = restirGIGrid, r.width == width, r.height == height { return r }
-        restirGIGrid = try? RestirGITargets(device: device, width: width, height: height)
-        restirGIWritten = false
-        return restirGIGrid
-    }
-
-    /// ReSTIR GI's stages for this frame: initial paths, temporal reuse, spatial reuse (the last pass writes t.indirect).
-    package func restirGIStages(_ plan: FramePlan, grid g: RestirGITargets, targets t: RenderTargets) -> [ComputeStage] {
-        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev
-        let r = settings.restirGI
-        let width = t.width, height = t.height
-        let lightMaps = plan.lightMaps && r.lightMaps
-        // Multi-bounce feedback: last frame's indirect light, denoised (still in the denoiser's ping-pong textures until
-        // this frame's denoiser runs) or raw (kept by the last spatial pass).
-        let denoisedFeedback = t.denoise[1].atrousPass(DenoiserSettings.passRange.clamp(r.denoisePasses) - 1).dst
-        let useDenoised = r.denoisedFeedback && r.denoise && plan.svgf
-        let feedbackSource = useDenoised ? denoisedFeedback : g.feedback[prev]
-        let feedback = r.feedback && plan.restirGIHistory && (plan.history || !useDenoised)
-        var flags: UInt32 = (r.temporal && plan.restirGIHistory ? GPURestirGIParams.temporalValid : 0)
-            | (lightMaps ? GPURestirGIParams.lightMaps : 0) | (feedback ? GPURestirGIParams.feedback : 0)
-            | (r.feedback ? GPURestirGIParams.feedbackSet : 0)
-            | (r.unbiased ? GPURestirGIParams.unbiased : 0) | (r.feedback && !useDenoised ? GPURestirGIParams.keepFeedback : 0)
-            | (r.feedback && r.feedbackFallback ? GPURestirGIParams.fallback : 0)
-        let maxM = UInt32(RestirGISettings.maxMRange.clamp(r.maxM))
-        let samples = UInt32(RestirGISettings.spatialSampleRange.clamp(r.spatialSamples))
-        let radius = RestirGISettings.radiusRange.clamp(r.radius) * Float(width) / 960
-        let clamp: Float = plan.accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as ReSTIR DI
-        let params = GPURestirGIParams(config: SIMD4(flags, maxM, samples, 0),
-                                       tuning: SIMD4(radius, max(r.minDistance, 0), clamp, 0),
-                                       extra: SIMD4(r.quarterBudget ? 1 : 0, UInt32(RenderSettings.bounceRange.clamp(r.bounces)),
-                                                    UInt32(RestirGISettings.maxAgeRange.clamp(r.maxAge)), 0))
-        var stages: [ComputeStage] = []
-        stages.append(ComputeStage(pass: "restir gi initial") { [self] enc in
-            var p = params
-            bind(enc, .restirGIInitial, uniforms, pass: p.initialPassFlags, sceneSlot: slot)
-            enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
-            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, lightMap, t.normalDepth[prev],
-                              feedbackSource, g.spatial.a, g.spatial.b])
-            enc.setBuffer(g.ambient[prev], offset: 0, index: 10)
-            if r.quarterBudget { dispatch(enc, .restirGIInitial, width: (width + 1) / 2, height: (height + 1) / 2) }
-            else { dispatch(enc, .restirGIInitial, width: width, height: height) }
-        })
-        stages.append(ComputeStage(pass: "restir gi temporal") { [self] enc in
-            var p = params
-            bind(enc, .restirGITemporal, uniforms)
-            enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
-            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.motion, t.normalDepth[prev], g.spatial.a, g.spatial.b,
-                              g.reservoir[prev].a, g.reservoir[prev].b, g.temporal.a, g.temporal.b])
-            enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
-            dispatch(enc, .restirGITemporal, width: width, height: height)
-        })
-        let passes = RestirGISettings.spatialPassRange.clamp(r.spatialPasses)
-        flags &= ~GPURestirGIParams.temporalValid
-        for i in 0..<max(passes, 1) {
-            let last = i == max(passes, 1) - 1
-            let src = i == 0 ? g.temporal : g.spatial, dst = last ? g.reservoir[cur] : g.spatial
-            var p = params
-            p.config.x = flags | (last ? GPURestirGIParams.shade : 0)
-            p.config.z = passes == 0 ? 0 : samples
-            p.config.w = UInt32(i)
-            stages.append(ComputeStage(pass: "restir gi spatial") { [self] enc in
-                var p = p
-                bind(enc, .restirGISpatial, uniforms, sceneSlot: slot)
-                enc.setBytes(&p, length: MemoryLayout<GPURestirGIParams>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, src.a, src.b, dst.a, dst.b, t.indirect, t.giDebug,
-                                  g.feedback[cur]])
-                enc.setBuffer(g.ambient[cur], offset: 0, index: 10)
-                dispatch(enc, .restirGISpatial, width: width, height: height)
-            })
-        }
-        return stages
     }
 
     /// Radiance-cascade stages for this frame (they write t.indirect and t.giDebug); empty if allocation failed.
@@ -197,8 +120,6 @@ extension Renderer {
     package func resetGIState() {
         historyValid = false
         taaHistory = false
-        restirWritten = false
-        restirGIWritten = false
         skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()

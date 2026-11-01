@@ -26,7 +26,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 (the `quick` table with radiance cascades)
 
 * Columns appear only for passes that ran: `Benchmark.passOrder` (`tlas lightmap trace temporal atrous composite
-  upscale`→`MetalFX`) first, then the GI/technique passes by name (`rc …`, `shadow …`, ReSTIR, fog…).
+  upscale`→`MetalFX`) first, then the GI/technique passes by name (`rc …`, `shadow …`, fog…).
 * Pass columns show the median ms over the measured frames. A pass that runs in several command buffers reports
   their sum.
 * `GPU total` is the median of the summed passes, `p95` is that sum's 95th percentile, and `max fps` = 1000 /
@@ -62,7 +62,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `1` | the default list: GI bounces, denoiser, render scale, MetalFX |
 | `quick` | the default setting, a camera move, path traced, 0.75× native: fast smoke tests |
 | `stress` | the stress building (warehouse, factory, garage, office) against light count (1–256), object count (0–2000) and GI method |
-| `restir` | 1 to 16384 lights for each direct-light method, plus the Night market |
+| `manylights` | 1 to 16384 lights for each direct-light method, plus the Night market |
 | `city` | the generated city: stills from three viewpoints and of each style, flat against textured, night; then 1 to 100 blocks by day and at night ("glass" is the panes' pass) |
 | `hwrt` | ray tracing's cost per scene and GI method ("cornell pt", "stress cascades" …), through the MetalFX denoiser |
 | `gallery` | glTF gallery: full meshes against virtual geometry at 0.5/1/2 px, plus a fly-through (warm the caches first) |
@@ -73,8 +73,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | Mode | Scorer |
 |---|---|
 | `stressq` | `Tools/eval/stress.py` |
-| `restirq`, `restircheck` | `Tools/eval/restir.py` |
-| `restirgicheck` | `Tools/eval/restirgi.py` (mean brightness ratios should be 1.00) |
+| `manylightsq`, `marketq`, `sampledcheck` | `Tools/eval/manylights.py` (`sampledcheck`'s mean brightness ratios should be 1.00) |
 | `speccheck` | `Tools/eval/specular.py` (direct light with specular materials; mean should be 1.00) |
 | `gi` | `Tools/eval/gi.py` |
 | `shadow` | `Tools/eval/shadow.py` |
@@ -97,8 +96,8 @@ pure speed change.
 * Override strings apply to every setting. Their keys are the env names in `SettingsTable.swift` (one line per
   setting: add a setting there and it gets its key, its Copy as Env entry and its panel row); `SettingsEnv.apply`
   reads them and reports unknown keys:
-  * `METALRENDERER_GI="mode=pt|cascades|restir,bounces=…,scale=…,factor=…,on=0,…"`;
-  * `METALRENDERER_DENOISE`, `_RESTIR`, `_RESTIR_GI`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
+  * `METALRENDERER_GI="mode=pt|cascades,bounces=…,scale=…,factor=…,on=0,…"`;
+  * `METALRENDERER_DENOISE`, `_SAMPLED_LIGHTS`, `_FOG_SET`, `_SKY_SET`, `_VIEW`.
 * Plain defaults: `METALRENDERER_DIRECT`, `_VG`, `_VG_TAU`, `_SPECULAR`, `_TEXTURE_BUDGET`, `_FOG`, `_SKY`.
   (Every frame is Metal 4's: there is no API to pick. `METALRENDERER_MFX4=1` tries MetalFX's Metal 4 scaler.)
 * Performance knobs:
@@ -138,7 +137,7 @@ means for measuring:
   python3 Tools/eval/pngdiff.py /tmp/off /tmp/on      # every line: max 0.0
   ```
   Run it after changing a flag, a mask in `Kernel.fixedFlags` / `fixedPassFlags`, or the Swift side of a kernel's own
-  flag word (`Uniforms.tracePassFlags`, `GPURestirGIParams.initialPassFlags`, `GPUFogParams.reflectionPassFlags`).
+  flag word (`Uniforms.tracePassFlags`, `GPUFogParams.reflectionPassFlags`).
   Safe math is slower: narrow the mode with `METALRENDERER_BENCH_ONLY` when the full one takes too long.
 
 ## A/B protocol

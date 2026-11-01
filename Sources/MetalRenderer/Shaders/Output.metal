@@ -489,7 +489,7 @@ inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
 // keeps what its guides show and smooths what they don't, and a shadow is in none of them: a tree's dappled shade came
 // out one soft blob. The sun's visibility is clean (a ray to a point on a disc half a degree across: 0 or 1, 0 to 1 only
 // in a penumbra a few centimetres wide), so it brings the guide no noise. Other lights' would (wide penumbrae, the
-// picks of many lights), and stay out, as does any visibility traceKernel didn't write (many lights, ReSTIR).
+// picks of many lights), and stay out, as does any visibility traceKernel didn't write (many lights, sampled lights).
 // How deep, at the denoiser's exposure (AutoExposure.denoiserKey), the forest over the reference: 1, a flat guide, reads
 // 1.00 sunlit and 1.22 in shade with 0.57 of its local contrast; 0.5 reads 0.97, 1.07 and 0.62; 0.15 reads 0.99, 1.05 and 0.67.
 constant float SUN_GUIDE_SHADE = 0.15f;
@@ -498,7 +498,7 @@ constant float SUN_GUIDE_SHADE_CLASSIC = 0.5f;   // the classic look's, with Met
 inline float sunShadowGuide(constant Uniforms& u, device const Light* lights, texture2d<float, access::read> visibility,
                             texture2d<float, access::read> surfacePos, texture2d<float, access::read> nd,
                             texture2d<float, access::read> geoNormal, texture2d<float, access::read> albedoTex, uint2 tid) {
-    bool traced = !((passOn(tracePassFlags(u), TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_RESTIR)) && !flagOn(u.flags, FLAG_ALL_LIGHTS));
+    bool traced = !((passOn(tracePassFlags(u), TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_SAMPLED_LIGHTS)) && !flagOn(u.flags, FLAG_ALL_LIGHTS));
     float4 ndc = nd.read(tid);
     if (!traced || ndc.w <= 0.0f) return 1.0f;
     float3 sp = surfacePos.read(tid).xyz;
@@ -572,10 +572,6 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
         float3 p = sp.xyz + ng * RAY_EPSILON;
         illumination = float3(0.0f);
-        if (flagOn(u.flags, FLAG_RESTIR)) {
-            // ReSTIR (RESTIR_SPLIT): its denoised unshadowed light (in meshDirect's place) x its denoised visibility.
-            illumination = meshDirect.read(tid).rgb * vis.r;
-        } else {
         float4 g = geoNormal.read(tid);
         HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
         sunCaustics = true;
@@ -588,8 +584,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             illumination += e;
         }
         if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
-        }
-        if (flagOn(u.flags, FLAG_SPECULAR) && !flagOn(u.flags, FLAG_RESTIR)) {
+        if (flagOn(u.flags, FLAG_SPECULAR)) {
             // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
             float4 m = material.read(tid);
             if (any(m.rgb > 0.0f)) {
@@ -618,7 +613,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
-    // Where the sun's light isn't a term of its own here (ReSTIR, no shadow filter), the caustics go on
+    // Where the sun's light isn't a term of its own here (sampled lights, no shadow filter), the caustics go on
     // most of the light under the water (the sun's is most of it there).
     if (WATER && !sunCaustics) {
         float4 sp = surfacePos.read(tid);

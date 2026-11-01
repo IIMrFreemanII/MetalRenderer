@@ -163,8 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
           Space        pause animation      G               toggle global illumination
           Z / Shift-Cmd-D   show or hide the day bar (scenes with a day: Dawn, Noon, Sunset, Night hold the day there,
                        the slider picks an hour, play lets it run again)
-          B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades, ReSTIR GI
-          N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced, ReSTIR GI)
+          B            toggle blue-noise sampling   M   GI method: path traced, radiance cascades
+          N            toggle denoiser      [ / ]           fewer / more GI bounces (path traced)
           - / =        lower / raise render resolution   U   upscaling (MetalFX denoiser): off, 1.5x, 2x, 3x
           1-6          view: final, raw direct, raw indirect, normals, albedo, history length
           R            hot-reload the shaders (edit Shaders/*.metal while the app runs; the dev build reloads them,

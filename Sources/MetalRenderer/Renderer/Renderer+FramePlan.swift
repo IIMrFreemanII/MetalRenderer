@@ -110,7 +110,7 @@ extension Renderer {
             stages.gi = giStages(plan, targets: t)
             (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
             stages.reflections = contactAOStages(plan, targets: t) + stages.reflections
-            stages.restir = restirStages(plan, targets: t)
+            stages.sampledLights = sampledDirectStages(plan, targets: t)
             stages.denoise = sampledLightStages(plan, targets: t)
             stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
             stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
@@ -426,13 +426,9 @@ extension Renderer {
         // Lighting
         var giMode = GIMode.pathTraced
         var cascades = false                    // radiance-cascade GI runs
-        var restirGI = false                    // ReSTIR GI runs...
-        var restirGIGrid: RestirGITargets?      // ...on these reservoirs (nil if they couldn't be allocated: no stages)...
-        var restirGIHistory = false             // ...which the last frame filled
-        var restir = false                      // ReSTIR DI lights the scene, as above
-        var restirGrid: RestirTargets?
-        var restirHistory = false
-        var restirSettings = RestirSettings()   // references: unbiased initial sampling alone
+        var sampledLights = false               // sampled direct light lights the scene, as above
+        var sampledSpecular: MTLTexture?
+        var sampledSettings = SampledLightSettings()   // references: more candidates and rays
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
         var lightMaps = false
         var specular = false                    // reflections (glTF specular materials)
@@ -454,7 +450,6 @@ extension Renderer {
         var svgf = false                        // the denoiser is on (never for references)
         var neuralDenoise = false               // MetalFX's denoising scaler denoises instead, as it upscales
         var shadowDenoiser = false             // direct light's visibility goes through its own filter
-        var restirSplit = false                 // ReSTIR's visibility too, and its unshadowed light through SVGF
         var separate = false                    // direct and indirect light are separate signals
         var denoiseIndirect = false
         var denoiseMeshLights = false           // mesh lights' direct light is an SVGF signal of its own
@@ -507,7 +502,7 @@ extension Renderer {
         p.accumulating = accumulating
         p.giMode = activeGIMode
         let directMode = activeDirectMode
-        p.restir = directMode == .restir
+        p.sampledLights = directMode == .sampled
         p.specular = usesSpecular
         p.glass = scene.hasGlass
         if scene.hasLiquid || scene.hasWater { p.liquid = liquidTargets(width: width, height: height) }
@@ -598,11 +593,8 @@ extension Renderer {
         // GI. Light-visibility maps serve the GI techniques and the path tracer's light-map variant.
         p.lightMaps = usesLightMaps
         p.cascades = settings.giEnabled && p.giMode == .radianceCascades
-        p.restirGI = settings.giEnabled && p.giMode == .restirGI
-        if p.restirGI { p.restirGIGrid = restirGITargets(width: width, height: height) }
-        p.restirGIHistory = restirGIWritten   // read after restirGITargets: new reservoirs hold nothing
         // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
-        if p.cascades || p.restirGIGrid != nil { p.uniforms.flags |= UniformFlags.giDebug }
+        if p.cascades { p.uniforms.flags |= UniformFlags.giDebug }
         // References show the light's own paths: neither the contact shade nor the air, which they don't trace.
         p.cameraCut = upscalerReset
         p.contactAO = settings.contactAO > 0 && settings.giEnabled && !accumulating && !p.solid
@@ -622,42 +614,33 @@ extension Renderer {
         p.denoiseIndirect = settings.giEnabled && (!techniqueGI || techniqueDenoisesIndirect)
         //   With the shadow denoiser (default), direct light goes through its own visibility filter instead,
         //   and SVGF handles only indirect light.
-        //   ReSTIR's direct light is radiance, not per-group visibility: SVGF filters it (no loop over the lights).
+        //   Sampled direct light is radiance, not per-group visibility: SVGF filters it (no loop over the lights).
         let shadowDenoiserOn = p.svgf && settings.denoiser.shadowDenoiser && Renderer.shadowDenoiserAllowed
-        //   ReSTIR with the shadow denoiser (split): its visibility goes through the visibility filter, its unshadowed
-        //   light through SVGF, and the composite multiplies them.
-        p.restirSplit = p.restir && shadowDenoiserOn && settings.restir.splitVisibility
-        p.shadowDenoiser = shadowDenoiserOn && (!p.restir || p.restirSplit)
+        p.shadowDenoiser = shadowDenoiserOn && !p.sampledLights
         //   Every kernel of the frame is told, not only the composite: with the shadow denoiser the composite adds the
         //   analytic lights' direct specular (exact GGX x visibility), so the reflection pass must not add its own sample.
         if p.shadowDenoiser { p.uniforms.flags |= UniformFlags.shadowDenoiser }
         p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || p.shadowDenoiser
         let passCount = settings.denoiser.passes(for: p.giMode)
-        p.directPasses = p.restir ? DenoiserSettings.passRange.clamp(settings.restir.denoisePasses) : passCount
-        p.indirectPasses = p.restirGI ? DenoiserSettings.passRange.clamp(settings.restirGI.denoisePasses) : techniqueGI ? 1 : passCount
+        p.directPasses = passCount
+        p.indirectPasses = techniqueGI ? 1 : passCount
         // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
-        // of its own; otherwise it joins the direct light. (ReSTIR samples their triangles itself.)
-        p.meshLights = !scene.meshLights.isEmpty && !p.restir
+        // of its own; otherwise it joins the direct light. (Sampled lights sample their triangles themselves.)
+        p.meshLights = !scene.meshLights.isEmpty && !p.sampledLights
         p.denoiseMeshLights = p.meshLights && p.shadowDenoiser
 
         // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
-        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.restir
+        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.sampledLights
         // Rooms to walk into: two rays a group. A big room under many ceiling lights (an open office) speckles with
-        // one, even with its picks reused; two cost ~0.4 ms there, ReSTIR ~6 ms.
+        // one, even with its picks reused; two cost ~0.4 ms there.
         p.manyLightRays = settings.manyLightRays == 1 && scene.interiorBox != nil ? 2 : settings.manyLightRays
         p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && p.manyLightRays == 1
         p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
-        // ReSTIR DI. References with many lights accumulate its unbiased initial sampling alone (32 candidates).
-        p.restirSettings = settings.restir
-        if accumulating {
-            p.restirSettings.candidates = 32; p.restirSettings.temporal = false; p.restirSettings.spatialPasses = 0
-            p.restirSettings.visibilityReuse = false; p.restirSettings.chains = 4
-        }
-        if p.restir {
-            p.restirGrid = restirTargets(width: width, height: height, chains: RestirSettings.chainRange.clamp(p.restirSettings.chains))
-        }
-        p.restirHistory = restirWritten       // read after restirTargets, as above
+        // Sampled direct light. References with many lights accumulate it with more candidates and rays.
+        p.sampledSettings = settings.sampledLights
+        if accumulating { p.sampledSettings.candidates = 32; p.sampledSettings.rays = 4 }
+        if p.sampledLights { p.sampledSpecular = sampledSpecularTexture(width: width, height: height) }
 
         if accumulating { p.accumulation = accumulationTextures(width: width, height: height) }
         p.accumCount = p.provisional ? 0 : accumCount   // read after accumulationTextures: new textures start a new average
@@ -686,14 +669,14 @@ extension Renderer {
     }
 
     /// The light grid (ReGIR) for this frame: where its cells are and how they are filled and read. It is rebuilt from
-    /// this frame's lights before everything that samples them (ReSTIR DI's candidates, GI's next-event estimation, the
+    /// this frame's lights before everything that samples them (sampled direct light, GI's next-event estimation, the
     /// reflections, the fog). Off in scenes without a light table; references set grid.enabled themselves (off for
-    /// restirq's, on with every candidate for restircheck's "grid").
+    /// manylightsq's, on with every candidate for sampledcheck's "grid").
     private func lightGrid(directMode: DirectLightMode, camera: SIMD4<Float>) -> (params: GPURegirParams, buffer: MTLBuffer)? {
-        let g = settings.restir.grid
-        guard g.enabled && scene.lightTable.entries.count > 0 && (scene.usesLightTable || directMode == .restir),
+        let g = settings.sampledLights.grid
+        guard g.enabled && scene.lightTable.entries.count > 0 && (scene.usesLightTable || directMode == .sampled),
               let buffer = regirGrid(count: g.reservoirCount) else { return nil }
-        let restirCandidates = accumulating ? 32 : RestirSettings.candidateRange.clamp(settings.restir.candidates)
+        let candidates = accumulating ? 32 : SampledLightSettings.candidateRange.clamp(settings.sampledLights.candidates)
         let cells = RegirSettings.cellRange.clamp(g.cells), levels = RegirSettings.levelRange.clamp(g.levels)
         let cellSize = RegirSettings.cellSizeRange.clamp(g.cellSize), scale = RegirSettings.scaleRange.clamp(g.levelScale)
         let jitter = Renderer.regirJitter(frame: frameIndex)
@@ -706,14 +689,12 @@ extension Renderer {
         (gp.origin0, gp.origin1, gp.origin2, gp.origin3) = (origin(0), origin(1), origin(2), origin(3))
         gp.config = SIMD4(UInt32(cells), UInt32(levels), UInt32(RegirSettings.slotRange.clamp(g.slots)),
                           UInt32(RegirSettings.candidateRange.clamp(g.candidates)))
-        gp.consume = SIMD4(UInt32(max(min(RegirSettings.shareRange.clamp(g.share), restirCandidates), 1)), frameIndex, 0, 0)
+        gp.consume = SIMD4(UInt32(max(min(RegirSettings.shareRange.clamp(g.share), candidates), 1)), frameIndex, 0, 0)
         return (gp, buffer)
     }
 
     /// What the frame leaves for the next one's temporal reuse. Set here, in one place, once the frame is committed.
     private func finishFrame(_ plan: FramePlan) {
-        restirGIWritten = plan.restirGIGrid != nil
-        restirWritten = plan.restirGrid != nil
         reservoirsWritten = plan.lightReuse
         if plan.accumulation != nil && !plan.accumFull && !plan.provisional { accumCount += 1 }
         if let pt = plan.pathTrace, !plan.provisional { pathTraceCount += pt.params.samples.y }

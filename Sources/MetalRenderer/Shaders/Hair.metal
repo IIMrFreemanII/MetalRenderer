@@ -205,7 +205,7 @@ inline float3 hairUnshadowed(Light light, float3 p, HairPoint hp) {
 
 // ---------------------------------------------------------------------------------------------
 // Skin: light goes in, scatters under the surface and comes out further on, redder the further (blood takes the
-// green and blue first). Two approximations of that, in the light term (so the denoisers' albedo and ReSTIR's target
+// green and blue first). Two approximations of that, in the light term (so the denoisers' albedo and sampled lights' target
 // stay as they are; indirect light stays Lambertian):
 // - wrapped diffuse per channel: the light reaches round past where the surface turns from it, red furthest, which
 //   softens and reddens the shadow's edge on a face (Jimenez's and Penner's skin, as wrap lighting);

@@ -55,14 +55,13 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
     return e;
 }
 
-// ReSTIR's target function: the sample's unshadowed luminance as the pixel would show it.
+// A light sample's target function for RIS: its unshadowed luminance as the pixel would show it.
 inline float lightSampleTarget(thread const LightSampleEval& e, thread const ShadingPoint& sp) {
     return luminance(sp.albedo * e.diffuse + e.specular);
 }
 
 // Candidate k of a sampler's RIS over the lights at p: the first Mg come from the light grid, the rest of the M from
 // the light table, then each sun once. W = 1 / the pdf of its source (the suns: 1). False for an empty grid slot.
-// (ReSTIR DI's initial candidates are drawn in their own order, with quantised uv: restirTemporalKernel.)
 struct LightCandidate { uint element; float2 uv; float W; };
 inline bool lightCandidate(uint k, uint Mg, uint M, uint4 table, device const LightTableEntry* entries, float3 p,
                            thread const SceneData& s, thread Rng& rng, thread LightCandidate& c) {
@@ -182,24 +181,6 @@ inline bool lastFrameHistory(constant Uniforms& u, float3 prevPosition, float3 n
     return true;
 }
 
-// Spatial reuse (ReSTIR DI and GI). A random pixel in the disk of `radius` around tid: false for tid itself and for a
-// pixel off screen.
-inline bool diskNeighbour(uint2 tid, float radius, constant Uniforms& u, thread Rng& rng, thread int2& q) {
-    float r = radius * sqrt(rng.next()), angle = 2.0f * M_PI_F * rng.next();
-    q = int2(tid) + int2(round(r * float2(cos(angle), sin(angle))));
-    return !(all(q == int2(tid)) || q.x < 0 || q.y < 0 || q.x >= int(u.width) || q.y >= int(u.height));
-}
-
-// Pairwise MIS with confidence weights (Bitterli 2022, as in Lin et al. 2022), for one neighbour of confidence Mj
-// against the canonical sample's share cShare = M_c / n (n = neighbours with a reservoir, Msum = every M). The
-// targets: cc, jc = the canonical sample's here and at the neighbour; jj, cj = the neighbour's sample's there and
-// here. x = what this neighbour adds to the canonical sample's weight m_c, y = the neighbour's sample's weight m_j.
-// Every sample's weights sum to 1, so the result stays unbiased (for the target).
-inline float2 pairwiseMIS(float Mj, float cShare, float Msum, float cc, float jc, float jj, float cj) {
-    float B = (Mj + cShare) / Msum;
-    return float2(B * (cShare * cc) / max(Mj * jc + cShare * cc, 1e-30f),
-                  B * (Mj * jj) / max(Mj * jj + cShare * cj, 1e-30f));
-}
 
 // ---------------------------------------------------------------------------------------------
 // Equal-area octahedral mapping (Clarberg 2008): unit vector <-> [-1, 1]^2, every texel covers the same solid
