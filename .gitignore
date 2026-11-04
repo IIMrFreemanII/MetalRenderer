@@ -16,3 +16,6 @@ __pycache__/
 /Assets/Textures/*/.metalrenderer-cache/
 /Assets/*/.metalrenderer-cache/
 .idea
+
+# delegation plans (delegate skill), kept out of Git
+/.claude/plans/

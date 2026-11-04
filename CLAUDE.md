@@ -33,6 +33,14 @@ Plan and build them with the `data-oriented` skill (`.claude/skills/data-oriente
 things is written in the fast subset of Swift and proven with a profile and `Tools/perf/hotcalls.py`; the rest stays
 plain Swift.
 
+## Delegation
+
+Work beyond a small edit is planned in the main session and implemented by the `implementer-fast` (Haiku) and
+`implementer` (Sonnet) agents (`.claude/agents`), following the `delegate` skill (`.claude/skills/delegate`): a plan
+in `.claude/plans/` with a tier and owned files per step, steps with no file in common in parallel, each diff reviewed
+and sent back at most twice. The main session keeps shaders, hot loops, scene switching and cross-module design;
+implementers never commit.
+
 ## Shaders
 
 Write, review, debug or port Metal with the `metal-shaders` skill (`.claude/skills/metal-shaders`): where a kernel
