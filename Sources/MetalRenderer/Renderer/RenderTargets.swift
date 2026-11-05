@@ -159,6 +159,7 @@ package final class FogTargets {
     let columns: Int, rows: Int, slices: Int
     let scatter: [MTLTexture]     // [2], ping-ponged: rgb = in-scattered light per metre, a = extinction (fogInjectKernel)
     let integrated: MTLTexture    // rgb = in-scatter from the camera to each slice's far side, a = transmittance
+    let guide: [MTLTexture]       // [2], with scatter: the lights' unshadowed light at the froxels' centres (Fog.metal fogLightGuide)
 
     package init(device: MTLDevice, renderWidth: Int, renderHeight: Int, slices: Int) throws {
         self.renderWidth = renderWidth
@@ -180,6 +181,7 @@ package final class FogTargets {
         }
         scatter = [try make("fog scatter0"), try make("fog scatter1")]
         integrated = try make("fog integrated")
+        guide = [try make("fog guide0"), try make("fog guide1")]
     }
 }
 

@@ -204,21 +204,21 @@
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/area-ref.png": {
-    "mtime": 1793031035.894806,
-    "seen": 1793911443.9521642,
-    "ast_hash": "967e54da24e8fc1b794770c5d30a5aa8",
+    "mtime": 1793914677.8302112,
+    "seen": 1793914774.041423,
+    "ast_hash": "509856ff07da63d2c3d409b0be182840",
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/spots-ref.png": {
-    "mtime": 1793031035.8993466,
-    "seen": 1793911443.9521642,
-    "ast_hash": "27e6216fb7256164e99486ac3cb841e8",
+    "mtime": 1793914677.8304515,
+    "seen": 1793914774.041423,
+    "ast_hash": "37ae6c7d34b6a4899bd47f9878c3522f",
     "semantic_hash": ""
   },
   "Tools/eval/refs/speccheck/tubes-ref.png": {
-    "mtime": 1793031035.9033082,
-    "seen": 1793911443.9521651,
-    "ast_hash": "9fa040f912af3d6b5eaef213751a573b",
+    "mtime": 1793914677.8306777,
+    "seen": 1793914774.0414238,
+    "ast_hash": "e7641e069901ffb6e6836a5630cbcfa1",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Denoise.metal": {
@@ -228,9 +228,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Fog.metal": {
-    "mtime": 1793911149.1155567,
-    "seen": 1793911443.951879,
-    "ast_hash": "f463d2463539c056925e7fbffae9b4d3",
+    "mtime": 1793913879.0168762,
+    "seen": 1793914774.031168,
+    "ast_hash": "afb43f4d83e5897396f70385d5505c65",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Intersect.metal": {
@@ -252,9 +252,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Output.metal": {
-    "mtime": 1793908632.0577044,
-    "seen": 1793911443.951885,
-    "ast_hash": "fbee31a50239c1f6e77638d0417c3cd3",
+    "mtime": 1793913675.7476084,
+    "seen": 1793914774.031355,
+    "ast_hash": "b91c8e58f65a7f8613191b03ca69113a",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/RadianceCascades.metal": {
@@ -264,9 +264,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Reflections.metal": {
-    "mtime": 1793908632.0586908,
-    "seen": 1793911443.95189,
-    "ast_hash": "ab62f9925ad29682fa5ea719c3bed6f5",
+    "mtime": 1793914192.5736377,
+    "seen": 1793914774.03154,
+    "ast_hash": "c001dd26e17031101f67bd7cf69be094",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Shaders/Regir.metal": {
@@ -2010,9 +2010,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderTargets.swift": {
-    "mtime": 1793908632.0524125,
-    "seen": 1793911443.951852,
-    "ast_hash": "c81a26a4fa35df3c3ced69fcd7e54077",
+    "mtime": 1793913821.4787686,
+    "seen": 1793914774.030313,
+    "ast_hash": "e9ead04e3edd0eb7a0aa1efd0142cacb",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/RenderThread.swift": {
@@ -2076,9 +2076,9 @@
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer+Stages.swift": {
-    "mtime": 1793908632.053685,
-    "seen": 1793911443.9518578,
-    "ast_hash": "d74a1f8340b3ea41ce12fd3586492657",
+    "mtime": 1793913821.4789107,
+    "seen": 1793914774.0305111,
+    "ast_hash": "e60df5c5ade8ae3e54a8d5beefe26e4f",
     "semantic_hash": ""
   },
   "Sources/MetalRenderer/Renderer/Renderer.swift": {
@@ -2688,15 +2688,15 @@
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Checks.swift": {
-    "mtime": 1793911075.4005446,
-    "seen": 1793911443.9517598,
-    "ast_hash": "a34e783d62ef0d9d2e78e905c4e97684",
+    "mtime": 1793913912.2716823,
+    "seen": 1793914774.026815,
+    "ast_hash": "e2f44954173aead9afc2ed299af2b22f",
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Modes.swift": {
-    "mtime": 1793909939.0124695,
-    "seen": 1793911443.9517598,
-    "ast_hash": "f0e35ef6cffb74b9f12d99a1fe01f661",
+    "mtime": 1793913600.015577,
+    "seen": 1793914774.026816,
+    "ast_hash": "777c4fc1479d9dfe7eaf5f6e88ff8478",
     "semantic_hash": ""
   },
   "Sources/Game/Benchmark/Benchmark+Quality.swift": {

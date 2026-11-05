@@ -408,17 +408,40 @@ float3 fogAlongRay(float3 o, float3 d, float t, float3 L, float2 uDistMix, float
 inline float froxelDepth(constant FogParams& f, float slice) { return f.grid.x * exp(f.grid.z * slice / f.grid.w); }
 inline float froxelSlice(constant FogParams& f, float depth) { return log(max(depth, 1e-4f) / f.grid.x) / f.grid.z * f.grid.w; }
 
-// Last frame's froxel grid where this frame's froxel `tid` centre was (or `fallback` if it was outside the grid).
-inline float4 fogHistory(constant Uniforms& u, constant FogParams& f, texture3d<float> history, uint3 tid, uint3 dims,
-                         float4 fallback) {
-    float3 c = u.camPos.xyz + viewDirection(u, (float2(tid.xy) + 0.5f) / float2(dims.xy)) * froxelDepth(f, float(tid.z) + 0.5f);
-    float3 q = c - u.prevCamPos.xyz;
-    float depth = dot(q, u.prevCamForward.xyz);
-    if (depth <= f.grid.x) return fallback;
-    float2 ndc = float2(dot(q, u.prevCamRight.xyz) / (depth * u.prevCamRight.w), dot(q, u.prevCamUp.xyz) / (depth * u.prevCamUp.w));
-    float3 tc = float3(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f, froxelSlice(f, depth) / f.grid.w);
-    return all(tc >= 0.0f) && all(tc <= 1.0f) ? history.sample(fogGridSampler, tc) : fallback;
+// The centre of froxel `tid`, in the world.
+inline float3 froxelCentre(constant Uniforms& u, constant FogParams& f, uint3 tid, uint3 dims) {
+    return u.camPos.xyz + viewDirection(u, (float2(tid.xy) + 0.5f) / float2(dims.xy)) * froxelDepth(f, float(tid.z) + 0.5f);
 }
+
+// Where this frame's froxel `tid` centre was in last frame's grid (texture coordinates), false if outside it.
+inline bool fogHistoryCoord(constant Uniforms& u, constant FogParams& f, uint3 tid, uint3 dims, thread float3& tc) {
+    float3 q = froxelCentre(u, f, tid, dims) - u.prevCamPos.xyz;
+    float depth = dot(q, u.prevCamForward.xyz);
+    if (depth <= f.grid.x) return false;
+    float2 ndc = float2(dot(q, u.prevCamRight.xyz) / (depth * u.prevCamRight.w), dot(q, u.prevCamUp.xyz) / (depth * u.prevCamUp.w));
+    tc = float3(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f, froxelSlice(f, depth) / f.grid.w);
+    return all(tc >= 0.0f) && all(tc <= 1.0f);
+}
+
+// The fog's light at p toward the viewer (v), unshadowed and smooth: every light's picking weight (lightVolumeWeight x
+// the phase) plus the ambient. It moves with the lights the frame they move, so the froxels' history is rescaled by
+// it (fogInjectKernel): with one light sample a froxel a frame and 90% of the last frames kept, a light that moved
+// left its glow in the fog where it had been for ten frames (the Emissive scene's spinning cubes trailed theirs).
+// Few lights only (it loops over them all, as pickFogLight does up to LIGHT_CANDIDATES); 0 = no guide (more: a city's
+// lamps, the history as it was).
+inline float3 fogLightGuide(constant FogParams& f, thread const SceneData& s, float3 p, float3 v, float3 ambient) {
+    if (s.lightCount > LIGHT_CANDIDATES) return float3(0.0f);
+    bool sunsOnly = (f.counts.w & FOG_SKY_LIGHT) != 0;
+    float3 sum = ambient;
+    for (uint i = 0; i < s.lightCount; ++i) {
+        if (sunsOnly && lightType(s.lights[i]) != LIGHT_SUN) continue;
+        float3 l;
+        sum += lightVolumeWeight(s.lights[i], p, l) * phaseHG(-dot(l, v), f.medium.w);
+    }
+    return min(sum, float3(60000.0f));   // (stored as half)
+}
+
+constant float FOG_GUIDE_MAX_RATIO = 8.0f;   // past this the history is mostly another light's: this frame's sample takes half
 
 kernel void fogInjectKernel(constant Uniforms&                u          [[buffer(0)]],
                             SCENE_ACCEL                       accel      [[buffer(1)]],
@@ -433,13 +456,34 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
                             texture3d<float>                  history    [[texture(2)]],   // last frame's froxels
                             texture3d<float, access::write>   outScatter [[texture(3)]],   // rgb = in-scatter / m, a = extinction
                             texture2d<float, access::read>    normalDepth [[texture(4)]],  // this frame's G-buffer depth
+                            texture3d<float>                  guideHistory [[texture(5)]], // last frame's fogLightGuide
+                            texture3d<float, access::write>   outGuide   [[texture(6)]],   // this frame's, at the froxels' centres
                             uint3 tid [[thread_position_in_grid]])
 {
     uint3 dims = uint3(f.counts.x, f.counts.y, uint(f.grid.w));
     if (any(tid >= dims)) return;
-    bool historyValid = (f.counts.w & FOG_HISTORY_VALID) != 0;
     SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
+    float3 ambient = skyAmbient(u, s) * f.albedo.w;
+
+    // Last frame's froxels where this one's centre was, rescaled by how much the lights' unshadowed light there changed
+    // since (fogLightGuide, at the centres both frames): the history keeps averaging the samples' noise (the light
+    // picked, the shadows) but not the place a light was. Where the light grew past FOG_GUIDE_MAX_RATIO (a light come
+    // close), this frame's sample takes half.
+    float3 tc;
+    bool seen = (f.counts.w & FOG_HISTORY_VALID) != 0 && fogHistoryCoord(u, f, tid, dims, tc);
+    float4 last = seen ? history.sample(fogGridSampler, tc) : float4(0.0f);
+    float3 centre = froxelCentre(u, f, tid, dims);
+    float3 guide = fogLightGuide(f, s, centre, normalize(u.camPos.xyz - centre), ambient);
+    float blend = f.noise.w;
+    float3 lastGuide = seen ? guideHistory.sample(fogGridSampler, tc).rgb : float3(0.0f);
+    if (luminance(guide) > 0.0f && luminance(lastGuide) > 0.0f) {
+        float eps = 1e-4f * (luminance(guide) + luminance(lastGuide));
+        float3 ratio = (guide + eps) / (lastGuide + eps);
+        if (any(ratio > FOG_GUIDE_MAX_RATIO)) blend = max(blend, 0.5f);
+        last.rgb *= min(ratio, FOG_GUIDE_MAX_RATIO);
+    }
+    outGuide.write(roundToHalf(float4(guide, 0.0f)), tid);
 
     // A different blue-noise window per slice.
     Sampler rng = makeSampler(blueNoise, u, tid.xy + uint2(37u, 71u) * tid.z, 0,
@@ -453,7 +497,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float pixelDepth = normalDepth.read(min(uint2(uv * float2(u.width, u.height)), uint2(u.width - 1, u.height - 1))).w;
     float z0 = froxelDepth(f, float(tid.z)), z1 = min(froxelDepth(f, float(tid.z + 1)), pixelDepth > 0.0f ? pixelDepth : f.grid.y);
     if (z1 <= z0) {
-        outScatter.write(historyValid ? fogHistory(u, f, history, tid, dims, float4(0.0f)) : float4(0.0f), tid);
+        outScatter.write(roundToHalf(last), tid);
         return;
     }
     float3 dir = viewDirection(u, uv);
@@ -462,10 +506,10 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float4 sample = float4(0.0f, 0.0f, 0.0f, m.w);
     if (m.w > 0.0f) {
         float4 r = float4(rng.next2(), rng.next2());
-        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, skyAmbient(u, s) * f.albedo.w, rng.rng);
+        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, ambient, rng.rng);
     }
     // Blend into last frame's grid, sampled where this froxel's centre was.
-    if (historyValid) sample = mix(fogHistory(u, f, history, tid, dims, sample), sample, f.noise.w);
+    if (seen) sample = mix(last, sample, blend);
     outScatter.write(roundToHalf(sample), tid);
 }
 

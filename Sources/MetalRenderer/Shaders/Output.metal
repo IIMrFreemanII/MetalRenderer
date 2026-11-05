@@ -733,7 +733,13 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         output.write(float4(max(c, 0.0f), 1.0f), tid);
         outSpecularAlbedo.write(float4(guideSpecular, 1.0f), tid);
         outRoughness.write(float4(guideRoughness), tid);
-        outDiffuseGuide.write(float4(albedo * sunShadowGuide(u, lights, visibilityTex, surfacePos, nd, geoNormal, albedoTex, tid), 1.0f), tid);
+        // An emitter (albedo 0, its light all its own) is guided by its own colour: with its albedo, a black guide
+        // under bright light, MetalFX smeared the spinning cubes' light over the frames and left dark copies of them
+        // where they had been.
+        float3 guide = albedo * sunShadowGuide(u, lights, visibilityTex, surfacePos, nd, geoNormal, albedoTex, tid);
+        float em = max(emission.x, max(emission.y, emission.z));
+        if (em > 0.0f) guide = max(guide, emission / em);
+        outDiffuseGuide.write(float4(guide, 1.0f), tid);
         // (With FLAG_SPECULAR reflectionKernel wrote it; without, no reflection rays.)
         if (!flagOn(u.flags, FLAG_SPECULAR)) outHitDistance.write(float4(0.0f), tid);
         return;

@@ -809,6 +809,21 @@ extension Benchmark {
                 shown.named("orb final moving")]
     }
 
+    /// The Emissive scene's spinning cubes as the app shows them (its look, radiance cascades, MetalFX 2x from 0.5x),
+    /// moving: 120 frames recorded from 2 s, the warm-up's 60 included, so the last lands on 5 s; then paused at 5 s,
+    /// the converged picture of that instant to hold the last against (ghosts: what still trails a cube), and the
+    /// moving frames in the fog's view and the raw indirect light. Blinks: the recorded frames' spikes, frame to frame.
+    static func emissivemotion() -> [Config] {
+        let shown = Config("", scale: 0.5, upscale: 2, gi: .radianceCascades, scene: SceneSettings(kind: .emissive)).appLook()
+        let moving = Config(name: "", settings: shown.settings, startTime: 2, frames: 120).appLook()
+        return [moving.named("cubes moving").recording(),
+                shown.named("cubes still").still(at: 5).frames(120),
+                moving.named("cubes fog moving").view(14),
+                shown.named("cubes fog still").view(14).still(at: 5).frames(120),
+                moving.named("cubes indirect moving").view(2),
+                shown.named("cubes indirect still").view(2).still(at: 5).frames(120)]
+    }
+
     /// Cloud shadows through every sun-visibility path (shadow rays, the shadow denoiser, light maps): the valley in
     /// the afternoon, a cloud shadow's edge in view, each GI method against a 4-bounce path-traced reference (512
     /// frames), final image and indirect light, with cloud shadows on and off. Each method's error should not depend

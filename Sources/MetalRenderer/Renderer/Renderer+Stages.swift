@@ -432,7 +432,7 @@ extension Renderer {
                 var fp = fogParams
                 bind(enc, .fogInject, uniforms, sceneSlot: slot)
                 enc.setBytes(&fp, length: MemoryLayout<GPUFogParams>.stride, index: 9)
-                setTextures(enc, [blueNoiseTexture, noise, g.scatter[prev], g.scatter[cur], t.normalDepth[cur]])
+                setTextures(enc, [blueNoiseTexture, noise, g.scatter[prev], g.scatter[cur], t.normalDepth[cur], g.guide[prev], g.guide[cur]])
                 enc.dispatchThreads(MTLSize(width: g.columns, height: g.rows, depth: g.slices),
                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
             },
