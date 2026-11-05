@@ -55,17 +55,25 @@ package struct MeshLightDraft {
     }
 
     /// The light of `instance`, its triangles from `firstTriangle` (their `v0.w` now the running share of its
-    /// power); nil if nothing was added.
+    /// power); nil if nothing was added. Its bounding sphere is centred on the triangles' box, its radius the farthest
+    /// vertex: a sphere's own (the box's half diagonal was √3 times it), so the fog can aim at it (Fog.metal,
+    /// meshLightConeSample).
     package mutating func finish(instance: Int, firstTriangle: Int) -> MeshLight? {
         guard !weights.isEmpty else { return nil }
         let total = weights.reduce(0, +)
         var running: Float = 0
+        let center = (lo + hi) / 2
+        var radius2: Float = 0
         for (k, w) in weights.enumerated() {
             running += w
             triangles[k].v0.w = k == weights.count - 1 ? 1 : running / total
+            let t = triangles[k], p0 = SIMD3(t.v0.x, t.v0.y, t.v0.z)
+            for p in [p0, p0 + SIMD3(t.e1.x, t.e1.y, t.e1.z), p0 + SIMD3(t.e2.x, t.e2.y, t.e2.z)] {
+                radius2 = max(radius2, length_squared(p - center))
+            }
         }
-        return MeshLight(instance: instance, firstTriangle: firstTriangle, triangleCount: weights.count, center: (lo + hi) / 2,
-                         radius: max(length(hi - lo) / 2, 1e-3), normal: length(areaNormal) > 0 ? normalize(areaNormal) : .zero,
+        return MeshLight(instance: instance, firstTriangle: firstTriangle, triangleCount: weights.count, center: center,
+                         radius: max(radius2.squareRoot(), 1e-3), normal: length(areaNormal) > 0 ? normalize(areaNormal) : .zero,
                          flatness: min(length(areaNormal) / area, 1), power: power)
     }
 

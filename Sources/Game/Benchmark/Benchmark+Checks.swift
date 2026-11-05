@@ -794,6 +794,21 @@ extension Benchmark {
         }
     }
 
+    /// The fog lit by an emissive mesh up close: the Emissive scene's orb, in a fog volume of its own, 2.5 m away.
+    /// The scattering alone, the froxel grid against the reference march; then the final image as the app shows it
+    /// (radiance cascades, MetalFX 2x from 1280x800), paused and moving. One triangle point per froxel left the fog
+    /// around the orb in blotches; meshLightVolumeSample (Fog.metal) aims at the orb's cone instead.
+    static func fogemissive() -> [Config] {
+        let orb = Camera(position: [-4.9, 1.25, -1.55], yaw: -0.0204, pitch: 0.1017)
+        let emissive = SceneSettings(kind: .emissive)
+        let direct = Config("", gi: nil, scene: emissive).from(orb)
+        let shown = Config("", scale: 1, upscale: 2, gi: .radianceCascades, scene: emissive).from(orb)
+        return [direct.named("orb ref scattering").view(14).reference(frames: 512),
+                direct.named("orb grid scattering").view(14).still().frames(120),
+                shown.named("orb final").still().frames(120),
+                shown.named("orb final moving")]
+    }
+
     /// Cloud shadows through every sun-visibility path (shadow rays, the shadow denoiser, light maps): the valley in
     /// the afternoon, a cloud shadow's edge in view, each GI method against a 4-bounce path-traced reference (512
     /// frames), final image and indirect light, with cloud shadows on and off. Each method's error should not depend
