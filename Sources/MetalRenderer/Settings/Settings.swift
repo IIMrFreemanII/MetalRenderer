@@ -203,9 +203,10 @@ package struct CascadeSettings: Equatable, Codable {
     /// in the gallery (with this 0.97, 0.99).
     package var shNormal = true
     /// Emissive meshes (SceneSettings.cascadeEmitterSize and up) light the scene through the cascades within their reach
-    /// (cascadeEmitterReach, which grows as their size squared): there the cascade rays that hit them see their emission,
-    /// with the rays' own soft shadows, and the mesh-light pass samples only what lies beyond. In the emissive room
-    /// (Nov 2026) shade went from 0.78 to 0.82 of path traced, with no more flicker and within noise of the cost.
+    /// (cascadeEmitterReach, which grows as their size squared and shrinks as they turn edge-on): there the cascade rays
+    /// that hit them see their emission, with the rays' own soft shadows, and the mesh-light pass samples only what lies
+    /// beyond. In the emissive room (Nov 2026) the frame went from 0.759 to 0.779 of path traced (shade 0.793 to 0.816),
+    /// with no more flicker and within noise of the cost.
     package var emitters = true
 
     static let spacingOptions = [4, 8]
