@@ -56,6 +56,8 @@ package final class RadianceCascades {
     private var historyReady = false    // textures start undefined: no feedback until one frame has been resolved
     /// The scene's plants or `SceneDefinition.cascadeSkyGaps`: a ray with no next-cascade probe on its surface asks for the sky.
     var skyGaps = false
+    /// `SceneDefinition.cascadeIntervalOverlap`: in the interiors' box an interval starts inside the one below.
+    var intervalOverlap = true
     /// The scene's share of the probes' mean light at a hit whose own isn't known (CascadeSettings.hiddenLight).
     var hiddenLight: Float = 1
 
@@ -103,7 +105,7 @@ package final class RadianceCascades {
     private func params(_ c: Int) -> RCParams {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
-                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0)),
+                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0) | (intervalOverlap ? 0 : 16)),
                         interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 + hiddenLight : 0,
                                         historyReady ? 1 : 0))
     }

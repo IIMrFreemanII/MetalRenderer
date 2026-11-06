@@ -146,6 +146,11 @@ package final class SceneDefinition {
     /// asks whether it reaches the sky (RadianceCascades.metal RC_SKY_GAPS). A lone tree under an open sky needs it
     /// (its crown's leaves came out a third darker than path traced). It costs a forest ~0.8 ms.
     package var cascadeSkyGaps = false
+    /// Radiance cascades in the walkable interiors' box: whether an interval starts inside the one below
+    /// (RadianceCascades.metal RC_INTERVALS_MEET when not), so no light leaks past a thin partition. In a hall full of
+    /// clutter (the stress building) the coarse probes' early rays hit desks, cars and racks the fine probes' missed,
+    /// and the bounce light came out at 0.57 of path traced (1.00 with the intervals meeting).
+    package var cascadeIntervalOverlap = true
     /// Radiance cascades: a hit whose own light isn't known takes CascadeSettings.hiddenLight of the probes' mean rather
     /// than all of it. For one thing on an open stage: the mean is the stage's, and such hits lie inside the thing.
     package var cascadeHiddenLight = false

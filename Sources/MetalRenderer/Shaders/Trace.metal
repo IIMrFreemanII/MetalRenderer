@@ -192,11 +192,25 @@ kernel void traceKernel(constant Uniforms&               u          [[buffer(0)]
             float2 r = rng.next2();
             float3 unshadowed = litUnshadowed(lights[i], p, n, ng, hp);
             if (all(unshadowed <= 0.0f)) continue;   // light behind the surface: it shadows itself
-            float b;
-            float3 target = lightShadowTarget(lights[i], p, r);
-            float3 origin = hairOrSurface(hp, sf.position, n, p, target);
-            float v = isVisibleBlocker(origin, target, accel, b) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
-            direct += unshadowed * v * (v > 0.0f ? glassShadowTint(origin, target, accel, s, u.flags) : float3(1.0f));
+            // Under MetalFX's denoiser, two rays to a local light: its motion vectors move surfaces, not shadows, so a
+            // shadow moving over a still floor (a walking figure's) had no history there and showed one ray's speckle.
+            // The second point is the first's R2 neighbour on the light. Not the sun's: its narrow penumbrae barely
+            // speckle, and a forest's leaves make its rays dear.
+            uint rays = flagOn(u.flags, FLAG_HDR_OUTPUT) && lightType(lights[i]) != LIGHT_SUN ? 2u : 1u;
+            float b = 0.0f, v = 0.0f;
+            float3 lit = float3(0.0f);
+            for (uint k = 0; k < rays; ++k) {
+                float2 rk = k == 0 ? r : fract(r + float2(0.7548777f, 0.5698403f));
+                float3 target = lightShadowTarget(lights[i], p, rk);
+                float3 origin = hairOrSurface(hp, sf.position, n, p, target);
+                float bk;
+                float vk = isVisibleBlocker(origin, target, accel, bk) ? sunVisibilityScale(lights[i], p, s) : 0.0f;
+                b = max(b, bk);
+                v += vk;
+                lit += vk * (vk > 0.0f ? glassShadowTint(origin, target, accel, s, u.flags) : float3(1.0f));
+            }
+            v /= float(rays);
+            direct += unshadowed * lit / float(rays);
             uint g = lightGroup(lights[i]);
             float w = luminance(unshadowed);
             unshadowedSum[g] += w;
