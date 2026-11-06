@@ -102,6 +102,7 @@ extension GameScenes {
             scene(.stress, "Stress test", "buildStress", build: { $0.buildStress(objects: $0.settings.objects, lights: $0.settings.lights) }) {
                 $0.lights = SceneSettings().lights
                 $0.detail = { "stress: \($0.objects) objects, \($0.lights) lights" }
+                $0.cascadeIntervalOverlap = false   // the hall's interiors' box, minus the overlap: its clutter (stressq)
                 // Low in the central aisle, turned toward the office, rising and backing up to the overview.
                 $0.cameraMove = { p, _ in
                     var start = Camera()

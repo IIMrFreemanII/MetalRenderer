@@ -111,6 +111,7 @@ extension Renderer {
         let definition = scene.settings.kind.definition
         radianceCascades!.skyGaps = definition.cascadeSkyGaps || settings.cascades.skyGaps || (settings.cascades.hitRays && definition.hasPlants)
         radianceCascades!.hiddenLight = definition.cascadeHiddenLight ? settings.cascades.hiddenLight : 1
+        radianceCascades!.intervalOverlap = definition.cascadeIntervalOverlap
         return radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
                                         bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
                                         normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)
