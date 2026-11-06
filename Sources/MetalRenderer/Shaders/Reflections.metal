@@ -11,9 +11,10 @@
 constant float REFLECTION_SKY_REACH = 200.0f;   // m: how far a hit off screen looks for what hides the sky
 
 // Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
+// `emittersSampled`: the mesh lights' own light comes from reflectionMeshLight, not from the ray meeting them.
 float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
                              thread Sampler& rng, texture2d<float, access::read> normalDepth,
-                             texture2d<float, access::read> indirect, constant uint* roomAmbient) {
+                             texture2d<float, access::read> indirect, constant uint* roomAmbient, bool emittersSampled) {
     if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 L = float3(0.0f), throughput = float3(1.0f);
     bool reference = flagOn(u.flags, FLAG_REFERENCE);
@@ -23,7 +24,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         orientNormals(h, dir, hng, hn);
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 albedo = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));
-        L += throughput * (b == 0 ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
+        L += throughput * (b == 0 && !emittersSampled ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
         if (LIGHT_TABLE) {
             Rng r;
             r.state = pcgHash(as_type<uint>(rng.next()) + b * 977u);
@@ -64,6 +65,57 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         dir = d;
         if (!h.hit) return L + throughput * skyRadiance(u, s, dir, 2.0f);
     }
+}
+
+// Glossy surfaces (from this roughness to REFLECTION_MAX_ROUGHNESS) take the emissive-mesh lights' highlights from a
+// point sampled on one of them (reflectionMeshLight), not from the reflection ray happening to meet them: at roughness
+// 0.3 few of a steel ball's rays met the Emissive scene's small spinning cubes, and their highlights changed shape
+// every frame (MetalFX can't settle what moves). Smoother surfaces keep the ray: their lobe is narrower than a light.
+constant float REFLECTION_MESH_LIGHT_ROUGHNESS = 0.15f;
+
+// A mesh light's share of the pick at p: its proxy's light (meshLightUnshadowed) x the GGX lobe toward its centre,
+// widened by its angular size and renormalised (a sphere light's, Karis 2013). Positive wherever the light reaches p.
+inline float meshLightSpecularWeight(Light light, float3 p, float3 n, float3 ng, float3 v, float a) {
+    float3 unshadowed = meshLightUnshadowed(light, p, n, ng);
+    if (all(unshadowed <= 0.0f)) return 0.0f;
+    float3 toL = light.positionRadius.xyz - p;
+    float d = max(length(toL), 1e-6f);
+    float aw = saturate(a + 0.5f * light.positionRadius.w / d);
+    float3 h = normalize(toL / d + v);
+    return luminance(unshadowed) * ggxD(saturate(dot(n, h)), max(aw, 1e-3f)) * (a * a) / max(aw * aw, 1e-6f) + 1e-6f;
+}
+
+// The emissive-mesh lights' direct specular at p: one light picked by meshLightSpecularWeight, one point of it by
+// power, its GGX light with one shadow ray, dimmed by the fog on the way when the reflections are fogged. (Lights after
+// lightGroupEnd.w, at most LIGHT_CANDIDATES of them: the caller checks.)
+float3 reflectionMeshLight(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, constant FogParams& fog,
+                           bool fogged, float3 p, float3 n, float3 ng, float3 v, float3 f0, float f90, float a,
+                           float uPick, float2 r) {
+    uint first = u.lightGroupEnd.w, count = u.lightCount - first;
+    StreamPick pick = streamPick(uPick);
+    uint picked = count;
+    float pickedWeight = 0.0f;
+    for (uint i = 0; i < count; ++i) {
+        float w = meshLightSpecularWeight(s.lights[first + i], p, n, ng, v, a);
+        if (w > 0.0f && pick.offer(w)) { picked = i; pickedWeight = w; }
+    }
+    if (picked >= count) return float3(0.0f);
+    MeshLightPoint mp = sampleMeshLightPoint(s.lights[first + picked], r, s);
+    if (!mp.valid) return float3(0.0f);
+    float3 w = mp.x - p;
+    float d2 = max(dot(w, w), 1e-6f);
+    float3 l = w * rsqrt(d2);
+    float NoL = dot(n, l), NoV = max(dot(n, v), 1e-4f);
+    if (NoL <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
+    float cosL = abs(dot(mp.cr, l)) / mp.area2;   // emission is two-sided
+    float3 h = normalize(l + v);
+    float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
+    // Point pdf (area) = prob / area, the light's pick = weight / total.
+    float3 e = meshLightPointEmission(mp, s) * schlick(f0, f90, saturate(dot(v, h)))
+             * (brdf * NoL * cosL / d2 * (0.5f * mp.area2 / mp.prob) * (pick.total / pickedWeight));
+    if (all(e <= 0.0f) || !isVisible(p, p + w * 0.99f, accel)) return float3(0.0f);
+    if (fogged) e *= exp(-fogOpticalDepth(p, l, sqrt(d2), fog));
+    return e;
 }
 
 constant uint REFLECT_FOG = 1;   // reflectionKernel's own flag: the reflection rays are fogged (FOG_ENABLED and FOG_REFLECTIONS)
@@ -194,6 +246,16 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             b = cross(n, t);
             at = anisotropicAlpha(a, anisotropy);
         }
+        // The mesh lights' highlights from a point of them (see REFLECTION_MESH_LIGHT_ROUGHNESS); the ray then skips them.
+        bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
+        uint meshLights = u.lightCount - analyticLights;
+        bool sampleEmitters = !flagOn(u.flags, FLAG_SAMPLED_LIGHTS) && !flagOn(u.flags, FLAG_REFERENCE) && anisotropy <= 0.0f
+                              && roughness >= REFLECTION_MESH_LIGHT_ROUGHNESS && meshLights > 0 && meshLights <= LIGHT_CANDIDATES;
+        if (sampleEmitters) {
+            float uPick = rng.next();
+            float2 r = rng.next2();
+            result += reflectionMeshLight(u, accel, s, fog, fogged, p, n, ng, v, f0, f90, a, uPick, r);
+        }
         float3 vt = float3(dot(v, t), dot(v, b), NoV);
         float3 hl = sampleGGXVNDF(vt, at, a, rng.next2());
         float3 h = t * hl.x + b * hl.y + n * hl.z;
@@ -215,13 +277,12 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
             hitDistance = hit.hit ? length(hit.position - p) : REFLECTION_SKY_DISTANCE;
-            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient);
+            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient, sampleEmitters);
             if (PARTICLES && (accel.particleFlags & PARTICLES_REFLECTED) != 0u) {   // the particles in front of what it reflects
                 float meanT;
                 float4 seen = particleGather<2>(p, l, hit.hit ? length(hit.position - p) : 1.0e5f, hit.hit, accel, meanT);
                 radiance = seen.rgb + (1.0f - seen.a) * radiance;
             }
-            bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
             if (passOn(fogged ? REFLECT_FOG : 0u, REFLECT_FOG)) {
                 float2 uDistMix = rng.next2();
                 float4 r = float4(rng.next2(), rng.next2());

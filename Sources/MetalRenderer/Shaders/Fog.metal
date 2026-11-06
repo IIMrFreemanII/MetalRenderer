@@ -142,21 +142,104 @@ float3 lightVolumeWeight(Light light, float3 p, thread float3& l) {
     return e;
 }
 
+// A mesh light's in-scatter at p from one of FOG_MESH_CANDIDATES triangle points, picked by resampling (RIS) in
+// proportion to cosL / d^2, a fifth as likely on triangles facing away from p (one point alone swings with 1/d^2,
+// and near a closed emitter half of them lie on its hidden side). The candidates are the R2 lattice rotated by u
+// (stratified, no more random numbers); the pick's own random number is a hash of u. Unbiased (the target is
+// positive wherever the light is: two-sided and open emitters still count); the caller traces the shadow ray.
+// (Emissive scene, orb close up, M4 Max: 4 candidates against 1 took the error near the neon sign from 3.1 to 2.6 RMS
+// for 0.07 ms of fog and 0.06 of reflections; 8 gained nothing more.)
+constant uint FOG_MESH_CANDIDATES = 4;
+
+float3 meshLightAreaSample(Light light, float3 p, float2 u, thread const SceneData& s, thread float3& target, thread float3& l) {
+    const float2 r2 = float2(0.7548776662f, 0.5698402910f);
+    StreamPick pick = streamPick(float(pcgHash(as_type<uint>(u.x) ^ pcgHash(as_type<uint>(u.y)))) * (1.0f / 4294967296.0f));
+    MeshLightPoint chosen;
+    chosen.valid = false;
+    float chosenTarget = 0.0f;
+    for (uint k = 0; k < FOG_MESH_CANDIDATES; ++k) {
+        MeshLightPoint mp = sampleMeshLightPoint(light, fract(u + float(k) * r2), s);
+        if (!mp.valid) continue;
+        float3 w = mp.x - p;
+        float d2 = max(dot(w, w), 1e-4f);
+        float t = abs(dot(mp.cr, w)) * rsqrt(d2) / (mp.area2 * d2) * (dot(mp.cr, w) < 0.0f ? 1.0f : 0.2f);
+        float weight = t * (0.5f * mp.area2 / mp.prob);   // target / pdf (the point's pdf: prob / area)
+        if (weight > 0.0f && pick.offer(weight)) { chosen = mp; chosenTarget = t; }
+    }
+    if (!chosen.valid || chosenTarget <= 0.0f) return float3(0.0f);
+    float3 w = chosen.x - p;
+    float d2 = dot(w, w);
+    l = w * rsqrt(max(d2, 1e-12f));
+    target = p + w * 0.99f;
+    float cosL = abs(dot(chosen.cr, l)) / chosen.area2;
+    return meshLightPointEmission(chosen, s) * (cosL / max(d2, 1e-4f) / chosenTarget * (pick.total / float(FOG_MESH_CANDIDATES)));
+}
+
+// A compact mesh light seen from outside its bounding sphere: a direction uniform in the cone the sphere subtends,
+// traced to the first surface; this light's emission there over the cone's pdf if the ray hits one of its
+// triangles, nothing if it hits anything else (the ray is the shadow ray: `traced`). Compact: its surface fills at
+// least FOG_CONE_FILL of the cone (a convex body's mean silhouette is a quarter of its area, so area / (4 pi r^2),
+// the area from its power and its material's emission): an orb's rays nearly all hit it, so the estimate barely
+// varies. Triangle points left each froxel near the Emissive scene's orb with its own error (half of the points on
+// its hidden side, the rest swinging with 1/d^2), which MetalFX's denoiser smeared into blotches. Thin and flat
+// emitters (neon bars, screens), whose cones the rays would mostly miss, and points inside the sphere, keep
+// meshLightAreaSample. Either estimate is unbiased, so choosing per light and point is too.
+constant float FOG_CONE_FILL = 0.5f;
+
+float3 meshLightVolumeSample(Light light, float3 p, float2 u, SCENE_ACCEL accel, thread const SceneData& s,
+                             thread float3& target, thread float3& l, thread bool& traced) {
+    traced = false;
+    float3 toCentre = light.positionRadius.xyz - p;
+    float r = light.positionRadius.w, D2 = dot(toCentre, toCentre);
+    if (D2 <= 1.0001f * r * r) return meshLightAreaSample(light, p, u, s, target, l);   // inside its sphere
+    uint instance = as_type<uint>(light.params.w);
+    InstanceData inst = instanceRecord(s.instances, instance);
+    uint material = inst.materialIndex + uint(light.axis.w);
+    Material m = s.materials[material];
+    float le = luminance(m.emission.rgb);
+    float fill = le > 0.0f ? luminance(light.color.rgb) / (le * 4.0f * M_PI_F * r * r) : 0.0f;
+    if (fill < FOG_CONE_FILL) return meshLightAreaSample(light, p, u, s, target, l);
+
+    traced = true;
+    float D = sqrt(D2), sin2 = r * r / D2, cosMax = sqrt(max(1.0f - sin2, 0.0f));
+    float oneMinusCos = sin2 / (1.0f + cosMax);   // 1 - cosMax without the cancellation
+    float cosT = 1.0f - u.x * oneMinusCos, sinT = sqrt(max(0.0f, 1.0f - cosT * cosT)), phi = 2.0f * M_PI_F * u.y;
+    float3 axis = toCentre / D, t, b;
+    tangentFrame(axis, t, b);
+    l = axis * cosT + (t * cos(phi) + b * sin(phi)) * sinT;
+    Hit h = intersectClosest(makeRay(p, l, 0.0f, D + r), rayMask(MASK_GEOMETRY, RAY_GI), accel);
+    if (!h.hit || h.instance != instance || (SDF_SHAPES && h.part == HIT_SDF) || (VOXELS && h.part == HIT_VOXEL)
+        || (HAIR_CURVES && h.part == HIT_CURVE)) return float3(0.0f);
+    float3 Le = m.emission.rgb;
+    bool textured = m.textures.w != NO_TEXTURE;
+    if (!textured && !MULTI_MATERIAL && !STREAMED && h.part == HIT_NO_PART) {
+        // One material, no texture: the hit's material is the instance's, no vertices to read.
+        if (inst.materialIndex != material) return float3(0.0f);
+    } else {
+        HitVertices hv = fetchHitVertices(h, inst, accel, s);
+        uint hitMaterial = inst.materialIndex + (hv.leaf ? 1u : 0u);   // as hitMaterialIndex (Surface.metal)
+        if (MULTI_MATERIAL && hv.triangle != ~0u) hitMaterial += s.triangleMaterials[hv.triangle];
+        if (STREAMED) hitMaterial += hv.material;
+        if (hitMaterial != material) return float3(0.0f);   // another material of its mesh: not this light
+        if (textured) {
+            float2 bc = h.barycentrics, d1 = hv.t[1] - hv.t[0], d2uv = hv.t[2] - hv.t[0];
+            float2 uv = hv.t[0] + d1 * bc.x + d2uv * bc.y;
+            float uvArea = abs(d1.x * d2uv.y - d1.y * d2uv.x);   // the texel footprint meshLightPointEmission takes
+            Le *= sampleMaterial(s, m.textures.w, uv, 0.5f * log2(max(uvArea, 1e-12f)) - 2.0f, false).rgb;
+        }
+    }
+    target = p + l * h.distance;
+    float T = PARTICLES ? particleTransmittance(p, l, 0.0f, h.distance, accel) : 1.0f;   // isVisible's particles, averaged
+    return Le * (T * 2.0f * M_PI_F * oneMinusCos);
+}
+
 // One-sample estimate of the same, with a shadow-ray end `target` and the direction `l` the light arrives from:
 // spheres, spots and the sun as above; a uniform point of the emitter for rects, tubes (along the axis, intensity
-// per unit length 4 I / (pi length) broadside) and mesh lights (one triangle point).
+// per unit length 4 I / (pi length) broadside) and mesh lights (meshLightAreaSample; fogInscatter aims at compact
+// ones with meshLightVolumeSample).
 float3 lightVolumeSample(Light light, float3 p, float2 u, thread const SceneData& s, thread float3& target, thread float3& l) {
     uint type = lightType(light);
-    if (type == LIGHT_MESH) {
-        MeshLightPoint mp = sampleMeshLightPoint(light, u, s);
-        if (!mp.valid) return float3(0.0f);
-        float3 w = mp.x - p;
-        float d2 = dot(w, w);
-        l = w * rsqrt(max(d2, 1e-12f));
-        target = p + w * 0.99f;
-        float cosL = abs(dot(mp.cr, l)) / mp.area2;
-        return meshLightPointEmission(mp, s) * (cosL / max(d2, 1e-4f) * (0.5f * mp.area2 / mp.prob));
-    }
+    if (type == LIGHT_MESH) return meshLightAreaSample(light, p, u, s, target, l);
     target = lightShadowTarget(light, p, u);
     if (type == LIGHT_RECT) {
         float3 w = target - p;
@@ -297,11 +380,13 @@ float3 fogInscatter(float3 p, float3 v, float4 u, float uMix, SCENE_ACCEL accel,
     if (li >= s.lightCount || pdf <= 0.0f) return ambient;
     Light light = s.lights[li];
     float3 target, l;
-    float3 E = lightVolumeSample(light, p, u.zw, s, target, l);
+    bool traced = false;   // the sample's own ray already found it in sight (meshLightVolumeSample's cone)
+    float3 E = lightType(light) == LIGHT_MESH ? meshLightVolumeSample(light, p, u.zw, accel, s, target, l, traced)
+                                              : lightVolumeSample(light, p, u.zw, s, target, l);
     if (all(E <= 0.0f)) return ambient;
     float T = exp(-fogOpticalDepth(p, l, lightType(light) == LIGHT_SUN ? sunFogDistance(light, p) : length(target - p), f))
             * sunVisibilityScale(light, p, s);
-    if (T < 1e-4f || !isVisible(p, target, accel, RAY_GI)) return ambient;
+    if (T < 1e-4f || (!traced && !isVisible(p, target, accel, RAY_GI))) return ambient;
     return ambient + E * (T * phaseHG(-dot(l, v), g) / pdf);
 }
 
@@ -323,17 +408,40 @@ float3 fogAlongRay(float3 o, float3 d, float t, float3 L, float2 uDistMix, float
 inline float froxelDepth(constant FogParams& f, float slice) { return f.grid.x * exp(f.grid.z * slice / f.grid.w); }
 inline float froxelSlice(constant FogParams& f, float depth) { return log(max(depth, 1e-4f) / f.grid.x) / f.grid.z * f.grid.w; }
 
-// Last frame's froxel grid where this frame's froxel `tid` centre was (or `fallback` if it was outside the grid).
-inline float4 fogHistory(constant Uniforms& u, constant FogParams& f, texture3d<float> history, uint3 tid, uint3 dims,
-                         float4 fallback) {
-    float3 c = u.camPos.xyz + viewDirection(u, (float2(tid.xy) + 0.5f) / float2(dims.xy)) * froxelDepth(f, float(tid.z) + 0.5f);
-    float3 q = c - u.prevCamPos.xyz;
-    float depth = dot(q, u.prevCamForward.xyz);
-    if (depth <= f.grid.x) return fallback;
-    float2 ndc = float2(dot(q, u.prevCamRight.xyz) / (depth * u.prevCamRight.w), dot(q, u.prevCamUp.xyz) / (depth * u.prevCamUp.w));
-    float3 tc = float3(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f, froxelSlice(f, depth) / f.grid.w);
-    return all(tc >= 0.0f) && all(tc <= 1.0f) ? history.sample(fogGridSampler, tc) : fallback;
+// The centre of froxel `tid`, in the world.
+inline float3 froxelCentre(constant Uniforms& u, constant FogParams& f, uint3 tid, uint3 dims) {
+    return u.camPos.xyz + viewDirection(u, (float2(tid.xy) + 0.5f) / float2(dims.xy)) * froxelDepth(f, float(tid.z) + 0.5f);
 }
+
+// Where this frame's froxel `tid` centre was in last frame's grid (texture coordinates), false if outside it.
+inline bool fogHistoryCoord(constant Uniforms& u, constant FogParams& f, uint3 tid, uint3 dims, thread float3& tc) {
+    float3 q = froxelCentre(u, f, tid, dims) - u.prevCamPos.xyz;
+    float depth = dot(q, u.prevCamForward.xyz);
+    if (depth <= f.grid.x) return false;
+    float2 ndc = float2(dot(q, u.prevCamRight.xyz) / (depth * u.prevCamRight.w), dot(q, u.prevCamUp.xyz) / (depth * u.prevCamUp.w));
+    tc = float3(ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f, froxelSlice(f, depth) / f.grid.w);
+    return all(tc >= 0.0f) && all(tc <= 1.0f);
+}
+
+// The fog's light at p toward the viewer (v), unshadowed and smooth: every light's picking weight (lightVolumeWeight x
+// the phase) plus the ambient. It moves with the lights the frame they move, so the froxels' history is rescaled by
+// it (fogInjectKernel): with one light sample a froxel a frame and 90% of the last frames kept, a light that moved
+// left its glow in the fog where it had been for ten frames (the Emissive scene's spinning cubes trailed theirs).
+// Few lights only (it loops over them all, as pickFogLight does up to LIGHT_CANDIDATES); 0 = no guide (more: a city's
+// lamps, the history as it was).
+inline float3 fogLightGuide(constant FogParams& f, thread const SceneData& s, float3 p, float3 v, float3 ambient) {
+    if (s.lightCount > LIGHT_CANDIDATES) return float3(0.0f);
+    bool sunsOnly = (f.counts.w & FOG_SKY_LIGHT) != 0;
+    float3 sum = ambient;
+    for (uint i = 0; i < s.lightCount; ++i) {
+        if (sunsOnly && lightType(s.lights[i]) != LIGHT_SUN) continue;
+        float3 l;
+        sum += lightVolumeWeight(s.lights[i], p, l) * phaseHG(-dot(l, v), f.medium.w);
+    }
+    return min(sum, float3(60000.0f));   // (stored as half)
+}
+
+constant float FOG_GUIDE_MAX_RATIO = 8.0f;   // past this the history is mostly another light's: this frame's sample takes half
 
 kernel void fogInjectKernel(constant Uniforms&                u          [[buffer(0)]],
                             SCENE_ACCEL                       accel      [[buffer(1)]],
@@ -348,13 +456,34 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
                             texture3d<float>                  history    [[texture(2)]],   // last frame's froxels
                             texture3d<float, access::write>   outScatter [[texture(3)]],   // rgb = in-scatter / m, a = extinction
                             texture2d<float, access::read>    normalDepth [[texture(4)]],  // this frame's G-buffer depth
+                            texture3d<float>                  guideHistory [[texture(5)]], // last frame's fogLightGuide
+                            texture3d<float, access::write>   outGuide   [[texture(6)]],   // this frame's, at the froxels' centres
                             uint3 tid [[thread_position_in_grid]])
 {
     uint3 dims = uint3(f.counts.x, f.counts.y, uint(f.grid.w));
     if (any(tid >= dims)) return;
-    bool historyValid = (f.counts.w & FOG_HISTORY_VALID) != 0;
     SceneData s = sceneLights(instances, shading, lights, u.lightCount);
     bindLightSampling(s, u.lightTable, regirGrid, regir);
+    float3 ambient = skyAmbient(u, s) * f.albedo.w;
+
+    // Last frame's froxels where this one's centre was, rescaled by how much the lights' unshadowed light there changed
+    // since (fogLightGuide, at the centres both frames): the history keeps averaging the samples' noise (the light
+    // picked, the shadows) but not the place a light was. Where the light grew past FOG_GUIDE_MAX_RATIO (a light come
+    // close), this frame's sample takes half.
+    float3 tc;
+    bool seen = (f.counts.w & FOG_HISTORY_VALID) != 0 && fogHistoryCoord(u, f, tid, dims, tc);
+    float4 last = seen ? history.sample(fogGridSampler, tc) : float4(0.0f);
+    float3 centre = froxelCentre(u, f, tid, dims);
+    float3 guide = fogLightGuide(f, s, centre, normalize(u.camPos.xyz - centre), ambient);
+    float blend = f.noise.w;
+    float3 lastGuide = seen ? guideHistory.sample(fogGridSampler, tc).rgb : float3(0.0f);
+    if (luminance(guide) > 0.0f && luminance(lastGuide) > 0.0f) {
+        float eps = 1e-4f * (luminance(guide) + luminance(lastGuide));
+        float3 ratio = (guide + eps) / (lastGuide + eps);
+        if (any(ratio > FOG_GUIDE_MAX_RATIO)) blend = max(blend, 0.5f);
+        last.rgb *= min(ratio, FOG_GUIDE_MAX_RATIO);
+    }
+    outGuide.write(roundToHalf(float4(guide, 0.0f)), tid);
 
     // A different blue-noise window per slice.
     Sampler rng = makeSampler(blueNoise, u, tid.xy + uint2(37u, 71u) * tid.z, 0,
@@ -368,7 +497,7 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float pixelDepth = normalDepth.read(min(uint2(uv * float2(u.width, u.height)), uint2(u.width - 1, u.height - 1))).w;
     float z0 = froxelDepth(f, float(tid.z)), z1 = min(froxelDepth(f, float(tid.z + 1)), pixelDepth > 0.0f ? pixelDepth : f.grid.y);
     if (z1 <= z0) {
-        outScatter.write(historyValid ? fogHistory(u, f, history, tid, dims, float4(0.0f)) : float4(0.0f), tid);
+        outScatter.write(roundToHalf(last), tid);
         return;
     }
     float3 dir = viewDirection(u, uv);
@@ -377,10 +506,10 @@ kernel void fogInjectKernel(constant Uniforms&                u          [[buffe
     float4 sample = float4(0.0f, 0.0f, 0.0f, m.w);
     if (m.w > 0.0f) {
         float4 r = float4(rng.next2(), rng.next2());
-        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, skyAmbient(u, s) * f.albedo.w, rng.rng);
+        sample.rgb = m.rgb * fogInscatter(p, -normalize(dir), r, rng.next(), accel, s, f, ambient, rng.rng);
     }
     // Blend into last frame's grid, sampled where this froxel's centre was.
-    if (historyValid) sample = mix(fogHistory(u, f, history, tid, dims, sample), sample, f.noise.w);
+    if (seen) sample = mix(last, sample, blend);
     outScatter.write(roundToHalf(sample), tid);
 }
 
