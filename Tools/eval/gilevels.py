@@ -17,7 +17,7 @@ from PIL import Image
 folder = sys.argv[1]
 shots = {}
 for path in glob.glob(os.path.join(folder, "*.png")):
-    m = re.match(r"\d+-(\w+?)-(cascades-gaps|cascades-contact|cascades-raw|cascades-first|cascades-plain|cascades-maps|cascades|normals|direct|traced-one|traced)\.png$", os.path.basename(path))
+    m = re.match(r"\d+-(\w+?)-(cascades-gaps|cascades-contact|cascades-emit|cascades-wrc|cascades-raw|cascades-first|cascades-plain|cascades-maps|cascades|normals|direct|traced-one|traced)\.png$", os.path.basename(path))
     if m:
         shots.setdefault(m.group(1), {})[m.group(2)] = path
 
@@ -41,7 +41,7 @@ for scene in sorted(shots):
     lit = surface & (direct > 0.01)
     shade = surface & ~lit
     print("%s  (surfaces %.0f%% of the frame, in shade %.0f%% of them)" % (scene, surface.mean() * 100, shade.sum() / max(surface.sum(), 1) * 100))
-    for name in ("cascades", "cascades-raw", "cascades-plain", "cascades-maps", "cascades-gaps", "cascades-contact"):
+    for name in ("cascades", "cascades-raw", "cascades-plain", "cascades-maps", "cascades-gaps", "cascades-contact", "cascades-emit", "cascades-wrc"):
         if name not in s:
             continue
         c = load(name).mean(-1)

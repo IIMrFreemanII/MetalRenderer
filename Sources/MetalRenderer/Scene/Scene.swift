@@ -430,6 +430,8 @@ package final class Scene {
     package var instances: [Instance] = []
     package var lights: [Light] = []
     package var meshLights: [MeshLight] = []
+    /// How many of `meshLights` have a material the cascades light (params.z 2: big enough, `cascadeEmitterSize`).
+    package internal(set) var cascadeLitMeshLights = 0
     package var borrowedLights: [BorrowedLight] = []
     package var emissiveTriangles: [GPUEmissiveTriangle] = []
     /// The materials changed since the renderer last took this (light proxies whose brightness is animated): the

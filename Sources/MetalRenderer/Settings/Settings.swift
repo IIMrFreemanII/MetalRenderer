@@ -202,11 +202,39 @@ package struct CascadeSettings: Equatable, Codable {
     /// took a third off hillsides facing the camera, and sunlit walls read 0.92 of path traced in the Cornell box, 0.90
     /// in the gallery (with this 0.97, 0.99).
     package var shNormal = true
+    /// Emissive meshes (SceneSettings.cascadeEmitterSize and up) light the scene through the cascades within their reach
+    /// (cascadeEmitterReach, which grows as their size squared): there the cascade rays that hit them see their emission,
+    /// with the rays' own soft shadows, and the mesh-light pass samples only what lies beyond. In the emissive room
+    /// (Nov 2026) shade went from 0.78 to 0.82 of path traced, with no more flicker and within noise of the cost.
+    package var emitters = true
 
     static let spacingOptions = [4, 8]
     static let cascadeRange = 2...5
     static let firstIntervalRange: ClosedRange<Float> = 0.1...1.0
     static let hiddenLightRange: ClosedRange<Float> = 0...1
+}
+
+/// World-space cache parameters: a cache of irradiance probes around the camera (DDGI-style) gives the cascades' hidden
+/// hits (off screen or occluded last frame) their light instead of the mean of all probes.
+package struct WorldCacheSettings: Equatable, Codable {
+    /// A world-space cache of irradiance probes around the camera (DDGI-style) gives the cascades' hidden hits (off screen
+    /// or occluded last frame) their light instead of the mean of all probes.
+    package var enabled = false
+    /// How many nested grids of probes follow the camera, each `spacing` 3x the last.
+    package var levels = 2
+    /// Level 0's probe spacing (m).
+    package var spacing: Float = 1.5
+    /// Each probe is traced every this many frames.
+    package var updateFrames = 32
+    /// How much of the previous frame's probe value a blend keeps.
+    /// A probe is traced every `updateFrames` frames, so this is per update, not per frame: at 0.5 a probe holds about
+    /// its last three updates' rays (~190), and a still frame converges in a few hundred frames.
+    package var hysteresis: Float = 0.5
+
+    static let levelsRange = 1...3
+    static let spacingRange: ClosedRange<Float> = 0.5...4
+    static let updateFramesRange = 4...128
+    static let hysteresisRange: ClosedRange<Float> = 0...0.99
 }
 
 /// Solid shading's look (RenderSettings.solidLook): what tells things apart in it. `classic` is the old one, every
@@ -604,6 +632,7 @@ package struct RenderSettings: Equatable, Codable {
     package var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
                                        // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
     package var cascades = CascadeSettings()
+    package var worldCache = WorldCacheSettings()
     package var scene = SceneSettings()
     package var virtualGeometry = VirtualGeometrySettings()
     package var specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0"   // GGX specular for glTF materials
@@ -748,7 +777,7 @@ package struct RenderSettings: Equatable, Codable {
     package static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering"]
+                            "Fog scattering", "World cache"]
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
     /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
@@ -760,7 +789,7 @@ package struct RenderSettings: Equatable, Codable {
     package static let geometryViews = 8...13
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
+    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), worldCache: WorldCacheSettings = WorldCacheSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
         self.renderScale = renderScale
         self.upscaleFactor = upscaleFactor
         self.frameInterpolation = frameInterpolation
@@ -782,6 +811,7 @@ package struct RenderSettings: Equatable, Codable {
         self.manyLightRays = manyLightRays
         self.manyLightReuse = manyLightReuse
         self.cascades = cascades
+        self.worldCache = worldCache
         self.scene = scene
         self.virtualGeometry = virtualGeometry
         self.specular = specular

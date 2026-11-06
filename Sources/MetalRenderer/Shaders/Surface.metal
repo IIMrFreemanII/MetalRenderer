@@ -149,6 +149,7 @@ struct Surface {
     float3 f0;            // specular reflectance at normal incidence (0 for diffuse-only materials)
     uint   instanceId;
     bool   lightEmitter;  // its emission is sampled as an emissive-mesh light (Material.params.z)
+    float  cascadeReach;  // ...one the radiance cascades light to this distance (cascadeEmitterReach), else -1
     bool   backlit;       // a translucent leaf showing the light of its far side: orientNormals faces it away
     bool   hair;          // a strand (HAIR_CURVES) whose material is hair (Material.params.z < 0): Hair.metal lights it
     float3 tangent;       // a strand's direction there
@@ -201,6 +202,23 @@ constant float GENERATED_TEXTURE_MEAN = 0.7f;
 // Emission a GI or bounce ray picks up at a hit: none from emissive-mesh lights, whose light next-event estimation
 // and the light maps already deliver (as the light spheres, which GI rays don't even see).
 inline float3 giEmission(thread const Surface& h) { return h.lightEmitter ? float3(0.0f) : h.emission; }
+
+// Emitters through the cascades (FLAG_CASCADE_EMITTERS, CascadeSettings.emitters): a big enough emissive mesh's
+// material has params.z = 2 + its size (Scene.buildMeshLights, SceneSettings.cascadeEmitterSize). Within its reach
+// the cascades' rays see its emission and carry its light, soft shadows and all; beyond it the mesh-light pass samples
+// it, so between them the light is counted once. A cascade's rays are further apart the further they go (2x per 4x of
+// distance), so the distance out to which they still sample a light finely grows as the light's size squared.
+constant float CASCADE_EMITTER_REACH = 4.0f;   // reach (m) = this x size^2 (m)
+inline float cascadeEmitterReach(float materialZ) {
+    float size = materialZ - 2.0f;
+    return materialZ > 1.5f ? CASCADE_EMITTER_REACH * size * size : -1.0f;
+}
+// What a ray from `origin` sees of what it hit, as GI's light (FLAG_CASCADE_EMITTERS): a cascade-lit emitter's emission
+// within its reach of the origin, any other emitter that is no light, as giEmission.
+inline float3 cascadeEmission(thread const Surface& h, float3 origin) {
+    if (h.cascadeReach >= 0.0f) return length(h.position - origin) <= h.cascadeReach ? h.emission : float3(0.0f);
+    return giEmission(h);
+}
 
 // ---------------------------------------------------------------------------------------------
 // Specular BRDF: GGX with height-correlated Smith visibility and Schlick Fresnel (F90 = specular weight).
@@ -860,6 +878,7 @@ inline void surfaceMaterial(thread Surface& sf, Material mat) {
     sf.specular = specularWeight(mat.params.x);
     sf.coat = mat.params.x >= 2.0f ? mat.params.x - 2.0f : -1.0f;
     sf.lightEmitter = mat.params.z > 0.0f;
+    sf.cascadeReach = cascadeEmitterReach(mat.params.z);
     sf.skin = max(-mat.params.w, 0.0f);
 }
 
@@ -978,6 +997,7 @@ Surface surfaceFromHit(Hit res, Ray r, SCENE_ACCEL accel, thread const SceneData
     sf.f0 = float3(0.0f);
     sf.instanceId = 0;
     sf.lightEmitter = false;
+    sf.cascadeReach = -1.0f;
     sf.backlit = false;
     sf.hair = false;
     sf.tangent = float3(0.0f);

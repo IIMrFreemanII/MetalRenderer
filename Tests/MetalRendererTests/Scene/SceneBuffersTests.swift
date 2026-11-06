@@ -317,7 +317,7 @@ final class SceneBuffersTests: XCTestCase {
             XCTAssertLessThan(distance(light.power, SIMD3<Float>(2, 4, 8) * (areas[0] + areas[1])), 1e-4)
             // Its material is a light's: GI doesn't count what it emits again. The mesh's other material isn't.
             let material = scene.instances[1].material
-            XCTAssertEqual(scene.materials[material + 1].params.z, 1)
+            XCTAssertGreaterThan(scene.materials[material + 1].params.z, 0, "a light's (1 sampled, 2 the cascades')")
             XCTAssertEqual(scene.materials[material].params.z, 0)
             // The light's record names the material, and the table has its triangles.
             var records = [GPULight](repeating: GPULight(positionRadius: .zero, color: .zero, axis: .zero, params: .zero), count: scene.lights.count)
@@ -332,6 +332,25 @@ final class SceneBuffersTests: XCTestCase {
             XCTAssertEqual(scene.lightTable.triangles[2].light, UInt32(scene.lights.count - 1))
             XCTAssertEqual(scene.lightTable.triangles[3].radianceLum, 2 * 0.2126 + 4 * 0.7152 + 8 * 0.0722, accuracy: 1e-4)
         }
+    }
+
+    func testCascadeEmitterSize() {
+        XCTAssertEqual(Scene.cascadeEmitterSize(area: 1, flatness: 1), 0.5642, accuracy: 1e-3)
+        XCTAssertEqual(Scene.cascadeEmitterSize(area: 4 * .pi * 0.01, flatness: 0), 0.1, accuracy: 1e-5)
+    }
+
+    /// A big emissive panel's material is the cascades' (params.z 2), a tiny one's stays a sampled light's (1).
+    func testOnlyBigEmittersAreCascadeLit() {
+        let scene = Scene(SceneSettings(kind: .cornell, cascadeEmitterSize: 0.3)) { scene in
+            let big = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(self.quad(0)), big, matrix_identity_float4x4)
+            let tiny = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(self.quad(0)), tiny, scale(SIMD3(repeating: 0.1)))
+        }
+        XCTAssertEqual(scene.meshLights.count, 2)
+        XCTAssertEqual(scene.materials[scene.instances[0].material].params.z, 2 + 0.5642, accuracy: 1e-3, "2 + its size")
+        XCTAssertEqual(scene.materials[scene.instances[1].material].params.z, 1)
+        XCTAssertEqual(scene.cascadeLitMeshLights, 1)
     }
 
     /// The open world's lights (`Scene.cityLights`): materials that emit nothing as the scene is made, and their
@@ -363,7 +382,7 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertEqual(scene.lightTable.triangles.map(\.radianceLum), [0, 0])
         XCTAssertEqual(scene.lightTable.entries.count, 2, "but they are in it, each by what it emits when on")
         XCTAssertGreaterThan(scene.lightTable.entries[0].pdf, scene.lightTable.entries[1].pdf)
-        XCTAssertEqual(scene.materials[1].params.z, 1, "a light's material")
+        XCTAssertGreaterThan(scene.materials[1].params.z, 0, "a light's material")
         XCTAssertNil(scene.takeMaterialsDirty())
         XCTAssertNil(scene.takeLightTrianglesDirty())
 

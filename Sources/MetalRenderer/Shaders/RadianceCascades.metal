@@ -33,6 +33,8 @@ constant uint RC_SKY_GAPS = 2u;            // layout.w: a ray that missed, with 
                                            // whether it reaches the sky (SceneDefinition.cascadeSkyGaps)
 constant float RC_PARENT_TRUST = 0.1f;     // ...past this share of matching parents' weight their light is taken whole
 constant uint RC_HIT_RAYS = 4u;            // layout.w: a hit sees the sun through a ray, past its light map (CascadeSettings.hitRays)
+constant uint RC_WORLD_HIDDEN = 32u;      // layout.w: hidden hits take the world cache's light (WorldCache.metal, WorldCacheSettings)
+constant uint RC_FAR_CAP = 64u;           // layout.w: measuring only (METALRENDERER_RC_FARCAP): the last interval ends at interval.y
 constant uint RC_SH_NORMAL = 8u;           // layout.w: a probe's SH is true to its own normal (CascadeSettings.shNormal)
 constant uint RC_INTERVALS_MEET = 16u;     // layout.w: no overlap in the interiors' box (SceneDefinition.cascadeIntervalOverlap)
 
@@ -117,6 +119,10 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
                                texture2d<float, access::read>   prevND     [[texture(8)]],   // last frame's normal + depth
                                texture2d<float, access::read>   prevIndirect [[texture(9)]], // last frame's indirect light
                                device const uint*               prevAmbient [[buffer(10)]],  // rgb sums (x1024) + count
+                               constant WorldCacheParams&       wrc        [[buffer(13)]],   // with RC_WORLD_HIDDEN
+                               texture2d_array<float>           wrcIrr     [[texture(10)]],
+                               texture2d_array<float>           wrcDist    [[texture(11)]],
+                               texture2d_array<float, access::read> wrcState [[texture(12)]],
                                uint gid [[thread_position_in_grid]])
 {
     uint probeCount = p.grids.x * p.grids.y;
@@ -160,7 +166,7 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     // scene asks (RC_INTERVALS_MEET: a hall full of clutter, whose coarse probes' early rays hit what the fine ones missed).
     bool overlap = (p.layout.w & RC_INTERVALS_MEET) == 0 && inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz);
     float start = overlap ? min(p.interval.x * 0.5f, RC_INTERIOR_START) : p.interval.x;
-    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last ? INFINITY : p.interval.y);
+    Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last && (p.layout.w & RC_FAR_CAP) == 0 ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 
     float3 radiance = float3(0.0f);
@@ -168,19 +174,31 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
         float3 hng, hns;
         orientNormals(h, dir, hng, hns);
         float3 hp = h.position + hng * RAY_EPSILON;
+        bool emitters = flagOn(u.flags, FLAG_CASCADE_EMITTERS);
         float3 light = giLightIllum(lights, u, lightMap, hp, hns, hng,
-                                    pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), accel, s, (p.layout.w & RC_HIT_RAYS) != 0);
+                                    pcgHash(gid + pcgHash(u.frameIndex + p.layout.x * 7919u)), accel, s, (p.layout.w & RC_HIT_RAYS) != 0,
+                                    emitters);
         if (p.interval.z > 0.0f) {
             // Multi-bounce: where this hit point was on screen last frame, add last frame's indirect light there;
-            // elsewhere (off screen, occluded) fall back to last frame's average indirect light over all probes.
+            // elsewhere (off screen, occluded) the world cache's light around it (RC_WORLD_HIDDEN), or where it has
+            // none, last frame's average indirect light over all probes.
             uint2 q;
             bool found = lastFramePixel(u, h.prevPosition, hns, prevND, q);
             if (found) light += prevIndirect.read(q).rgb;
-            if (!found && prevAmbient[3] > 0)
+            float4 cached = float4(0.0f);
+            if (!found && (p.layout.w & RC_WORLD_HIDDEN) != 0)
+                cached = wrcIrradiance(h.position, hns, wrc, wrcIrr, wrcDist, wrcState);
+            if (cached.w > 0.0f) light += cached.rgb;
+            else if (!found && prevAmbient[3] > 0)
                 light += (inInteriorBox(u.interiorLo, u.interiorHi, h.position) ? 1.0f : p.interval.z - 1.0f)
                        * float3(prevAmbient[0], prevAmbient[1], prevAmbient[2]) / (1024.0f * float(prevAmbient[3]));
         }
         radiance = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY)) * light;
+        // Emitters (FLAG_CASCADE_EMITTERS): within its reach of the probe, what the rays see of an emissive mesh is its
+        // light, so it lights the scene through the cascades with the rays' own soft shadows (the mesh-light pass samples
+        // only what lies beyond, the light maps above leave it out near); an emitter that is no light gives its emission,
+        // as path-traced GI's does.
+        if (emitters) radiance += cascadeEmission(h, pos.xyz);
     } else if (last) {
         radiance = skyRadiance(u, s, dir, 2.0f);
     } else {
@@ -367,6 +385,10 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> giDebug    [[texture(9)]],
                             texture2d<float, access::read>  prevND     [[texture(10)]],  // last frame's normal + depth
                             texture2d<float, access::read>  prevHistory [[texture(11)]], // last frame's outHistory
+                            texture2d_array<float>          wrcIrr     [[texture(12)]],  // the world cache (RC_WORLD_HIDDEN),
+                            texture2d_array<float>          wrcDist    [[texture(13)]],  // for the "World cache" view
+                            texture2d_array<float, access::read> wrcState [[texture(14)]],
+                            constant WorldCacheParams&      wrc        [[buffer(13)]],
                             uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
@@ -403,7 +425,14 @@ kernel void rcResolveKernel(constant Uniforms&              u          [[buffer(
     }
     outIndirect.write(float4(indirect, 1.0f), tid);
     outHistory.write(float4(indirect, frames), tid);
-    // Debug: probe grid lines over the strongest weight's confidence (dark = no good probe nearby).
+    // Debug, a = the "GI debug" view: probe grid lines over the strongest weight's confidence (dark = no good probe
+    // nearby). rgb = the "World cache" view: the world cache's light at this point, as the cascades' hidden hits take
+    // it (same units as `indirect`); -1 where it has none (no valid probe), 0 without the cache.
     bool grid = any(fmod(float2(tid), float(p.layout.x)) < 1.0f);
-    giDebug.write(float4(grid ? float3(0.25f) : float3(saturate(wsum)), 1.0f), tid);
+    float3 cached = float3(0.0f);
+    if ((p.layout.w & RC_WORLD_HIDDEN) != 0) {
+        float4 e = wrcIrradiance(sp.xyz, n, wrc, wrcIrr, wrcDist, wrcState);
+        cached = e.w > 0.0f ? e.rgb : float3(-1.0f);
+    }
+    giDebug.write(float4(cached, grid ? 0.25f : saturate(wsum)), tid);
 }

@@ -346,11 +346,16 @@ float3 lightIllumCachedOne(Light light, uint l, texture2d_array<float, access::r
 // exactly; with more, CACHED_LIGHT_SAMPLES lights are picked by unshadowed luminance (one weighted reservoir each,
 // seeded by `seed`) and only their maps are read, so the cost no longer grows with the light count's map reads.
 // `sunRay` (in the interiors' box): every light's visibility by a ray too (giSunVisibility, giLightVisibility).
+// `skipCascadeLit`: leave out the emitters whose light at p the cascades' own rays carry (cascadeLitNear).
 float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_array<float, access::read> lightMap,
-                        float3 p, float3 n, float3 ng, uint seed, uint flags, bool sunRay, SCENE_ACCEL accel, thread const SceneData& s) {
+                        float3 p, float3 n, float3 ng, uint seed, uint flags, bool sunRay, SCENE_ACCEL accel, thread const SceneData& s,
+                        bool skipCascadeLit = false) {
     float3 sum = float3(0.0f);
     if (lightCount <= 8 || flagOn(flags, FLAG_ALL_LIGHTS)) {
-        for (uint l = 0; l < lightCount; ++l) sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, sunRay, accel, s);
+        for (uint l = 0; l < lightCount; ++l) {
+            if (skipCascadeLit && cascadeLitNear(lights[l], p, s)) continue;
+            sum += lightIllumCachedOne(lights[l], l, lightMap, p, n, ng, sunRay, accel, s);
+        }
         return sum;
     }
     float4 u;
@@ -361,6 +366,7 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
     float4 pickedWeight = float4(0.0f);
     for (uint j = 0; j < ls.count; ++j) {
         uint i = lightSubsetIndex(ls, j, lightCount);
+        if (skipCascadeLit && cascadeLitNear(lights[i], p, s)) continue;
         float w = luminance(lightUnshadowed(lights[i], p, n, ng));
         if (w <= 0.0f) continue;
         total += w;
@@ -390,7 +396,7 @@ float3 lightIllumCached(device const Light* lights, uint lightCount, texture2d_a
 // (LIGHT_TABLE, no light maps) one light sample picked by RIS from the light table, with one shadow ray.
 inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, texture2d_array<float, access::read> lightMap,
                            float3 p, float3 n, float3 ng, uint seed, SCENE_ACCEL accel, thread const SceneData& s,
-                           bool sunRay = false) {
+                           bool sunRay = false, bool skipCascadeLit = false) {
     if (LIGHT_TABLE) {
         // Clamped: cascades average few rays per frame, and their anti-lag takes a rare bright sample (a
         // surface right beside a bulb) for a change in the lighting, so it would stay as a coloured blotch.
@@ -400,7 +406,8 @@ inline float3 giLightIllum(device const Light* lights, constant Uniforms& u, tex
         float l = luminance(e);
         return l > 2.0f ? e * (2.0f / l) : e;
     }
-    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, sunRay || inInteriorBox(u.interiorLo, u.interiorHi, p), accel, s);
+    return lightIllumCached(lights, u.lightCount, lightMap, p, n, ng, seed, u.flags, sunRay || inInteriorBox(u.interiorLo, u.interiorHi, p), accel, s,
+                            skipCascadeLit);
 }
 
 // View direction through screen position uv (0...1, y down), scaled so that its view depth is 1.

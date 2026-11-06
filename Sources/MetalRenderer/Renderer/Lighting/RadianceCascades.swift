@@ -49,6 +49,7 @@ package final class RadianceCascades {
     private let history: [MTLTexture]   // [2] resolved indirect light, ping-ponged: last frame's feeds multi-bounce
     private let sh: [MTLTexture]        // cascade-0 probes' L1 SH, one texture per colour channel
     private let ambient: [MTLBuffer]    // [2] mean probe irradiance (rgb sums x1024 + count), ping-ponged
+    private let placeholder: MTLTexture // a 1x1 array in the world cache's slots when there is none
     private var frame = 0
     /// Last frame's mean probe irradiance (rgb sums x1024 + count), as this frame's trace reads it: the reflection
     /// pass's light at its hits off screen in the interiors' box (a room's, where the sky's was).
@@ -91,6 +92,16 @@ package final class RadianceCascades {
                            filtered: c == 0 ? nil : try make(.rgba16Float, grid.x * dirSide, grid.y * dirSide, "rc\(c) filtered"))
         }
         history = [try make(.rgba16Float, width, height, "rc history0"), try make(.rgba16Float, width, height, "rc history1")]
+        let pd = MTLTextureDescriptor()
+        pd.textureType = .type2DArray
+        pd.pixelFormat = .rgba32Float
+        pd.width = 1
+        pd.height = 1
+        pd.usage = .shaderRead
+        pd.storageMode = .private
+        guard let ph = device.makeTexture(descriptor: pd) else { throw RendererError.resourceCreation("texture rc placeholder") }
+        ph.label = "rc placeholder"
+        placeholder = ph
         let g0 = cascades[0].grid
         sh = try ["R", "G", "B"].map { try make(.rgba16Float, g0.x, g0.y, "rc sh\($0)") }
         ambient = try (0..<2).map { i in
@@ -102,26 +113,40 @@ package final class RadianceCascades {
         }
     }
 
+    /// Measuring (plan rc-emitters-and-world-cache, A0): `METALRENDERER_RC_SPLIT=1` times each cascade's rays as its own
+    /// pass (`rc trace 0`...), `METALRENDERER_RC_FARCAP=<m>` ends the last cascade's rays there (misses past it see the sky).
+    static let splitPasses = ProcessInfo.processInfo.environment["METALRENDERER_RC_SPLIT"] == "1"
+    static let farCap = Float(ProcessInfo.processInfo.environment["METALRENDERER_RC_FARCAP"] ?? "") ?? 0
+    /// ...and `METALRENDERER_RC_HIDDEN=<share>` sets every scene's hidden hits' share of the mean light (outside the
+    /// interiors' box), where only some scenes take `hiddenLight`.
+    static let hiddenOverride = Float(ProcessInfo.processInfo.environment["METALRENDERER_RC_HIDDEN"] ?? "")
+
     private func params(_ c: Int) -> RCParams {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
+        let last = c == cascades.count - 1, capped = last && RadianceCascades.farCap > k.interval.lowerBound
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
-                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (c == cascades.count - 1 ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0) | (intervalOverlap ? 0 : 16)),
-                        interval: SIMD4(k.interval.lowerBound, k.interval.upperBound, settings.feedback && historyReady ? 1 + hiddenLight : 0,
-                                        historyReady ? 1 : 0))
+                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (last ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0) | (intervalOverlap ? 0 : 16) | (capped ? 64 : 0)),
+                        interval: SIMD4(k.interval.lowerBound, capped ? RadianceCascades.farCap : k.interval.upperBound,
+                                        settings.feedback && historyReady ? 1 + (RadianceCascades.hiddenOverride ?? hiddenLight) : 0, historyReady ? 1 : 0))
     }
 
     /// Probes -> trace/merge (top down) -> SH -> resolve into `targets.indirect` and `targets.giDebug`, as stages that
     /// must run in order (each depends on the one before). Also needs this frame's light map and G-buffer (normalDepth,
     /// surfacePos), so the caller runs them after the trace and light-map passes; stage 0 needs only the TLAS.
     /// `bindScene` binds buffers 1...8.
+    /// `world`: the world cache and this frame's parameters, for the hidden hits (RC_WORLD_HIDDEN).
     func stages(pipelines: RCPipelines, uniforms: Uniforms, bindScene: @escaping (ComputePass) -> Void,
                 lightMap: MTLTexture, normalDepth: MTLTexture, prevNormalDepth: MTLTexture,
-                targets t: RenderTargets) -> [ComputeStage] {
+                targets t: RenderTargets, world: (cache: WorldRadianceCache, params: WorldCacheParams)? = nil) -> [ComputeStage] {
         let cur = frame & 1, prev = cur ^ 1
         frame += 1
         lastAmbient = historyReady ? ambient[prev] : nil
         defer { historyReady = true }
         let cascades = cascades, history = history, sh = sh, ambient = ambient, width = width, height = height
+        // Without the cache its slots hold small placeholders the shader never reads (RC_WORLD_HIDDEN off).
+        let worldTextures: [MTLTexture] = world.map { [$0.cache.irradiance, $0.cache.distance, $0.cache.state] }
+            ?? [placeholder, placeholder, placeholder]
+        let worldParams = world?.params ?? WorldCacheParams()
 
         var stages = [ComputeStage(pass: "rc probes") { enc in
             // All cascades in one flat dispatch; see rcProbeKernel. Unused texture slots repeat cascade 0's.
@@ -152,8 +177,9 @@ package final class RadianceCascades {
         let interiors = uniforms.interiorLo.x <= uniforms.interiorHi.x
         for c in cascades.indices.reversed() {
             let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1] : k
-            let p = params(c)
-            stages.append(ComputeStage(pass: "rc trace") { enc in
+            var p = params(c)
+            if world != nil { p.layout.w |= 32 }   // RC_WORLD_HIDDEN
+            stages.append(ComputeStage(pass: RadianceCascades.splitPasses ? "rc trace \(c)" : "rc trace") { enc in
                 var u = uniforms, p = p
                 enc.setComputePipelineState(pipelines.traceMerge)
                 enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -162,6 +188,9 @@ package final class RadianceCascades {
                 enc.setTextures([k.probePos, k.probeNs, k.probeNg, next.probePos, next.probeNs, next.merged, k.merged,
                                  lightMap, prevNormalDepth, history[prev]], range: 0..<10)
                 enc.setBuffer(ambient[prev], offset: 0, index: 10)
+                var w = worldParams
+                enc.setBytes(&w, length: MemoryLayout<WorldCacheParams>.stride, index: 13)
+                enc.setTextures(worldTextures, range: 10..<13)
                 enc.dispatchThreads(MTLSize(width: k.grid.x * k.grid.y * k.dirSide * k.dirSide, height: 1, depth: 1),
                                     threadsPerThreadgroup: MTLSize(width: 64, height: 1, depth: 1))
             })
@@ -183,7 +212,8 @@ package final class RadianceCascades {
                 })
             }
         }
-        let p0 = params(0)
+        var p0 = params(0)
+        if world != nil { p0.layout.w |= 32 }   // RC_WORLD_HIDDEN: the resolve writes the "World cache" view
         stages.append(ComputeStage(pass: "rc sh") { enc in
             var p = p0
             enc.setComputePipelineState(pipelines.sh)
@@ -200,6 +230,9 @@ package final class RadianceCascades {
             enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setTextures([cascades[0].probePos, cascades[0].probeNs, sh[0], sh[1], sh[2], normalDepth, t.surfacePos,
                              t.indirect, history[cur], t.giDebug, prevNormalDepth, history[prev]], range: 0..<12)
+            var w = worldParams
+            enc.setBytes(&w, length: MemoryLayout<WorldCacheParams>.stride, index: 13)
+            enc.setTextures(worldTextures, range: 12..<15)
             enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
                                 threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
         })

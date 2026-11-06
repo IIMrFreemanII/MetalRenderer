@@ -20,6 +20,7 @@ extension Scene {
     /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
     package func buildMeshLights() {
+        cascadeLitMeshLights = 0
         // (A borrowed mesh's lights may be off as the scene is made: the open world's by day.)
         guard !borrowedLights.isEmpty || materials.contains(where: { $0.emission.x > 0 || $0.emission.y > 0 || $0.emission.z > 0 }) else { return }
         emissiveTriangles.reserveCapacity(borrowedLights.reduce(0) { $0 + $1.range.count })
@@ -31,7 +32,24 @@ extension Scene {
             textureCache[Int(index)] = sampler
             return sampler
         }
-        var flagged = Set<Int>()
+        // Each light's material, and the size of its smallest light if every light of it is big enough to be lit by the
+        // cascades (params.z = 2 + that size: the shaders' reach of the cascades, cascadeEmitterReach), -1 if one isn't.
+        var flagged: [Int: Float] = [:]
+        var lightMaterials: [Int] = []
+        let leastSize = settings.cascadeEmitterSize
+        func flag(_ material: Int, light: MeshLight, triangles: ArraySlice<GPUEmissiveTriangle>) {
+            let t = instances[light.instance].transform
+            let linear = float3x3(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z),
+                                  SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z),
+                                  SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
+            var area: Float = 0
+            for tri in triangles { area += 0.5 * length(cross(SIMD3(tri.e1.x, tri.e1.y, tri.e1.z), SIMD3(tri.e2.x, tri.e2.y, tri.e2.z))) }
+            area *= pow(abs(linear.determinant), 2.0 / 3.0)
+            let size = Scene.cascadeEmitterSize(area: area, flatness: light.flatness)
+            let was = flagged[material] ?? .infinity
+            flagged[material] = size >= leastSize && was >= 0 ? min(was, size) : -1
+            lightMaterials.append(material)
+        }
         let lent = Set(borrowed.map(\.mesh))   // their lights come with them (`addMeshLight`)
         var sdfLights: [Int: (positions: [SIMD3<Float>], indices: [UInt32], materials: [Int])] = [:]
         for (i, inst) in instances.enumerated() where inst.isGeometry && !inst.deforms {
@@ -52,10 +70,10 @@ extension Scene {
                     }
                     guard var light = draft.finish(instance: i, firstTriangle: emissiveTriangles.count) else { continue }
                     light.materialOffset = offset
+                    flag(inst.material + offset, light: light, triangles: draft.triangles[...])
                     emissiveTriangles += draft.triangles
                     meshLights.append(light)
                     lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
-                    flagged.insert(inst.material + offset)
                 }
                 continue
             }
@@ -85,25 +103,33 @@ extension Scene {
                 draft.add(positions[a], positions[b], positions[c], uv0: uv0, uv1: uv1, uv2: uv2, emission: le)
             }
             guard let light = draft.finish(instance: i, firstTriangle: emissiveTriangles.count) else { continue }
+            flag(inst.material, light: light, triangles: draft.triangles[...])
             emissiveTriangles += draft.triangles
             meshLights.append(light)
             lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
-            flagged.insert(inst.material)
         }
         // The lights that came with borrowed meshes: their triangles as they are.
         for borrowed in borrowedLights {
             var light = borrowed.light
             light.firstTriangle = emissiveTriangles.count
+            let first = emissiveTriangles.count
             borrowed.triangles.withUnsafeBufferPointer { emissiveTriangles.append(contentsOf: UnsafeBufferPointer(rebasing: $0[borrowed.range])) }
+            flag(instances[light.instance].material + light.materialOffset, light: light, triangles: emissiveTriangles[first...])
             meshLights.append(light)
             lights.append(Light(kind: .mesh(meshLights.count - 1), color: light.power, pose: { _ in LightPose(position: .zero) }))
-            flagged.insert(instances[light.instance].material + light.materialOffset)
         }
         borrowedLights = []
-        for m in flagged { materials[m].params.z = 1 }
+        for (m, size) in flagged { materials[m].params.z = size >= 0 ? 2 + size : 1 }
+        cascadeLitMeshLights = lightMaterials.reduce(0) { $0 + ((flagged[$1] ?? -1) >= 0 ? 1 : 0) }
         if !meshLights.isEmpty {
-            print(String(format: "Emissive lights: %d meshes, %d triangles", meshLights.count, emissiveTriangles.count))
+            print(String(format: "Emissive lights: %d meshes (%d for the cascades), %d triangles", meshLights.count, cascadeLitMeshLights, emissiveTriangles.count))
         }
+    }
+
+    /// How big a mesh light is, as a length: the radius of a disc of its area if it is flat, else of a sphere's
+    /// quarter-area (about a quarter of a closed or round shape's area faces any one direction).
+    package static func cascadeEmitterSize(area: Float, flatness: Float) -> Float {
+        (area / (flatness >= 0.5 ? .pi : 4 * .pi)).squareRoot()
     }
 
     /// A 64-pixel copy of an encoded image, sampled (repeat, nearest) as linear RGB; nil if it doesn't decode.

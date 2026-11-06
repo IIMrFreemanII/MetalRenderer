@@ -595,6 +595,11 @@ extension Renderer {
         p.cascades = settings.giEnabled && p.giMode == .radianceCascades
         // Only these write t.giDebug: with any other method the "GI debug" view would show what one of them left.
         if p.cascades { p.uniforms.flags |= UniformFlags.giDebug }
+        // Emitters through the cascades (CascadeSettings.emitters): within its reach an emissive mesh lights the scene
+        // through the cascades' rays, beyond it through the mesh-light pass (cascadeEmitterReach). Not with the light
+        // table, whose scenes' emitters stay sampled.
+        let cascadeEmitters = p.cascades && settings.cascades.emitters && !scene.usesLightTable && scene.cascadeLitMeshLights > 0
+        if cascadeEmitters { p.uniforms.flags |= UniformFlags.cascadeEmitters }
         // References show the light's own paths: neither the contact shade nor the air, which they don't trace.
         p.cameraCut = upscalerReset
         p.contactAO = settings.contactAO > 0 && settings.giEnabled && !accumulating && !p.solid

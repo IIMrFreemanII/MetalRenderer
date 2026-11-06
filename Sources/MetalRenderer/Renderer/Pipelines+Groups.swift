@@ -10,6 +10,7 @@ import Plants
 
 /// The pipelines of the passes that take theirs as a group (Pipelines is in the core; these groups are the engine's).
 extension Pipelines {
+    var wrc: WRCPipelines { WRCPipelines(trace: self[.wrcTrace], blend: self[.wrcBlend]) }
     var rc: RCPipelines {
         RCPipelines(probe: self[.rcProbe], traceMerge: self[.rcTraceMerge], filter: self[.rcFilter], sh: self[.rcSH], clearAmbient: self[.rcClearAmbient],
                     resolve: self[.rcResolve])

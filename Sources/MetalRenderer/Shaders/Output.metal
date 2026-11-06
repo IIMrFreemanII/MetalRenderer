@@ -704,7 +704,12 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 4: c = albedo; break;
         case 5: { float h = moments.read(tid).z / u.denoise.y; c = float3(1.0f - h, h, 0.0f); break; }
         case 6: c = albedo * finalIndirect; break;                // indirect light only, as it reaches the image
-        case 7: c = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f); break;   // GI technique's debug view
+        case 7: c = float3(flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).a : 0.0f); break;   // GI technique's debug view
+        case 15: {   // the world cache's light where the cascades' hidden hits would take it, as "Raw indirect" shows theirs
+            float3 e = flagOn(u.flags, FLAG_GI_DEBUG) ? giDebug.read(tid).rgb : float3(0.0f);
+            c = e.x < 0.0f ? float3(0.5f, 0.0f, 0.5f) : albedo * e;   // magenta: no valid probe there
+            break;
+        }
         case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
         default: {

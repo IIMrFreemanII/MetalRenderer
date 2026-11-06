@@ -160,6 +160,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPUSkyParams>.stride == 192, "GPUSkyParams layout mismatch")
     precondition(MemoryLayout<BVHNode>.stride == 64, "BVHNode layout mismatch")
     precondition(MemoryLayout<RCParams>.stride == 48, "RCParams layout mismatch")
+    precondition(MemoryLayout<WorldCacheParams>.stride == 128, "WorldCacheParams layout mismatch")
     precondition(MemoryLayout<GPURegirParams>.stride == 96, "GPURegirParams layout mismatch")
     precondition(MemoryLayout<GPURegirReservoir>.stride == 16, "GPURegirReservoir layout mismatch")
     precondition(MemoryLayout<VGCluster>.stride == 80, "VGCluster layout mismatch")

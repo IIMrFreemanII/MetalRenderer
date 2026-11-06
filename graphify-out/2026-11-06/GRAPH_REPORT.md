@@ -1,7 +1,7 @@
-# Graph Report - dev-environment-setup-710394  (2026-11-05)
+# Graph Report - dev-environment-setup-710394  (2026-11-06)
 
 ## Corpus Check
-- 918 files · ~20,749,876 words
+- 918 files · ~20,749,490 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 69 file(s) not represented in the graph (top: .exr 25, .glb 15, .fbx 12)
 
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `3d11ec8c`
+- Built from commit: `112c1080`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

@@ -13,6 +13,7 @@ package enum Kernel: Int, CaseIterable {
     case waterCaustics          // the sun's caustics under the waves
     case manyLights, manyLightsReuse, meshLights, regirBuild, sampledLights
     case rcProbe, rcTraceMerge, rcFilter, rcSH, rcClearAmbient, rcResolve
+    case wrcTrace, wrcBlend     // the world cache's probes (Shaders/WorldCache.metal)
     case reflection
     case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
     case temporal, atrous, shadowTemporal, shadowFilter, accumulate
@@ -70,7 +71,7 @@ package enum Kernel: Int, CaseIterable {
         case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
         case .sampledLights: return F.specular
         case .reflection: return F.blueNoise | F.noClamp | F.reference | F.sampledLights | F.shadowDenoiser | F.skyMap | F.wind
-        case .rcProbe, .rcTraceMerge, .lightMap, .solid, .solidTrace: return F.wind
+        case .rcProbe, .rcTraceMerge, .wrcTrace, .lightMap, .solid, .solidTrace: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
         }

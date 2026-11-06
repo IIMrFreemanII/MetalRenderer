@@ -13,6 +13,18 @@ inline uint lightType(Light light) {
     return (LIGHT_TYPES & (LIGHT_TYPES - 1u)) == 0 ? ctz(LIGHT_TYPES) : uint(light.color.w) >> 2;   // one type: known
 }
 inline uint lightGroup(Light light) { return uint(light.color.w) & 3u; }
+// How far the radiance cascades light an emissive-mesh light (cascadeEmitterReach), -1 for a light they don't.
+inline float cascadeLitReach(Light light, thread const SceneData& s) {
+    if (lightType(light) != LIGHT_MESH) return -1.0f;
+    uint instance = as_type<uint>(light.params.w);
+    return cascadeEmitterReach(s.materials[s.instances[instance].materialIndex + uint(light.axis.w)].params.z);
+}
+// With FLAG_CASCADE_EMITTERS: whether a point p is within a light's reach of the cascades (its centre's distance), so
+// light maps at GI's hits leave it to the cascades' own light there (last frame's, the feedback).
+inline bool cascadeLitNear(Light light, float3 p, thread const SceneData& s) {
+    float reach = cascadeLitReach(light, s);
+    return reach >= 0.0f && length(p - light.positionRadius.xyz) <= reach;
+}
 // 1 in group g's channel: `v += groupMask(g) * x` and `dot(v, groupMask(g))` in place of v[g], which indexes a vector
 // by a run-time value.
 inline float4 groupMask(uint g) { return float4(uint4(g) == uint4(0u, 1u, 2u, 3u)); }

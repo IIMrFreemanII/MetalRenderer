@@ -482,6 +482,8 @@ package enum SettingsTable {
             S.check("Freeze LOD (L)", \.virtualGeometry.freeze).enabled { virtual($0) || $0.scene.kind.hasPlants },
             S.check("Specular (glTF PBR)", \.specular).env(.specular),
             S.check("Emissive surfaces are lights", \.scene.emissiveLights).env(.scene, "emissivelights"),
+            S.slider("Cascade emitters' least size", \.scene.cascadeEmitterSize, SceneSettings.cascadeEmitterSizeRange, step: 0.05, fmt("%.2f m"))
+                .env(.scene, "emittersize").advanced(),
             S.custom(.clearModels).when { !$0.scene.extraModels.isEmpty },
         ])
     }
@@ -614,6 +616,16 @@ package enum SettingsTable {
             S.check("Sky through gaps", \.cascades.skyGaps).env(.gi, "rcskygaps").when(cascades).enabled(on).advanced(),
             S.check("Sun rays at hits", \.cascades.hitRays).env(.gi, "rchits").when(cascades).enabled(on).advanced(),
             S.check("SH true to the normal", \.cascades.shNormal).env(.gi, "rcsh").when(cascades).enabled(on).advanced(),
+            S.check("Emitters through the cascades", \.cascades.emitters).env(.gi, "rcemit").when(cascades).enabled(on).advanced(),
+            S.check("World cache for hidden hits", \.worldCache.enabled).env(.gi, "wrc").when(cascades).enabled(on),
+            S.slider("World cache levels", \.worldCache.levels, WorldCacheSettings.levelsRange).env(.gi, "wrclevels")
+                .when(cascades).enabled({ on($0) && $0.worldCache.enabled }).advanced(),
+            S.slider("World cache spacing", \.worldCache.spacing, WorldCacheSettings.spacingRange, step: 0.1, fmt("%.1f m"))
+                .env(.gi, "wrcspacing").when(cascades).enabled({ on($0) && $0.worldCache.enabled }).advanced(),
+            S.slider("World cache update", \.worldCache.updateFrames, WorldCacheSettings.updateFramesRange)
+                .env(.gi, "wrcframes").when(cascades).enabled({ on($0) && $0.worldCache.enabled }).advanced(),
+            S.slider("World cache hysteresis", \.worldCache.hysteresis, WorldCacheSettings.hysteresisRange, step: 0.01, fmt("%.2f"))
+                .env(.gi, "wrchyst").when(cascades).enabled({ on($0) && $0.worldCache.enabled }).advanced(),
             S.check("Denoise cascade GI", \.cascades.denoiseIndirect).env(.gi, "cdenoise").when(cascades).enabled(on),
         ])
     }()

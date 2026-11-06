@@ -64,7 +64,7 @@ extension Benchmark {
     /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky, and the first bounce of
     /// each apart (`first`, `traced one`).
     static func gilevels() -> [Config] {
-        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .gallery, .world].flatMap { kind -> [Config] in
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .emissive, .gallery, .world].flatMap { kind -> [Config] in
             func plain(_ c: Config) -> Config {
                 c.appLook().still().fog { $0.enabled = false }.with {
                     $0.toneMap = .none
@@ -83,6 +83,11 @@ extension Benchmark {
                     cascades.named("\(kind) cascades contact").with { $0.contactAO = 1 },
                     cascades.named("\(kind) cascades plain").with { $0.cascades.shNormal = false },
                     cascades.named("\(kind) cascades maps").with { $0.cascades.hitRays = false },
+                    cascades.named("\(kind) cascades emit").with { $0.cascades.emitters = true },
+                    cascades.named("\(kind) cascades wrc").with { $0.worldCache.enabled = true },
+                    // The world cache's light at each surface ("World cache" view) next to the cascades' own there.
+                    raw.named("\(kind) wrc view").with { $0.worldCache.enabled = true; $0.viewMode = 15 },
+                    raw.named("\(kind) wrc indirect").with { $0.worldCache.enabled = true; $0.viewMode = 2 },
                     cascades.named("\(kind) normals").with { $0.viewMode = 3 }.frames(8),
                     cascades.named("\(kind) direct").with { $0.viewMode = 1 }.frames(30),
                     plain(Config("\(kind) traced", scale: 0.75, scene: scene) { $0.reference.mode = .pathTraced }).frames(1024),
