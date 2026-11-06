@@ -57,6 +57,8 @@ package final class RadianceCascades {
     private var historyReady = false    // textures start undefined: no feedback until one frame has been resolved
     /// The scene's plants or `SceneDefinition.cascadeSkyGaps`: a ray with no next-cascade probe on its surface asks for the sky.
     var skyGaps = false
+    /// `SceneDefinition.cascadeIntervalOverlap`: in the interiors' box an interval starts inside the one below.
+    var intervalOverlap = true
     /// The scene's share of the probes' mean light at a hit whose own isn't known (CascadeSettings.hiddenLight).
     var hiddenLight: Float = 1
 
@@ -123,7 +125,7 @@ package final class RadianceCascades {
         let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1].grid : k.grid
         let last = c == cascades.count - 1, capped = last && RadianceCascades.farCap > k.interval.lowerBound
         return RCParams(grids: SIMD4(UInt32(k.grid.x), UInt32(k.grid.y), UInt32(next.x), UInt32(next.y)),
-                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (last ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0) | (capped ? 64 : 0)),
+                        layout: SIMD4(UInt32(k.spacing), UInt32(k.dirSide), UInt32(c), (last ? 1 : 0) | (skyGaps ? 2 : 0) | (settings.hitRays ? 4 : 0) | (settings.shNormal ? 8 : 0) | (intervalOverlap ? 0 : 16) | (capped ? 64 : 0)),
                         interval: SIMD4(k.interval.lowerBound, capped ? RadianceCascades.farCap : k.interval.upperBound,
                                         settings.feedback && historyReady ? 1 + (RadianceCascades.hiddenOverride ?? hiddenLight) : 0, historyReady ? 1 : 0))
     }
@@ -176,7 +178,7 @@ package final class RadianceCascades {
         for c in cascades.indices.reversed() {
             let k = cascades[c], next = c + 1 < cascades.count ? cascades[c + 1] : k
             var p = params(c)
-            if world != nil { p.layout.w |= 16 }   // RC_WORLD_HIDDEN
+            if world != nil { p.layout.w |= 32 }   // RC_WORLD_HIDDEN
             stages.append(ComputeStage(pass: RadianceCascades.splitPasses ? "rc trace \(c)" : "rc trace") { enc in
                 var u = uniforms, p = p
                 enc.setComputePipelineState(pipelines.traceMerge)
@@ -211,7 +213,7 @@ package final class RadianceCascades {
             }
         }
         var p0 = params(0)
-        if world != nil { p0.layout.w |= 16 }   // RC_WORLD_HIDDEN: the resolve writes the "World cache" view
+        if world != nil { p0.layout.w |= 32 }   // RC_WORLD_HIDDEN: the resolve writes the "World cache" view
         stages.append(ComputeStage(pass: "rc sh") { enc in
             var p = p0
             enc.setComputePipelineState(pipelines.sh)

@@ -64,6 +64,11 @@ extension Scene {
         let h = Hall.height
         addInstance(quad, concrete, scale([40, 1, 40]))                                                          // floor
         addInstance(quad, ceilingPaint, translate([0, h, 0]) * rotate(.pi, [1, 0, 0]) * scale([40, 1, 40]))    // ceiling
+        // A closed hall, so the walkable interiors' box (Scene.interiorBox) over it, a little past its walls: the cascades'
+        // room handling (jittered, filtered probes: no probe-sized blotches on the walls; flicker 1.11 -> 0.76 in stressq)
+        // and two many-light rays a group (no streaks over the walls and car roofs at 32 lights). Not its overlapping
+        // intervals (SceneDefinition.cascadeIntervalOverlap, off in GameScenes): the clutter took 43% off the bounce light.
+        interiorBox = (SIMD3<Float>(-20.8, -0.5, -20.8), SIMD3<Float>(20.8, h + 0.5, 20.8))
         slab([-20, 0, -20.3], [20, h, -20], wallPaint)                                                         // back
         slab([-20.3, 0, -20.3], [-20, h, 20.3], wallPaint)                                                     // sides
         slab([20, 0, -20.3], [20.3, h, 20.3], wallPaint)

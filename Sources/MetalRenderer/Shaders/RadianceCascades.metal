@@ -18,7 +18,8 @@ struct RCParams {
     uint4  grids;      // xy = this cascade's probe grid, zw = the next cascade's probe grid
     uint4  layout;     // x = probe spacing in pixels, y = direction tile side, z = cascade index, w = bit 0: last cascade,
                        // bit 1: open sky through the gaps (RC_SKY_GAPS), bit 2: rays at hits (RC_HIT_RAYS),
-                       // bit 3: SH true to the probe's normal (RC_SH_NORMAL)
+                       // bit 3: SH true to the probe's normal (RC_SH_NORMAL), bit 4: intervals meet in the interiors'
+                       // box too (RC_INTERVALS_MEET)
     float4 interval;   // x = start, y = end (meters), z = 0, or to use last frame's indirect light at hits 1 + the share of
                        // the probes' mean a hit takes where it isn't known (RadianceCascades.hiddenLight), w = 1 if there
                        // is a last frame (the resolve's history in the interiors' box)
@@ -32,9 +33,10 @@ constant uint RC_SKY_GAPS = 2u;            // layout.w: a ray that missed, with 
                                            // whether it reaches the sky (SceneDefinition.cascadeSkyGaps)
 constant float RC_PARENT_TRUST = 0.1f;     // ...past this share of matching parents' weight their light is taken whole
 constant uint RC_HIT_RAYS = 4u;            // layout.w: a hit sees the sun through a ray, past its light map (CascadeSettings.hitRays)
-constant uint RC_WORLD_HIDDEN = 16u;      // layout.w: hidden hits take the world cache's light (WorldCache.metal, WorldCacheSettings)
+constant uint RC_WORLD_HIDDEN = 32u;      // layout.w: hidden hits take the world cache's light (WorldCache.metal, WorldCacheSettings)
 constant uint RC_FAR_CAP = 64u;           // layout.w: measuring only (METALRENDERER_RC_FARCAP): the last interval ends at interval.y
 constant uint RC_SH_NORMAL = 8u;           // layout.w: a probe's SH is true to its own normal (CascadeSettings.shNormal)
+constant uint RC_INTERVALS_MEET = 16u;     // layout.w: no overlap in the interiors' box (SceneDefinition.cascadeIntervalOverlap)
 
 // Per cascade: xy = probe grid, z = probe spacing in pixels, w = index of its first probe in the flat dispatch.
 struct RCProbeBatch {
@@ -160,8 +162,10 @@ kernel void rcTraceMergeKernel(constant Uniforms&               u          [[buf
     // probe's own rays missed, and bring the sunlit outside in (light leaking through walls and ceilings); halfway
     // alone still started cascade 1's 0.2 m out, past a 0.12 m partition, and a dark room's ceiling edges glowed with
     // the next room's light. Indoors the longer rays cost nothing: they meet the room's own walls first. Elsewhere
-    // the intervals only meet (it costs the forest ~3 ms of rays and changes little outdoors).
-    float start = inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz) ? min(p.interval.x * 0.5f, RC_INTERIOR_START) : p.interval.x;
+    // the intervals only meet (it costs the forest ~3 ms of rays and changes little outdoors), and so they do where the
+    // scene asks (RC_INTERVALS_MEET: a hall full of clutter, whose coarse probes' early rays hit what the fine ones missed).
+    bool overlap = (p.layout.w & RC_INTERVALS_MEET) == 0 && inInteriorBox(u.interiorLo, u.interiorHi, pos.xyz);
+    float start = overlap ? min(p.interval.x * 0.5f, RC_INTERIOR_START) : p.interval.x;
     Ray r = makeRay(pos.xyz + ng * RAY_EPSILON, dir, start, last && (p.layout.w & RC_FAR_CAP) == 0 ? INFINITY : p.interval.y);
     Surface h = traceSurface(r, rayMask(MASK_GEOMETRY, RAY_GI), accel, s, GI_RAY_SPREAD);
 

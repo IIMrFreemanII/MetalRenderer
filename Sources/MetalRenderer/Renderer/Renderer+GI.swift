@@ -111,6 +111,7 @@ extension Renderer {
         let definition = scene.settings.kind.definition
         radianceCascades!.skyGaps = definition.cascadeSkyGaps || settings.cascades.skyGaps || (settings.cascades.hitRays && definition.hasPlants)
         radianceCascades!.hiddenLight = definition.cascadeHiddenLight ? settings.cascades.hiddenLight : 1
+        radianceCascades!.intervalOverlap = definition.cascadeIntervalOverlap
         // The world cache (WorldCacheSettings): its probes traced and blended first, then read by the cascades' hidden hits.
         var world: (cache: WorldRadianceCache, params: WorldCacheParams)?
         var worldStages: [ComputeStage] = []
