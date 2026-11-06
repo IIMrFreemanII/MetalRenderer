@@ -525,15 +525,12 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     float pickedWeight = 0.0f;
     StreamPick pick = streamPick(rng.next());
     uint picked = count;
-    // With FLAG_CASCADE_EMITTERS the cascades light an emitter within its reach (cascadeEmitterReach): a light wholly
-    // within it is left out here, and a sample point within it counts nothing (the cascades' rays carry that part).
+    // With FLAG_CASCADE_EMITTERS the cascades light an emitter within its reach toward p (cascadeEmitterReach,
+    // cascadeReachToward): a flat light wholly within it is left out here (cascadeLitWhole), and a sample point within
+    // it counts nothing (the cascades' rays carry that part).
     bool cascadeEmitters = flagOn(u.flags, FLAG_CASCADE_EMITTERS);
     for (uint i = 0; i < count; ++i) {
-        if (cascadeEmitters) {
-            Light l = lights[first + i];
-            float reach = cascadeLitReach(l, s);
-            if (reach >= 0.0f && length(p - l.positionRadius.xyz) + l.positionRadius.w <= reach) continue;
-        }
+        if (cascadeEmitters && cascadeLitWhole(lights[first + i], p, s)) continue;
         float3 l = hp.on ? hairLightDirection(lights[first + i], p) : n;   // a strand: as a surface facing the light
         float w = luminance(meshLightUnshadowed(lights[first + i], p, hp.on ? l : n, hp.on ? l : ng));
         if (w <= 0.0f) continue;
@@ -543,19 +540,21 @@ kernel void meshLightsKernel(constant Uniforms&                    u          [[
     float3 result = float3(0.0f);
     if (picked < count) {
         float3 target;
+        float cosL;
         Light light = lights[first + picked];
         if (hp.on) {
             // A strand: the light a surface facing the light would get, through the hair's BSDF toward the sample.
             float3 l = hairLightDirection(light, p);
-            result = sampleMeshLight(light, p, l, l, r, s, target) * (pick.total / pickedWeight);
+            result = sampleMeshLight(light, p, l, l, r, s, target, cosL) * (pick.total / pickedWeight);
             float3 wi = normalize(target - p);
             result *= M_PI_F * (hairScatter(hp, wi) + hairMultiple(hp, wi)) / hp.albedo;
         } else {
-            result = sampleMeshLight(light, p, n, ng, r, s, target) * (pick.total / pickedWeight);
+            result = sampleMeshLight(light, p, n, ng, r, s, target, cosL) * (pick.total / pickedWeight);
         }
         if (cascadeEmitters) {
+            // The cascades' part: within the light's reach toward p at the sampled point (target is 0.99 of the way).
             float reach = cascadeLitReach(light, s);
-            if (reach >= 0.0f && length(target - p) <= 0.99f * reach) result = float3(0.0f);   // the cascades' part
+            if (reach >= 0.0f && length(target - p) <= 0.99f * cascadeReachToward(reach, cosL)) result = float3(0.0f);
         }
         if (any(result > 0.0f) && !isVisible(hairOrSurface(hp, sp.xyz, n, p, target), target, accel)) result = float3(0.0f);
     }
