@@ -352,6 +352,34 @@ final class SettingsTableTests: XCTestCase {
         XCTAssertTrue(s.scene.voxelBoxes)
     }
 
+    /// The cascades' emitters are on; their env keys read back, and the least size is a scene key.
+    func testCascadeEmittersFromTheEnvironment() {
+        XCTAssertTrue(defaults.cascades.emitters)
+        XCTAssertEqual(defaults.scene.cascadeEmitterSize, 0.1)
+        var s = defaults
+        SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
+            "METALRENDERER_GI": "rcemit=0",
+            "METALRENDERER_SCENE": "forest,emittersize=0.5",
+        ])
+        XCTAssertFalse(s.cascades.emitters)
+        XCTAssertEqual(s.scene.cascadeEmitterSize, 0.5)
+    }
+
+    func testWorldCacheFromTheEnvironment() {
+        XCTAssertFalse(defaults.worldCache.enabled)
+        XCTAssertEqual(defaults.worldCache.levels, 2)
+        XCTAssertEqual(defaults.worldCache.spacing, 1.5)
+        XCTAssertEqual(defaults.worldCache.updateFrames, 32)
+        XCTAssertEqual(defaults.worldCache.hysteresis, 0.5)
+        var s = defaults
+        SettingsEnv.applyAll(to: &s, defaults: defaults, from: [
+            "METALRENDERER_GI": "wrc=1,wrclevels=3,wrcspacing=2",
+        ])
+        XCTAssertTrue(s.worldCache.enabled)
+        XCTAssertEqual(s.worldCache.levels, 3)
+        XCTAssertEqual(s.worldCache.spacing, 2)
+    }
+
     /// A slider shows the value it just set: its position after a move is inside the slider and stays put when the
     /// slider is moved to it again (to a tolerance: the fog's wind heading is derived from a vector).
     func testSlidersShowWhatTheySet() {

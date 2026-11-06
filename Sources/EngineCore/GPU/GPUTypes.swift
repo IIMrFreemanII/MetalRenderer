@@ -100,6 +100,7 @@ package enum UniformFlags {
     package static let tintedShadows: UInt32 = 16777216
     package static let deepShadowGuide: UInt32 = 33554432   // MetalFX's diffuse guide takes the sun's shadow deep (SUN_GUIDE_SHADE)
     package static let particles: UInt32 = 67108864  // the composite puts the particles' layer over the scene (particleLayerKernel)
+    package static let cascadeEmitters: UInt32 = 134217728  // the cascades light the big emissive meshes (CascadeSettings.emitters)
 }
 
 /// Sampled direct light's parameters (MSL SampledLightParams).
@@ -196,7 +197,8 @@ package struct GPUMaterial {
                                             // >= 2: a clear coat over metallic paint, x - 2 the paint's roughness:
                                             // Scene.addPaintMaterial),
                                             // y = normal scale,
-                                            // z = 1: an emissive-mesh light's (buildMeshLights), -1: hair (Hair.metal),
+                                            // z = 1: an emissive-mesh light's (buildMeshLights), 2: one the cascades can light
+                                            // (cascadeEmitterSize), -1: hair (Hair.metal),
                                             // w = a leaf's translucency; < 0: skin, -w its strength (0...1), + 2
                                             // where it is thin (Hair.metal skinUnshadowed)
     package var textures = SIMD4<UInt32>(repeating: .max)   // base colour, metallic-roughness, normal, emissive: Scene.textures

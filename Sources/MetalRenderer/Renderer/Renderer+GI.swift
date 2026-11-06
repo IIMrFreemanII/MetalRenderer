@@ -111,9 +111,27 @@ extension Renderer {
         let definition = scene.settings.kind.definition
         radianceCascades!.skyGaps = definition.cascadeSkyGaps || settings.cascades.skyGaps || (settings.cascades.hitRays && definition.hasPlants)
         radianceCascades!.hiddenLight = definition.cascadeHiddenLight ? settings.cascades.hiddenLight : 1
-        return radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
+        // The world cache (WorldCacheSettings): its probes traced and blended first, then read by the cascades' hidden hits.
+        var world: (cache: WorldRadianceCache, params: WorldCacheParams)?
+        var worldStages: [ComputeStage] = []
+        if settings.worldCache.enabled && settings.cascades.feedback {
+            if worldCache == nil || worldCache!.settings != settings.worldCache {
+                worldCache = try? WorldRadianceCache(device: device, settings: settings.worldCache)
+            }
+            if let cache = worldCache {
+                let params = cache.params(camera: SIMD3(plan.uniforms.camPos.x, plan.uniforms.camPos.y, plan.uniforms.camPos.z),
+                                          hitRays: settings.cascades.hitRays)
+                world = (cache, params)
+                worldStages = cache.stages(pipelines: pipelines.wrc, uniforms: plan.uniforms, params: params,
+                                           bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap)
+            }
+        } else {
+            worldCache = nil
+        }
+        return worldStages + radianceCascades!.stages(pipelines: pipelines.rc, uniforms: plan.uniforms,
                                         bindScene: { [unowned self] in bindScene($0, slot: slot) }, lightMap: lightMap,
-                                        normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t)
+                                        normalDepth: t.normalDepth[plan.cur], prevNormalDepth: t.normalDepth[plan.prev], targets: t,
+                                        world: world)
     }
 
     /// Drops all temporal GI state (cascade feedback, denoiser history).
@@ -123,5 +141,6 @@ extension Renderer {
         skyRefreshed = nil
         fogLastFrame = nil
         radianceCascades?.reset()
+        worldCache?.reset()
     }
 }

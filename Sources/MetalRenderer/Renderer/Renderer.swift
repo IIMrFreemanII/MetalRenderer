@@ -38,6 +38,7 @@ package final class Renderer: NSObject {
     package let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     package var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
     package var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
+    package var worldCache: WorldRadianceCache?        // ...and its world cache, while WorldCacheSettings.enabled
 
     /// The scene's geometry, its instances' records and Metal's structures over them (SceneBuffers.swift).
     package var sceneBuffers: SceneBuffers!

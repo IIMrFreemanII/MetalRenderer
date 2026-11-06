@@ -37,6 +37,14 @@ package struct SceneSettings: Equatable, Codable {
     /// Emissive surfaces are lights: sampled for direct light with shadow rays (and seen by GI through light maps).
     /// Off: they only light what GI rays happen to hit, as before.
     package var emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0"
+    /// The least size (m) of an emissive mesh light that the cascades light (CascadeSettings.emitters): the radius of a
+    /// disc of its area, a closed shape's a quarter of its area. The cascades take such a light only within its reach,
+    /// which grows as its size squared (cascadeEmitterReach in Lights.metal): a cascade's rays are further apart the
+    /// further out they go, and a light smaller than their spacing flickers as it moves. Beyond the reach it is sampled.
+    /// Lit to any distance (Nov 2026), 0.3 lit the emissive room's orb, cubes and letters too, and its walls went
+    /// blotchy with twice the flicker; 1.0 (its screen) stayed clean.
+    package var cascadeEmitterSize: Float = 0.1
+    static let cascadeEmitterSizeRange: ClosedRange<Float> = 0.05...2
     /// Benchmarks only (METALRENDERER_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
     package var lightCheck: String? = nil
 
@@ -191,7 +199,7 @@ package struct SceneSettings: Equatable, Codable {
     }
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(kind: SceneKind = SceneKind.cornell, objects: Int = 400, lights: Int = 32, characters: Int = 2048, poses: Int = 64, detail: Int = 3, crowdBodies: CrowdBodies = CrowdBodies.library, city: CitySettings = CitySettings(), showcase: String = "", extraModels: [ExtraModel] = [], emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0", lightCheck: String? = nil, trees: Int = 2500, undergrowth: Int = 100, seed: Int = 1, worldTile: SIMD2<Int>? = nil, worldAnchor: SIMD2<Int>? = nil, worldLit: Bool = false, bakedPlants: Bool = false, leafCards: Bool = false, realism: Realism = Realism.on, voxelBoxes: Bool = false, physics: PhysicsSettings = PhysicsSettings(), destruction: DestructionSettings = DestructionSettings(), demolition: DemolitionSettings = DemolitionSettings(), cars: CarSettings = CarSettings(), particles: ParticleSettings = ParticleSettings(), plants: PlantSceneSettings = PlantSceneSettings(), plantCatalog: String = "", effects: String = "", stage: VFXStageSettings = VFXStageSettings(), materialWorkshop: MaterialWorkshopSettings = MaterialWorkshopSettings(), materials: String = "", materialAssignments: String = "", painterWorkshop: PainterWorkshopSettings = PainterWorkshopSettings(), terrainWorkshop: TerrainWorkshopSettings = TerrainWorkshopSettings(), terrainKey: String = "", paintAssignments: String = "", sceneOverrides: String = "", buildings: BuildingSceneSettings = BuildingSceneSettings(), buildingCatalog: String = "", characterWorkshop: CharacterSceneSettings = CharacterSceneSettings(), characterCatalog: String = "", interior: String? = nil) {
+    package init(kind: SceneKind = SceneKind.cornell, objects: Int = 400, lights: Int = 32, characters: Int = 2048, poses: Int = 64, detail: Int = 3, crowdBodies: CrowdBodies = CrowdBodies.library, city: CitySettings = CitySettings(), showcase: String = "", extraModels: [ExtraModel] = [], emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0", cascadeEmitterSize: Float = 0.1, lightCheck: String? = nil, trees: Int = 2500, undergrowth: Int = 100, seed: Int = 1, worldTile: SIMD2<Int>? = nil, worldAnchor: SIMD2<Int>? = nil, worldLit: Bool = false, bakedPlants: Bool = false, leafCards: Bool = false, realism: Realism = Realism.on, voxelBoxes: Bool = false, physics: PhysicsSettings = PhysicsSettings(), destruction: DestructionSettings = DestructionSettings(), demolition: DemolitionSettings = DemolitionSettings(), cars: CarSettings = CarSettings(), particles: ParticleSettings = ParticleSettings(), plants: PlantSceneSettings = PlantSceneSettings(), plantCatalog: String = "", effects: String = "", stage: VFXStageSettings = VFXStageSettings(), materialWorkshop: MaterialWorkshopSettings = MaterialWorkshopSettings(), materials: String = "", materialAssignments: String = "", painterWorkshop: PainterWorkshopSettings = PainterWorkshopSettings(), terrainWorkshop: TerrainWorkshopSettings = TerrainWorkshopSettings(), terrainKey: String = "", paintAssignments: String = "", sceneOverrides: String = "", buildings: BuildingSceneSettings = BuildingSceneSettings(), buildingCatalog: String = "", characterWorkshop: CharacterSceneSettings = CharacterSceneSettings(), characterCatalog: String = "", interior: String? = nil) {
         self.kind = kind
         self.objects = objects
         self.lights = lights
@@ -203,6 +211,7 @@ package struct SceneSettings: Equatable, Codable {
         self.showcase = showcase
         self.extraModels = extraModels
         self.emissiveLights = emissiveLights
+        self.cascadeEmitterSize = cascadeEmitterSize
         self.lightCheck = lightCheck
         self.trees = trees
         self.undergrowth = undergrowth
