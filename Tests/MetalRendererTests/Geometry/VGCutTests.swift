@@ -61,6 +61,9 @@ final class VGCutTests: XCTestCase {
         XCTAssertTrue(VirtualBLAS.buildsNow(changed: 9, triangles: 100, waited: VirtualBLAS.waitPasses))
         XCTAssertTrue(VirtualBLAS.buildsNow(changed: 10, triangles: 100, waited: 0))
         XCTAssertTrue(VirtualBLAS.buildsNow(changed: 3, triangles: 0, waited: 0), "a cut gone empty")
+        XCTAssertTrue(VirtualBLAS.buildsNow(changed: 1, triangles: 100, waited: 0, wait: nil), "the wait rule off")
+        XCTAssertFalse(VirtualBLAS.buildsNow(changed: 19, triangles: 100, waited: 3, wait: VirtualBLAS.Wait(share: 0.2, passes: 4)))
+        XCTAssertTrue(VirtualBLAS.buildsNow(changed: 19, triangles: 100, waited: 4, wait: VirtualBLAS.Wait(share: 0.2, passes: 4)))
     }
 
     /// A cut that waits isn't lost: with the camera then at rest (no pass would look at the instance again if its last

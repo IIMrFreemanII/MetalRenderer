@@ -211,12 +211,12 @@ package enum VirtualGeometryBuilder {
                         var tris: [UInt32] = []
                         for m in members { tris += clusters[m].triangles }
                         var (simplified, err) = MeshSimplifier.simplify(triangles: tris, positions: P, posId: PID, uvs: UV,
-                                                                         targetTriangles: tris.count / 6,
+                                                                         targetTriangles: tris.count / 6, normals: N,
                                                                          locked: { lockedPositions[Int($0)] })
                         if simplified.count > tris.count * 3 / 4 {
                             // Stuck on UV seams: finish with the relaxed pass (textures may stretch slightly at this LOD).
                             let (relaxed, rerr) = MeshSimplifier.simplify(triangles: simplified, positions: P, posId: PID, uvs: UV,
-                                                                          targetTriangles: tris.count / 6, relaxed: true,
+                                                                          targetTriangles: tris.count / 6, relaxed: true, normals: N,
                                                                           locked: { lockedPositions[Int($0)] })
                             simplified = relaxed
                             err = max(err, rerr)
@@ -348,8 +348,26 @@ package enum VirtualGeometryBuilder {
         }
     }
 
+    /// The virtual mesh of a generated shape, cached as `<cacheKey>-v<version>.mgv` in the assets' cache folder
+    /// (memory-mapped, as a model's are): `build` only runs on a miss. The key must name every parameter of the shape.
+    package static func mesh(cacheKey: String, build arrays: () -> VGMeshArrays) -> VirtualMesh {
+        let folder = Assets.directory.appendingPathComponent(".metalrenderer-cache")
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let cache = folder.appendingPathComponent("\(cacheKey)-v\(version).mgv")
+        if let cached = try? read(cache), let m = cached[0] { return m }
+        let a = arrays()
+        let built = build(positions: a.positions, normals: a.normals, uvs: a.uvs, indices: a.indices, name: cacheKey)
+        do {
+            try write([(0, built)], to: cache)
+            if let m = try read(cache)[0] { return m }
+        } catch {
+            print("Virtual geometry: could not write \(cache.path): \(error)")
+        }
+        return built
+    }
+
     private static let magic: UInt32 = 0x3156_474D   // "MGV1"
-    package static let version: UInt32 = 4
+    package static let version: UInt32 = 6   // 6: no collapse leaves a triangle facing against, or across, its normals
 
     /// Cache file for `model` (by name, size and modification time): next to it in `.metalrenderer-cache/`, or in
     /// ~/Library/Caches/MetalRenderer if that isn't writable.

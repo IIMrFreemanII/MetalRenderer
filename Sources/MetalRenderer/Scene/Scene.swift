@@ -256,6 +256,9 @@ package final class Scene {
     /// Large glTF meshes as level-of-detail cluster DAGs (VirtualTracing, VirtualBLAS).
     package var virtualMeshes: [VirtualMesh] = []
     package var virtualMeshNames: [String] = []
+    /// The virtual meshes that are closed and wound outward (generated shapes): the Cracks view marks a back face hit
+    /// first on them, which only a hole lets a ray see.
+    package var watertightVirtualMeshes: Set<Int> = []
     package let usesVirtualGeometry: Bool
     /// Generated plants as assemblies of shared parts (PlantTracing), unless baked into meshes of their own (bakedPlants).
     package var assemblies: [Assembly] = []

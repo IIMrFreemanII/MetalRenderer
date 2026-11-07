@@ -40,20 +40,27 @@ struct Quadric {
 /// * Each attribute copy of the moving vertex must map to exactly one copy of the target across the collapsed edge.
 ///   That lets seam vertices slide along their seam and stops everything else from crossing a seam, so textures
 ///   don't smear.
-/// * Collapses that flip a triangle or break manifoldness (link condition) are rejected.
+/// * Collapses that flip a triangle or break manifoldness (link condition) are rejected. With `normals`, so are those
+///   that leave a triangle facing against its corners' normals: a step's flip test alone lets a triangle turn over
+///   a little at a time, and on a closed mesh a turned-over triangle is a fold whose back faces show (the VG lab's
+///   Cracks view found them on its thin shapes' coarse levels).
 /// * Cost = mean squared distance of the target to the planes merged into the moving vertex, plus seam-edge planes
 ///   that keep seams in place. The returned error is the square root of the largest cost accepted: an object-space
 ///   distance, the LOD DAG's error metric.
 package enum MeshSimplifier {
     static let debugStuck = ProcessInfo.processInfo.environment["METALRENDERER_VG_DEBUG"] != nil
+    /// With normals: the least cosine between a triangle's face and its corners' normals a collapse may leave (78°).
+    static let minFacing: Float = 0.2
     /// `locked(posId)`: positions shared with other groups (the group border), which must not move.
     /// `relaxed`: also move vertices where UV charts meet (more than one seam), mapping each UV copy to the target's
     /// nearest one: textures may stretch a little, so the builder only uses it when the strict pass gets stuck,
     /// which happens in coarse levels of meshes with fragmented UV atlases.
     package static func simplify(triangles input: [UInt32], positions: UnsafeBufferPointer<SIMD3<Float>>,
                          posId: UnsafeBufferPointer<Int32>, uvs: UnsafeBufferPointer<SIMD2<Float>>, targetTriangles: Int,
-                         relaxed: Bool = false, locked groupBorder: (Int32) -> Bool) -> (triangles: [UInt32], error: Float) {
+                         relaxed: Bool = false, normals: UnsafeBufferPointer<SIMD3<Float>>? = nil,
+                         locked groupBorder: (Int32) -> Bool) -> (triangles: [UInt32], error: Float) {
         var group = Group(triangles: input, positions: positions, posId: posId, uvs: uvs, relaxed: relaxed, locked: groupBorder)
+        group.normals = normals
         group.collapse(to: targetTriangles)
         return group.result()
     }
@@ -67,6 +74,8 @@ package enum MeshSimplifier {
         package struct EdgeInfo { var count = 0; var a0: Int32 = -1; var b0: Int32 = -1; var seam = false }
         package let relaxed: Bool
         package let uvs: UnsafeBufferPointer<SIMD2<Float>>
+        /// The input's vertex normals (by global attribute vertex), if given: no triangle may end up facing against them.
+        package var normals: UnsafeBufferPointer<SIMD3<Float>>?
         // Local attribute vertices (their global index, their position) and positions (where, their global id).
         package var attrGlobal: [UInt32] = [], attrPos: [Int32] = [], P: [SIMD3<Float>] = [], posGlobal: [Int32] = []
         package var tri: [SIMD3<Int32>] = []
@@ -275,6 +284,20 @@ package enum MeshSimplifier {
                 let q0 = ps[0] == u ? pv : p0, q1 = ps[1] == u ? pv : p1, q2 = ps[2] == u ? pv : p2
                 let n1 = cross(q1 - q0, q2 - q0)
                 if dot(n0, n1) <= 0.05 * length(n0) * length(n1) || length_squared(n1) == 0 { return false }
+                if let normals {
+                    // Facing the way its corners' normals do (u's corner as the copy it maps to: wedgeMap ran first).
+                    var reference = SIMD3<Float>()
+                    for k in 0..<3 {
+                        var a = tri[Int(t)][k]
+                        if attrPos[Int(a)] == u {
+                            guard let i = mapFrom.firstIndex(of: a) else { continue }
+                            a = mapTo[i]
+                        }
+                        reference += normals[Int(attrGlobal[Int(a)])]
+                    }
+                    // Not even edge-on: a triangle standing across the surface is a fin, seen from behind from one side.
+                    if dot(n1, reference) <= MeshSimplifier.minFacing * length(n1) * length(reference) { return false }
+                }
             }
             return true
         }

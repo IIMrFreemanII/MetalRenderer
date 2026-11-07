@@ -10,6 +10,10 @@ import simd
 ///              "scale": [1, 1, 1], "material": "wood", "parent": "Table"}}       an object of that name is replaced
 ///   {"move": {"name": "Crate", "position": [...], "rotation": [...], "scale": [...]}}   live, no new scene
 ///   {"remove": {"names": ["Crate"], "prefix": "Grid "}}                            with what hangs from them
+///   {"bookmark": {"name": "7"}}                 the scene's bookmark (by name, number or prefix; or {"bookmark": "7"})
+///   {"vg_stats": {"rows": 32, "history": 60}}   virtual geometry's report as JSON (rows: nearest instances)
+///   {"vg_set": {"tau": 1, "freeze": false, "wait": true, "waitShare": 0.1, "waitPasses": 16, "recut": true,
+///               "evict": "owl", "view": "LOD error", "instances": 256}}      applied in that order
 ///   {"camera": {"position": [...], "lookAt": [...], "yaw": 30, "pitch": -10, "fov": 60}}   angles in degrees
 ///
 /// A rotation is `[x, y, z]` in degrees (turned about y, then x, then z) or a quaternion `[x, y, z, w]`.
@@ -18,6 +22,23 @@ package enum SceneCommand: Equatable {
     case move(name: String, position: SIMD3<Float>?, rotation: simd_quatf?, scale: SIMD3<Float>?)
     case remove(names: [String], prefix: String?)
     case camera(position: SIMD3<Float>?, lookAt: SIMD3<Float>?, yaw: Float?, pitch: Float?, fovDegrees: Float?)
+    case bookmark(name: String)
+    case vgStats(rows: Int, history: Int)
+    case vgSet(VGSet)
+
+    /// `vg_set`'s fields: each applied if given, in the order below.
+    package struct VGSet: Equatable {
+        package var tau: Float?
+        package var freeze: Bool?
+        package var wait: Bool?
+        package var waitShare: Float?
+        package var waitPasses: Int?
+        package var recut = false
+        package var evict: String?          // "" or "all": every mesh; else a part of a mesh's name
+        package var view: Int?              // index into RenderSettings.viewModes
+        package var instances: Int?
+        static let keys: Set<String> = ["tau", "freeze", "wait", "waitShare", "waitPasses", "recut", "evict", "view", "instances"]
+    }
 
     package struct Failure: Error, Equatable, CustomStringConvertible {
         package let description: String
@@ -25,11 +46,12 @@ package enum SceneCommand: Equatable {
     }
 
     /// The request's keys this reads.
-    package static let keys = ["place", "move", "remove", "camera"]
+    package static let keys = ["place", "move", "remove", "camera", "bookmark", "vg_stats", "vg_set"]
 
     /// The command a request asks for; nil if it asks for none of these.
     package static func decode(_ request: [String: Any]) -> Result<SceneCommand, Failure>? {
         guard let key = keys.first(where: { request[$0] != nil }) else { return nil }
+        if key == "bookmark", let name = request[key] as? String { return .success(.bookmark(name: name)) }
         guard let body = request[key] as? [String: Any] else { return .failure(Failure("\(key): give an object")) }
         do {
             switch key {
@@ -51,6 +73,34 @@ package enum SceneCommand: Equatable {
                 let prefix = body["prefix"] as? String
                 guard !names.isEmpty || !(prefix ?? "").isEmpty else { throw Failure("remove: give names or a prefix") }
                 return .success(.remove(names: names, prefix: prefix))
+            case "bookmark":
+                guard let name = body["name"] as? String, !name.isEmpty else { throw Failure("bookmark: needs a name") }
+                return .success(.bookmark(name: name))
+            case "vg_stats":
+                try SceneCommand.checkKeys(body, ["rows", "history"], "vg_stats")
+                let rows = try integer(body["rows"], "rows") ?? 32, history = try integer(body["history"], "history") ?? 60
+                guard rows >= 0, history >= 0 else { throw Failure("vg_stats: rows and history are 0 or more") }
+                return .success(.vgStats(rows: rows, history: history))
+            case "vg_set":
+                try SceneCommand.checkKeys(body, VGSet.keys, "vg_set")
+                var v = VGSet()
+                v.tau = number(body["tau"], "tau")
+                if body["tau"] != nil, v.tau == nil { throw Failure("vg_set: tau is a number") }
+                v.freeze = try boolean(body["freeze"], "freeze")
+                v.wait = try boolean(body["wait"], "wait")
+                v.waitShare = number(body["waitShare"], "waitShare")
+                if body["waitShare"] != nil, v.waitShare == nil { throw Failure("vg_set: waitShare is a number") }
+                v.waitPasses = try integer(body["waitPasses"], "waitPasses")
+                v.recut = try boolean(body["recut"], "recut") ?? false
+                if let e = body["evict"] {
+                    guard let e = e as? String else { throw Failure("vg_set: evict is a string (\"\" or \"all\": every mesh, else a part of a mesh's name)") }
+                    v.evict = e
+                }
+                if let view = body["view"] {
+                    v.view = try viewMode(view)
+                }
+                v.instances = try integer(body["instances"], "instances")
+                return .success(.vgSet(v))
             default:
                 return .success(.camera(position: try vector(body["position"], "position"), lookAt: try vector(body["lookAt"], "lookAt"),
                                         yaw: number(body["yaw"]), pitch: number(body["pitch"]), fovDegrees: number(body["fov"])))
@@ -99,22 +149,124 @@ package enum SceneCommand: Equatable {
             }
             return .success(["removed": removed])
         case .camera(let position, let lookAt, let yaw, let pitch, let fov):
-            var camera = renderer.camera
-            if let position { camera.position = position }
-            if let yaw { camera.yaw = yaw * .pi / 180 }
-            if let pitch { camera.pitch = pitch * .pi / 180 }
-            if let lookAt {
-                guard let (y, p) = SceneCommand.angles(from: camera.position, to: lookAt) else {
-                    return .failure(Failure("camera: lookAt is where the camera is"))
-                }
-                camera.yaw = y
-                camera.pitch = p
+            return SceneCommand.moveCamera(renderer, position: position, lookAt: lookAt, yaw: yaw, pitch: pitch, fov: fov)
+        case .bookmark(let name):
+            let bookmarks = renderer.settings.scene.kind.definition.bookmarks
+            guard let b = SceneDefinition.resolve(name, in: bookmarks) else {
+                let list = bookmarks.isEmpty ? "this scene has none" : bookmarks.map(\.name).joined(separator: ", ")
+                return .failure(Failure("bookmark: no bookmark \"\(name)\" (the bookmarks: \(list))"))
             }
-            renderer.camera = camera
-            if let fov { renderer.settings.fovDegrees = fov }
-            return .success(["position": [camera.position.x, camera.position.y, camera.position.z].map(Double.init),
-                             "yaw": Double(camera.yaw * 180 / .pi), "pitch": Double(camera.pitch * 180 / .pi)])
+            var answer = SceneCommand.moveCamera(renderer, position: b.position, lookAt: b.lookAt, yaw: nil, pitch: nil, fov: nil)
+            if case .success(var a) = answer { a["bookmark"] = b.name; answer = .success(a) }
+            return answer
+        case .vgStats(let rows, let history):
+            return .success(SceneCommand.vgStatsAnswer(renderer, rows: rows, history: history))
+        case .vgSet(let v):
+            return .success(SceneCommand.vgSetApply(renderer, v))
         }
+    }
+
+    private static func vgStatsAnswer(_ renderer: Renderer, rows: Int, history: Int) -> [String: Any] {
+        renderer.vgReport()?.json(rows: rows, history: history) ?? ["virtualGeometry": false]
+    }
+
+    private static func vgSetApply(_ renderer: Renderer, _ v: VGSet) -> [String: Any] {
+        var applied: [String: Any] = [:]
+        if let tau = v.tau {
+            let r = VirtualGeometrySettings.pixelErrorRange
+            renderer.settings.virtualGeometry.pixelError = min(max(tau, r.lowerBound), r.upperBound)
+            applied["tau"] = Double(renderer.settings.virtualGeometry.pixelError)
+        }
+        if let freeze = v.freeze { renderer.settings.virtualGeometry.freeze = freeze; applied["freeze"] = freeze }
+        if let wait = v.wait { renderer.settings.virtualGeometry.waitRule = wait; applied["wait"] = wait }
+        if let share = v.waitShare {
+            let r = VirtualGeometrySettings.waitShareRange
+            renderer.settings.virtualGeometry.waitShare = min(max(share, r.lowerBound), r.upperBound)
+            applied["waitShare"] = Double(renderer.settings.virtualGeometry.waitShare)
+        }
+        if let passes = v.waitPasses {
+            let r = VirtualGeometrySettings.waitPassesRange
+            renderer.settings.virtualGeometry.waitPasses = min(max(passes, r.lowerBound), r.upperBound)
+            applied["waitPasses"] = renderer.settings.virtualGeometry.waitPasses
+        }
+        if v.recut { renderer.vgForceRecut(); applied["recut"] = true }
+        if let evict = v.evict {
+            let all = evict.isEmpty || evict.lowercased() == "all"
+            let after = renderer.vgEvict(matching: all ? nil : evict)
+            applied["evict"] = all ? "all" : evict
+            applied["residency"] = after.map { ["mesh": $0.mesh, "resident": Double($0.resident)] }
+        }
+        if let view = v.view {
+            renderer.settings.viewMode = view
+            applied["view"] = RenderSettings.viewModes[view]
+            applied["viewMode"] = view
+        }
+        if let n = v.instances {
+            let r = SceneSettings.objectRange
+            renderer.settings.scene.objects = min(max(n, r.lowerBound), r.upperBound)
+            applied["instances"] = renderer.settings.scene.objects
+        }
+        return applied
+    }
+
+    private static func checkKeys(_ body: [String: Any], _ allowed: Set<String>, _ what: String) throws {
+        let unknown = body.keys.filter { !allowed.contains($0) }.sorted()
+        if !unknown.isEmpty { throw Failure("\(what): unknown \(unknown.joined(separator: ", ")) (the keys: \(allowed.sorted().joined(separator: ", ")))") }
+    }
+
+    private static func boolean(_ value: Any?, _ what: String) throws -> Bool? {
+        guard let value else { return nil }
+        guard let n = value as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { throw Failure("\(what): true or false") }
+        return n.boolValue
+    }
+
+    private static func integer(_ value: Any?, _ what: String) throws -> Int? {
+        guard let value else { return nil }
+        guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded(),
+              abs(n.doubleValue) < 1e9 else { throw Failure("\(what): give a whole number") }
+        return n.intValue
+    }
+
+    /// A view's number, or its name (any case; the start of a name if one view starts so).
+    private static func viewMode(_ value: Any) throws -> Int {
+        let names = RenderSettings.viewModes
+        if let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() {
+            guard n.doubleValue == n.doubleValue.rounded(), names.indices.contains(n.intValue) else {
+                throw Failure("view: no view numbered \(n) (0 to \(names.count - 1))")
+            }
+            return n.intValue
+        }
+        guard let text = (value as? String)?.trimmingCharacters(in: .whitespaces).lowercased(), !text.isEmpty else {
+            throw Failure("view: give a view's name or number")
+        }
+        if let k = Int(text) {
+            guard names.indices.contains(k) else { throw Failure("view: no view numbered \(k) (0 to \(names.count - 1))") }
+            return k
+        }
+        if let k = names.firstIndex(where: { $0.lowercased() == text }) { return k }
+        let starts = names.indices.filter { names[$0].lowercased().hasPrefix(text) }
+        if starts.count == 1 { return starts[0] }
+        let list = names.enumerated().map { "\($0) \($1)" }.joined(separator: ", ")
+        throw Failure("view: no view \"\(text)\" (the views: \(list))")
+    }
+
+    private static func moveCamera(_ renderer: Renderer, position: SIMD3<Float>?, lookAt: SIMD3<Float>?, yaw: Float?, pitch: Float?,
+                                   fov: Float?) -> Result<[String: Any], Failure> {
+        var camera = renderer.camera
+        if let position { camera.position = position }
+        if let yaw { camera.yaw = yaw * .pi / 180 }
+        if let pitch { camera.pitch = pitch * .pi / 180 }
+        if let lookAt {
+            guard let (y, p) = SceneCommand.angles(from: camera.position, to: lookAt) else {
+                return .failure(Failure("camera: lookAt is where the camera is"))
+            }
+            camera.yaw = y
+            camera.pitch = p
+        }
+        renderer.camera = camera
+        if let fov { renderer.settings.fovDegrees = fov }
+        return .success(["position": [camera.position.x, camera.position.y, camera.position.z].map(Double.init),
+                         "yaw": Double(camera.yaw * 180 / .pi), "pitch": Double(camera.pitch * 180 / .pi)])
     }
 
     /// The camera's yaw and pitch (radians) to look from `eye` at `target` (Camera.forward's inverse).
@@ -128,6 +280,10 @@ package enum SceneCommand: Equatable {
     // MARK: - Reading the JSON
 
     private static func number(_ value: Any?) -> Float? { (value as? NSNumber).map { $0.floatValue } }
+    private static func number(_ value: Any?, _ what: String) -> Float? {
+        guard let n = value as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return nil }
+        return n.floatValue
+    }
 
     private static func numbers(_ value: Any?, _ what: String) throws -> [Float]? {
         guard let value else { return nil }

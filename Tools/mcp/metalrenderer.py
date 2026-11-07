@@ -23,7 +23,8 @@ ROTATION = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxIte
             "description": "[x, y, z] in degrees (turned about y, then x, then z), or a quaternion [x, y, z, w]."}
 SCALE = {"description": "A number, or [x, y, z].", "anyOf": [{"type": "number"}, VEC3]}
 # The typed tools: the socket's SceneCommand by its key.
-COMMANDS = {"place_object": "place", "move_object": "move", "remove_objects": "remove", "set_camera": "camera"}
+COMMANDS = {"place_object": "place", "move_object": "move", "remove_objects": "remove", "set_camera": "camera", "go_to_bookmark": "bookmark",
+            "vg_stats": "vg_stats", "vg_set": "vg_set"}
 
 TOOLS = [
     {
@@ -114,6 +115,39 @@ TOOLS = [
             "position": VEC3, "lookAt": VEC3,
             "yaw": {"type": "number", "description": "Degrees; 0 looks down -Z."}, "pitch": {"type": "number", "description": "Degrees; negative looks down."},
             "fov": {"type": "number"}, "build": BUILD}},
+    },
+    {
+        "name": "go_to_bookmark",
+        "description": ("Move the camera to one of the scene's bookmarks (scene_state lists them): by name, by number "
+                        "(\"7\" is \"07 Spot cones\"), or by the start or a part of its name, in any case."),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "The bookmark's name, number or prefix."}, "build": BUILD},
+            "required": ["name"]},
+    },
+    {
+        "name": "vg_stats",
+        "description": ("Virtual geometry's state as JSON (the VG lab: scene `vglab`): summary, triangles, clusters, MB, rebuilds, "
+                        "last cut and build ms, per-mesh cache residency, the nearest instances' table (distance, levels, "
+                        "triangles, waited, slack, faults), the last frames' cut history, and the crosshair's probe while a "
+                        "geometry view is drawn. {\"virtualGeometry\": false} when the scene has none."),
+        "inputSchema": {"type": "object", "properties": {
+            "rows": {"type": "integer", "description": "At most this many instance rows, nearest first (default 32)."},
+            "history": {"type": "integer", "description": "The last this many frames of history (default 60, at most 512)."},
+            "build": BUILD}},
+    },
+    {
+        "name": "vg_set",
+        "description": ("Drive virtual geometry, applied in this order, values clamped to the settings' ranges: tau (pixel error, "
+                        "0.25 to 8), freeze (keep the cut chosen for the camera now), wait (the wait rule), waitShare (0.01 to 0.5), "
+                        "waitPasses (1 to 64), recut (cut every instance afresh), evict (\"\" or \"all\": drop every mesh's cache pages; "
+                        "else a part of a mesh's name; the answer lists each mesh's residency after), view (a view's name, any "
+                        "case, or its number: Final, Normals, Triangles, Clusters, Groups, LOD level, LOD error, Rebuilt, "
+                        "Cracks...), instances (the VG lab's instance field, 1 to 2000; rebuilds the scene). Answers what was applied."),
+        "inputSchema": {"type": "object", "properties": {
+            "tau": {"type": "number"}, "freeze": {"type": "boolean"}, "wait": {"type": "boolean"},
+            "waitShare": {"type": "number"}, "waitPasses": {"type": "integer"}, "recut": {"type": "boolean"},
+            "evict": {"type": "string"}, "view": {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+            "instances": {"type": "integer"}, "build": BUILD}},
     },
     {
         "name": "modeller",

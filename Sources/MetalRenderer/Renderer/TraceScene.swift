@@ -15,6 +15,7 @@ package struct VGView {
     var camPos: SIMD3<Float>
     var pixelScale: Float       // traced height / (2 tan(fovY / 2))
     var tau: Float              // allowed error in traced pixels
+    var wait: VirtualBLAS.Wait? = VirtualBLAS.Wait()   // the wait rule (nil: off)
 }
 
 /// The wind this frame (Shaders/Foliage.metal): where it blows to, how hard, how gusty; the animation time now and a frame ago.

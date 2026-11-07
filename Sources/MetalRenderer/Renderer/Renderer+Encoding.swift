@@ -358,8 +358,17 @@ extension Renderer {
             return (drawable, nil, drawableWait)
         }
         // 3c. Geometry debug views: their own pass, only while one is shown.
-        if RenderSettings.geometryViews.contains(settings.viewMode), let enc = passes.compute("geometry debug") {
+        if RenderSettings.drawsGeometryDebug(settings.viewMode), let enc = passes.compute("geometry debug") {
             bind(enc, .geometryDebug, c.uniforms, sceneSlot: plan.slot)
+            let lod = vgDebugView ?? VGView(camPos: camera.position, pixelScale: 1, tau: settings.virtualGeometry.pixelError)
+            var vgd = GPUVGDebug(camPos: SIMD4(lod.camPos, lod.pixelScale), tau: lod.tau, frame: frameIndex,
+                                 probe: SIMD2(UInt32(size.width / 2), UInt32(size.height / 2)))
+            enc.setBytes(&vgd, length: MemoryLayout<GPUVGDebug>.stride, index: 8)
+            if vgProbe == nil {
+                vgProbe = device.makeBuffer(length: MemoryLayout<GPUVGProbe>.stride, options: .storageModeShared)
+                vgProbe?.label = "vgProbe"
+            }
+            enc.setBuffer(vgProbe, offset: 0, index: 9)
             enc.setTexture(t.geometryDebug, index: 0)
             dispatch(enc, .geometryDebug, width: size.width, height: size.height)
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it

@@ -17,6 +17,9 @@ extension Renderer {
     /// The current setting's events that its track has reached, its lift ride, its flashlight (Config.events, ride).
     package func benchmarkActs(_ benchmark: Benchmark) {
         let c = benchmark.current
+        if let path = c.cameraFunction { camera = path(benchmark.progressInConfig) }
+        c.frameHook?(self, benchmark.frameInConfig)
+        if benchmark.isLastFrame { c.captureHook?(self) }
         for (k, e) in c.events.enumerated() where !benchmarkFired.contains(k) && benchmark.trackTime >= e.time {
             if case .script(let path, let arguments) = e.event {
                 benchmarkFired.insert(k)
@@ -80,6 +83,7 @@ extension Renderer {
             rebuildScene()
         }
         camera = c.track?.camera(at: 0)
+            ?? c.cameraFunction.map { $0(0) }
             ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         prevCamera = camera
         benchmarkAccumulating = c.accumulate
@@ -606,6 +610,10 @@ extension Renderer {
         case 11 where !virtual && !(scene.hasPlants && scene.usesAssemblies) && !scene.meshes.contains(where: { $0.lod != 0 }):
             return "Nothing in this scene has levels of detail: virtual geometry needs big glTF meshes; plants, crowds "
                 + "and the open world's tiles have theirs."
+        case 16...18 where !virtual:
+            return "Virtual geometry's own views: this scene has none (glTF meshes of 64K+ triangles, or the VG lab)."
+        case 18:
+            return "Only closed generated meshes (the VG lab's) are checked for back faces; other meshes show nothing here."
         case 13:
             return "Metal's traversal can't count its nodes: the cost is the triangles and boxes it hands each ray's query."
         case 14 where !settings.fog.enabled:
@@ -648,6 +656,7 @@ extension Renderer {
         d.vgFrozen = frozenLOD != nil && lodFreezes
         d.lodFreezes = lodFreezes
         d.viewNote = viewNote
+        d.vgReport = vgReport()
         if let ts = textureStreamer {
             d.textures = (ts.stats.residentMB, ts.budgetBytes >> 20, ts.stats.levelsMapped, ts.stats.uploadedMB)
         }
