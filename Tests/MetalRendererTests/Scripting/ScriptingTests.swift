@@ -122,6 +122,35 @@ final class ScriptingTests: XCTestCase {
         }
     }
 
+    func testVGCommandsDecode() throws {
+        guard case .success(.vgStats(let rows, let history))? = SceneCommand.decode(["vg_stats": [:]]) else { return XCTFail("vg_stats") }
+        XCTAssertEqual(rows, 32)
+        XCTAssertEqual(history, 60)
+        guard case .success(.vgStats(8, 5))? = SceneCommand.decode(["vg_stats": ["rows": 8, "history": 5]]) else { return XCTFail("vg_stats args") }
+        let body: [String: Any] = ["tau": 2.5, "freeze": true, "wait": false, "waitShare": 0.2, "waitPasses": 4, "recut": true,
+                                   "evict": "owl", "view": "lod ERROR", "instances": 64]
+        guard case .success(.vgSet(let v))? = SceneCommand.decode(["vg_set": body]) else { return XCTFail("vg_set") }
+        XCTAssertEqual(v.tau, 2.5)
+        XCTAssertEqual(v.freeze, true)
+        XCTAssertEqual(v.wait, false)
+        XCTAssertEqual(v.waitPasses, 4)
+        XCTAssertTrue(v.recut)
+        XCTAssertEqual(v.evict, "owl")
+        XCTAssertEqual(v.view, RenderSettings.viewModes.firstIndex(of: "LOD error"))
+        XCTAssertEqual(v.instances, 64)
+        guard case .success(.vgSet(let n))? = SceneCommand.decode(["vg_set": ["view": 3]]) else { return XCTFail("view number") }
+        XCTAssertEqual(n.view, 3)
+        guard case .success(.vgSet(let s))? = SceneCommand.decode(["vg_set": ["view": "3", "evict": ""]]) else { return XCTFail("view text") }
+        XCTAssertEqual(s.view, 3)
+        XCTAssertEqual(s.evict, "")
+        let bad: [[String: Any]] = [["vg_set": ["tua": 1]], ["vg_set": ["tau": "big"]], ["vg_set": ["freeze": 1.5]],
+                                    ["vg_set": ["view": "nothing"]], ["vg_set": ["view": 99]], ["vg_set": ["waitPasses": 1.5]],
+                                    ["vg_set": ["evict": 3]], ["vg_stats": ["rows": -1]], ["vg_stats": ["row": 3]], ["vg_set": 3]]
+        for b in bad {
+            guard case .failure? = SceneCommand.decode(b) else { return XCTFail("\(b) should fail") }
+        }
+    }
+
     func testCameraAnglesLookAtTheTarget() throws {
         let eye = SIMD3<Float>(3, 4, 5), target = SIMD3<Float>(-1, 0.5, 2)
         let (yaw, pitch) = try XCTUnwrap(SceneCommand.angles(from: eye, to: target))

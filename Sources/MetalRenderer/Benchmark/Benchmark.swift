@@ -41,6 +41,14 @@ package final class Benchmark {
         var body = false                    // the camera is a walker's body: doors open for it, it shoves loose furniture
         var ride: Int? = nil                // the camera rides lift `ride` (its track keyed at the lift's lowest floor)
         package var events: [(time: Float, event: Event)] = []   // what happens at times of its track (`at`)
+        /// Called on the render thread each frame of the setting, before its frame is drawn, with the renderer and the
+        /// frame's number (0 = the first warm-up frame; 60 = the first measured one). Set by `onFrame`.
+        package var frameHook: ((Renderer, Int) -> Void)? = nil
+        /// Called once, on the last frame's turn (the frame that is saved), with the renderer as the frames before it left it.
+        package var captureHook: ((Renderer) -> Void)? = nil
+        /// The camera at progress p (0 at the first frame, 1 at the last; the warm-up included) instead of a scene's
+        /// `cameraMove`. Set by `cameraMove(_:)`.
+        package var cameraFunction: ((Float) -> Camera)? = nil
         /// Something done in a building at a moment of a setting's track, as the walker would (InteriorControls).
         package enum Event {
             case callLift(Int, floor: Int)          // lift n to that floor
@@ -106,7 +114,29 @@ package final class Benchmark {
         package func step(_ seconds: Float) -> Config { var c = self; c.dt = seconds; return c }
         package func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         package func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
+        /// The camera at the scene's bookmark `name` (by name, number or prefix), as `from` sets it; a scene without it is a
+        /// bug in the benchmark.
+        package func at(_ bookmark: String) -> Config {
+            let kind = settings.scene.kind
+            guard let b = SceneDefinition.resolve(bookmark, in: kind.definition.bookmarks) else {
+                fatalError("benchmark \"\(name)\": scene \(kind) has no bookmark \"\(bookmark)\"")
+            }
+            var camera = Camera()
+            camera.position = b.position
+            guard let (yaw, pitch) = SceneCommand.angles(from: b.position, to: b.lookAt) else {
+                fatalError("benchmark \"\(name)\": bookmark \"\(b.name)\" looks from where it stands")
+            }
+            camera.yaw = yaw
+            camera.pitch = pitch
+            return from(camera)
+        }
         package func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
+        /// The camera follows `path` (progress 0...1 over the whole setting, warm-up included).
+        package func cameraMove(_ path: @escaping (Float) -> Camera) -> Config { var c = self; c.cameraFunction = path; return c }
+        /// `hook` runs each frame before it is drawn (render thread), with the frame's number in the setting.
+        package func onFrame(_ hook: @escaping (Renderer, Int) -> Void) -> Config { var c = self; c.frameHook = hook; return c }
+        /// `hook` runs on the last frame's turn, just before the frame that is saved (render thread).
+        package func atCapture(_ hook: @escaping (Renderer) -> Void) -> Config { var c = self; c.captureHook = hook; return c }
         /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
         package func recording() -> Config { var c = self; c.record = true; return c }
         package func flying(_ velocity: SIMD3<Float>) -> Config { var c = self; c.flight = velocity; return c }
@@ -334,6 +364,8 @@ package final class Benchmark {
     package func noteSwap() {
         if let k = Benchmark.swapShot, cut == nil { cut = min(frameInConfig + max(k, 0) + 1, framesInConfig) }
     }
+    /// The setting's last frame, the one that is saved.
+    package var isLastFrame: Bool { framesLeftInConfig == 1 }
     package var shouldCapture: Bool { framesLeftInConfig == 1 || (current.capturePrevious && framesLeftInConfig == 2) }
     /// A recording setting's frame to save: every other measured one.
     package var shouldRecord: Bool { current.record && isMeasuring && (frameInConfig - warmupFrames) % 2 == 0 }

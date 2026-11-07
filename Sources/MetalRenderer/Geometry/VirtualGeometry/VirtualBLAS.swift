@@ -17,18 +17,70 @@ import simd
 /// structure has each virtual instance at its current BLAS (VirtualTracing).
 ///
 /// GPU memory holds only the current cuts: about one triangle per traced pixel at the default error of 1 px.
-final class VirtualBLAS {
+package final class VirtualBLAS {
     /// Per VG instance on the GPU (MSL `VGBlas`): its current cut's triangles (p0 p1 p2 as float4s, the debug views'
     /// IDs in p1.w and p2.w; the BLAS is built over them), then per triangle 6 words of attributes: 3 octahedral
-    /// normals, 3 half2 UVs. A hit's primitive is a triangle's place there.
+    /// normals, 3 half2 UVs. A hit's primitive is a triangle's place there. The rest is for the debug views: the
+    /// frame its BLAS was swapped in, its mesh's cluster records (`VGClusterInfo`, by cluster) and `flagWatertight`.
     struct Entry {
         package var tris: UInt64 = 0
         package var attrs: UInt64 = 0
         package var triangles: UInt32 = 0
+        package var rebuiltFrame: UInt32 = 0
+        package var clusterInfo: UInt64 = 0
+        package var flags: UInt32 = 0
         package var pad0: UInt32 = 0
         package var pad1: UInt32 = 0
         package var pad2: UInt32 = 0
     }
+    static let flagWatertight: UInt32 = 1
+
+    /// A cluster as the debug views read it (MSL `VGClusterInfo`): its bounding sphere and error, its parents' (the
+    /// group's) sphere and error (infinity for a root), and its DAG level.
+    struct ClusterInfo {
+        var selfSphere = SIMD4<Float>()
+        var parentSphere = SIMD4<Float>()
+        var selfError: Float = 0
+        var parentError: Float = 0
+        var level: UInt32 = 0
+        var pad: UInt32 = 0
+    }
+
+    /// The wait rule (`buildsNow`): a changed cut waits while under `share` of its triangles differ, for at most
+    /// `passes` of the worker's passes. nil: every changed cut is built at once.
+    struct Wait: Equatable {
+        var share: Float = VirtualBLAS.waitShare
+        var passes: Int = VirtualBLAS.waitPasses
+    }
+
+    /// One virtual instance as the Debug window's table and `vg_stats` show it.
+    package struct InstanceStats {
+        package var instance = 0                 // the scene's instance index
+        package var mesh = 0
+        package var name = ""
+        package var distance: Float = 0          // camera to the mesh's bounds' centre (world)
+        package var clusters = 0                 // in the cut
+        package var triangles = 0                // in the cut
+        package var finestTriangles = 0          // the mesh's finest level
+        package var minLevel = 0, maxLevel = 0   // DAG levels in the cut (0 = finest)
+        package var waited = 0                   // passes a changed cut has waited (the wait rule)
+        package var slack: Float = 0             // how far the camera can move before the cut could change
+        package var rebuilds = 0
+        package var rebuiltFrame: UInt32 = 0
+        package var bytes = 0                    // triangle buffer + BLAS
+        package var gatherMs = 0.0               // the last gather
+        package var faults = 0                   // major page faults in the last build's pass (all instances built in it)
+        package var watertight = false
+    }
+
+    /// One frame of the history graph: the last cut's time, BLASes swapped in this frame, triangles and MB.
+    package struct HistorySample {
+        package var cutMs: Float = 0
+        package var rebuilds: UInt16 = 0
+        package var triangles: UInt32 = 0
+        package var megabytes: Float = 0
+    }
+    static let historyLength = 512
 
     /// Cuts and builds on the calling thread (deterministic): benchmarks, or METALRENDERER_VG_SYNC=1; =0 forces the
     /// background path even in benchmarks.
@@ -61,8 +113,9 @@ final class VirtualBLAS {
     }
 
     /// Whether a cut with `changed` of its `triangles` different is built now, having waited `waited` passes.
-    static func buildsNow(changed: Int, triangles: Int, waited: Int) -> Bool {
-        waited >= waitPasses || Float(changed) >= waitShare * Float(triangles)
+    static func buildsNow(changed: Int, triangles: Int, waited: Int, wait: Wait? = Wait()) -> Bool {
+        guard let wait else { return true }
+        return waited >= wait.passes || Float(changed) >= wait.share * Float(triangles)
     }
 
     /// What an instance's last cut was made for, and how far the camera can move before any of its tests could change.
@@ -100,12 +153,21 @@ final class VirtualBLAS {
     private var lastCut: [CutInput?]                     // the worker's
     private var waited: [Int]                            // the worker's: passes a changed cut has waited
     private var started = false
+    private var gatherMs: [Double] = []                  // the worker's: the last build's gathers
+    private var recutAll = false                         // under `lock`: the next pass cuts every instance again
+    private var workerStats: [InstanceStats]             // the worker's (under `lock` when read)
+    private let names: [String]
+    private let watertight: Set<Int>
+    private let clusterInfo: [MTLBuffer?]                // per mesh: ClusterInfo per cluster, for the debug views
+    private var historyRing = [HistorySample](repeating: HistorySample(), count: VirtualBLAS.historyLength)
+    private var historyNext = 0
     /// Bumped whenever an instance's structure changes: the top-level structure is rebuilt over the new ones.
     private(set) var version = 0
     private(set) var stats = (triangles: 0, clusters: 0, rebuilds: 0, lastBuildMs: 0.0, megabytes: 0.0, lastCutMs: 0.0,
                               skippedInstances: 0)
 
-    package init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], slots: Int) throws {
+    package init(device: MTLDevice, meshes: [VirtualMesh], instances: [(instance: Int, mesh: Int)], slots: Int,
+                 names: [String] = [], watertight: Set<Int> = []) throws {
         guard let queue = device.makeCommandQueue() else { throw RendererError.resourceCreation("command queue (virtual geometry)") }
         queue.label = "vgBLAS"
         self.device = device
@@ -116,6 +178,21 @@ final class VirtualBLAS {
         workerSelection = Array(repeating: [], count: instances.count)
         lastCut = Array(repeating: nil, count: instances.count)
         waited = Array(repeating: 0, count: instances.count)
+        self.names = names
+        self.watertight = watertight
+        workerStats = instances.map { p in
+            InstanceStats(instance: p.instance, mesh: p.mesh, name: p.mesh < names.count ? names[p.mesh] : "mesh \(p.mesh)",
+                          finestTriangles: meshes[p.mesh].triangleCount, watertight: watertight.contains(p.mesh))
+        }
+        clusterInfo = meshes.enumerated().map { m, mesh in
+            let info = mesh.clusters.map { c in
+                ClusterInfo(selfSphere: c.selfSphere, parentSphere: c.parentSphere, selfError: c.lo.w, parentError: c.hi.w,
+                            level: mesh.groups[Int(c.group)].level)
+            }
+            let buffer = info.withUnsafeBytes { device.makeBuffer(bytes: $0.baseAddress!, length: max($0.count, 16), options: .storageModeShared) }
+            buffer?.label = "vgClusterInfo\(m)"
+            return buffer
+        }
         for slot in 0..<slots {
             guard let t = device.makeBuffer(length: max(instances.count, 1) * MemoryLayout<Entry>.stride, options: .storageModeShared) else {
                 throw RendererError.resourceCreation("buffer vgBlasTable")
@@ -136,7 +213,9 @@ final class VirtualBLAS {
     var isBusy: Bool { lock.lock(); defer { lock.unlock() }; return busy }
 
     func table(slot: Int) -> MTLBuffer { tables[slot] }
-    func resources(slot: Int) -> [MTLResource] { [tables[slot]] + current.compactMap(\.buffer) + current.compactMap(\.structure) }
+    func resources(slot: Int) -> [MTLResource] {
+        [tables[slot]] + current.compactMap(\.buffer) + current.compactMap(\.structure) + clusterInfo.compactMap { $0 }
+    }
     /// Each virtual instance's current structure (nil: none yet, or an empty cut), in their rank.
     var structures: [MTLAccelerationStructure?] { current.map(\.structure) }
 
@@ -157,7 +236,7 @@ final class VirtualBLAS {
     /// Render thread, before encoding `frame`: swap in finished BLASes, then start the next cut if the worker is free.
     /// `sceneInstances`: every scene instance, for this frame's object -> world matrices.
     func update(frame: UInt32, slot: Int, framesInFlight: Int, camPos: SIMD3<Float>, pixelScale: Float,
-                tau: Float, sceneInstances: [Scene.Instance]) {
+                tau: Float, wait: Wait? = Wait(), sceneInstances: [Scene.Instance]) {
         // Buffers the GPU is done with go back to the pool (frames finish in order), which keeps about as many bytes as
         // the current BLASes, dropping the oldest beyond that.
         let past = retired.filter { $0.1 &+ UInt32(framesInFlight) < frame }.map(\.0)
@@ -173,7 +252,7 @@ final class VirtualBLAS {
             lock.unlock()
         }
         let snapshot = instances.map { sceneInstances[$0.instance].transform }
-        let job = { [self] in self.cut(camPos: camPos, pixelScale: pixelScale, tau: tau, transforms: snapshot) }
+        let job = { [self] in self.cut(camPos: camPos, pixelScale: pixelScale, tau: tau, wait: wait, transforms: snapshot) }
         if VirtualBLAS.sync || !started {
             started = true
             job()   // benchmarks (deterministic: the cut matches this frame's camera), and the first frame (no pop-in)
@@ -191,6 +270,7 @@ final class VirtualBLAS {
         for f in finishedNow {
             retired.append((current[f.index], frame))
             current[f.index] = f.built
+            current[f.index].entry.rebuiltFrame = frame
         }
         if !finishedNow.isEmpty { version += 1 }
         var bytes = 0, triangles = 0
@@ -201,7 +281,82 @@ final class VirtualBLAS {
         stats.megabytes = Double(bytes) / 1_048_576
         stats.triangles = triangles
         stats.clusters = current.reduce(0) { $0 + $1.selection.count }
+        historyRing[historyNext] = HistorySample(cutMs: Float(stats.lastCutMs), rebuilds: UInt16(min(finishedNow.count, 65535)),
+                                                 triangles: UInt32(triangles), megabytes: Float(stats.megabytes))
+        historyNext = (historyNext + 1) % VirtualBLAS.historyLength
         current.map(\.entry).withUnsafeBytes { tables[slot].contents().copyMemory(from: $0.baseAddress!, byteCount: $0.count) }
+    }
+
+    // MARK: Debugging (the Debug window, vg_stats, the VG lab)
+
+    /// The next pass cuts every instance again, as if nothing were known of the last cuts.
+    func forceRecut() {
+        lock.lock()
+        recutAll = true
+        lock.unlock()
+    }
+
+    /// Every virtual instance as it stands, its distance from `camPos` (render thread: `sceneInstances` this frame's).
+    func instanceStats(camPos: SIMD3<Float>, sceneInstances: [Scene.Instance]) -> [InstanceStats] {
+        lock.lock()
+        var out = workerStats
+        lock.unlock()
+        for k in out.indices {
+            let b = meshes[instances[k].mesh].bounds
+            let c = sceneInstances[instances[k].instance].transform * SIMD4<Float>(b.centroid, 1)
+            out[k].distance = length(SIMD3(c.x, c.y, c.z) - camPos)
+            out[k].rebuiltFrame = current[k].entry.rebuiltFrame
+            out[k].bytes = (current[k].buffer?.length ?? 0) + (current[k].structure?.size ?? 0)
+            // What is swapped in, rather than the worker's newest (which may still be building).
+            out[k].clusters = current[k].selection.count
+            out[k].triangles = Int(current[k].entry.triangles)
+        }
+        return out
+    }
+
+    /// The last `historyLength` frames, oldest first.
+    var history: [HistorySample] { Array(historyRing[historyNext...] + historyRing[..<historyNext]) }
+
+    /// The share of `mesh`'s cache pages in memory now (mincore over its mapping).
+    func residency(mesh m: Int) -> Float {
+        let (resident, total) = VirtualBLAS.pages(of: meshes[m].pageData) { base, length in
+            let pageSize = Int(vm_page_size)
+            var vec = [CChar](repeating: 0, count: (length + pageSize - 1) / pageSize)
+            guard mincore(base, length, &vec) == 0 else { return 0 }
+            return vec.reduce(0) { $0 + (($1 & 1) != 0 ? 1 : 0) }
+        }
+        return total == 0 ? 0 : Float(resident) / Float(total)
+    }
+
+    /// Asks the OS to drop `mesh`'s cache pages from memory (best effort: MS_INVALIDATE then MADV_DONTNEED over its
+    /// mapping; the file is clean, so they can go), and cuts every instance again once they are gone, so their next
+    /// gathers read them from disk. `residency` tells whether they went.
+    func evict(mesh m: Int) {
+        _ = VirtualBLAS.pages(of: meshes[m].pageData) { base, length in
+            msync(base, length, MS_INVALIDATE)
+            madvise(base, length, MADV_DONTNEED)
+            return 0
+        }
+        forceRecut()
+    }
+
+    /// `body` over the OS pages that `data`'s bytes lie on (base aligned down, length rounded up); the page count.
+    private static func pages(of data: Data, _ body: (UnsafeMutableRawPointer, Int) -> Int) -> (Int, Int) {
+        data.withUnsafeBytes { raw in
+            guard let start = raw.baseAddress, raw.count > 0 else { return (0, 0) }
+            let pageSize = Int(vm_page_size)
+            let aligned = Int(bitPattern: start) & ~(pageSize - 1)
+            let length = Int(bitPattern: start) + raw.count - aligned
+            let pages = (length + pageSize - 1) / pageSize
+            return (body(UnsafeMutableRawPointer(bitPattern: aligned)!, length), pages)
+        }
+    }
+
+    /// The process's major page faults so far (getrusage): pages read from disk.
+    static func majorFaults() -> Int {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Int(usage.ru_majflt)
     }
 
     /// Nanite's rule without residency (every page is readable), over `groups` of `mesh`: a cluster is in the cut when
@@ -241,8 +396,12 @@ final class VirtualBLAS {
 
     /// Worker: the cut for every instance whose cut could have changed (in parallel, in ranges of groups), then a new
     /// BLAS for each instance whose cut did change (in parallel), after asking the OS to read their pages ahead.
-    private func cut(camPos: SIMD3<Float>, pixelScale: Float, tau: Float, transforms: [float4x4]) {
+    private func cut(camPos: SIMD3<Float>, pixelScale: Float, tau: Float, wait: Wait?, transforms: [float4x4]) {
         let start = CFAbsoluteTimeGetCurrent()
+        lock.lock()
+        if recutAll { lastCut = Array(repeating: nil, count: instances.count) }
+        recutAll = false
+        lock.unlock()
         // An instance with the same transform and error settings, whose camera hasn't moved as far as its slack, keeps
         // its cut (0.99: margin for rounding).
         let todo = instances.indices.filter { k in
@@ -276,13 +435,16 @@ final class VirtualBLAS {
                     i += 1
                 }
                 lastCut[k] = CutInput(transform: transforms[k], camPos: camPos, pixelScale: pixelScale, tau: tau, slack: slack)
+                lock.lock()
+                workerStats[k].slack = slack
+                lock.unlock()
                 if sel == workerSelection[k] {
                     waited[k] = 0
                 } else {
                     let mesh = meshes[instances[k].mesh]
                     let triangles = sel.reduce(0) { $0 + Int(mesh.clusters[Int($1)].triangles) }
                     if VirtualBLAS.buildsNow(changed: VirtualBLAS.changedTriangles(mesh: mesh, from: workerSelection[k], to: sel),
-                                             triangles: triangles, waited: waited[k]) {
+                                             triangles: triangles, waited: waited[k], wait: wait) {
                         changed.append((k, sel))
                         workerSelection[k] = sel
                         waited[k] = 0
@@ -291,6 +453,9 @@ final class VirtualBLAS {
                         lastCut[k] = nil   // looked at again next pass, or a camera now at rest would never build it
                     }
                 }
+                lock.lock()
+                workerStats[k].waited = waited[k]
+                lock.unlock()
             }
         }
         let cutMs = (CFAbsoluteTimeGetCurrent() - start) * 1000
@@ -301,8 +466,26 @@ final class VirtualBLAS {
         guard !changed.isEmpty else { return }
 
         prefetch(changed)
+        let faultsBefore = VirtualBLAS.majorFaults()
         let results = build(changed)
+        let faults = VirtualBLAS.majorFaults() - faultsBefore
         lock.lock()
+        for (j, r) in results.enumerated() {
+            let k = r.index, mesh = meshes[instances[k].mesh]
+            var lo = Int.max, hi = 0
+            for ci in r.built.selection {
+                let level = Int(mesh.groups[Int(mesh.clusters[Int(ci)].group)].level)
+                lo = min(lo, level)
+                hi = max(hi, level)
+            }
+            workerStats[k].clusters = r.built.selection.count
+            workerStats[k].triangles = Int(r.built.entry.triangles)
+            workerStats[k].minLevel = lo == .max ? 0 : lo
+            workerStats[k].maxLevel = hi
+            workerStats[k].rebuilds += 1
+            workerStats[k].gatherMs = gatherMs[j]
+            workerStats[k].faults = faults
+        }
         finished += results
         stats.rebuilds += changed.count
         stats.lastBuildMs = (CFAbsoluteTimeGetCurrent() - start) * 1000 - cutMs
@@ -313,13 +496,22 @@ final class VirtualBLAS {
     /// built over them in one command buffer and compacted, which this waits for (the worker's, or a benchmark's frame).
     private func build(_ changed: [(Int, [UInt32])]) -> [(index: Int, built: Built)] {
         var gathered = [Built](repeating: Built(), count: changed.count)
-        gathered.withUnsafeMutableBufferPointer { out in
-            DispatchQueue.concurrentPerform(iterations: changed.count) { j in
-                let (k, sel) = changed[j]
-                let g = gather(mesh: meshes[instances[k].mesh], selection: sel)
-                out[j] = Built(buffer: g.buffer, entry: g.entry, selection: sel)
+        var times = [Double](repeating: 0, count: changed.count)
+        times.withUnsafeMutableBufferPointer { ms in
+            gathered.withUnsafeMutableBufferPointer { out in
+                DispatchQueue.concurrentPerform(iterations: changed.count) { j in
+                    let t0 = CFAbsoluteTimeGetCurrent()
+                    let (k, sel) = changed[j]
+                    let m = instances[k].mesh
+                    var g = gather(mesh: meshes[m], selection: sel)
+                    g.entry.clusterInfo = clusterInfo[m]?.gpuAddress ?? 0
+                    g.entry.flags = watertight.contains(m) ? VirtualBLAS.flagWatertight : 0
+                    out[j] = Built(buffer: g.buffer, entry: g.entry, selection: sel)
+                    ms[j] = (CFAbsoluteTimeGetCurrent() - t0) * 1000
+                }
             }
         }
+        gatherMs = times
         // One structure per cut, built from a range of one scratch buffer each (the builds of an encoder may run side
         // by side).
         var jobs: [(j: Int, descriptor: MTLPrimitiveAccelerationStructureDescriptor, structure: MTLAccelerationStructure, scratch: Int)] = []

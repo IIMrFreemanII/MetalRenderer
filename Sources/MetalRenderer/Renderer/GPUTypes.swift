@@ -14,6 +14,22 @@ import simd
 // so every struct is built from 16-byte vectors/matrices plus groups of four 32-bit scalars.
 
 /// The reference path tracer's parameters (MSL PathTraceParams in Shaders/PathTrace.metal), passed with setBytes.
+/// What the virtual-geometry debug views measure against (MSL `VGDebugArgs`, Output.metal): the viewpoint the cut was
+/// chosen for (xyz) and its pixel scale (w), the allowed error, this frame, and the pixel the probe reads.
+struct GPUVGDebug {
+    var camPos = SIMD4<Float>()
+    var tau: Float = 1
+    var frame: UInt32 = 0
+    var probe = SIMD2<UInt32>()
+}
+
+/// What the probe pixel hit (MSL `VGProbe`): instance (~0: nothing virtual), cluster, group, level; own and parent
+/// projected error in pixels, the distance, back face (1).
+package struct GPUVGProbe {
+    package var ids = SIMD4<UInt32>(repeating: .max)
+    package var errors = SIMD4<Float>()
+}
+
 struct GPUPathTraceParams {
     var samples = SIMD4<UInt32>()   // x = paths in the mean so far, y = paths to add, z = bounces, w = light-tree nodes
     var config = SIMD4<UInt32>()    // x = flags (below), y = instances the light-proxy map covers, z = the average's seed
@@ -164,7 +180,10 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPURegirParams>.stride == 96, "GPURegirParams layout mismatch")
     precondition(MemoryLayout<GPURegirReservoir>.stride == 16, "GPURegirReservoir layout mismatch")
     precondition(MemoryLayout<VGCluster>.stride == 80, "VGCluster layout mismatch")
-    precondition(MemoryLayout<VirtualBLAS.Entry>.stride == 32, "VirtualBLAS.Entry (VGBlas) layout mismatch")
+    precondition(MemoryLayout<VirtualBLAS.Entry>.stride == 48, "VirtualBLAS.Entry (VGBlas) layout mismatch")
+    precondition(MemoryLayout<VirtualBLAS.ClusterInfo>.stride == 48, "VirtualBLAS.ClusterInfo (VGClusterInfo) layout mismatch")
+    precondition(MemoryLayout<GPUVGDebug>.stride == 32, "GPUVGDebug (VGDebugArgs) layout mismatch")
+    precondition(MemoryLayout<GPUVGProbe>.stride == 32, "GPUVGProbe (VGProbe) layout mismatch")
     precondition(MemoryLayout<GPUPhysicsBody>.stride == 128, "GPUPhysicsBody layout mismatch")
     precondition(MemoryLayout<GPUPhysicsShape>.stride == 64, "GPUPhysicsShape layout mismatch")
     precondition(MemoryLayout<GPUPhysicsPair>.stride == 16, "GPUPhysicsPair layout mismatch")

@@ -37,6 +37,8 @@ package final class Renderer: NSObject {
     package var shaderGeneration = 0                // shader reloads so far: a set built from an older one is stale
     package let pipelineCache = PipelineCache<Pipelines>()   // the sets for the light types of the scenes before (makePipelines)
     package var frozenLOD: (SIMD3<Float>, Float)?   // "Freeze LOD": camera position and pixel scale it was turned on at
+    package var vgDebugView: VGView?               // the viewpoint this frame's cut was chosen for (the VG debug views)
+    package var vgProbe: MTLBuffer?                // what the crosshair's pixel hit (GPUVGProbe), while a geometry view is on
     package var radianceCascades: RadianceCascades?   // created on first use of the radiance-cascades GI mode
     package var worldCache: WorldRadianceCache?        // ...and its world cache, while WorldCacheSettings.enabled
 

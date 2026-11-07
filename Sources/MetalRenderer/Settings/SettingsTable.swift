@@ -152,7 +152,7 @@ package struct SettingSpec {
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     package enum Custom {
-        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
+        case scene, bookmarks, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
     }
     /// The setting as text in an environment variable.
     package struct Env {
@@ -382,6 +382,7 @@ package enum SettingsTable {
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
+            S.custom(.bookmarks, "Bookmarks").when { !$0.scene.kind.definition.bookmarks.isEmpty },
             S.value(\.scene.showcase).env(.scene, "showcase"),
             // Scene sizes rebuild the scene, so they apply when the slider is released.
             S.slider("Lights", \.scene.lights, SceneSettings.lightRange, log: true, live: false)

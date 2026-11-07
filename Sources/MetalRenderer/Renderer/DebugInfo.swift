@@ -35,6 +35,7 @@ package struct DebugInfo {
     package var vg = VirtualGeometry.off
     package var vgPixelError: Float = 1
     package var vgFrozen = false
+    package var vgReport: VGReport?             // virtual geometry's per-instance numbers, history and probe
     package var lodFreezes = false              // Freeze LOD does something here (Renderer.lodFreezes)
     package var viewNote: String?               // why the view shown has nothing to show here (Renderer.viewNote)
     package var textures: (residentMB: Double, budgetMB: Int, levelsMapped: Int, uploadedMB: Double)?
@@ -42,7 +43,7 @@ package struct DebugInfo {
     package var traversal: (stats: TraversalStats, frames: Int)?
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(stats: String = "", cpuMs: Double = 0.0, encodeMs: Double = 0.0, sceneTitle: String = "", instances: Int = 0, virtualInstances: Int = 0, triangles: Int = 0, analyticLights: Int = 0, meshLights: Int = 0, suns: Int = 0, lightTable: Bool = false, lightTableEntries: Int = 0, directMode: String = "", giMode: String = "", vg: VirtualGeometry = VirtualGeometry.off, vgPixelError: Float = 1, vgFrozen: Bool = false, lodFreezes: Bool = false, viewNote: String? = nil, textures: (residentMB: Double, budgetMB: Int, levelsMapped: Int, uploadedMB: Double)? = nil, allocatedMB: Double = 0.0, workingSetMB: Double = 0.0, traversal: (stats: TraversalStats, frames: Int)? = nil) {
+    package init(stats: String = "", cpuMs: Double = 0.0, encodeMs: Double = 0.0, sceneTitle: String = "", instances: Int = 0, virtualInstances: Int = 0, triangles: Int = 0, analyticLights: Int = 0, meshLights: Int = 0, suns: Int = 0, lightTable: Bool = false, lightTableEntries: Int = 0, directMode: String = "", giMode: String = "", vg: VirtualGeometry = VirtualGeometry.off, vgPixelError: Float = 1, vgFrozen: Bool = false, lodFreezes: Bool = false, vgReport: VGReport? = nil, viewNote: String? = nil, textures: (residentMB: Double, budgetMB: Int, levelsMapped: Int, uploadedMB: Double)? = nil, allocatedMB: Double = 0.0, workingSetMB: Double = 0.0, traversal: (stats: TraversalStats, frames: Int)? = nil) {
         self.stats = stats
         self.cpuMs = cpuMs
         self.encodeMs = encodeMs
@@ -61,6 +62,7 @@ package struct DebugInfo {
         self.vgPixelError = vgPixelError
         self.vgFrozen = vgFrozen
         self.lodFreezes = lodFreezes
+        self.vgReport = vgReport
         self.viewNote = viewNote
         self.textures = textures
         self.allocatedMB = allocatedMB

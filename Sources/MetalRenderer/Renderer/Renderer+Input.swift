@@ -65,10 +65,9 @@ extension Renderer {
         case "-": settings.renderScale = max(RenderSettings.renderScaleRange.lowerBound, settings.renderScale - RenderSettings.renderScaleStep)
         case "=", "+": settings.renderScale = min(RenderSettings.renderScaleRange.upperBound, settings.renderScale + RenderSettings.renderScaleStep)
         case "1", "2", "3", "4", "5", "6", "7", "8": settings.viewMode = Int(key)! - 1
-        case "9":   // cycle the geometry debug views
-            let views = RenderSettings.geometryViews
-            settings.viewMode = views.contains(settings.viewMode) && settings.viewMode < views.upperBound
-                ? settings.viewMode + 1 : views.lowerBound
+        case "9":   // cycle the geometry debug views, then virtual geometry's
+            let views = Array(RenderSettings.geometryViews) + Array(RenderSettings.vgViews)
+            settings.viewMode = views.firstIndex(of: settings.viewMode).map { views[($0 + 1) % views.count] } ?? views[0]
         case "0": settings.viewMode = 0
         case "l": settings.virtualGeometry.freeze.toggle()
         case "t":   // Reference: off, accumulated passes, path traced

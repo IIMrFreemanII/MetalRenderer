@@ -27,7 +27,8 @@ package final class VirtualTracing {
         let virtual = scene.instances.indices.filter { scene.instances[$0].virtualMesh >= 0 }
         let pairs = virtual.map { ($0, scene.instances[$0].virtualMesh) }
         virtualInstances = virtual
-        blas = try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: pairs, slots: slots)
+        blas = try VirtualBLAS(device: device, meshes: scene.virtualMeshes, instances: pairs, slots: slots,
+                               names: scene.virtualMeshNames, watertight: scene.watertightVirtualMeshes)
         written = [Int](repeating: -1, count: slots)
         // One inactive triangle (NaN), for the descriptors that point at nothing yet. (Not one far away: its instance
         // would stretch the top-level structure to it, which hardware traversal pays for at every ray.)
@@ -75,7 +76,7 @@ package final class VirtualTracing {
     /// Render thread, before encoding `frame`: the next cut (VirtualBLAS swaps in the BLASes it has finished).
     func update(frame: UInt32, slot: Int, framesInFlight: Int, view: VGView, scene: Scene) {
         blas.update(frame: frame, slot: slot, framesInFlight: framesInFlight, camPos: view.camPos, pixelScale: view.pixelScale,
-                    tau: view.tau, sceneInstances: scene.instances)
+                    tau: view.tau, wait: view.wait, sceneInstances: scene.instances)
     }
 
     /// Writes the virtual instances' descriptors into `slot`'s: true if the structures they name changed since the

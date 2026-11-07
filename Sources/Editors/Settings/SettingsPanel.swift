@@ -192,6 +192,32 @@ final class SettingsPanel: NSObject {
             }
             refreshers.append { kinds.selectItem(at: all.firstIndex(of: $0.scene.kind) ?? 0) }
             return [label(title), kinds]
+        case .bookmarks:   // the scene's named camera places, by group; choosing one moves the camera, and the popup stays blank
+            let menu = popup([]) { [unowned self] popup in
+                guard let name = popup.selectedItem?.representedObject as? String else { return }
+                self.renderer.goToBookmark(name)
+                popup.selectItem(at: -1)
+            }
+            var shown: [SceneBookmark] = []
+            refreshers.append { s in
+                let bookmarks = s.scene.kind.definition.bookmarks
+                if bookmarks != shown {
+                    shown = bookmarks
+                    menu.removeAllItems()
+                    var group: String?
+                    for b in bookmarks {
+                        if b.group != group {
+                            group = b.group
+                            menu.menu?.addItem(NSMenuItem.sectionHeader(title: b.group))
+                        }
+                        let item = NSMenuItem(title: b.name, action: nil, keyEquivalent: "")
+                        item.representedObject = b.name
+                        menu.menu?.addItem(item)
+                    }
+                    menu.selectItem(at: -1)
+                }
+            }
+            return [label(title), menu]
         case .showcaseModel:   // a model brings its look: its fog and lens
             let files = Scene.galleryFiles()
             let models = popup(files.map(Scene.showcaseName)) { [unowned self] popup in

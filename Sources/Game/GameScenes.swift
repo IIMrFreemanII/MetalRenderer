@@ -35,6 +35,7 @@ extension SceneKind {
     static let level = SceneKind("level")
     static let furnace = SceneKind("furnace")
     static let lobes = SceneKind("lobes")
+    static let vgLab = SceneKind("vglab")
     static let stress = SceneKind("stress")
     static let gallery = SceneKind("gallery")
     static let spots = SceneKind("spots")
@@ -359,6 +360,26 @@ extension GameScenes {
                 $0.realisticLook = true
                 $0.sky = sky { $0.coverage = 0.25; $0.cloudBase = 1400; $0.cloudThickness = 1200; $0.cloudScale = 3000 }
                 $0.camera = Scene.camera([0, 1.3, 1], pitch: -0.1)
+            },
+            // Virtual geometry's test scene: booths of known-answer shapes and the gallery's models (VGLab.swift).
+            scene(.vgLab, "VG lab", "buildVGLab", build: { $0.buildVGLab() }) {
+                $0.loadsModels = true   // virtual geometry on or off rebuilds it (full-detail meshes off)
+                $0.sky = sky { $0.coverage = 0.2; $0.cloudBase = 1400; $0.cloudThickness = 1000; $0.cloudScale = 3000 }
+                $0.bookmarks = VGLab.bookmarks()
+                $0.scope = { "vglab,objects=\($0.objects)" }
+                $0.detail = { "vglab: \($0.objects) instances in the field" }
+                if let start = $0.bookmarks.first, let (yaw, pitch) = SceneCommand.angles(from: start.position, to: start.lookAt) {
+                    $0.camera = Scene.camera(start.position, yaw: yaw, pitch: pitch)
+                }
+                // Along every booth's front, 6 m back, at head height.
+                $0.cameraMove = { p, _ in
+                    var start = Camera(), end = Camera()
+                    start.position = [VGLab.x(1), 1.8, 6]
+                    end.position = [VGLab.x(8), 1.8, 6]
+                    start.pitch = -0.08
+                    end.pitch = -0.08
+                    return Benchmark.glide(from: start, to: end, p)
+                }
             },
             scene(.level, "Default level", "buildDefaultLevel", build: { $0.buildDefaultLevel() }) {
                 $0.opensFirst = true
