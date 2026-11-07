@@ -407,6 +407,18 @@ struct CurveLevels {
     typedef intersector<curve_data, instancing> PlainIntersector;
     template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) { return true; }   // (no cards)
 };
+// HAIR_CURVES and OPACITY scenes: CurveLevels with the triangles' data in every query and the instances that cut holes
+// alpha-tested, as OpacityLevels. (CurveLevels alone let a cut-out in a scene with hair come out solid: the light lab's
+// booth 12, Nov 2026.)
+struct CurveOpacityLevels {
+    typedef intersection_query<triangle_data, curve_data, instancing> Closest;
+    typedef Closest Plain;
+    typedef intersector<triangle_data, curve_data, instancing> ClosestIntersector;
+    typedef ClosestIntersector PlainIntersector;
+    template <typename Q> static bool card(thread Q& q, SCENE_ACCEL sc) {
+        return rtOpacity(sc, q.get_candidate_instance_id(), q.get_candidate_primitive_id(), q.get_candidate_triangle_barycentric_coord());
+    }
+};
 #endif
 
 // The query's candidate box: marched as far as the nearest hit so far, `v`'s or the triangle the query
@@ -510,6 +522,7 @@ Hit intersectClosestCost(Ray r, uint mask, SCENE_ACCEL sc, thread uint& candidat
     uint2 n;
     Hit h;
 #if HAS_CURVES
+    if (HAIR_CURVES && OPACITY && !ASSEMBLIES) h = countedQuery<false, false, true, CurveOpacityLevels>(r, mask, sc, n); else
     if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, false, true, CurveLevels>(r, mask, sc, n); else
 #endif
     if (OPACITY && !ASSEMBLIES) h = countedQuery<false, false, false, OpacityLevels>(r, mask, sc, n); else
@@ -524,6 +537,7 @@ inline Hit countedHit(Ray r, uint mask, SCENE_ACCEL sc) {
     uint2 n;
     Hit h;
 #if HAS_CURVES
+    if (HAIR_CURVES && OPACITY && !ASSEMBLIES) h = countedQuery<false, ANY, true, CurveOpacityLevels>(r, mask, sc, n); else
     if (HAIR_CURVES && !ASSEMBLIES) h = countedQuery<false, ANY, true, CurveLevels>(r, mask, sc, n); else
 #endif
     if (OPACITY && !ASSEMBLIES) h = countedQuery<false, ANY, false, OpacityLevels>(r, mask, sc, n); else
@@ -566,6 +580,7 @@ Hit intersectClosest(Ray r, uint mask, SCENE_ACCEL sc) {
     return countedHit<false>(r, mask, sc);
 #endif
 #if HAS_CURVES
+    if (HAIR_CURVES && OPACITY && !ASSEMBLIES) return closestHit<false, true, CurveOpacityLevels>(r, mask, sc);
     if (HAIR_CURVES && !ASSEMBLIES) return closestHit<false, true, CurveLevels>(r, mask, sc);
 #endif
     if (OPACITY && !ASSEMBLIES) return closestHit<false, false, OpacityLevels>(r, mask, sc);
@@ -597,6 +612,7 @@ float intersectDistance(Ray r, uint mask, SCENE_ACCEL sc) {
     return h.hit ? h.distance : INFINITY;
 #endif
 #if HAS_CURVES
+    if (HAIR_CURVES && OPACITY && !ASSEMBLIES) return closestDistance<false, true, CurveOpacityLevels>(r, mask, sc);
     if (HAIR_CURVES && !ASSEMBLIES) return closestDistance<false, true, CurveLevels>(r, mask, sc);
 #endif
     if (OPACITY && !ASSEMBLIES) return closestDistance<false, false, OpacityLevels>(r, mask, sc);
@@ -637,6 +653,7 @@ bool intersectAny(Ray r, uint mask, SCENE_ACCEL sc, thread float& t) {
     return h.hit;
 #endif
 #if HAS_CURVES
+    if (HAIR_CURVES && OPACITY && !ASSEMBLIES) return anyHit<false, true, CurveOpacityLevels>(r, mask, sc, t);
     if (HAIR_CURVES && !ASSEMBLIES) return anyHit<false, true, CurveLevels>(r, mask, sc, t);
 #endif
     if (OPACITY && !ASSEMBLIES) return anyHit<false, false, OpacityLevels>(r, mask, sc, t);

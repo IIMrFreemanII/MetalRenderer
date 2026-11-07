@@ -36,7 +36,7 @@ package struct SceneKind: Hashable, Codable, CustomStringConvertible {
     package static let numbered = ["cornell", "stress", "gallery", "spots", "sun", "area", "tubes", "emissive", "mixed", "fog", "valley",
                            "market", "forest", "crowd", "city", "cityNight", "world", "showcase", "shapes", "physics", "ragdolls",
                            "hair", "softBodies", "muscles", "fluids", "particles", "plants", "buildings", "characters", "vfxStage",
-                           "materials", "mireland", "painter", "terrain", "destruction", "demolition", "stage"]
+                           "materials", "mireland", "painter", "terrain", "destruction", "demolition", "stage", "lightLab"]
 
     package init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
@@ -67,6 +67,22 @@ package struct SceneKind: Hashable, Codable, CustomStringConvertible {
     package var hasPlants: Bool { definition.hasPlants }
     package var hasForest: Bool { definition.hasForest }
     package var hasRealisticLook: Bool { definition.realisticLook || hasPlants }
+}
+
+/// A named camera place in a scene: the settings panel lists them, `SceneCommand.bookmark` and the benchmarks go to them.
+package struct SceneBookmark: Equatable {
+    package var name: String
+    /// The panel's section it is listed under.
+    package var group: String
+    package var position: SIMD3<Float>
+    package var lookAt: SIMD3<Float>
+
+    package init(name: String, group: String, position: SIMD3<Float>, lookAt: SIMD3<Float>) {
+        self.name = name
+        self.group = group
+        self.position = position
+        self.lookAt = lookAt
+    }
 }
 
 /// Scenes the editors open to show their work in a world: the building editor's city, the plant editor's forest, the
@@ -165,6 +181,10 @@ package final class SceneDefinition {
     package var scope: ((SceneSettings) -> String)? = nil
     /// Its gameplay (SceneBehaviour), made with the scene once it is built.
     package var behaviour: ((Scene) -> SceneBehaviour)? = nil
+    /// It is the light lab: `SceneSettings.lightLab` (its variant and motion) shapes it.
+    package var hasLightLab = false
+    /// Its named camera places (the settings panel's Bookmarks popup, `go_to_bookmark`, `Config.at`).
+    package var bookmarks: [SceneBookmark] = []
     /// What the benchmark's table adds to its name (the stress test's counts).
     package var detail: ((SceneSettings) -> String)? = nil
 
@@ -174,6 +194,17 @@ package final class SceneDefinition {
         self.builder = builder
         self.envName = envName ?? kind.name.lowercased()
         self.build = build
+    }
+
+    /// The bookmark `query` names: its exact name (any case), else its leading number ("7" is "07 Spot cones"), else a
+    /// prefix of its name, else a part of it.
+    package static func resolve(_ query: String, in bookmarks: [SceneBookmark]) -> SceneBookmark? {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return nil }
+        if let b = bookmarks.first(where: { $0.name.lowercased() == q }) { return b }
+        if let n = Int(q), let b = bookmarks.first(where: { Int($0.name.prefix(while: \.isNumber)) == n && $0.name.first?.isNumber == true }) { return b }
+        if let b = bookmarks.first(where: { $0.name.lowercased().hasPrefix(q) }) { return b }
+        return bookmarks.first { $0.name.lowercased().contains(q) }
     }
 
     /// The fog and sky presets read as they are set: `fog.enabled = true; fog.density = …`.

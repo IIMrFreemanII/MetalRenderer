@@ -192,6 +192,32 @@ final class SettingsPanel: NSObject {
             }
             refreshers.append { kinds.selectItem(at: all.firstIndex(of: $0.scene.kind) ?? 0) }
             return [label(title), kinds]
+        case .bookmarks:   // the scene's named camera places, by group; choosing one moves the camera, and the popup stays blank
+            let menu = popup([]) { [unowned self] popup in
+                guard let name = popup.selectedItem?.representedObject as? String else { return }
+                self.renderer.goToBookmark(name)
+                popup.selectItem(at: -1)
+            }
+            var shown: [SceneBookmark] = []
+            refreshers.append { s in
+                let bookmarks = s.scene.kind.definition.bookmarks
+                if bookmarks != shown {
+                    shown = bookmarks
+                    menu.removeAllItems()
+                    var group: String?
+                    for b in bookmarks {
+                        if b.group != group {
+                            group = b.group
+                            menu.menu?.addItem(NSMenuItem.sectionHeader(title: b.group))
+                        }
+                        let item = NSMenuItem(title: b.name, action: nil, keyEquivalent: "")
+                        item.representedObject = b.name
+                        menu.menu?.addItem(item)
+                    }
+                    menu.selectItem(at: -1)
+                }
+            }
+            return [label(title), menu]
         case .showcaseModel:   // a model brings its look: its fog and lens
             let files = Scene.galleryFiles()
             let models = popup(files.map(Scene.showcaseName)) { [unowned self] popup in
@@ -209,19 +235,6 @@ final class SettingsPanel: NSObject {
             let button = NSButton(title: "Clear Added Models", target: nil, action: nil)
             onChange(button) { [unowned self] in self.renderer.update { $0.scene.extraModels = [] } }
             return [NSGridCell.emptyContentView, button]
-        case .lightRays:   // shadow rays per light group and whether one ray's picks are reused: two settings
-            let rays = popup(["1 per group (fastest)", "1 per group + reuse", "2 per group (least noise)"]) { [unowned self] popup in
-                let choice = popup.indexOfSelectedItem, reuse = self.renderer.defaultSettings.manyLightReuse
-                self.renderer.update {
-                    $0.manyLightRays = choice == 2 ? 2 : 1
-                    $0.manyLightReuse = choice == 1 ? reuse : 0
-                }
-            }
-            refreshers.append { s in
-                rays.selectItem(at: s.manyLightRays >= 2 ? 2 : s.manyLightReuse > 0 ? 1 : 0)
-                rays.isEnabled = s.scene.lights > 4
-            }
-            return [label(title), rays]
         case .upscale:   // the factors this GPU's MetalFX supports
             let steps = upscaleSteps
             let factor = popup(steps.map { $0 == 0 ? "Off" : String(format: "%g×", $0) }) { [unowned self] popup in
@@ -412,20 +425,16 @@ final class SettingsPanel: NSObject {
         } else if !s.denoiser.enabled {
             text = "Off: the composite shows the raw samples."
         } else {
-            let sampled = renderer.status?.directMode == .sampled
-            let shadow = s.denoiser.shadowDenoiser && !sampled
-            var generic: [String] = [], own: [String] = []
-            let combined = s.giEnabled && s.giMode == .pathTraced && !s.denoiser.separateSignals && !shadow
-            if shadow { own.append("direct light: the shadow denoiser") }
-            else { generic.append(combined ? "direct + indirect light, combined" : "direct light") }
+            var generic: [String] = []
+            let combined = s.giEnabled && s.giMode == .pathTraced && !s.denoiser.separateSignals
+            generic.append(combined ? "direct + indirect light, combined" : "direct light")
             if s.giEnabled {
                 switch s.giMode {
                 case .pathTraced: if !combined { generic.append("indirect light") }
                 case .radianceCascades: if s.cascades.denoiseIndirect { generic.append("cascade GI (1 pass)") }
                 }
             }
-            var lines = ["Passes, σ, history and anti-lag filter: " + (generic.isEmpty ? "nothing in this mode." : generic.joined(separator: ", ") + ".")]
-            if !own.isEmpty { lines.append("Own filters: " + own.joined(separator: "; ") + ".") }
+            let lines = ["Passes, σ, history and anti-lag filter: " + (generic.isEmpty ? "nothing in this mode." : generic.joined(separator: ", ") + ".")]
             text = lines.joined(separator: "\n")
         }
         if denoiserCaption.stringValue != text {

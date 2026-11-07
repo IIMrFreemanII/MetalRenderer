@@ -122,6 +122,27 @@ final class ScriptingTests: XCTestCase {
         }
     }
 
+    func testBookmarksResolveAndDecode() throws {
+        let marks = ["01 Point lights", "07 Spot cones", "12 Spot shadows", "Yard"].map {
+            SceneBookmark(name: $0, group: "g", position: [0, 1, 2], lookAt: [0, 1, 0])
+        }
+        func name(_ q: String) -> String? { SceneDefinition.resolve(q, in: marks)?.name }
+        XCTAssertEqual(name("7"), "07 Spot cones")
+        XCTAssertEqual(name("07"), "07 Spot cones")
+        XCTAssertEqual(name("12"), "12 Spot shadows")
+        XCTAssertEqual(name("1"), "01 Point lights")
+        XCTAssertEqual(name("07 spot CONES"), "07 Spot cones")
+        XCTAssertEqual(name("yar"), "Yard")
+        XCTAssertEqual(name("shadows"), "12 Spot shadows")
+        XCTAssertNil(name("99"))
+        XCTAssertNil(name(""))
+        guard case .success(.bookmark(let n))? = SceneCommand.decode(["bookmark": ["name": "7"]]) else { return XCTFail("bookmark") }
+        XCTAssertEqual(n, "7")
+        guard case .success(.bookmark(let m))? = SceneCommand.decode(["bookmark": "yard"]) else { return XCTFail("bare bookmark") }
+        XCTAssertEqual(m, "yard")
+        guard case .failure? = SceneCommand.decode(["bookmark": [:]]) else { return XCTFail("a bookmark needs a name") }
+    }
+
     func testCameraAnglesLookAtTheTarget() throws {
         let eye = SIMD3<Float>(3, 4, 5), target = SIMD3<Float>(-1, 0.5, 2)
         let (yaw, pitch) = try XCTUnwrap(SceneCommand.angles(from: eye, to: target))

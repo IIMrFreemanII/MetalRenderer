@@ -98,8 +98,7 @@ extension Renderer {
 
         // The stages, in the order their results land in the composite's inputs (each denoiser replaces what the one
         // before it set).
-        var composite = CompositeInputs(uniforms: plan.uniforms, illumination: [t.denoise[0].pingA], specular: t.specular,
-                                        meshDirect: t.meshDirect)
+        var composite = CompositeInputs(uniforms: plan.uniforms, illumination: [t.denoise[0].pingA], specular: t.specular)
         var stages = FrameStages()
         if plan.pathTrace != nil {
             // Reference "Path traced": one kernel makes the whole picture.
@@ -111,8 +110,7 @@ extension Renderer {
             (stages.reflections, stages.reflectionDenoise) = reflectionStages(plan, targets: t, composite: &composite)
             stages.reflections = contactAOStages(plan, targets: t) + stages.reflections
             stages.sampledLights = sampledDirectStages(plan, targets: t)
-            stages.denoise = sampledLightStages(plan, targets: t)
-            stages.denoise += shadowDenoiseStages(plan, targets: t, composite: &composite)
+            stages.denoise = referenceMeshLightStages(plan, targets: t)
             stages.denoise += accumulateStages(plan, targets: t, composite: &composite)
             stages.denoise += svgfStages(plan, targets: t, composite: &composite)
             stages.fog = fogStages(plan, targets: t, composite: &composite)
@@ -427,6 +425,7 @@ extension Renderer {
         var giMode = GIMode.pathTraced
         var cascades = false                    // radiance-cascade GI runs
         var sampledLights = false               // sampled direct light lights the scene, as above
+        var megaLights = false                  // ...by MegaLights (tile lists and the light tree) in place of sampledLightsKernel
         var sampledSpecular: MTLTexture?
         var sampledSettings = SampledLightSettings()   // references: more candidates and rays
         var lightGrid: (params: GPURegirParams, buffer: MTLBuffer)?   // the light grid (ReGIR), rebuilt this frame
@@ -439,20 +438,14 @@ extension Renderer {
         var liquid: LiquidTargets?              // camera rays bent through liquids (liquidKernel), before the trace
         var water = false                       // ...and into water (waterKernel; in the liquids' targets)
         var particles: (color: MTLTexture, depth: MTLTexture)?   // the particles' layer over the scene (particleLayerKernel)
-        var manyLights = false                  // more than 4 lights: one sampled light per group...
-        var manyLightRays = 1                   // ...with this many shadow rays a group...
-        var lightReuse = false                  // ...whose picks are kept for the next frame...
-        var lightPicksValid = false             // ...and the last frame's are there to reuse
-        var meshLights = false                  // emissive-mesh lights, sampled per pixel
+        var meshLights = false                  // references: the emissive-mesh lights' direct light (meshLightsKernel)
 
         // Denoisers
         var history = false                     // the last frame left denoiser history
         var svgf = false                        // the denoiser is on (never for references)
         var neuralDenoise = false               // MetalFX's denoising scaler denoises instead, as it upscales
-        var shadowDenoiser = false             // direct light's visibility goes through its own filter
         var separate = false                    // direct and indirect light are separate signals
         var denoiseIndirect = false
-        var denoiseMeshLights = false           // mesh lights' direct light is an SVGF signal of its own
         var directPasses = 0, indirectPasses = 0
         var accumulation: (direct: MTLTexture, indirect: MTLTexture, specular: MTLTexture)?   // references
         var accumCount: UInt32 = 0              // frames averaged so far
@@ -502,7 +495,8 @@ extension Renderer {
         p.accumulating = accumulating
         p.giMode = activeGIMode
         let directMode = activeDirectMode
-        p.sampledLights = directMode == .sampled
+        p.megaLights = directMode == .megalights
+        p.sampledLights = directMode == .sampled || p.megaLights
         p.specular = usesSpecular
         p.glass = scene.hasGlass
         if scene.hasLiquid || scene.hasWater { p.liquid = liquidTargets(width: width, height: height) }
@@ -533,6 +527,12 @@ extension Renderer {
         u.jitter = SIMD4<Float>(lowHalf: p.jitter, highHalf: prevJitter)
         if size.upscaling { u.flags |= UniformFlags.upscale }
         if neuralDenoise { u.flags |= UniformFlags.hdrOutput }
+        // MetalFX's diffuse guide takes the suns' shadows from MegaLights, which traces each sun once (sunShadowGuide).
+        if neuralDenoise && p.megaLights { u.flags |= UniformFlags.sunVisibility }
+        // The light tiles and picked-light views: written by Sampled or MegaLights into the debug texture.
+        if p.sampledLights && (RenderSettings.lightViews.lowerBound...RenderSettings.lightViews.lowerBound + 1).contains(settings.viewMode) {
+            u.flags |= UniformFlags.lightDebug
+        }
         if settings.blueNoise && blueNoiseReady { u.flags |= UniformFlags.blueNoise }
         // (Before the reference's early return: the path tracer shades materials the same way.)
         if settings.energyConservation { u.flags |= UniformFlags.energy }
@@ -617,30 +617,14 @@ extension Renderer {
         p.neuralDenoise = neuralDenoise
         p.svgf = denoiserOn && !accumulating
         p.denoiseIndirect = settings.giEnabled && (!techniqueGI || techniqueDenoisesIndirect)
-        //   With the shadow denoiser (default), direct light goes through its own visibility filter instead,
-        //   and SVGF handles only indirect light.
-        //   Sampled direct light is radiance, not per-group visibility: SVGF filters it (no loop over the lights).
-        let shadowDenoiserOn = p.svgf && settings.denoiser.shadowDenoiser && Renderer.shadowDenoiserAllowed
-        p.shadowDenoiser = shadowDenoiserOn && !p.sampledLights
-        //   Every kernel of the frame is told, not only the composite: with the shadow denoiser the composite adds the
-        //   analytic lights' direct specular (exact GGX x visibility), so the reflection pass must not add its own sample.
-        if p.shadowDenoiser { p.uniforms.flags |= UniformFlags.shadowDenoiser }
-        p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled || p.shadowDenoiser
+        //   Direct light (sampled or MegaLights') is radiance: SVGF filters it with the rest.
+        p.separate = settings.denoiser.separateSignals || techniqueGI || !settings.giEnabled
         let passCount = settings.denoiser.passes(for: p.giMode)
         p.directPasses = passCount
         p.indirectPasses = techniqueGI ? 1 : passCount
-        // Emissive-mesh lights' direct light: sampled per pixel, so noisy. With the shadow denoiser it's an SVGF signal
-        // of its own; otherwise it joins the direct light. (Sampled lights sample their triangles themselves.)
+        // References trace every light: the emissive-mesh lights' direct light then comes from a pass of its own, added
+        // to the direct light. (Sampled lights and MegaLights sample their triangles themselves.)
         p.meshLights = !scene.meshLights.isEmpty && !p.sampledLights
-        p.denoiseMeshLights = p.meshLights && p.shadowDenoiser
-
-        // More than 4 lights: direct light from one sampled light per group (manyLightsKernel).
-        p.manyLights = scene.lightGroupEnd[3] > 4 && u.flags & UniformFlags.allLights == 0 && !p.sampledLights
-        // Rooms to walk into: two rays a group. A big room under many ceiling lights (an open office) speckles with
-        // one, even with its picks reused; two cost ~0.4 ms there.
-        p.manyLightRays = settings.manyLightRays == 1 && scene.interiorBox != nil ? 2 : settings.manyLightRays
-        p.lightReuse = p.manyLights && settings.manyLightReuse > 0 && p.manyLightRays == 1
-        p.lightPicksValid = p.lightReuse && reservoirsWritten && historyValid
 
         // Sampled direct light. References with many lights accumulate it with more candidates and rays.
         p.sampledSettings = settings.sampledLights
@@ -700,7 +684,6 @@ extension Renderer {
 
     /// What the frame leaves for the next one's temporal reuse. Set here, in one place, once the frame is committed.
     private func finishFrame(_ plan: FramePlan) {
-        reservoirsWritten = plan.lightReuse
         if plan.accumulation != nil && !plan.accumFull && !plan.provisional { accumCount += 1 }
         if let pt = plan.pathTrace, !plan.provisional { pathTraceCount += pt.params.samples.y }
         if plan.fog != nil && plan.fogReference == nil {   // the froxel grid was written

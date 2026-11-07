@@ -200,6 +200,9 @@ final class RendererController: InputHandler {
     }
 
     /// Turns the traversal counters on or off: that recompiles the shaders, in the background; `done` when ready.
+    /// The camera at the scene's bookmark `name` (SceneCommand.bookmark: by name, number or prefix).
+    func goToBookmark(_ name: String) { renderer.perform { _ = SceneCommand.bookmark(name: name).apply(to: $0) } }
+
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
 

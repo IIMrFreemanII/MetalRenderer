@@ -246,6 +246,9 @@ package final class Renderer: NSObject {
     package var lightTreeRefitFrame: UInt32 = 0
     package var lightTreeBuffers: [MTLBuffer?] = [MTLBuffer?](repeating: nil, count: Renderer.maxFramesInFlight)
     package var lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)   // what each slot's holds
+    package var megaLightsTileLists: MTLBuffer?     // MegaLights' tile lists (GPU only), for the size and capacity they were made for
+    package var megaLightsGuides: [MTLBuffer] = []  // its visible-light hashes: this frame's and last frame's, by frame parity
+    package var megaLightsLast: MegaLightsHistory?  // what the frame before wrote them for (nil: nothing yet)
     package var instanceAS: [MTLAccelerationStructure] {
         sceneBuffers.voxelLOD.map { [MTLAccelerationStructure](repeating: $0.current, count: Renderer.maxFramesInFlight) }
             ?? sceneBuffers.instanceStructures
@@ -383,11 +386,10 @@ package final class Renderer: NSObject {
     /// Upscale factors this GPU supports (for MetalFX's denoising scaler), with 0 meaning off.
     package var upscaleSteps: [CGFloat] { upscaleSupported ? [0, 1.5, 2, 3].filter { $0 <= maxUpscale } : [0] }
     package var historyValid = false
-    /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF and the shadow denoiser stay off.
+    /// MetalFX's denoising scaler is this frame's upscaler: it denoises, so SVGF stays off.
     package var neuralDenoise: Bool { upscaler != nil }
-    /// This project's denoisers (SVGF, the shadow denoiser) are on.
+    /// This project's denoiser (SVGF) is on.
     package var denoiserOn: Bool { settings.denoiser.enabled && !neuralDenoise }
-    package var reservoirsWritten = false       // last frame's manyLightsKernel stored light picks (light reuse)
     package var heldKeys = Set<String>()
     /// Every key down now, whatever took it (releaseKeys lets them all go).
     package var downKeys = Set<String>()

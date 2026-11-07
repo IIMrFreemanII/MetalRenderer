@@ -2,8 +2,8 @@
 // 2d. Reflections (specular materials only): one GGX visible-normal ray per pixel for the indirect specular light,
 //     divided by the specular albedo so the denoiser filters a smooth signal (the composite multiplies it back).
 //     Hits are lit by one light sample (one shadow ray) plus this frame's diffuse GI where the hit is on screen
-//     (elsewhere a dim sky ambient, or indoors the radiance cascades' mean probe light); references (FLAG_REFERENCE) follow full paths instead. Without the shadow
-//     denoiser, which otherwise adds direct specular analytically, one sampled light's direct specular is added.
+//     (elsewhere a dim sky ambient, or indoors the radiance cascades' mean probe light); references (FLAG_REFERENCE) follow full paths instead. The
+//     direct specular is the sampled lights' or MegaLights' (sampledSpecular); references sample one light's here.
 //     Rougher than REFLECTION_MAX_ROUGHNESS: no ray, the composite uses the diffuse GI. A leaf: no ray either, the GI
 //     here instead (it is glossy for its highlights only).
 // ---------------------------------------------------------------------------------------------
@@ -11,10 +11,9 @@
 constant float REFLECTION_SKY_REACH = 200.0f;   // m: how far a hit off screen looks for what hides the sky
 
 // Light arriving along a reflection ray that hit `h`: emission, one light sample and the diffuse GI (see above).
-// `emittersSampled`: the mesh lights' own light comes from reflectionMeshLight, not from the ray meeting them.
 float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, Surface h, float3 dir,
                              thread Sampler& rng, texture2d<float, access::read> normalDepth,
-                             texture2d<float, access::read> indirect, constant uint* roomAmbient, bool emittersSampled) {
+                             texture2d<float, access::read> indirect, constant uint* roomAmbient) {
     if (!h.hit) return skyRadiance(u, s, dir, 0.0f);
     float3 L = float3(0.0f), throughput = float3(1.0f);
     bool reference = flagOn(u.flags, FLAG_REFERENCE);
@@ -24,7 +23,7 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         orientNormals(h, dir, hng, hn);
         float3 hp = h.position + hng * RAY_EPSILON;
         float3 albedo = hitAlbedo(h, flagOn(u.flags, FLAG_ENERGY));
-        L += throughput * (b == 0 && !emittersSampled ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
+        L += throughput * (b == 0 ? h.emission : giEmission(h));   // the reflection ray itself sees emitters
         if (LIGHT_TABLE) {
             Rng r;
             r.state = pcgHash(as_type<uint>(rng.next()) + b * 977u);
@@ -65,57 +64,6 @@ float3 reflectionHitRadiance(constant Uniforms& u, SCENE_ACCEL accel, thread con
         dir = d;
         if (!h.hit) return L + throughput * skyRadiance(u, s, dir, 2.0f);
     }
-}
-
-// Glossy surfaces (from this roughness to REFLECTION_MAX_ROUGHNESS) take the emissive-mesh lights' highlights from a
-// point sampled on one of them (reflectionMeshLight), not from the reflection ray happening to meet them: at roughness
-// 0.3 few of a steel ball's rays met the Emissive scene's small spinning cubes, and their highlights changed shape
-// every frame (MetalFX can't settle what moves). Smoother surfaces keep the ray: their lobe is narrower than a light.
-constant float REFLECTION_MESH_LIGHT_ROUGHNESS = 0.15f;
-
-// A mesh light's share of the pick at p: its proxy's light (meshLightUnshadowed) x the GGX lobe toward its centre,
-// widened by its angular size and renormalised (a sphere light's, Karis 2013). Positive wherever the light reaches p.
-inline float meshLightSpecularWeight(Light light, float3 p, float3 n, float3 ng, float3 v, float a) {
-    float3 unshadowed = meshLightUnshadowed(light, p, n, ng);
-    if (all(unshadowed <= 0.0f)) return 0.0f;
-    float3 toL = light.positionRadius.xyz - p;
-    float d = max(length(toL), 1e-6f);
-    float aw = saturate(a + 0.5f * light.positionRadius.w / d);
-    float3 h = normalize(toL / d + v);
-    return luminance(unshadowed) * ggxD(saturate(dot(n, h)), max(aw, 1e-3f)) * (a * a) / max(aw * aw, 1e-6f) + 1e-6f;
-}
-
-// The emissive-mesh lights' direct specular at p: one light picked by meshLightSpecularWeight, one point of it by
-// power, its GGX light with one shadow ray, dimmed by the fog on the way when the reflections are fogged. (Lights after
-// lightGroupEnd.w, at most LIGHT_CANDIDATES of them: the caller checks.)
-float3 reflectionMeshLight(constant Uniforms& u, SCENE_ACCEL accel, thread const SceneData& s, constant FogParams& fog,
-                           bool fogged, float3 p, float3 n, float3 ng, float3 v, float3 f0, float f90, float a,
-                           float uPick, float2 r) {
-    uint first = u.lightGroupEnd.w, count = u.lightCount - first;
-    StreamPick pick = streamPick(uPick);
-    uint picked = count;
-    float pickedWeight = 0.0f;
-    for (uint i = 0; i < count; ++i) {
-        float w = meshLightSpecularWeight(s.lights[first + i], p, n, ng, v, a);
-        if (w > 0.0f && pick.offer(w)) { picked = i; pickedWeight = w; }
-    }
-    if (picked >= count) return float3(0.0f);
-    MeshLightPoint mp = sampleMeshLightPoint(s.lights[first + picked], r, s);
-    if (!mp.valid) return float3(0.0f);
-    float3 w = mp.x - p;
-    float d2 = max(dot(w, w), 1e-6f);
-    float3 l = w * rsqrt(d2);
-    float NoL = dot(n, l), NoV = max(dot(n, v), 1e-4f);
-    if (NoL <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
-    float cosL = abs(dot(mp.cr, l)) / mp.area2;   // emission is two-sided
-    float3 h = normalize(l + v);
-    float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
-    // Point pdf (area) = prob / area, the light's pick = weight / total.
-    float3 e = meshLightPointEmission(mp, s) * schlick(f0, f90, saturate(dot(v, h)))
-             * (brdf * NoL * cosL / d2 * (0.5f * mp.area2 / mp.prob) * (pick.total / pickedWeight));
-    if (all(e <= 0.0f) || !isVisible(p, p + w * 0.99f, accel)) return float3(0.0f);
-    if (fogged) e *= exp(-fogOpticalDepth(p, l, sqrt(d2), fog));
-    return e;
 }
 
 constant uint REFLECT_FOG = 1;   // reflectionKernel's own flag: the reflection rays are fogged (FOG_ENABLED and FOG_REFLECTIONS)
@@ -182,27 +130,18 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
     uint analyticLights = u.lightGroupEnd.w;   // mesh lights: the reflection ray sees them
     if (flagOn(u.flags, FLAG_SAMPLED_LIGHTS)) {
         direct += sampledSpecular.read(tid).rgb;   // sampledLightsKernel's direct specular
-    } else if (!flagOn(u.flags, FLAG_SHADOW_DENOISER) && analyticLights > 0) {
-        // Direct specular from one light, with one shadow ray to a random point of it.
+    } else if (flagOn(u.flags, FLAG_REFERENCE) && analyticLights > 0) {
+        // References (every light traced): direct specular from one light, with one shadow ray to a random point of it,
+        // with the lobes Sampled and MegaLights shade (evalLightSample): a brushed highlight's stretch and a cloth's
+        // sheen (MATERIAL_LOBES), which the composite lays over the rest as it does theirs.
+        float4 sheen = MATERIAL_LOBES ? sheenTex.read(tid) : float4(0.0f);
+        bool sheened = MATERIAL_LOBES && any(sheen.rgb > 0.0f);
         float pdf;
         float uPick = rng.next();
         float uSubset = analyticLights > LIGHT_CANDIDATES ? rng.next() : 0.0f;
         float2 r = rng.next2();
-        if (!flagOn(u.flags, FLAG_REFERENCE)) {
-            // The light is picked by its specular light here, and that analytic specular (what the composite adds
-            // with the shadow denoiser) x the ray's visibility is the sample: only the pick and the shadow are noisy.
-            float3 unshadowed;
-            uint li = pickLightSpecular(lights, analyticLights, p, n, ng, v, f0, roughness, uPick, uSubset, pdf, unshadowed);
-            if (li < analyticLights && isVisible(p, lightShadowTarget(lights[li], p, r), accel)) {
-                if (MATERIAL_LOBES) {   // (The pick is by the plain highlight's light; the sample is the lobes'.)
-                    if (anisotropy > 0.0f) unshadowed = lightSpecularLobe(lights[li], p, n, ng, v, f0, roughness, lobeTangent, anisotropy);
-                    float4 sheen = sheenTex.read(tid);
-                    if (any(sheen.rgb > 0.0f)) unshadowed += lightSheen(lights[li], p, n, ng, v, sheen);
-                }
-                direct += unshadowed * (sunVisibilityScale(lights[li], p, s) / pdf) * glassShadowTint(p, lightShadowTarget(lights[li], p, r), accel, s, u.flags);
-            }
-        } else {
-            // References: the light is picked by its diffuse light here; spheres and spots exactly, a uniform point
+        {
+            // The light is picked by its diffuse light here; spheres and spots exactly, a uniform point
             // on the sphere; other lights their analytic specular x the visibility of a random point of them.
             uint li = pickLight(lights, analyticLights, p, n, ng, uPick, uSubset, pdf);
             if (li < analyticLights) {
@@ -221,11 +160,21 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
                         if (type == LIGHT_SPOT) Le *= spotFactor(light, -l);
                         float3 h = normalize(l + v);
                         float3 F = schlick(f0, f90, dot(v, h));
-                        float brdf = ggxD(saturate(dot(n, h)), max(a, 1e-4f)) * smithVisibility(NoV, NoL, max(a, 1e-4f));
-                        direct += F * brdf * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
+                        float aa = max(a, 1e-4f), NoH = saturate(dot(n, h));
+                        float brdf = ggxD(NoH, aa) * smithVisibility(NoV, NoL, aa);
+                        if (MATERIAL_LOBES && anisotropy > 0.0f) {   // D x V of the stretched lobe (ggxFromDirection's)
+                            float3 b = cross(n, lobeTangent);
+                            brdf = ggxAnisotropic(float3(dot(v, lobeTangent), dot(v, b), NoV), float3(dot(l, lobeTangent), dot(l, b), NoL),
+                                                  float3(dot(h, lobeTangent), dot(h, b), NoH), anisotropicAlpha(aa, anisotropy), aa);
+                        }
+                        float3 f = F * brdf;
+                        if (sheened) f += sheen.rgb * sheenLobe(sheen.a, NoH, NoV, NoL);
+                        direct += f * Le * (NoL * cosX * 4.0f * M_PI_F * rad * rad / d2) / pdf;
                     }
                 } else if (isVisible(p, x, accel)) {
-                    direct += lightSpecular(light, p, n, ng, v, f0, roughness) * (sunVisibilityScale(light, p, s) / pdf);
+                    float3 e = lightSpecularLobe(light, p, n, ng, v, f0, roughness, lobeTangent, anisotropy);
+                    if (sheened) e += lightSheen(light, p, n, ng, v, sheen);
+                    direct += e * (sunVisibilityScale(light, p, s) / pdf);
                 }
             }
         }
@@ -246,16 +195,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             b = cross(n, t);
             at = anisotropicAlpha(a, anisotropy);
         }
-        // The mesh lights' highlights from a point of them (see REFLECTION_MESH_LIGHT_ROUGHNESS); the ray then skips them.
         bool fogged = (fog.counts.w & (FOG_ENABLED | FOG_REFLECTIONS)) == (FOG_ENABLED | FOG_REFLECTIONS);
-        uint meshLights = u.lightCount - analyticLights;
-        bool sampleEmitters = !flagOn(u.flags, FLAG_SAMPLED_LIGHTS) && !flagOn(u.flags, FLAG_REFERENCE) && anisotropy <= 0.0f
-                              && roughness >= REFLECTION_MESH_LIGHT_ROUGHNESS && meshLights > 0 && meshLights <= LIGHT_CANDIDATES;
-        if (sampleEmitters) {
-            float uPick = rng.next();
-            float2 r = rng.next2();
-            result += reflectionMeshLight(u, accel, s, fog, fogged, p, n, ng, v, f0, f90, a, uPick, r);
-        }
         float3 vt = float3(dot(v, t), dot(v, b), NoV);
         float3 hl = sampleGGXVNDF(vt, at, a, rng.next2());
         float3 h = t * hl.x + b * hl.y + n * hl.z;
@@ -277,7 +217,7 @@ kernel void reflectionKernel(constant Uniforms&               u          [[buffe
             // range would ask for the finest mips.
             Surface hit = traceSurface(makeRay(p, l, 0.0f, INFINITY), rayMask(MASK_GEOMETRY, RAY_SPECULAR), accel, s, spread);
             hitDistance = hit.hit ? length(hit.position - p) : REFLECTION_SKY_DISTANCE;
-            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient, sampleEmitters);
+            float3 radiance = reflectionHitRadiance(u, accel, s, hit, l, rng, normalDepth, indirect, roomAmbient);
             if (PARTICLES && (accel.particleFlags & PARTICLES_REFLECTED) != 0u) {   // the particles in front of what it reflects
                 float meanT;
                 float4 seen = particleGather<2>(p, l, hit.hit ? length(hit.position - p) : 1.0e5f, hit.hit, accel, meanT);

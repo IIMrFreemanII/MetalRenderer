@@ -76,13 +76,28 @@ extension GIMode: EnvNamed {
 }
 extension ToneMap: EnvNamed {}
 extension Realism: EnvNamed {}
-extension DirectLightMode: EnvNamed {}
+extension DirectLightMode: EnvNamed {
+    // Only the modes a setting can take: `exact` is for references, so `METALRENDERER_DIRECT=exact` is refused.
+    package init?(envText: String) {
+        guard let match = Self.choices.first(where: { $0.envName.lowercased() == envText.lowercased() }) else { return nil }
+        self = match
+    }
+}
 extension FrameInterpolation: EnvNamed {}
 extension SceneKind: EnvNamed {
     /// The scenes this build has (SceneRegistry).
     package static var allCases: [SceneKind] { SceneRegistry.kinds }
     // cityNight is read back without regard to case; the character workshop is `people` (`characters=` is the crowd's count).
     package var envName: String { definition.envName }
+}
+extension LightLabVariant: EnvNamed {
+    package var envName: String { "\(self)".lowercased() }
+    /// By name, or by number (0 normal ... 4 threeSuns).
+    package init?(envText: String) {
+        if let n = Int(envText), let v = LightLabVariant(rawValue: n) { self = v; return }
+        guard let match = Self.allCases.first(where: { $0.envName == envText.lowercased() }) else { return nil }
+        self = match
+    }
 }
 extension CityStyle: EnvNamed {}
 extension PhysicsSettings.Backend: EnvNamed {}
@@ -121,9 +136,11 @@ package enum EnvVariable: String, CaseIterable {
     case textureBudget = "METALRENDERER_TEXTURE_BUDGET"
     case vg = "METALRENDERER_VG", vgTau = "METALRENDERER_VG_TAU"
     case fog = "METALRENDERER_FOG", sky = "METALRENDERER_SKY"
+    case labVariant = "METALRENDERER_LAB_VARIANT", labMotion = "METALRENDERER_LAB_MOTION"
     // Lists of key=value.
     case scene = "METALRENDERER_SCENE", gi = "METALRENDERER_GI", denoise = "METALRENDERER_DENOISE"
     case sampledLights = "METALRENDERER_SAMPLED_LIGHTS"
+    case megaLights = "METALRENDERER_MEGALIGHTS"
     case fogSet = "METALRENDERER_FOG_SET", skySet = "METALRENDERER_SKY_SET", view = "METALRENDERER_VIEW"
     case foliage = "METALRENDERER_FOLIAGE", post = "METALRENDERER_POST"
 
@@ -152,7 +169,7 @@ package struct SettingSpec {
     }
     /// Rows that are more than one setting behind one control; the panel builds them by hand (SettingsPanel.customRow).
     package enum Custom {
-        case scene, showcaseModel, clearModels, lightRays, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
+        case scene, bookmarks, showcaseModel, clearModels, upscale, skyMode, skyImage, fogAlbedo, denoiserCaption, dayPresets
     }
     /// The setting as text in an environment variable.
     package struct Env {
@@ -294,7 +311,7 @@ package struct SettingSpec {
 }
 
 extension RenderSettings {
-    /// Upscaling, through MetalFX's denoising scaler: it denoises the raw light, and SVGF and the shadow denoiser are off.
+    /// Upscaling, through MetalFX's denoising scaler: it denoises the raw light, and SVGF is off.
     package var neuralDenoiser: Bool { upscaleFactor > 1 }
 
     /// The denoiser's wavelet passes for the selected GI method: the panel's one slider edits whichever count applies.
@@ -382,6 +399,7 @@ package enum SettingsTable {
         let percent: (Float) -> String = { String(format: "%.0f%%", $0 * 100) }
         return Section(title: "Scene", rows: [
             S.custom(.scene, "Scene"),
+            S.custom(.bookmarks, "Bookmarks").when { !$0.scene.kind.definition.bookmarks.isEmpty },
             S.value(\.scene.showcase).env(.scene, "showcase"),
             // Scene sizes rebuild the scene, so they apply when the slider is released.
             S.slider("Lights", \.scene.lights, SceneSettings.lightRange, log: true, live: false)
@@ -453,6 +471,8 @@ package enum SettingsTable {
                 .when { $0.scene.kind.definition.particleShadows },
             S.popup("Particle layer", \.particleScale, [("Full size", Float(1)), ("Half size", Float(0.5))]).env(.view, "particlescale")
                 .when { $0.scene.kind.definition.hasParticles },
+            S.popup("Lab variant", \.scene.lightLab.variant, titled(\.title)).env(.labVariant).when { $0.scene.kind.definition.hasLightLab },
+            S.check("Lab lights move", \.scene.lightLab.motion).env(.labMotion).when { $0.scene.kind.definition.hasLightLab },
             S.slider("Trees", \.scene.trees, SceneSettings.treeRange, step: 250, live: false)
                 .env(.scene, "trees").when { $0.scene.kind.hasForest },
             S.slider("Undergrowth", \.scene.undergrowth, SceneSettings.undergrowthRange, step: 25, live: false) { "\($0)%" }
@@ -532,17 +552,24 @@ package enum SettingsTable {
     ])
 
     private static let directLight: Section = {
-        let sampled: When = { $0.directLight == .sampled || $0.directLight == .auto }
+        let sampled: When = { $0.directLight == .sampled }
         let grid: When = { sampled($0) && $0.sampledLights.grid.enabled }
+        let mega: When = { $0.directLight == .megalights }
         return Section(title: "Direct light", rows: [
-            S.popup("Method", \.directLight, titled { $0 == .auto ? "Auto (Sampled above 256 lights)" : $0.title }).env(.direct),
-            S.custom(.lightRays, "Shadow rays").when { $0.directLight == .grouped },
-            S.value(\.manyLightRays).env(.gi, "lightrays"),
-            S.slider("Pick reuse", \.manyLightReuse, RenderSettings.manyLightReuseRange) { $0 == 0 ? "off" : "\($0) fr" }
-                .env(.gi, "lightreuse").advanced().when { $0.directLight == .grouped && $0.manyLightRays < 2 },
+            S.popup("Method", \.directLight, DirectLightMode.choices.map { ($0.title, $0) }).env(.direct),
             S.popup("Candidates", \.sampledLights.candidates, counts: [4, 8, 16, 32]) { "\($0) per ray" }.env(.sampledLights, "candidates").when(sampled),
             S.slider("Rays", \.sampledLights.rays, SampledLightSettings.rayRange).env(.sampledLights, "rays").when(sampled),
             S.check("Light grid (ReGIR candidates)", \.sampledLights.grid.enabled).env(.sampledLights, "grid").when(sampled),
+            S.slider("Light samples", \.megaLights.samples, MegaLightsSettings.sampleRange).env(.megaLights, "samples").when(mega),
+            S.slider("From the light tree", \.megaLights.treeSamples, MegaLightsSettings.treeSampleRange).env(.megaLights, "tree").when(mega),
+            S.popup("Tile list capacity", \.megaLights.capacity, counts: MegaLightsSettings.capacityOptions) { "\($0) lights" }
+                .env(.megaLights, "capacity").advanced().when(mega),
+            S.slider("Reach cutoff", \.megaLights.cutoff, MegaLightsSettings.cutoffRange, step: 0.0005, log: true, fmt("%.4f"))
+                .env(.megaLights, "cutoff").advanced().when(mega),
+            S.check("Partition list / tree", \.megaLights.partition).env(.megaLights, "partition").advanced().when(mega),
+            S.check("Guide by visibility", \.megaLights.guiding).env(.megaLights, "guide").when(mega),
+            S.slider("Unseen light weight", \.megaLights.guideWeight, MegaLightsSettings.guideWeightRange, step: 0.05, fmt("%.2f"))
+                .env(.megaLights, "guideweight").advanced().when(mega),
             S.slider("Grid share", \.sampledLights.grid.share, RegirSettings.shareRange) { "\($0) cand." }.env(.sampledLights, "gshare").advanced().when(grid),
             S.slider("Grid cells", \.sampledLights.grid.cells, RegirSettings.cellRange) { "\($0)³" }.env(.sampledLights, "gcells").advanced().when(grid),
             S.slider("Grid levels", \.sampledLights.grid.levels, RegirSettings.levelRange).env(.sampledLights, "glevels").advanced().when(grid),
@@ -689,18 +716,9 @@ package enum SettingsTable {
         // While upscaling, the MetalFX denoiser denoises in place of everything here.
         let ours: When = { !$0.neuralDenoiser }
         let on: When = { $0.denoiser.enabled && ours($0) }
-        let shadows: When = { on($0) && $0.denoiser.shadowDenoiser }
         return Section(title: "Denoiser", rows: [
             S.custom(.denoiserCaption),
             S.check("Enabled", \.denoiser.enabled).env(.denoise, "on").enabled(ours),
-            S.check("Shadow denoiser (direct light)", \.denoiser.shadowDenoiser).env(.denoise, "shadows").enabled(on),
-            S.slider("Shadow passes", \.denoiser.shadowPasses, DenoiserSettings.passRange).env(.denoise, "spasses").enabled(shadows),
-            S.slider("Shadow history", \.denoiser.shadowHistory, DenoiserSettings.maxHistoryRange, step: 1, fmt("%.0f fr"))
-                .env(.denoise, "shistory").advanced().when(shadows),
-            S.slider("Shadow clamp", \.denoiser.shadowClamp, DenoiserSettings.shadowClampRange, step: 0.05, fmt("%.2f σ"))
-                .env(.denoise, "sclamp").advanced().when(shadows),
-            S.slider("Shadow edges (σ)", \.denoiser.shadowSigma, DenoiserSettings.shadowSigmaRange, step: 0.25, fmt("%.2f"))
-                .env(.denoise, "ssigma").advanced().when(shadows),
             S.check("Separate direct / indirect", \.denoiser.separateSignals).env(.denoise, "separate").enabled(on),
             // One slider for the selected GI method's count; each count has its own env name.
             S.slider("Filter passes", \.filterPasses, DenoiserSettings.passRange).enabled(on),

@@ -28,13 +28,6 @@ package struct DenoiserSettings: Equatable, Codable {
     var maxHistory: Float = 16      // frames of temporal accumulation (lower = less lag, noisier)
     var antiLag: Float = 0          // 0 = off; higher shortens the history faster where the lighting changes
     package var separateSignals = true      // filter direct and indirect light separately (sharper shadows, 2x the cost)
-    // Shadow denoiser for direct light (up to 4 lights; see Shaders/Denoise.metal, 3b): filters each light's visibility
-    // instead of the lit color, and clamps its history so moving shadows don't lag.
-    package var shadowDenoiser = true
-    var shadowPasses = 3            // 3x3 a-trous passes, steps 1, 2, 4, ...
-    var shadowHistory: Float = 32   // max frames averaged (the clamp keeps long histories from lagging)
-    var shadowClamp: Float = 0.35   // history clamp width, in standard deviations of the neighbourhood's visibility
-    var shadowSigma: Float = 3      // visibility edge-stopping, in standard errors
 
     static let passRange = 1...5
 
@@ -43,31 +36,31 @@ package struct DenoiserSettings: Equatable, Codable {
     static let luminanceSigmaRange: ClosedRange<Float> = 0.25...8
     static let maxHistoryRange: ClosedRange<Float> = 2...64
     static let antiLagRange: ClosedRange<Float> = 0...4
-    static let shadowClampRange: ClosedRange<Float> = 0.05...2
-    static let shadowSigmaRange: ClosedRange<Float> = 0.5...8
 }
 
-/// How direct light from the lights is computed.
+/// How direct light from the lights is computed. The raw values are saved with the settings: they stay put.
 package enum DirectLightMode: Int, CaseIterable, Codable {
-    case auto       // sampled with many lights (Scene.lightTableThreshold, 256), otherwise grouped (exact up to 4)
-    case exact      // one shadow ray per light (cost grows with the light count; references)
-    case grouped    // one light per shadow-denoiser group, picked over all lights (manyLightsKernel; O(N) per pixel)
-    case sampled    // one light per ray by RIS from the light grid and table, with no reuse (O(1))
+    /// Every light traced: accumulated benchmark references only (Renderer.activeDirectMode), never offered as a setting.
+    case exact = 1
+    case sampled = 3    // one light per ray by RIS from the light grid and table, with no reuse (O(1))
+    case megalights = 4 // MegaLights: lights culled into screen tiles, a few samples per pixel from the tile's list and the light tree
+
+    /// The modes a setting can take (the popup, `METALRENDERER_DIRECT`).
+    package static let choices: [DirectLightMode] = [.sampled, .megalights]
 
     package var title: String {
         switch self {
-        case .auto: return "Auto"
         case .exact: return "Exact"
-        case .grouped: return "Grouped"
         case .sampled: return "Sampled"
+        case .megalights: return "MegaLights"
         }
     }
 
-    /// `METALRENDERER_DIRECT=auto|exact|grouped|sampled`; `METALRENDERER_LIGHTS=all` is exact.
+    /// `METALRENDERER_DIRECT=sampled|megalights`; MegaLights otherwise.
     static let initial: DirectLightMode = {
         let env = ProcessInfo.processInfo.environment
-        if let v = env["METALRENDERER_DIRECT"], let m = allCases.first(where: { "\($0)" == v.lowercased() }) { return m }
-        return env["METALRENDERER_LIGHTS"] == "all" ? .exact : .auto
+        if let v = env["METALRENDERER_DIRECT"], let m = choices.first(where: { "\($0)" == v.lowercased() }) { return m }
+        return .megalights
     }()
 }
 
@@ -109,6 +102,30 @@ package struct RegirSettings: Equatable, Codable {
     var reservoirCount: Int {
         RegirSettings.levelRange.clamp(levels) * Int(pow(Double(RegirSettings.cellRange.clamp(cells)), 3)) * RegirSettings.slotRange.clamp(slots)
     }
+}
+
+/// MegaLights direct light (Shaders/MegaLights.metal): the lights are culled into 16x16-pixel tiles, and each pixel shades
+/// `samples` light samples with one shadow ray each: some picked from its tile's list, `treeSamples` drawn from the light
+/// tree (LightTree: the far field); each light comes from one of the two (`partition`; off: MIS). With more lights than `maxLights`, or more
+/// suns than LightTable.maxSuns, the frame falls back to Sampled.
+package struct MegaLightsSettings: Equatable, Codable {
+    package var samples = 3                 // light samples (shadow rays) per pixel, the suns' aside
+    package var treeSamples = 1             // ...of which from the light tree (the rest from the tile's list)
+    package var capacity = 128              // lights a tile's list holds (more: the tree samples still reach them)
+    package var cutoff: Float = 0.002       // a light reaches as far as its unshadowed light, exposed, stays above this
+    package var partition = true            // each light from one strategy (the list its lights in reach, the tree the rest):
+                                            // no tree walks for list samples; off = MIS (balance heuristic) between the two
+    package var guiding = true              // pick the lights the tile saw lit last frame more often
+    package var guideWeight: Float = 0.25   // ...the others' weight
+
+    package static let sampleRange = 1...8
+    package static let treeSampleRange = 1...8   // at most `samples`
+    package static let capacityOptions = [64, 128, 256]   // powers of two (the tile's sort), at most ML_MAX_CAPACITY
+    package static let cutoffRange: ClosedRange<Float> = 0.0001...0.1
+    package static let guideWeightRange: ClosedRange<Float> = 0.05...1
+    /// Lights a scene may have (a tile's list holds 16-bit indices); with more, or more suns than LightTable.maxSuns, the
+    /// frame uses Sampled instead.
+    package static let maxLights = 0xFFFF
 }
 
 /// The curve that maps the composited HDR colour to the display (compositeKernel). ACES was the only one before.
@@ -610,7 +627,7 @@ package struct RenderSettings: Equatable, Codable {
     package var frameInterpolation = FrameInterpolation.auto
     package var giEnabled = true
     package var bounces = 2
-    package var blueNoise = true               // stratified samples steady the shadow denoiser's history clamp (less flicker)
+    package var blueNoise = true               // stratified samples steady the denoiser's history (less flicker)
     package var taa = true                     // without upscaling: jittered rays and a temporal resolve (Post.metal taaResolveKernel)
     package var paused = false
     package var viewMode = 0
@@ -628,9 +645,7 @@ package struct RenderSettings: Equatable, Codable {
     package var lightMaps = false              // path tracer: light bounce hits from per-light shadow maps instead of shadow rays
     package var directLight = DirectLightMode.initial
     package var sampledLights = SampledLightSettings()
-    package var manyLightRays = 1              // more than 4 lights: shadow rays per light group (2 = less noise and flicker, slower)
-    package var manyLightReuse = 4             // more than 4 lights, 1 ray: reuse light picks for up to this many frames (0 = off):
-                                       // a third less flicker on still frames for ~0.7 ms and ~0.7 dB (manyLightsReuseKernel)
+    package var megaLights = MegaLightsSettings()
     package var cascades = CascadeSettings()
     package var worldCache = WorldCacheSettings()
     package var scene = SceneSettings()
@@ -769,7 +784,6 @@ package struct RenderSettings: Equatable, Codable {
     package static let fovRange: ClosedRange<Float> = 30...110
     package static let moveSpeedRange: ClosedRange<Float> = 0.5...100
     package static let timeScaleRange: ClosedRange<Float> = 0...4
-    package static let manyLightReuseRange = 0...8
     package static let textureBudgetOptions = [256, 512, 1024, 2048, 4096]
     package static let renderScaleRange: ClosedRange<CGFloat> = 0.25...2.0
     package static let renderScaleStep: CGFloat = 0.125
@@ -777,19 +791,22 @@ package struct RenderSettings: Equatable, Codable {
     package static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering", "World cache"]
+                            "Fog scattering", "World cache", "Light tiles", "Picked light", "Light bounds"]
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
     /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
     package static func showsLight(_ mode: Int) -> Bool {
-        ![3, 4, 5].contains(mode) && !(7...13).contains(mode)
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && !lightViews.contains(mode)
     }
+    /// The light debug views (Shaders/LightDebug.metal): MegaLights' tile lists (Sampled: its useful candidates), the
+    /// light each pixel's first sample picked, and the lights' shapes and reach as lines.
+    package static let lightViews = 16...18
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     package static let geometryViews = 8...13
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), manyLightRays: Int = 1, manyLightReuse: Int = 4, cascades: CascadeSettings = CascadeSettings(), worldCache: WorldCacheSettings = WorldCacheSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
+    package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), megaLights: MegaLightsSettings = MegaLightsSettings(), cascades: CascadeSettings = CascadeSettings(), worldCache: WorldCacheSettings = WorldCacheSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {
         self.renderScale = renderScale
         self.upscaleFactor = upscaleFactor
         self.frameInterpolation = frameInterpolation
@@ -808,8 +825,7 @@ package struct RenderSettings: Equatable, Codable {
         self.lightMaps = lightMaps
         self.directLight = directLight
         self.sampledLights = sampledLights
-        self.manyLightRays = manyLightRays
-        self.manyLightReuse = manyLightReuse
+        self.megaLights = megaLights
         self.cascades = cascades
         self.worldCache = worldCache
         self.scene = scene

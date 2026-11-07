@@ -3,7 +3,6 @@
 //   lightUnshadowed     diffuse light at p if nothing is in the way (albedo divided out); also every pick's weight
 //   lightShadowTarget   a random point of the light for a soft-shadow ray (the sun: a far point inside its disc)
 //   lightSpecular       GGX specular light, unshadowed (representative point, Karis 2013)
-//   penumbraWidth       half width of the penumbra an occluder at distance d casts (sizes the shadow filter)
 //   lightMapVisibility  visibility from the light's light map (secondary hits)
 // Emissive-mesh lights answer lightUnshadowed and the light map with a proxy (their bounding sphere and mean
 // normal), for picking and GI; their direct light is sampled per triangle (sampleMeshLight).
@@ -12,7 +11,6 @@
 inline uint lightType(Light light) {
     return (LIGHT_TYPES & (LIGHT_TYPES - 1u)) == 0 ? ctz(LIGHT_TYPES) : uint(light.color.w) >> 2;   // one type: known
 }
-inline uint lightGroup(Light light) { return uint(light.color.w) & 3u; }
 // How far the radiance cascades light an emissive-mesh light (cascadeEmitterReach), -1 for a light they don't.
 inline float cascadeLitReach(Light light, thread const SceneData& s) {
     if (lightType(light) != LIGHT_MESH) return -1.0f;
@@ -25,9 +23,7 @@ inline bool cascadeLitNear(Light light, float3 p, thread const SceneData& s) {
     float reach = cascadeLitReach(light, s);
     return reach >= 0.0f && length(p - light.positionRadius.xyz) <= reach;
 }
-// 1 in group g's channel: `v += groupMask(g) * x` and `dot(v, groupMask(g))` in place of v[g], which indexes a vector
-// by a run-time value.
-inline float4 groupMask(uint g) { return float4(uint4(g) == uint4(0u, 1u, 2u, 3u)); }
+// v[g] for a run-time g, without indexing a vector by a run-time value.
 inline uint groupElement(uint4 v, uint g) { uint4 m = select(uint4(0u), v, uint4(g) == uint4(0u, 1u, 2u, 3u)); return m.x | m.y | m.z | m.w; }
 
 // What multiplies a light's ray-traced visibility at p: the clouds' shadow for the sun, 1 for every other light.
@@ -39,29 +35,22 @@ inline float sunVisibilityScale(Light light, float3 p, constant SceneShading& sh
     return lightType(light) == LIGHT_SUN ? cloudShadowAt(shading.cloudShadow, shading.skyParams, p) : 1.0f;
 }
 
-// Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way. `blocker` = distance to an
-// occluder (any one, not necessarily the nearest), 0 if visible: the shadow denoiser estimates penumbrae from it.
-bool isVisibleBlocker(float3 from, float3 to, SCENE_ACCEL accel, thread float& blocker, uint cls = RAY_SHADOW) {
+// Shadow ray from `from` to `to`: true if nothing (but light spheres) is in the way.
+bool isVisible(float3 from, float3 to, SCENE_ACCEL accel, uint cls = RAY_SHADOW) {
     float3 d = to - from;
     float dist = length(d);
     float t;
     bool hit = intersectAny(makeRay(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f)), rayMask(MASK_GEOMETRY, cls), accel, t);
     if (PARTICLES && !hit) {
         // The particles that cast shadows let T of the light through: the ray gets through with that chance (the
-        // denoisers and the averages make it a soft shadow, as the voxels' stochastic leaves are).
+        // denoiser and the averages make it a soft shadow, as the voxels' stochastic leaves are).
         float T = particleTransmittance(from, d / dist, 0.0f, max(dist - RAY_EPSILON, 0.0f), accel);
         if (T < 1.0f) {
             uint h = pcgHash(as_type<uint>(from.x) ^ pcgHash(as_type<uint>(from.y) + pcgHash(as_type<uint>(to.z) ^ pcgHash(accel.frame))));
-            if (float(h >> 8) * (1.0f / 16777216.0f) >= T) { blocker = 0.5f * dist; return false; }
+            if (float(h >> 8) * (1.0f / 16777216.0f) >= T) return false;
         }
     }
-    blocker = hit ? max(t, 1e-3f) : 0.0f;
     return !hit;
-}
-
-bool isVisible(float3 from, float3 to, SCENE_ACCEL accel, uint cls = RAY_SHADOW) {
-    float b;
-    return isVisibleBlocker(from, to, accel, b, cls);
 }
 
 // Spot lights: smooth falloff from the inner to the outer cone, for the unit direction from the light to a point.
@@ -533,43 +522,6 @@ uint pickLight(device const Light* lights, uint lightCount, float3 p, float3 n, 
     }
     pdf = pick.total > 0.0f ? pickedWeight / (pick.total * ls.scale) : 0.0f;
     return picked;
-}
-
-// The same pick by the lights' unshadowed specular light at p toward v (lightSpecular), for a direct specular sample:
-// `specular` = the picked light's. specular / pdf is then the candidates' summed specular in the picked light's
-// colour, so the estimate never exceeds what the lights can give and needs no firefly clamp. (A pick by diffuse
-// light, as above, gives a light with a strong highlight but little diffuse light here a small pdf: its samples
-// were bright enough to be clamped, and the highlights came out dark.)
-uint pickLightSpecular(device const Light* lights, uint lightCount, float3 p, float3 n, float3 ng, float3 v, float3 f0,
-                       float roughness, float u, float uSubset, thread float& pdf, thread float3& specular) {
-    float pickedWeight = 0.0f;
-    uint picked = lightCount;
-    specular = float3(0.0f);
-    StreamPick pick = streamPick(u);
-    LightSubset ls = lightSubset(lightCount, uSubset);
-    for (uint j = 0; j < ls.count; ++j) {
-        uint i = lightSubsetIndex(ls, j, lightCount);
-        float3 sp = lightSpecular(lights[i], p, n, ng, v, f0, roughness);
-        float w = luminance(sp);
-        if (w <= 0.0f) continue;
-        if (pick.offer(w)) { picked = i; pickedWeight = w; specular = sp; }
-    }
-    pdf = pick.total > 0.0f ? pickedWeight / (pick.total * ls.scale) : 0.0f;
-    return picked;
-}
-
-// Half width of a light's penumbra in world units, for an occluder at distance d from the receiver:
-// w = r d / (D - d) for a light of radius r at distance D (as in PCSS); the sun: d tan(angular radius).
-// 0 = the sample was visible.
-inline float penumbraWidth(Light light, float3 p, float d) {
-    if (d <= 0.0f) return 0.0f;
-    uint type = lightType(light);
-    if (type == LIGHT_SUN) return max(d * tan(light.positionRadius.w), 1e-4f);
-    float size = light.positionRadius.w;
-    if (type == LIGHT_RECT) size = sqrt(length_squared(light.params.xyz) + light.params.w * light.params.w);
-    else if (type == LIGHT_TUBE) size += length(light.axis.xyz);
-    float D = length(light.positionRadius.xyz - p);
-    return max(size * d / max(D - d, 1e-3f), 1e-4f);
 }
 
 // ---------------------------------------------------------------------------------------------

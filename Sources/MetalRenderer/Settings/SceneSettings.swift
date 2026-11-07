@@ -17,6 +17,46 @@ package struct ExtraModel: Equatable, Codable {
     var yaw: Float
 }
 
+/// How many lights the light lab is built with (the plan's variants), and whether they move.
+package enum LightLabVariant: Int, Codable, CaseIterable {
+    /// Under 256 lights in all: no light table, and the references trace every light.
+    case normal
+    /// About 600 lights: the light table is on, and the references are still exact (up to 1024).
+    case table
+    /// 16384 lights in the counts booth: MegaLights, sampled references.
+    case dense
+    /// 70000 lights, past 65535: falls back to Sampled.
+    case overLimit
+    /// Three suns in the yard: falls back to Sampled.
+    case threeSuns
+
+    package var title: String {
+        switch self {
+        case .normal: return "Normal"
+        case .table: return "Light table"
+        case .dense: return "Dense (16k)"
+        case .overLimit: return "Over limit (70k)"
+        case .threeSuns: return "Three suns"
+        }
+    }
+}
+
+/// The light lab scene (Sources/Game/Scene/Builders/LightLab): which variant, whether its lights move.
+package struct LightLabSettings: Equatable, Codable {
+    package var variant = LightLabVariant.normal
+    package var motion = false
+    /// Benchmarks only: build this one booth alone (its number), like `SceneSettings.lightCheck`. Not saved.
+    package var only: Int? = nil
+
+    package init(variant: LightLabVariant = .normal, motion: Bool = false, only: Int? = nil) {
+        self.variant = variant
+        self.motion = motion
+        self.only = only
+    }
+
+    private enum CodingKeys: String, CodingKey { case variant, motion }
+}
+
 /// Scene choice and the stress test's size. Changing it rebuilds the scene (geometry, acceleration structures).
 package struct SceneSettings: Equatable, Codable {
     package var kind = SceneKind.cornell
@@ -47,6 +87,8 @@ package struct SceneSettings: Equatable, Codable {
     static let cascadeEmitterSizeRange: ClosedRange<Float> = 0.05...2
     /// Benchmarks only (METALRENDERER_BENCH=lightcheck): one light, or its emissive-mesh twin, over a floor instead of `kind`.
     package var lightCheck: String? = nil
+    /// The light lab: its variant and motion.
+    package var lightLab = LightLabSettings()
 
     /// The forest: how many trees, and bushes, ferns and grass as a percentage of the usual; the seed of the plants
     /// (and of the forest's ground and where everything stands).
@@ -199,7 +241,7 @@ package struct SceneSettings: Equatable, Codable {
     }
 
     /// (As the memberwise initializer, for the modules above this one.)
-    package init(kind: SceneKind = SceneKind.cornell, objects: Int = 400, lights: Int = 32, characters: Int = 2048, poses: Int = 64, detail: Int = 3, crowdBodies: CrowdBodies = CrowdBodies.library, city: CitySettings = CitySettings(), showcase: String = "", extraModels: [ExtraModel] = [], emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0", cascadeEmitterSize: Float = 0.1, lightCheck: String? = nil, trees: Int = 2500, undergrowth: Int = 100, seed: Int = 1, worldTile: SIMD2<Int>? = nil, worldAnchor: SIMD2<Int>? = nil, worldLit: Bool = false, bakedPlants: Bool = false, leafCards: Bool = false, realism: Realism = Realism.on, voxelBoxes: Bool = false, physics: PhysicsSettings = PhysicsSettings(), destruction: DestructionSettings = DestructionSettings(), demolition: DemolitionSettings = DemolitionSettings(), cars: CarSettings = CarSettings(), particles: ParticleSettings = ParticleSettings(), plants: PlantSceneSettings = PlantSceneSettings(), plantCatalog: String = "", effects: String = "", stage: VFXStageSettings = VFXStageSettings(), materialWorkshop: MaterialWorkshopSettings = MaterialWorkshopSettings(), materials: String = "", materialAssignments: String = "", painterWorkshop: PainterWorkshopSettings = PainterWorkshopSettings(), terrainWorkshop: TerrainWorkshopSettings = TerrainWorkshopSettings(), terrainKey: String = "", paintAssignments: String = "", sceneOverrides: String = "", buildings: BuildingSceneSettings = BuildingSceneSettings(), buildingCatalog: String = "", characterWorkshop: CharacterSceneSettings = CharacterSceneSettings(), characterCatalog: String = "", interior: String? = nil) {
+    package init(kind: SceneKind = SceneKind.cornell, objects: Int = 400, lights: Int = 32, characters: Int = 2048, poses: Int = 64, detail: Int = 3, crowdBodies: CrowdBodies = CrowdBodies.library, city: CitySettings = CitySettings(), showcase: String = "", extraModels: [ExtraModel] = [], emissiveLights: Bool = ProcessInfo.processInfo.environment["METALRENDERER_EMISSIVE_LIGHTS"] != "0", cascadeEmitterSize: Float = 0.1, lightCheck: String? = nil, lightLab: LightLabSettings = LightLabSettings(), trees: Int = 2500, undergrowth: Int = 100, seed: Int = 1, worldTile: SIMD2<Int>? = nil, worldAnchor: SIMD2<Int>? = nil, worldLit: Bool = false, bakedPlants: Bool = false, leafCards: Bool = false, realism: Realism = Realism.on, voxelBoxes: Bool = false, physics: PhysicsSettings = PhysicsSettings(), destruction: DestructionSettings = DestructionSettings(), demolition: DemolitionSettings = DemolitionSettings(), cars: CarSettings = CarSettings(), particles: ParticleSettings = ParticleSettings(), plants: PlantSceneSettings = PlantSceneSettings(), plantCatalog: String = "", effects: String = "", stage: VFXStageSettings = VFXStageSettings(), materialWorkshop: MaterialWorkshopSettings = MaterialWorkshopSettings(), materials: String = "", materialAssignments: String = "", painterWorkshop: PainterWorkshopSettings = PainterWorkshopSettings(), terrainWorkshop: TerrainWorkshopSettings = TerrainWorkshopSettings(), terrainKey: String = "", paintAssignments: String = "", sceneOverrides: String = "", buildings: BuildingSceneSettings = BuildingSceneSettings(), buildingCatalog: String = "", characterWorkshop: CharacterSceneSettings = CharacterSceneSettings(), characterCatalog: String = "", interior: String? = nil) {
         self.kind = kind
         self.objects = objects
         self.lights = lights
@@ -213,6 +255,7 @@ package struct SceneSettings: Equatable, Codable {
         self.emissiveLights = emissiveLights
         self.cascadeEmitterSize = cascadeEmitterSize
         self.lightCheck = lightCheck
+        self.lightLab = lightLab
         self.trees = trees
         self.undergrowth = undergrowth
         self.seed = seed

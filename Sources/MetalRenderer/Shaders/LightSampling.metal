@@ -6,7 +6,21 @@ struct ShadingPoint {
     float  roughness;
     bool   specular;      // F0 > 0 (with FLAG_SPECULAR)
     HairPoint hair;       // a strand's (Hair.metal): lit by its BSDF
+    float3 tangent = float3(0.0f);   // MATERIAL_LOBES, specular: the highlight's stretch along the tangent...
+    float  anisotropy = 0.0f;        // ...by this much (0 = none)
+    float4 sheen = float4(0.0f);     // ...and a cloth's sheen (rgb = colour, a = roughness)
 };
+
+// A specular pixel's lobes from the G-buffer (MATERIAL_LOBES): its anisotropic highlight and its sheen, which the lights'
+// direct specular takes (lightSpecularLobe, lightSheen).
+inline void readShadingLobes(thread ShadingPoint& sp, texture2d<float, access::read> anisotropy,
+                             texture2d<float, access::read> sheen, uint2 tid) {
+    if (!MATERIAL_LOBES || !sp.specular) return;
+    float4 lobe = anisotropy.read(tid);
+    sp.anisotropy = lobe.w;
+    if (lobe.w > 0.0f) sp.tangent = normalize(lobe.xyz - sp.n * dot(sp.n, lobe.xyz));
+    sp.sheen = sheen.read(tid);
+}
 
 // Where a shadow ray from `sp` toward `target` starts: `sp.p`, or a strand's or skin's own (hairOrSurface).
 inline float3 shadowOrigin(thread const ShadingPoint& sp, float3 target) {
@@ -23,8 +37,11 @@ struct LightSampleEval {
 
 // `lights` = this frame's or (prev) last frame's: a triangle then uses its instance's last transform.
 // `exact` = textured emission (shading); otherwise the triangle's mean luminance (the target function: no textures).
+// `cascadeCut` (FLAG_CASCADE_EMITTERS): a point of a cascade-lit emitter within its reach (cascadeLitReach) brings
+// nothing, as in meshLightsKernel: the cascades' rays carry that part. Only what it estimates changes, not its pdfs.
 LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoint& sp, thread const SceneData& s,
-                                device const Light* lights, device const TriangleInfo* tris, bool prev, bool exact) {
+                                device const Light* lights, device const TriangleInfo* tris, bool prev, bool exact,
+                                bool cascadeCut = false) {
     LightSampleEval e;
     e.diffuse = e.specular = float3(0.0f);
     uint index = element & ELEMENT_INDEX;
@@ -34,6 +51,10 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
         float d2 = dot(w, w);
         float3 l = w * rsqrt(max(d2, 1e-12f));
         e.target = sp.p + w * 0.99f;   // pulled toward p: an emitter traced at a coarser level of detail doesn't shadow itself
+        if (cascadeCut) {
+            float reach = cascadeLitReach(lights[tris[index].light], s);
+            if (reach >= 0.0f && d2 <= reach * reach) return e;   // the cascades' part
+        }
         float cosP = dot(sp.n, l), cosL = abs(dot(mp.cr, l)) / max(mp.area2, 1e-12f);   // emission is two-sided
         if (sp.hair.on && mp.area2 > 0.0f) {
             // A strand: the irradiance the triangle's point gives a surface facing it, through the hair's BSDF.
@@ -51,7 +72,10 @@ LightSampleEval evalLightSample(uint element, float2 uv, thread const ShadingPoi
     e.target = lightShadowTarget(light, sp.p, uv);
     float cloud = sunVisibilityScale(light, sp.p, s);
     e.diffuse = litUnshadowed(light, sp.p, sp.n, sp.ng, sp.hair) * cloud;
-    if (sp.specular) e.specular = lightSpecular(light, sp.p, sp.n, sp.ng, sp.v, sp.f0, sp.roughness) * cloud;
+    if (sp.specular) {
+        e.specular = lightSpecularLobe(light, sp.p, sp.n, sp.ng, sp.v, sp.f0, sp.roughness, sp.tangent, sp.anisotropy) * cloud;
+        if (MATERIAL_LOBES && any(sp.sheen.rgb > 0.0f)) e.specular += lightSheen(light, sp.p, sp.n, sp.ng, sp.v, sp.sheen) * cloud;
+    }
     return e;
 }
 
@@ -117,16 +141,6 @@ constant float FEEDBACK_DEPTH = 0.05f, FEEDBACK_NORMAL = 0.8f;      // last fram
 constant float REFLECTION_DEPTH = 0.03f, REFLECTION_NORMAL = 0.7f;  // this frame's GI at a reflection ray's hit
 inline bool sameSurface(float4 nd, float depth, float3 n, float depthTolerance, float minCos) {
     return nd.w > 0.0f && abs(nd.w - depth) < depthTolerance * depth && dot(nd.xyz, n) > minCos;
-}
-
-// Last frame's pixel for a pixel with motion vector mv (xy = where it was, in pixels; z = the depth expected there;
-// w > 0 = valid) and normal n: the nearest pixel if it shows the same surface, else -1.
-inline int2 reprojectNearest(constant Uniforms& u, float4 mv, float3 n, texture2d<float, access::read> prevND) {
-    if (!(mv.w > 0.0f)) return int2(-1);
-    int2 c = int2(floor(mv.xy + 0.5f));
-    if (c.x >= 0 && c.y >= 0 && c.x < int(u.width) && c.y < int(u.height)
-        && sameSurface(prevND.read(uint2(c)), mv.z, n, REUSE_DEPTH, REUSE_NORMAL)) return c;
-    return int2(-1);
 }
 
 // Continuous pixel coordinate (no jitter, y down) of camera-relative vector v, for a camera given as
@@ -419,4 +433,14 @@ inline float3 viewDirection(constant Uniforms& u, float2 uv) {
 // The primary ray's direction through pixel `tid` (jitter is zero unless upscaling is on).
 inline float3 primaryDirection(constant Uniforms& u, uint2 tid) {
     return normalize(viewDirection(u, (float2(tid) + 0.5f + u.jitter.xy) / float2(u.width, u.height)));
+}
+
+// The picked-light view (VIEW_PICKED_LIGHT): a 32-bit light index or element in the 8-bit debug texture's four
+// channels, exactly (ELEMENT_NONE: nothing picked).
+inline float4 debugPackId(uint id) {
+    return float4(float(id & 0xFFu), float((id >> 8) & 0xFFu), float((id >> 16) & 0xFFu), float(id >> 24)) / 255.0f;
+}
+inline uint debugUnpackId(float4 c) {
+    uint4 b = uint4(round(saturate(c) * 255.0f));
+    return b.x | (b.y << 8) | (b.z << 16) | (b.w << 24);
 }

@@ -5,6 +5,12 @@ import os, sys
 from evalcommon import *
 
 LIGHTS = (32, 128, 1024, 4096)
+# manylightsq's methods: the direct-light modes, and Sampled and MegaLights through MetalFX's denoising scaler at the
+# references' output size; a name is "<method>-static-<lights>".
+METHODS = ("sampled", "sampled-metalfx", "megalights", "megalights-metalfx")
+# marketq's sources: the table alone, the light grid (also through MetalFX), MegaLights (also through MetalFX).
+SOURCES = (("table", "sampled-table"), ("grid", "sampled-grid"), ("grid metalfx", "sampled-grid-metalfx"),
+           ("megalights", "megalights"), ("megalights metalfx", "megalights-metalfx"))
 runs = sys.argv[1:]
 pick_up_refs("manylights", runs, [f"ref-direct-{n}" for n in LIGHTS])
 
@@ -12,31 +18,31 @@ pick_up_refs("manylights", runs, [f"ref-direct-{n}" for n in LIGHTS])
 header = False
 for d in runs:
     for n in LIGHTS:
-        for mode in ("exact", "grouped", "sampled"):
+        for mode in METHODS:
             st = capture(d, f"{mode}-static-{n}")
             if st is None: continue
             if not header:
-                print(f"{'run':16s}{'lights':>7s}  {'method':9s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'mean':>9s}    (direct light)")
+                print(f"{'run':16s}{'lights':>7s}  {'method':16s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'mean':>9s}    (direct light)")
                 header = True
             r = ref("manylights", f"ref-direct-{n}")
             stp, mv = capture(d, f"{mode}-static-{n}-prev"), capture(d, f"{mode}-moving-{n}")
-            print(f"{os.path.basename(d):16s}{n:7d}  {mode:9s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
+            print(f"{os.path.basename(d):16s}{n:7d}  {mode:16s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
                   psnr(mv, r) if mv is not None else None, mean_luminance(st) / mean_luminance(r)]))
 
 pick_up_refs("manylights", runs, ["ref-direct-market", "ref-indirect-market", "ref-scattering-market"])
 header = False
 for d in runs:
     # METALRENDERER_BENCH=marketq: sampled lights' candidates from the table alone / the light grid
-    for source, prefix in (("table", "sampled-table"), ("grid", "sampled-grid")):
+    for source, prefix in SOURCES:
         st = capture(d, f"{prefix}-static-market")
         if st is None: continue
         if not header:
-            print(f"\n{'run':16s}{'source':9s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'mean':>9s}{'accum64':>9s}    (Night market direct light, 4096 bulbs)")
+            print(f"\n{'run':16s}{'source':16s}{'static':>9s}{'flicker':>9s}{'moving':>9s}{'mean':>9s}{'accum64':>9s}    (Night market direct light, 4096 bulbs)")
             header = True
         r = ref("manylights", "ref-direct-market")
         stp, mv = capture(d, f"{prefix}-static-market-prev"), capture(d, f"{prefix}-moving-market")
         ac = capture(d, f"{prefix}-accum-market")
-        print(f"{os.path.basename(d):16s}{source:9s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
+        print(f"{os.path.basename(d):16s}{source:16s}" + fmt([psnr(st, r), flicker(st, stp) if stp is not None else None,
               psnr(mv, r) if mv is not None else None, mean_luminance(st) / mean_luminance(r),
               psnr(ac, r) if ac is not None else None]))
 
@@ -63,7 +69,7 @@ for d in runs:
                 "stress32"):
         exact = capture(d, f"{tag}-exact")
         if exact is None: continue
-        for source in ("sampled", "sampled-grid"):   # the table alone; the light grid (ReGIR) + the table
+        for source in ("sampled", "sampled-grid", "megalights"):   # the table alone; the light grid (ReGIR) + the table; MegaLights
             sampled = capture(d, f"{tag}-{source}")
             if sampled is None: continue
             if not header:

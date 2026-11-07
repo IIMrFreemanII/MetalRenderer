@@ -161,10 +161,9 @@ package final class Scene {
         package var proxyInstance = -1                // visible emissive shape that follows the light (maskLights)
         package var proxyMaterial = -1
         package var proxyEmission = SIMD3<Float>(repeating: 0)   // its radiance at scale 1
-        package var group = 0                         // shadow-denoiser channel (see assignLightGroups)
         /// A rect light's reach (GPULight axis.w; 0: all space): how far below it, and beyond its edges, it lights.
         package var reach: Float = 0
-        /// Its place among the lights as they were added (assignLightGroups sorts them): what the outline names it by.
+        /// Its place among the lights as they were added: what the outline names it by.
         package var order = 0
 
         package var isMesh: Bool { if case .mesh = kind { return true }; return false }
@@ -612,6 +611,9 @@ package final class Scene {
     private(set) var sceneSphere = SIMD4<Float>(0, 0, 0, 1)
     /// The walkable interiors' box, world space (BuildingKit.addInterior): where GI's hits see the sun through rays and the
     /// fog's sky light is occluded (Renderer.interiorBox). Nil: no interiors.
+    /// A scene with closed rooms needs it: outside it the cascades' intervals start where they nominally do (cascade 2
+    /// about a metre out), past a thin wall, and bring the next room's light in. The light lab's booths were 1.6-7.5x
+    /// brighter than path traced without it (Nov 2026).
     package var interiorBox: (lo: SIMD3<Float>, hi: SIMD3<Float>)?
     /// Every light and emissive triangle by power, for sampled lights' candidates (built once, after the lights).
     package var lightTable = LightTable()
@@ -663,7 +665,7 @@ package final class Scene {
         hasGroups = !groups.isEmpty
         hasSDFShapes = instances.contains { $0.sdf >= 0 }
         precondition(!hasSDFShapes || !hasGroups, "SDF shapes in a scene with instance groups (SceneBuffers.InstanceBlock has no SDF instances)")
-        assignLightGroups()
+        countAnalyticLights()
         if settings.emissiveLights { buildMeshLights() }
         if let place = worldPlace {
             // The open world has no bounds worth a light map: what counts is what is near its middle tile.
@@ -733,7 +735,7 @@ package final class Scene {
 
     // MARK: - Scene construction: state
 
-    /// Where each shadow-denoiser group's lights end in `lights` (sorted by group): group g = [end[g-1], end[g]).
+    /// w = the analytic lights' count, where the emissive-mesh lights start in `lights` (xyz the same; countAnalyticLights).
     package var lightGroupEnd = SIMD4<UInt32>(repeating: 0)
     package var geometryReleased = false
 

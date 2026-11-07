@@ -69,36 +69,10 @@ extension Scene {
     }
 
 
-    /// Lights share the shadow denoiser's 4 visibility channels by group. Up to 4 lights get one channel each;
-    /// more are clustered by chromaticity (k-means, k = 4), so each channel's lights have similar colours.
-    /// Lights are then sorted by group, so the shaders can walk one group's lights.
-    package func assignLightGroups() {
-        defer {
-            lights.sort { $0.group < $1.group }   // stable: lights keep their order within a group
-            for g in 0..<4 { lightGroupEnd[g] = UInt32(lights.filter { $0.group <= g }.count) }
-        }
-        guard lights.count > 4 else {
-            for i in lights.indices { lights[i].group = i }
-            return
-        }
-        let chroma = lights.map { $0.color / max($0.color.sum(), 1e-6) }   // analytic lights (mesh lights come later)
-        // Farthest-point initialisation, deterministic.
-        var centers = [chroma[0]]
-        while centers.count < 4 {
-            let far = chroma.indices.max { a, b in
-                centers.map { distance_squared(chroma[a], $0) }.min()! < centers.map { distance_squared(chroma[b], $0) }.min()!
-            }!
-            centers.append(chroma[far])
-        }
-        for _ in 0..<10 {
-            for i in lights.indices {
-                lights[i].group = centers.indices.min { distance_squared(chroma[i], centers[$0]) < distance_squared(chroma[i], centers[$1]) }!
-            }
-            for g in centers.indices {
-                let members = lights.indices.filter { lights[$0].group == g }
-                if !members.isEmpty { centers[g] = members.map { chroma[$0] }.reduce(.zero, +) / Float(members.count) }
-            }
-        }
+    /// The analytic lights end where the emissive-mesh lights (buildMeshLights) will start: `lightGroupEnd.w`, which
+    /// the shaders read as the analytic lights' count (xyz the same).
+    package func countAnalyticLights() {
+        lightGroupEnd = SIMD4(repeating: UInt32(lights.count))
     }
 
     /// `materials`: for a mesh of several materials, each triangle's material as an offset from the material its

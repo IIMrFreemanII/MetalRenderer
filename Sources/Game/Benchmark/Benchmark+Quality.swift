@@ -19,7 +19,6 @@ extension Benchmark {
     /// * direct light only (640x400) at 32 and 128 lights;
     /// * the GI methods (640x400, no upscaling) against an 8-bounce path-traced reference;
     /// * MetalFX's denoising scaler (3x from 640x400) on albedo and direct light against supersampled 1920x1200 references.
-    /// Run again with `METALRENDERER_LIGHTS=all` for the brute-force baseline, `METALRENDERER_DENOISE=shadows=0` for SVGF.
     static func stressq() -> [Config] {
         let direct = [32, 128].flatMap { lights -> [Config] in
             let base = Config("", scale: 0.5, gi: nil, scene: stressHall(lights: lights))
@@ -55,18 +54,33 @@ extension Benchmark {
     /// static (+ previous frame, for flicker) and moving frames, at 32 to 4096 lights. References trace every light up
     /// to Renderer.exactReferenceLights (1024), and accumulate sampled lights above
     /// (Tools/eval/manylights.py).
+    ///
+    /// The sampled mode and MegaLights also run through MetalFX's denoising scaler (`metalfx`).
     static func manylightsq() -> [Config] {
         [32, 128, 1024, 4096].flatMap { lights -> [Config] in
             let base = Config("", scale: 0.5, gi: nil, scene: stressHall(lights: lights))
             let ref = base.named("ref direct \(lights)").reference(frames: lights <= 128 ? 1024 : lights <= 1024 ? 256 : 2048)
                 .with { $0.sampledLights.grid.enabled = false }   // the table alone
-            let modes: [DirectLightMode] = (lights <= 128 ? [.exact] : []) + [.grouped, .sampled]
+            let modes: [DirectLightMode] = [.sampled, .megalights]
             return references([ref]) + modes.flatMap { mode -> [Config] in
                 let method = base.direct(mode), tag = mode.title.lowercased()
                 return [method.named("\(tag) static \(lights)").still(previous: true), method.named("\(tag) moving \(lights)")]
-            }
+            } + sampledVariants.flatMap { tag, change in
+                let method = base.direct(.sampled).with(change)
+                return [method.named("sampled \(tag) static \(lights)").still(previous: true), method.named("sampled \(tag) moving \(lights)")]
+            } + {
+                let method = base.direct(.megalights).with(megaLightsMetalFX)   // MegaLights through MetalFX's denoising scaler
+                return [method.named("megalights metalfx static \(lights)").still(previous: true), method.named("megalights metalfx moving \(lights)")]
+            }()
         }
     }
+
+    /// The sampled direct light's variants the quality benchmarks compare: through MetalFX's denoising scaler, at 2x from
+    /// 0.25x so its OUTPUT is the 640x400 of the references (hwrtq's 3x from 0.5x would give 1920x1200).
+    static let sampledVariants: [(String, (inout RenderSettings) -> Void)] = [("metalfx", megaLightsMetalFX)]
+
+    /// MetalFX's denoising scaler at the references' output size (MegaLights' `metalfx` and the sampled one).
+    static let megaLightsMetalFX: (inout RenderSettings) -> Void = { $0.renderScale = 0.25; $0.upscaleFactor = 2 }
 
     /// Direct light in the Night market (4096 bulbs, GI and fog off, 640x400) against an accumulated reference
     /// (sampled lights, as manylightsq's above 1024 lights): candidates from the table alone
@@ -82,6 +96,19 @@ extension Benchmark {
             // The candidates alone (no reuse, no denoiser), 64 frames averaged: the sampler's own variance.
             let accum = st.named("sampled \(tag) accum market").reference(frames: 64).with { $0.sampledLights.grid.share = 32 }
             out += [st, st.named("sampled \(tag) moving market").moving(), accum]
+        }
+        // MegaLights (its own tile lists and light tree: the grid doesn't apply), static (+ previous), moving, accumulated,
+        // and through MetalFX.
+        let mega = base.direct(.megalights)
+        for (tag, change) in [("megalights", { (_: inout RenderSettings) in }), ("megalights metalfx", megaLightsMetalFX)] {
+            let st = mega.named("\(tag) static market").still(previous: true).with(change)
+            out += [st, st.named("\(tag) moving market").moving()]
+            if !tag.hasSuffix("metalfx") { out.append(st.named("\(tag) accum market").reference(frames: 64)) }
+        }
+        // The grid through MetalFX, static (+ previous) and moving.
+        for (tag, change) in sampledVariants {
+            let st = base.named("sampled grid \(tag) static market").still(previous: true).with { $0.sampledLights.grid.enabled = true }.with(change)
+            out += [st, st.named("sampled grid \(tag) moving market").moving()]
         }
         // The grid at the secondary hits and in the fog: indirect light alone (view 6, path traced and cascades)
         // against an accumulated path-traced reference, and the fog's scattering alone (view 14) against the
@@ -101,7 +128,7 @@ extension Benchmark {
         return out
     }
 
-    /// Direct light only (GI off), for the shadow denoiser: a converged reference at t = 5 s, then static (+ previous
+    /// Direct light only (GI off): the default direct light (MegaLights) in Cornell against a converged reference at t = 5 s, then static (+ previous
     /// frame), moving and camera-move frames that all end at t = 5 s with the default camera (Tools/eval/shadow.py).
     static func shadow() -> [Config] {
         let direct = Config("", scale: 0.5, gi: nil)

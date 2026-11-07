@@ -37,18 +37,17 @@ final class KernelVariantsTests: XCTestCase {
             ("FLAG_HISTORY_VALID", UniformFlags.historyValid), ("FLAG_DENOISE", UniformFlags.denoise),
             ("FLAG_UPSCALE", UniformFlags.upscale), ("FLAG_BLUE_NOISE", UniformFlags.blueNoise),
             ("FLAG_SEPARATE", UniformFlags.separateSignals), ("FLAG_NO_CLAMP", UniformFlags.noClamp),
-            ("FLAG_LIGHT_MAPS", UniformFlags.lightMaps), ("FLAG_SHADOW_DENOISER", UniformFlags.shadowDenoiser),
+            ("FLAG_LIGHT_MAPS", UniformFlags.lightMaps), ("FLAG_SUN_VISIBILITY", UniformFlags.sunVisibility),
             ("FLAG_ALL_LIGHTS", UniformFlags.allLights), ("FLAG_SPECULAR", UniformFlags.specular),
-            ("FLAG_REFERENCE", UniformFlags.reference), ("FLAG_MESH_LIGHTS", UniformFlags.meshLights),
+            ("FLAG_REFERENCE", UniformFlags.reference),
             ("FLAG_FOG", UniformFlags.fog), ("FLAG_FOG_REFERENCE", UniformFlags.fogReference),
             ("FLAG_SKY_MAP", UniformFlags.skyMap), ("FLAG_SAMPLED_LIGHTS", UniformFlags.sampledLights),
-            ("TRACE_BOUNCES", Uniforms.traceBounces), ("TRACE_MANY_LIGHTS", Uniforms.traceManyLights),
+            ("TRACE_BOUNCES", Uniforms.traceBounces),
             ("REFLECT_FOG", GPUFogParams.reflectionsFogged),
             ("FOG_HISTORY_VALID", GPUFogParams.historyValid), ("FOG_REFLECTIONS", GPUFogParams.reflections),
             ("FOG_ENABLED", GPUFogParams.enabled),
         ]
         for (name, value) in pairs { XCTAssertEqual(msl[name], value, name) }
-        XCTAssertEqual(msl["SHADOW_GROUPS"], 4, "Uniforms.tracePassFlags compares with 4")
     }
 
     func testOwnFlagWords() {
@@ -56,10 +55,8 @@ final class KernelVariantsTests: XCTestCase {
         XCTAssertEqual(u.tracePassFlags, 0)
         u.bounces = 3
         XCTAssertEqual(u.tracePassFlags, Uniforms.traceBounces)
-        u.lightGroupEnd.w = 4
+        u.lightGroupEnd.w = 5   // the light count isn't in it
         XCTAssertEqual(u.tracePassFlags, Uniforms.traceBounces)
-        u.lightGroupEnd.w = 5
-        XCTAssertEqual(u.tracePassFlags, Uniforms.traceBounces | Uniforms.traceManyLights)
 
         var f = GPUFogParams()
         XCTAssertEqual(f.reflectionPassFlags, 0)

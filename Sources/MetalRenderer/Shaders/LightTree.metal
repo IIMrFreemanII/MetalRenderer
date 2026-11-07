@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------------------------
-// The light tree (LightTree.swift): the path tracer's many lights (more than PT_LIGHT_HITS). A bounding hierarchy over
+// The light tree (LightTree.swift): the path tracer's many lights (more than PT_LIGHT_HITS) and MegaLights' far field. A bounding hierarchy over
 // every light but the suns. A light is drawn by walking
 // down from the root, at each node in proportion to its children's weights at the pixel; its probability is the
 // product of those choices, which lightTreePdf computes back along the light's path.
@@ -45,20 +45,32 @@ inline float lightTreeImportance(LightTreeNode node, float3 p, float3 n, bool vo
     return power * cosP * cosIp / (M_PI_F * max(d2, r2));
 }
 
-// A child's weight: a leaf's light's exact unshadowed diffuse light (the mesh lights' proxy), else its bound. `volume`: at a point in a medium (lightVolumeWeight, no receiver cosine).
+// Which lights the tree leaves to another strategy (MegaLights' tile lists: MegaLightsOwned): their leaves weigh 0, so
+// the tree never draws them. The path tracer's tree owns every light.
+struct LightTreeOwnsAll {
+    bool owns(uint, float3, device const Light*) const { return false; }
+    bool exactLeaves() const { return true; }   // a leaf weighs its light's exact unshadowed light (else its bound)
+};
+
+// A child's weight: a leaf's light's exact unshadowed diffuse light (the mesh lights' proxy; 0 if `owner` takes it),
+// else its bound. `volume`: at a point in a medium (lightVolumeWeight, no receiver cosine).
+template <typename Owner = LightTreeOwnsAll>
 inline float lightTreeWeight(device const LightTreeNode* tree, uint i, thread const ShadingPoint& sp, device const Light* lights,
-                             bool volume = false) {
+                             bool volume = false, Owner owner = Owner()) {
     LightTreeNode node = tree[i];
     if ((node.link.x & LIGHT_TREE_LEAF) != 0) {
         uint l = node.link.x & ~LIGHT_TREE_LEAF;
+        if (owner.owns(l, sp.p, lights)) return 0.0f;
+        if (!owner.exactLeaves()) return lightTreeImportance(node, sp.p, sp.n, volume);
         return volume ? lightVolumeWeight(lights[l], sp.p) : luminance(lightUnshadowed(lights[l], sp.p, sp.n, sp.ng));
     }
     return lightTreeImportance(node, sp.p, sp.n, volume);
 }
 
 // A light drawn from the tree with one random number (rescaled at every choice), and its probability (0: none).
+template <typename Owner = LightTreeOwnsAll>
 inline uint sampleLightTree(device const LightTreeNode* tree, uint nodes, float u, thread const ShadingPoint& sp,
-                            device const Light* lights, thread float& pdf, bool volume = false) {
+                            device const Light* lights, thread float& pdf, bool volume = false, Owner owner = Owner()) {
     pdf = 0.0f;
     if (nodes == 0) return ELEMENT_NONE;
     uint i = 0;
@@ -67,10 +79,11 @@ inline uint sampleLightTree(device const LightTreeNode* tree, uint nodes, float 
         uint2 link = tree[i].link.xy;
         if ((link.x & LIGHT_TREE_LEAF) != 0) {
             uint l = link.x & ~LIGHT_TREE_LEAF;
+            if (depth == 0 && owner.owns(l, sp.p, lights)) return ELEMENT_NONE;   // one light, and another strategy's
             pdf = p;
             return l;
         }
-        float wl = lightTreeWeight(tree, link.x, sp, lights, volume), wr = lightTreeWeight(tree, link.y, sp, lights, volume);
+        float wl = lightTreeWeight(tree, link.x, sp, lights, volume, owner), wr = lightTreeWeight(tree, link.y, sp, lights, volume, owner);
         if (!(wl + wr > 0.0f)) return ELEMENT_NONE;
         float pl = wl / (wl + wr);
         if (u < pl) { u = min(u / pl, 0.99999f); p *= pl; i = link.x; }
@@ -80,8 +93,9 @@ inline uint sampleLightTree(device const LightTreeNode* tree, uint nodes, float 
 }
 
 // The probability that sampleLightTree draws light l at the pixel.
+template <typename Owner = LightTreeOwnsAll>
 inline float lightTreePdf(device const LightTreeNode* tree, uint nodes, uint l, thread const ShadingPoint& sp,
-                          device const Light* lights, bool volume = false) {
+                          device const Light* lights, bool volume = false, Owner owner = Owner()) {
     if (nodes == 0) return 0.0f;
     uint2 path = ((device const uint2*)(tree + nodes))[l];
     if (path.y > 32) return 0.0f;   // not in the tree (the suns)
@@ -89,7 +103,7 @@ inline float lightTreePdf(device const LightTreeNode* tree, uint nodes, uint l, 
     float p = 1.0f;
     for (uint depth = 0; depth < path.y; ++depth) {
         uint2 link = tree[i].link.xy;
-        float wl = lightTreeWeight(tree, link.x, sp, lights, volume), wr = lightTreeWeight(tree, link.y, sp, lights, volume);
+        float wl = lightTreeWeight(tree, link.x, sp, lights, volume, owner), wr = lightTreeWeight(tree, link.y, sp, lights, volume, owner);
         if (!(wl + wr > 0.0f)) return 0.0f;
         bool right = ((path.x >> depth) & 1u) != 0;
         p *= (right ? wr : wl) / (wl + wr);

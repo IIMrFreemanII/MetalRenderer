@@ -83,7 +83,7 @@ extension Renderer {
             ?? (c.cameraPath ? Benchmark.cameraPose(progress: 0, scene: settings.scene.kind, sceneCamera: scene.defaultCamera) : c.camera ?? scene.defaultCamera)
         prevCamera = camera
         benchmarkAccumulating = c.accumulate
-        referenceDirectMode = c.accumulate && [.exact, .sampled].contains(c.directLight) ? c.directLight : nil
+        referenceDirectMode = c.accumulate ? c.directLight : nil
         supersampling = c.accumulate && c.supersample
         resetReference()
         resetGIState()
@@ -306,20 +306,19 @@ extension Renderer {
 
     /// sRGB, so shaders and MetalFX write linear color and the GPU encodes it.
     package static let drawableFormat = MTLPixelFormat.bgra8Unorm_srgb
-    package static let shadowDenoiserAllowed = ProcessInfo.processInfo.environment["METALRENDERER_SHADOWS"] != "0"
     /// References trace every light up to this many; above, they accumulate sampled lights, unbiased.
     package static let exactReferenceLights = 1024
 
-    /// This frame's direct-light method: Auto resolved (sampled with many lights), references exact or sampled.
+    /// This frame's direct-light method: references trace every light (sampled lights above exactReferenceLights);
+    /// MegaLights within its limits (16-bit tile lists, the suns lit apart, as the tree leaves them out), else Sampled.
     package var activeDirectMode: DirectLightMode {
         if accumulating {
             if let forced = referenceDirectMode { return forced }   // METALRENDERER_BENCH=sampledcheck
             return scene.lights.count > Renderer.exactReferenceLights ? .sampled : .exact
         }
-        switch settings.directLight {
-        case .auto: return scene.usesLightTable ? .sampled : .grouped   // nothing may loop over the lights above 256
-        case let mode: return mode
-        }
+        if settings.directLight == .sampled { return .sampled }
+        // (.exact is never a setting: a saved one, or any other, is MegaLights.)
+        return scene.lights.count <= MegaLightsSettings.maxLights && scene.lightTable.sunCount <= LightTable.maxSuns ? .megalights : .sampled
     }
 
     /// The light grid's buffer for `count` reservoirs (reallocated only when the count changes: a settings change).
@@ -636,7 +635,7 @@ extension Renderer {
         d.meshLights = scene.meshLights.count
         d.lightTable = scene.usesLightTable
         d.lightTableEntries = scene.lightTable.entries.count
-        d.directMode = activeDirectMode == .grouped && scene.lightGroupEnd.w <= 4 ? "Exact (4 lights or fewer)" : activeDirectMode.title
+        d.directMode = activeDirectMode.title
         d.giMode = !settings.giEnabled ? "Off" : activeGIMode.title
         if let vg = virtualTracing?.blas {
             d.vg = .blas(meshes: vg.meshCount, instances: vg.instanceCount, sourceTriangles: vg.sourceTriangles,

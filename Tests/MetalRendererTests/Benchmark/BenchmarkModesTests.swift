@@ -128,7 +128,7 @@ final class BenchmarkModesTests: XCTestCase {
     }
 
     func testEnvListsOverrideASetting() {
-        let c = Benchmark.Config("x", scale: 0.5).direct(.grouped)
+        let c = Benchmark.Config("x", scale: 0.5).direct(.sampled)
         let s = c.resolvedSettings(env: ["METALRENDERER_GI": "mode=cascades,bounces=3", "METALRENDERER_VIEW": "paused=1,fov=70",
                                          "METALRENDERER_DENOISE": "on=0"])
         XCTAssertEqual(s.giMode, .radianceCascades)
@@ -136,7 +136,7 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertEqual(s.fovDegrees, 70)
         XCTAssertFalse(s.paused, "benchmarks choose the pause themselves")
         XCTAssertFalse(s.denoiser.enabled)
-        XCTAssertEqual(s.directLight, .grouped)
+        XCTAssertEqual(s.directLight, .sampled)
         // References keep their own GI settings.
         let ref = c.reference(frames: 8).resolvedSettings(env: ["METALRENDERER_GI": "mode=cascades,bounces=3"])
         XCTAssertEqual(ref.giMode, .pathTraced)

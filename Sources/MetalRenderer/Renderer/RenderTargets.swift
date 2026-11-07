@@ -25,14 +25,11 @@ package final class RenderTargets {
     let geoNormal: MTLTexture       // geometric normal, oriented toward the camera
     let giDebug: MTLTexture         // debug visualisation written by cascade GI (view mode "GI debug")
     let geometryDebug: MTLTexture   // geometry debug views (view modes 8-13), written by geometryDebugKernel
-    let visibility: MTLTexture      // per light group (rgba = groups 0...3): visibility of this frame's shadow ray(s)
-    let blocker: MTLTexture         // per light group: penumbra half width of the occluded samples, 0 = visible
+    let visibility: MTLTexture      // MegaLights under MetalFX: the suns' raw visibility, for its diffuse guide (sunShadowGuide)
     let material: MTLTexture        // specular materials: rgb = F0, a = roughness
     let specular: MTLTexture        // raw 1-spp specular light (reflections), divided by the specular albedo
-    let meshDirect: MTLTexture      // raw 1-spp direct light from emissive-mesh lights (albedo removed)
-    let shadow: ShadowTargets       // shadow denoiser state
-    /// Denoiser state for [0] direct + indirect light combined (or direct alone), [1] indirect light alone,
-    /// [2] specular light and [3] mesh-light direct light (with the shadow denoiser).
+    /// Denoiser state for [0] direct + indirect light combined (or direct alone), [1] indirect light alone and
+    /// [2] specular light.
     let denoise: [DenoiseTargets]
     // MetalFX inputs (written only while upscaling is on)
     static let upscaleColorFormat = MTLPixelFormat.rgba16Float
@@ -74,14 +71,10 @@ package final class RenderTargets {
         geoNormal = try make(.rgba16Float, "geoNormal")
         giDebug = try make(.rgba16Float, "giDebug")
         geometryDebug = try make(.rgba8Unorm, "geometryDebug")
-        visibility = try make(.rgba8Unorm, "visibility")
-        blocker = try make(.rgba16Float, "blocker")
+        visibility = try make(.r8Unorm, "sunVisibility")
         material = try make(.rgba16Float, "material")
         specular = try make(.rgba16Float, "specular")
-        meshDirect = try make(.rgba16Float, "meshDirect")
-        shadow = try ShadowTargets(device: device, width: width, height: height, make)
-        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect"), try DenoiseTargets(make, "specular"),
-                   try DenoiseTargets(make, "meshDirect")]
+        denoise = [try DenoiseTargets(make, "direct"), try DenoiseTargets(make, "indirect"), try DenoiseTargets(make, "specular")]
         upscaleColor = try make(RenderTargets.upscaleColorFormat, "upscaleColor")
         deviceDepth = try make(RenderTargets.upscaleDepthFormat, "deviceDepth")
         pixelMotion = try make(RenderTargets.upscaleMotionFormat, "pixelMotion")
@@ -120,36 +113,6 @@ final class DenoiseTargets {
         case 1: return (history, pingB)
         default: return i % 2 == 0 ? (pingB, pingA) : (pingA, pingB)
         }
-    }
-}
-
-/// Textures the shadow denoiser keeps (visibility per light in rgba).
-final class ShadowTargets {
-    let history: MTLTexture     // filtered visibility fed back into next frame's temporal pass
-    let pingA: MTLTexture
-    let pingB: MTLTexture
-    let meta: [MTLTexture]      // [2], ping-ponged. z = history length
-    let penumbra: MTLTexture    // per light: penumbra half-width in pixels
-    let tiles: MTLTexture       // per 8x8 tile: 1 = fully lit / shadowed everywhere, nothing to filter
-    // More than 4 lights with light reuse: per group, last frame's light pick (manyLightsKernel), ping-ponged.
-    let reservoir: [MTLTexture]         // [2] rgba32Uint: light index | confidence M << 16
-    let reservoirWeight: [MTLTexture]   // [2] rgba32Float: the pick's contribution weight W
-
-    package init(device: MTLDevice, width: Int, height: Int, _ make: (MTLPixelFormat, String) throws -> MTLTexture) throws {
-        history = try make(.rgba16Float, "shadow history")
-        pingA = try make(.rgba16Float, "shadow pingA")
-        pingB = try make(.rgba16Float, "shadow pingB")
-        meta = [try make(.rgba16Float, "shadow meta0"), try make(.rgba16Float, "shadow meta1")]
-        penumbra = try make(.rgba16Float, "shadow penumbra")
-        reservoir = [try make(.rgba32Uint, "light reservoir0"), try make(.rgba32Uint, "light reservoir1")]
-        reservoirWeight = [try make(.rgba32Float, "light reservoir weight0"), try make(.rgba32Float, "light reservoir weight1")]
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Uint, width: (width + 7) / 8,
-                                                         height: (height + 7) / 8, mipmapped: false)
-        d.usage = [.shaderRead, .shaderWrite]
-        d.storageMode = .private
-        guard let tiles = device.makeTexture(descriptor: d) else { throw RendererError.resourceCreation("texture shadow tiles") }
-        tiles.label = "shadow tiles"
-        self.tiles = tiles
     }
 }
 

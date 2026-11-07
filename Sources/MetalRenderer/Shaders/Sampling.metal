@@ -30,10 +30,10 @@ inline uint pcgHash(uint v) {
 // one seed pick correlated samples (a light and a bounce direction, say).
 constant uint SEED_TRACE             = 0u;
 constant uint SEED_FOG_REFERENCE     = 0x5bd1e995u;
-constant uint SEED_MANY_LIGHTS       = 0x9E3779B9u;   // manyLightsKernel / manyLightsReuseKernel: one of them runs
 constant uint SEED_GLASS              = 0x7F4A7C15u;   // a rough glass's surface (liquidKernel)
 constant uint SEED_CONTACT_AO        = 0x3C6EF372u;
 constant uint SEED_SAMPLED_LIGHTS    = 0x2545F491u;
+constant uint SEED_MEGALIGHTS        = 0x61C88647u;   // megaLightsSampleKernel (runs in place of sampledLightsKernel)
 inline uint pixelSeed(uint2 pixel, uint frame, uint salt) {
     return pcgHash(pixel.x + pcgHash(pixel.y + pcgHash(frame ^ salt)));
 }

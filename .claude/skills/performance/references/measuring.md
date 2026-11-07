@@ -62,7 +62,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `1` | the default list: GI bounces, denoiser, render scale, MetalFX |
 | `quick` | the default setting, a camera move, path traced, 0.75× native: fast smoke tests |
 | `stress` | the stress building (warehouse, factory, garage, office) against light count (1–256), object count (0–2000) and GI method |
-| `manylights` | 1 to 16384 lights for each direct-light method, plus the Night market |
+| `manylights` | 1 to 16384 lights with Sampled and MegaLights (exact is the reference, not timed), plus the Night market |
 | `city` | the generated city: stills from three viewpoints and of each style, flat against textured, night; then 1 to 100 blocks by day and at night ("glass" is the panes' pass) |
 | `hwrt` | ray tracing's cost per scene and GI method ("cornell pt", "stress cascades" …), through the MetalFX denoiser |
 | `gallery` | glTF gallery: full meshes against virtual geometry at 0.5/1/2 px, plus a fly-through (warm the caches first) |
@@ -76,7 +76,7 @@ setting  res  tlas  lightmap  trace  composite  MetalFX  rc probes  rc resolve  
 | `manylightsq`, `marketq`, `sampledcheck` | `Tools/eval/manylights.py` (`sampledcheck`'s mean brightness ratios should be 1.00) |
 | `speccheck` | `Tools/eval/specular.py` (direct light with specular materials; mean should be 1.00) |
 | `gi` | `Tools/eval/gi.py` |
-| `shadow` | `Tools/eval/shadow.py` |
+| `shadow` | `Tools/eval/shadow.py` (the default direct light, MegaLights, in Cornell) |
 | `hwrtq` | `Tools/eval/hwrt.py` |
 | `noise` (references) + `denoise` | `Tools/eval/noise.py` |
 | `gallery` | `Tools/eval/gallery.py` |

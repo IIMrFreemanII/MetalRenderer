@@ -25,7 +25,7 @@ package final class Benchmark {
         package var name: String
         /// What it renders with, before the METALRENDERER_* lists override it (`resolvedSettings`).
         package var settings: RenderSettings
-        /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / Auto.
+        /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / the default (MegaLights).
         var directLight: DirectLightMode? = nil
         package var startTime: Float = 0            // the animation clock at the first frame
         var dt: Float = 1.0 / 60.0          // the clock's step a frame (seconds)
@@ -106,6 +106,22 @@ package final class Benchmark {
         package func step(_ seconds: Float) -> Config { var c = self; c.dt = seconds; return c }
         package func direct(_ mode: DirectLightMode) -> Config { var c = self; c.directLight = mode; return c }
         package func from(_ camera: Camera) -> Config { var c = self; c.camera = camera; return c }
+        /// The camera at the scene's bookmark `name` (by name, number or prefix), as `from` sets it; a scene without it is a
+        /// bug in the benchmark.
+        package func at(_ bookmark: String) -> Config {
+            let kind = settings.scene.kind
+            guard let b = SceneDefinition.resolve(bookmark, in: kind.definition.bookmarks) else {
+                fatalError("benchmark \"\(name)\": scene \(kind) has no bookmark \"\(bookmark)\"")
+            }
+            var camera = Camera()
+            camera.position = b.position
+            guard let (yaw, pitch) = SceneCommand.angles(from: b.position, to: b.lookAt) else {
+                fatalError("benchmark \"\(name)\": bookmark \"\(b.name)\" looks from where it stands")
+            }
+            camera.yaw = yaw
+            camera.pitch = pitch
+            return from(camera)
+        }
         package func cameraMove() -> Config { var c = self; c.cameraPath = true; return c }
         /// Saves every other measured frame (30 fps of the 60 Hz clock) for a video: `<NN-name>/f0001.jpg` and on.
         package func recording() -> Config { var c = self; c.record = true; return c }
@@ -169,7 +185,7 @@ package final class Benchmark {
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.sampledLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.sampledLights, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }

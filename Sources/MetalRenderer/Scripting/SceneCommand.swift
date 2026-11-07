@@ -10,6 +10,7 @@ import simd
 ///              "scale": [1, 1, 1], "material": "wood", "parent": "Table"}}       an object of that name is replaced
 ///   {"move": {"name": "Crate", "position": [...], "rotation": [...], "scale": [...]}}   live, no new scene
 ///   {"remove": {"names": ["Crate"], "prefix": "Grid "}}                            with what hangs from them
+///   {"bookmark": {"name": "7"}}                 the scene's bookmark (by name, number or prefix; or {"bookmark": "7"})
 ///   {"camera": {"position": [...], "lookAt": [...], "yaw": 30, "pitch": -10, "fov": 60}}   angles in degrees
 ///
 /// A rotation is `[x, y, z]` in degrees (turned about y, then x, then z) or a quaternion `[x, y, z, w]`.
@@ -18,6 +19,7 @@ package enum SceneCommand: Equatable {
     case move(name: String, position: SIMD3<Float>?, rotation: simd_quatf?, scale: SIMD3<Float>?)
     case remove(names: [String], prefix: String?)
     case camera(position: SIMD3<Float>?, lookAt: SIMD3<Float>?, yaw: Float?, pitch: Float?, fovDegrees: Float?)
+    case bookmark(name: String)
 
     package struct Failure: Error, Equatable, CustomStringConvertible {
         package let description: String
@@ -25,11 +27,12 @@ package enum SceneCommand: Equatable {
     }
 
     /// The request's keys this reads.
-    package static let keys = ["place", "move", "remove", "camera"]
+    package static let keys = ["place", "move", "remove", "camera", "bookmark"]
 
     /// The command a request asks for; nil if it asks for none of these.
     package static func decode(_ request: [String: Any]) -> Result<SceneCommand, Failure>? {
         guard let key = keys.first(where: { request[$0] != nil }) else { return nil }
+        if key == "bookmark", let name = request[key] as? String { return .success(.bookmark(name: name)) }
         guard let body = request[key] as? [String: Any] else { return .failure(Failure("\(key): give an object")) }
         do {
             switch key {
@@ -51,6 +54,9 @@ package enum SceneCommand: Equatable {
                 let prefix = body["prefix"] as? String
                 guard !names.isEmpty || !(prefix ?? "").isEmpty else { throw Failure("remove: give names or a prefix") }
                 return .success(.remove(names: names, prefix: prefix))
+            case "bookmark":
+                guard let name = body["name"] as? String, !name.isEmpty else { throw Failure("bookmark: needs a name") }
+                return .success(.bookmark(name: name))
             default:
                 return .success(.camera(position: try vector(body["position"], "position"), lookAt: try vector(body["lookAt"], "lookAt"),
                                         yaw: number(body["yaw"]), pitch: number(body["pitch"]), fovDegrees: number(body["fov"])))
@@ -99,22 +105,36 @@ package enum SceneCommand: Equatable {
             }
             return .success(["removed": removed])
         case .camera(let position, let lookAt, let yaw, let pitch, let fov):
-            var camera = renderer.camera
-            if let position { camera.position = position }
-            if let yaw { camera.yaw = yaw * .pi / 180 }
-            if let pitch { camera.pitch = pitch * .pi / 180 }
-            if let lookAt {
-                guard let (y, p) = SceneCommand.angles(from: camera.position, to: lookAt) else {
-                    return .failure(Failure("camera: lookAt is where the camera is"))
-                }
-                camera.yaw = y
-                camera.pitch = p
+            return SceneCommand.moveCamera(renderer, position: position, lookAt: lookAt, yaw: yaw, pitch: pitch, fov: fov)
+        case .bookmark(let name):
+            let bookmarks = renderer.settings.scene.kind.definition.bookmarks
+            guard let b = SceneDefinition.resolve(name, in: bookmarks) else {
+                let list = bookmarks.isEmpty ? "this scene has none" : bookmarks.map(\.name).joined(separator: ", ")
+                return .failure(Failure("bookmark: no bookmark \"\(name)\" (the bookmarks: \(list))"))
             }
-            renderer.camera = camera
-            if let fov { renderer.settings.fovDegrees = fov }
-            return .success(["position": [camera.position.x, camera.position.y, camera.position.z].map(Double.init),
-                             "yaw": Double(camera.yaw * 180 / .pi), "pitch": Double(camera.pitch * 180 / .pi)])
+            var answer = SceneCommand.moveCamera(renderer, position: b.position, lookAt: b.lookAt, yaw: nil, pitch: nil, fov: nil)
+            if case .success(var a) = answer { a["bookmark"] = b.name; answer = .success(a) }
+            return answer
         }
+    }
+
+    private static func moveCamera(_ renderer: Renderer, position: SIMD3<Float>?, lookAt: SIMD3<Float>?, yaw: Float?, pitch: Float?,
+                                   fov: Float?) -> Result<[String: Any], Failure> {
+        var camera = renderer.camera
+        if let position { camera.position = position }
+        if let yaw { camera.yaw = yaw * .pi / 180 }
+        if let pitch { camera.pitch = pitch * .pi / 180 }
+        if let lookAt {
+            guard let (y, p) = SceneCommand.angles(from: camera.position, to: lookAt) else {
+                return .failure(Failure("camera: lookAt is where the camera is"))
+            }
+            camera.yaw = y
+            camera.pitch = p
+        }
+        renderer.camera = camera
+        if let fov { renderer.settings.fovDegrees = fov }
+        return .success(["position": [camera.position.x, camera.position.y, camera.position.z].map(Double.init),
+                         "yaw": Double(camera.yaw * 180 / .pi), "pitch": Double(camera.pitch * 180 / .pi)])
     }
 
     /// The camera's yaw and pitch (radians) to look from `eye` at `target` (Camera.forward's inverse).

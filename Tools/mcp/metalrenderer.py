@@ -23,7 +23,7 @@ ROTATION = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxIte
             "description": "[x, y, z] in degrees (turned about y, then x, then z), or a quaternion [x, y, z, w]."}
 SCALE = {"description": "A number, or [x, y, z].", "anyOf": [{"type": "number"}, VEC3]}
 # The typed tools: the socket's SceneCommand by its key.
-COMMANDS = {"place_object": "place", "move_object": "move", "remove_objects": "remove", "set_camera": "camera"}
+COMMANDS = {"place_object": "place", "move_object": "move", "remove_objects": "remove", "set_camera": "camera", "go_to_bookmark": "bookmark"}
 
 TOOLS = [
     {
@@ -114,6 +114,14 @@ TOOLS = [
             "position": VEC3, "lookAt": VEC3,
             "yaw": {"type": "number", "description": "Degrees; 0 looks down -Z."}, "pitch": {"type": "number", "description": "Degrees; negative looks down."},
             "fov": {"type": "number"}, "build": BUILD}},
+    },
+    {
+        "name": "go_to_bookmark",
+        "description": ("Move the camera to one of the scene's bookmarks (scene_state lists them): by name, by number "
+                        "(\"7\" is \"07 Spot cones\"), or by the start or a part of its name, in any case."),
+        "inputSchema": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "The bookmark's name, number or prefix."}, "build": BUILD},
+            "required": ["name"]},
     },
     {
         "name": "modeller",

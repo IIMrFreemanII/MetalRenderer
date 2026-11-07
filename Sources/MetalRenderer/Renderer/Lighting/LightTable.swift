@@ -36,6 +36,7 @@ package struct LightTable {
     var entries: [GPULightTableEntry] = []
     var triangles: [GPUTriangleInfo] = []
     var suns: [UInt32] = []
+    var sunCount = 0   // every sun, also those past maxSuns (in the table): MegaLights lights only the first maxSuns
 
     /// Bytes after the lights in each frame's light buffer: entries (16 B each), then triangles (8 B each).
     var byteCount: Int {
@@ -51,6 +52,7 @@ package struct LightTable {
             let power: Float
             switch l.kind {
             case .sun:
+                sunCount += 1
                 if suns.count < LightTable.maxSuns { suns.append(UInt32(i)); continue }
                 power = .pi * pow(scene.sceneSphere.w, 2) * dot(l.color, lum)   // more suns: what falls on the scene
             case .sphere, .tube: power = 4 * .pi * dot(l.color, lum)

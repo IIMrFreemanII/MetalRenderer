@@ -72,6 +72,7 @@ extension Renderer {
             "sceneIn": scene.settings.kind.envName,
             "settled": sceneSettled,
             "scenes": SceneRegistry.kinds.map(\.envName),
+            "bookmarks": settings.scene.kind.definition.bookmarks.map(\.name),
             "camera": ["position": xyz(camera.position), "yaw": Double(camera.yaw), "pitch": Double(camera.pitch),
                        "forward": xyz(camera.forward), "fovDegrees": Double(settings.fovDegrees)],
             "time": Double(animTime),
