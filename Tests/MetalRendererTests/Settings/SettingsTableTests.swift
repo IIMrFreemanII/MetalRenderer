@@ -162,7 +162,7 @@ final class SettingsTableTests: XCTestCase {
     /// to RenderSettings without a line in the table fails here.
     func testEverySettingRoundTrips() {
         // Session state, like the camera; and what the renderer sets by the time of day.
-        let unexported: Set<String> = ["lookVersion", "post.classic", "virtualGeometry.freeze", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
+        let unexported: Set<String> = ["lookVersion", "post.classic", "virtualGeometry.freeze", "virtualGeometry.waitRule", "virtualGeometry.waitShare", "virtualGeometry.waitPasses", "scene.worldLit", "scene.plantCatalog", "scene.plants.mutants",
                                          "scene.plants.compare", "scene.buildingCatalog", "scene.buildings.mutants", "scene.buildings.compare",
                                          "scene.interior", "scene.buildings.pinned", "solidFromScene"]
         let changes = singleChanges()

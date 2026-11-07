@@ -41,11 +41,17 @@ extension Scene {
     /// Adds every part of `model` as an instance at `transform` (times the part's own transform), with the model's
     /// materials and textures. `animation`, if given, replaces `transform` over time.
     package func addModel(_ model: GLTFModel, url: URL, transform: float4x4, animation: ((Float) -> float4x4)? = nil) {
+        addModel(model, url: url, placements: [(transform, animation)])
+    }
+
+    /// Adds `model` once per placement (a transform, and an animation that replaces it over time), every copy sharing
+    /// its meshes, virtual meshes and materials.
+    package func addModel(_ model: GLTFModel, url: URL, placements: [(transform: float4x4, animation: ((Float) -> float4x4)?)]) {
         beginObject(model.name, assets: [AssetKey(kind: .model, name: url.lastPathComponent)])   // the outline's: its parts, its lights
         defer { endObject() }
         let firstMaterial = addModelMaterials(model, url: url)
         let fallback = addMaterial(albedo: [0.7, 0.7, 0.7])   // parts without a material
-        addModelLights(model, transform: transform, animation: animation)
+        for (transform, animation) in placements { addModelLights(model, transform: transform, animation: animation) }
         // Big meshes become virtual (cached cluster DAGs); the rest are ordinary meshes.
         let virtualIndices = usesVirtualGeometry
             ? model.meshes.indices.filter { model.meshes[$0].indices.count / 3 >= VirtualGeometryBuilder.minTriangles } : []
@@ -63,20 +69,22 @@ extension Scene {
             meshOf[i] = (addMesh((mesh.positions, mesh.normals, mesh.indices), uvs: mesh.uvs), -1)
             label(mesh: meshOf[i]!.mesh, "\(model.name)#\(i)", shared: true)
         }
-        for part in model.parts {
-            let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
-            let (mesh, virtual) = meshOf[part.mesh]!
-            let index: Int
-            if let animation {
-                index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
-                if isSolidGlass(model, part.mesh) { instances[index].mask = Scene.maskLiquid }
-            } else {
-                index = addInstance(mesh, material, transform * part.transform, mask: isSolidGlass(model, part.mesh) ? Scene.maskLiquid : Scene.maskGeometry)
-            }
-            instances[index].virtualMesh = virtual
-            if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
-                let m = model.meshes[part.mesh]
-                emitterSources[index] = (m.positions, m.uvs, m.indices)
+        for (transform, animation) in placements {
+            for part in model.parts {
+                let material = model.meshes[part.mesh].material.map { firstMaterial + $0 } ?? fallback
+                let (mesh, virtual) = meshOf[part.mesh]!
+                let index: Int
+                if let animation {
+                    index = addInstance(mesh, material, transform * part.transform) { t in animation(t) * part.transform }
+                    if isSolidGlass(model, part.mesh) { instances[index].mask = Scene.maskLiquid }
+                } else {
+                    index = addInstance(mesh, material, transform * part.transform, mask: isSolidGlass(model, part.mesh) ? Scene.maskLiquid : Scene.maskGeometry)
+                }
+                instances[index].virtualMesh = virtual
+                if materials[material].emission.x + materials[material].emission.y + materials[material].emission.z > 0 {
+                    let m = model.meshes[part.mesh]
+                    emitterSources[index] = (m.positions, m.uvs, m.indices)
+                }
             }
         }
     }

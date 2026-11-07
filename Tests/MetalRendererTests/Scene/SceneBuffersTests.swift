@@ -353,6 +353,35 @@ final class SceneBuffersTests: XCTestCase {
         XCTAssertEqual(scene.cascadeLitMeshLights, 1)
     }
 
+    /// An animated emitter is measured at its pose at t = 0, not at the placeholder transform it was added with (the
+    /// Emissive scene's ring of 0.22 m cubes, added at identity, were measured as unit cubes and reached 1.9 m).
+    func testAnimatedEmitterIsMeasuredAtItsPose() {
+        let scene = Scene(SceneSettings(kind: .cornell, cascadeEmitterSize: 0.3)) { scene in
+            let shrunk = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(self.quad(0)), shrunk, matrix_identity_float4x4,
+                              animation: { t in translate([0, 1 + t, 0]) * scale(SIMD3(repeating: 0.1)) })
+            let whole = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(self.quad(0)), whole, scale(SIMD3(repeating: 0.1)),
+                              animation: { t in translate([0, 1 + t, 0]) })
+        }
+        XCTAssertEqual(scene.materials[scene.instances[0].material].params.z, 1, "0.1 m across: a sampled light")
+        XCTAssertEqual(scene.materials[scene.instances[1].material].params.z, 2 + 0.5642, accuracy: 1e-3, "1 m across: the cascades'")
+    }
+
+    /// A scale that differs between axes is measured exactly: a quad stretched in its own plane, a thin box.
+    func testEmitterSizeUnderNonUniformScale() {
+        let scene = Scene(SceneSettings(kind: .cornell, cascadeEmitterSize: 0.01)) { scene in
+            let panel = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(self.quad(0)), panel, scale([3, 7, 3]))
+            let bar = scene.addMaterial(albedo: .zero, emission: [3, 3, 3])
+            scene.addInstance(scene.addMesh(Scene.cubeMesh()), bar, scale([1.2, 0.08, 0.08]))
+        }
+        // The panel: area 9 (its height's scale is out of its plane), flat. The bar: 2 (1.2 x 0.08 x 2 + 0.08^2), closed.
+        XCTAssertEqual(scene.materials[scene.instances[0].material].params.z, 2 + (9 / Float.pi).squareRoot(), accuracy: 1e-3)
+        let barArea: Float = 2 * (2 * 1.2 * 0.08 + 0.08 * 0.08)
+        XCTAssertEqual(scene.materials[scene.instances[1].material].params.z, 2 + (barArea / (4 * .pi)).squareRoot(), accuracy: 1e-4)
+    }
+
     /// The open world's lights (`Scene.cityLights`): materials that emit nothing as the scene is made, and their
     /// borrowed meshes' lights with them; as far on as the sun's height says, in the materials and in the light table.
     func testCityLightsComeOn() throws {

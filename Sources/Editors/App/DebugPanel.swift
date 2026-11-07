@@ -24,6 +24,28 @@ final class DebugPanel: NSObject {
     private let freezeLOD = NSButton(checkboxWithTitle: "Freeze LOD (L)", target: nil, action: nil)
     private let viewNote = NSTextField(wrappingLabelWithString: "")
     private let counters = NSButton(checkboxWithTitle: "Ray query counters (recompiles shaders, slower)", target: nil, action: nil)
+    // Virtual geometry
+    private let vgGraph = VGGraphView()
+    private let vgProbe = NSTextField(wrappingLabelWithString: "")
+    private let vgResidency = NSTextField(wrappingLabelWithString: "")
+    private let vgTable = VGInstanceTable()
+    private let vgTau = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let vgTauValue = NSTextField(labelWithString: "")
+    private let vgRecut = NSButton(title: "Force re-cut", target: nil, action: nil)
+    private let vgWait = NSButton(checkboxWithTitle: "Wait rule", target: nil, action: nil)
+    private let vgShare = NSSlider(value: 0.1, minValue: Double(DebugPanel.shareRange.lowerBound), maxValue: Double(DebugPanel.shareRange.upperBound),
+                                   target: nil, action: nil)
+    private let vgShareValue = NSTextField(labelWithString: "")
+    private let vgPasses = NSStepper()
+    private let vgPassesValue = NSTextField(labelWithString: "")
+    private let vgView = NSPopUpButton()
+    private var vgViewModes: [Int] = []
+    private let vgBooth = NSPopUpButton()
+    private var shownBookmarks: [SceneBookmark] = []
+    private let vgCount = NSTextField(string: "")
+    private let vgCountStepper = NSStepper()
+    private let vgEvict = NSButton(title: "Evict cache", target: nil, action: nil)
+    private var vgLabControls: [NSView] = []
     private let frame = Section("Frame")
     private let view = Section("View")
     private let passes = Section("GPU passes")
@@ -34,6 +56,12 @@ final class DebugPanel: NSObject {
     private let traversal = Section("Ray queries")
     private var lastRebuilds: (count: Int, time: CFTimeInterval)?
     private var rebuildRate = 0.0
+
+    // The VG controls' ranges (the instance field's count: the VG lab's settings.scene.objects).
+    private static let tauRange = VirtualGeometrySettings.pixelErrorRange
+    private static let shareRange = VirtualGeometrySettings.waitShareRange
+    private static let passesRange = VirtualGeometrySettings.waitPassesRange
+    private static let objectsRange = 1...SceneSettings.objectRange.upperBound
 
     private static let visibleKey = "debug.visible"
     /// Shown at the last launch (the window comes back where it was).
@@ -83,6 +111,7 @@ final class DebugPanel: NSObject {
         view.add(controls)
         view.add(viewNote)
         traversal.add(counters)
+        buildVGControls()
 
         let stack = NSStackView(views: [frame, view, passes, scene, vg, textures, memory, traversal])
         stack.orientation = .vertical
@@ -156,6 +185,7 @@ final class DebugPanel: NSObject {
     private func update(from s: RenderSettings) {
         debugView.selectItem(at: s.viewMode)
         freezeLOD.state = s.virtualGeometry.freeze ? .on : .off
+        updateVGControls(from: s)
     }
 
     private func refresh() {
@@ -206,6 +236,7 @@ final class DebugPanel: NSObject {
         }
         vg.set(vgRows)
         vg.isHidden = vgRows.isEmpty
+        if let report = d.vgReport { showVG(report) }
 
         if let t = d.textures {
             textures.set([
@@ -254,6 +285,165 @@ final class DebugPanel: NSObject {
         if n >= 10_000_000 { return String(format: "%.1fM", Double(n) / 1e6) }
         return n.formatted(.number)
     }
+
+    // MARK: - Virtual geometry
+
+    private func buildVGControls() {
+        let small = NSFont.smallSystemFontSize
+        for field in [vgProbe, vgResidency] {
+            field.font = .monospacedSystemFont(ofSize: small, weight: .regular)
+            field.textColor = .secondaryLabelColor
+        }
+        for field in [vgTauValue, vgShareValue, vgPassesValue] {
+            field.font = .monospacedDigitSystemFont(ofSize: small, weight: .regular)
+        }
+        vgGraph.translatesAutoresizingMaskIntoConstraints = false
+        vgGraph.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        vgTable.translatesAutoresizingMaskIntoConstraints = false
+        vgTable.heightAnchor.constraint(equalToConstant: 190).isActive = true
+        vgTau.minValue = 0
+        vgTau.maxValue = 1
+        vgPasses.minValue = Double(Self.passesRange.lowerBound)
+        vgPasses.maxValue = Double(Self.passesRange.upperBound)
+        vgCountStepper.minValue = Double(Self.objectsRange.lowerBound)
+        vgCountStepper.maxValue = Double(Self.objectsRange.upperBound)
+        vgCount.alignment = .right
+        vgCount.formatter = {
+            let f = NumberFormatter()
+            f.minimum = NSNumber(value: Self.objectsRange.lowerBound)
+            f.maximum = NSNumber(value: Self.objectsRange.upperBound)
+            f.allowsFloats = false
+            return f
+        }()
+        vgCount.widthAnchor.constraint(equalToConstant: 56).isActive = true
+        for (control, action) in [(vgTau, #selector(vgTauChanged)), (vgRecut, #selector(vgRecutPressed)),
+                                  (vgWait, #selector(vgWaitChanged)), (vgShare, #selector(vgShareChanged)),
+                                  (vgPasses, #selector(vgPassesChanged)), (vgView, #selector(vgViewChanged)),
+                                  (vgBooth, #selector(vgBoothChanged)), (vgCount, #selector(vgCountEntered)),
+                                  (vgCountStepper, #selector(vgCountStepped)), (vgEvict, #selector(vgEvictPressed))]
+            as [(NSControl, Selector)] {
+            control.target = self
+            control.action = action
+            control.controlSize = .small
+            if !(control is NSSlider || control is NSStepper) { control.font = .systemFont(ofSize: small) }
+        }
+        vgViewModes = [0] + Array(RenderSettings.geometryViews) + Array(RenderSettings.vgViews)
+        vgView.addItems(withTitles: vgViewModes.map { RenderSettings.viewModes[$0] })
+        func row(_ views: [NSView]) -> NSStackView {
+            let s = NSStackView(views: views)
+            s.spacing = 6
+            return s
+        }
+        let tauRow = row([label("Geometry error"), vgTau, vgTauValue])
+        let waitRow = row([vgWait, vgShare, vgShareValue])
+        let passesRow = row([label("Wait passes"), vgPassesValue, vgPasses])
+        let viewRow = row([label("View"), vgView, vgRecut])
+        let boothRow = row([label("Booth"), vgBooth])
+        let countRow = row([label("Instances"), vgCount, vgCountStepper, vgEvict])
+        for r in [tauRow, waitRow] { vgTau.widthAnchor.constraint(equalToConstant: 120).isActive = true; _ = r }
+        vgShare.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        vgLabControls = [boothRow, countRow]
+        for v in [vgGraph, vgProbe, vgResidency, vgTable, tauRow, waitRow, passesRow, viewRow, boothRow, countRow] { vg.add(v) }
+    }
+
+    private func updateVGControls(from s: RenderSettings) {
+        let g = s.virtualGeometry
+        vgTau.doubleValue = Self.tauSlider(g.pixelError)
+        vgTauValue.stringValue = String(format: "%.2g px", g.pixelError)
+        vgWait.state = g.waitRule ? .on : .off
+        vgShare.doubleValue = Double(g.waitShare)
+        vgShare.isEnabled = g.waitRule
+        vgShareValue.stringValue = String(format: "%.0f%%", g.waitShare * 100)
+        vgPasses.integerValue = g.waitPasses
+        vgPasses.isEnabled = g.waitRule
+        vgPassesValue.stringValue = "\(g.waitPasses)"
+        vgView.selectItem(at: vgViewModes.firstIndex(of: s.viewMode) ?? -1)
+        let lab = s.scene.kind.name == "vglab"
+        for v in vgLabControls { v.isHidden = !lab }
+        if lab, vgCount.currentEditor() == nil {
+            vgCount.integerValue = s.scene.objects
+            vgCountStepper.integerValue = s.scene.objects
+        }
+        let bookmarks = lab ? s.scene.kind.definition.bookmarks : []
+        if bookmarks != shownBookmarks {
+            shownBookmarks = bookmarks
+            vgBooth.removeAllItems()
+            var group: String?
+            for b in bookmarks {
+                if b.group != group {
+                    group = b.group
+                    vgBooth.menu?.addItem(NSMenuItem.sectionHeader(title: b.group))
+                }
+                let item = NSMenuItem(title: b.name, action: nil, keyEquivalent: "")
+                item.representedObject = b.name
+                vgBooth.menu?.addItem(item)
+            }
+            vgBooth.selectItem(at: -1)
+        }
+    }
+
+    private static func tauSlider(_ v: Float) -> Double {
+        let lo = Double(tauRange.lowerBound), hi = Double(tauRange.upperBound)
+        return log(min(max(Double(v), lo), hi) / lo) / log(hi / lo)
+    }
+
+    private func showVG(_ r: VGReport) {
+        vgGraph.set(r.history)
+        if let p = r.probe {
+            func px(_ v: Float) -> String { v.isFinite ? String(format: "%.2f px", v) : "none" }
+            vgProbe.stringValue = "probe: instance \(p.ids.x), cluster \(p.ids.y), group \(p.ids.z), level \(p.ids.w)\n"
+                + "error \(px(p.errors.x)) own, \(px(p.errors.y)) parent, tau \(String(format: "%g", r.pixelError)) px\n"
+                + String(format: "distance %.2f m", p.errors.z) + (p.errors.w > 0.5 ? ", back face" : "")
+        } else {
+            vgProbe.stringValue = "aim at virtual geometry with a geometry view on"
+        }
+        let cold = zip(r.meshNames, r.residency).filter { $0.1 < 0.995 }
+            .map { String(format: "%@ %.0f%%", $0.0, $0.1 * 100) }
+        vgResidency.stringValue = cold.isEmpty ? "" : "cache resident: " + cold.joined(separator: ", ")
+        vgResidency.isHidden = cold.isEmpty
+        vgTable.show(r.rows)
+    }
+
+    @objc private func vgTauChanged() {
+        let lo = Double(Self.tauRange.lowerBound), hi = Double(Self.tauRange.upperBound)
+        let v = Float(lo * pow(hi / lo, vgTau.doubleValue))
+        renderer.update { $0.virtualGeometry.pixelError = v }
+    }
+    @objc private func vgRecutPressed() { renderer.vgForceRecut() }
+    @objc private func vgWaitChanged() {
+        let on = vgWait.state == .on
+        renderer.update { $0.virtualGeometry.waitRule = on }
+    }
+    @objc private func vgShareChanged() {
+        let v = Float(vgShare.doubleValue)
+        renderer.update { $0.virtualGeometry.waitShare = v }
+    }
+    @objc private func vgPassesChanged() {
+        let v = vgPasses.integerValue
+        renderer.update { $0.virtualGeometry.waitPasses = v }
+    }
+    @objc private func vgViewChanged() {
+        let i = vgView.indexOfSelectedItem
+        guard vgViewModes.indices.contains(i) else { return }
+        let mode = vgViewModes[i]
+        renderer.update { $0.viewMode = mode }
+    }
+    @objc private func vgBoothChanged() {
+        guard let name = vgBooth.selectedItem?.representedObject as? String else { return }
+        renderer.goToBookmark(name)
+        vgBooth.selectItem(at: -1)
+    }
+    /// Enter in the field: the lab is rebuilt with that many instances.
+    @objc private func vgCountEntered() {
+        let n = min(max(vgCount.integerValue, Self.objectsRange.lowerBound), Self.objectsRange.upperBound)
+        vgCount.integerValue = n
+        vgCountStepper.integerValue = n
+        renderer.update { $0.scene.objects = n }
+    }
+    @objc private func vgCountStepped() {
+        vgCount.integerValue = vgCountStepper.integerValue   // applied on Enter: each change rebuilds the scene
+    }
+    @objc private func vgEvictPressed() { renderer.vgEvict() }
 
     // MARK: - Controls
 
@@ -312,7 +502,7 @@ final class DebugPanel: NSObject {
         func add(_ view: NSView) {
             insertArrangedSubview(view, at: arrangedSubviews.count - 1)
             view.widthAnchor.constraint(lessThanOrEqualTo: widthAnchor).isActive = true
-            if view is FrameGraphView || view is NSTextField { view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true }
+            if view is FrameGraphView || view is VGGraphView || view is NSTextField || view is VGInstanceTable { view.widthAnchor.constraint(equalTo: widthAnchor).isActive = true }
         }
 
         /// Shows `rows` (label, value, colour); the grid is rebuilt only when the labels change.

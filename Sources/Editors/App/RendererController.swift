@@ -203,6 +203,14 @@ final class RendererController: InputHandler {
     /// The camera at the scene's bookmark `name` (SceneCommand.bookmark: by name, number or prefix).
     func goToBookmark(_ name: String) { renderer.perform { _ = SceneCommand.bookmark(name: name).apply(to: $0) } }
 
+    // MARK: Virtual geometry debugging
+
+    /// The next cut of every virtual instance is made afresh (Renderer.vgForceRecut).
+    func vgForceRecut() { renderer.perform { $0.vgForceRecut() } }
+
+    /// Drops the virtual meshes' cache pages and cuts afresh (Renderer.vgEvict).
+    func vgEvict() { renderer.perform { _ = $0.vgEvict(matching: nil) } }
+
     /// The plant workshop's camera at its plants again (F).
     func frameWorkshop() { renderer.perform { $0.frameWorkshop() } }
 

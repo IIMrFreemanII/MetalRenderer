@@ -220,9 +220,10 @@ package struct CascadeSettings: Equatable, Codable {
     /// in the gallery (with this 0.97, 0.99).
     package var shNormal = true
     /// Emissive meshes (SceneSettings.cascadeEmitterSize and up) light the scene through the cascades within their reach
-    /// (cascadeEmitterReach, which grows as their size squared): there the cascade rays that hit them see their emission,
-    /// with the rays' own soft shadows, and the mesh-light pass samples only what lies beyond. In the emissive room
-    /// (Nov 2026) shade went from 0.78 to 0.82 of path traced, with no more flicker and within noise of the cost.
+    /// (cascadeEmitterReach, which grows as their size squared and shrinks as they turn edge-on): there the cascade rays
+    /// that hit them see their emission, with the rays' own soft shadows, and the mesh-light pass samples only what lies
+    /// beyond. In the emissive room (Nov 2026) the frame went from 0.759 to 0.779 of path traced (shade 0.793 to 0.816),
+    /// with no more flicker and within noise of the cost.
     package var emitters = true
 
     static let spacingOptions = [4, 8]
@@ -286,8 +287,15 @@ package struct VirtualGeometrySettings: Equatable, Codable {
     /// Keep choosing detail for the camera position at the moment this was turned on (debugging: fly up to a model
     /// to see the cut it got from far away).
     package var freeze = false
+    /// The wait rule (VirtualBLAS.buildsNow): a changed cut waits while under `waitShare` of its triangles differ, for
+    /// at most `waitPasses` of the worker's passes. Off: every changed cut is built at once (the VG lab's checks).
+    package var waitRule = ProcessInfo.processInfo.environment["METALRENDERER_VG_WAIT"] != "0"
+    package var waitShare: Float = 0.1
+    package var waitPasses = 16
 
-    static let pixelErrorRange: ClosedRange<Float> = 0.25...8
+    package static let pixelErrorRange: ClosedRange<Float> = 0.25...8
+    package static let waitShareRange: ClosedRange<Float> = 0.01...0.5
+    package static let waitPassesRange = 1...64
 }
 
 /// Volumetric fog (Shaders/Fog.metal): exponential height fog with drifting noise, plus the scene's
@@ -791,19 +799,25 @@ package struct RenderSettings: Equatable, Codable {
     package static let viewModes = ["Final", "Raw direct", "Raw indirect", "Normals", "Albedo", "History length",
                             "Indirect only", "GI debug",
                             "Triangles", "Clusters", "Groups", "LOD level", "Triangle size", "Traversal cost",
-                            "Fog scattering", "World cache", "Light tiles", "Picked light", "Light bounds"]
+                            "Fog scattering", "World cache", "LOD error", "Rebuilt", "Cracks",
+                            "Light tiles", "Picked light", "Light bounds"]
     /// Whether view mode `mode` shows the light (tone mapped, with the lens effects) rather than a value to read as it
     /// is (normals, albedo, the geometry views...): viewIsHDR in
     /// Shaders/Output.metal.
     package static func showsLight(_ mode: Int) -> Bool {
-        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && !lightViews.contains(mode)
+        ![3, 4, 5].contains(mode) && !(7...13).contains(mode) && !vgViews.contains(mode) && !lightViews.contains(mode)
     }
     /// The light debug views (Shaders/LightDebug.metal): MegaLights' tile lists (Sampled: its useful candidates), the
     /// light each pixel's first sample picked, and the lights' shapes and reach as lines.
-    package static let lightViews = 16...18
+    package static let lightViews = 19...21
     /// The geometry debug views (geometryDebugKernel): triangles, virtual-geometry clusters / groups / DAG levels,
     /// projected triangle size, and the primary rays' traversal cost.
     package static let geometryViews = 8...13
+    /// Virtual geometry's own debug views (geometryDebugKernel too): each cluster's projected error against the cut's
+    /// rule, the instances whose BLAS was just rebuilt, back faces of closed meshes (holes).
+    package static let vgViews = 16...18
+    /// Every view geometryDebugKernel draws.
+    package static func drawsGeometryDebug(_ mode: Int) -> Bool { geometryViews.contains(mode) || vgViews.contains(mode) }
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(renderScale: CGFloat = 0.75, upscaleFactor: CGFloat = 2, frameInterpolation: FrameInterpolation = FrameInterpolation.auto, giEnabled: Bool = true, bounces: Int = 2, blueNoise: Bool = true, taa: Bool = true, paused: Bool = false, viewMode: Int = 0, solid: Bool = false, solidLook: SolidLook = SolidLook(), solidFromScene: Bool = false, reference: ReferenceSettings = ReferenceSettings(), denoiser: DenoiserSettings = DenoiserSettings(), giMode: GIMode = GIMode.radianceCascades, lightMaps: Bool = false, directLight: DirectLightMode = DirectLightMode.initial, sampledLights: SampledLightSettings = SampledLightSettings(), megaLights: MegaLightsSettings = MegaLightsSettings(), cascades: CascadeSettings = CascadeSettings(), worldCache: WorldCacheSettings = WorldCacheSettings(), scene: SceneSettings = SceneSettings(), virtualGeometry: VirtualGeometrySettings = VirtualGeometrySettings(), specular: Bool = ProcessInfo.processInfo.environment["METALRENDERER_SPECULAR"] != "0", textureBudgetMB: Int = Int(ProcessInfo.processInfo.environment["METALRENDERER_TEXTURE_BUDGET"] ?? "") ?? 1024, fog: FogSettings = FogSettings.preset(for: .cornell), sky: SkySettings = SkySettings.preset(for: .cornell), foliage: FoliageSettings = FoliageSettings.preset(for: .cornell), post: PostSettings = PostSettings.unreal, exposure: Float = 0, toneMap: ToneMap = ToneMap.film, fovDegrees: Float = 60, moveSpeed: Float = 2.5, timeScale: Float = 1, timeOfDay: Float = 0, dayHeld: Bool = false, particleScale: Float = 1) {

@@ -17,11 +17,27 @@ inline float cascadeLitReach(Light light, thread const SceneData& s) {
     uint instance = as_type<uint>(light.params.w);
     return cascadeEmitterReach(s.materials[s.instances[instance].materialIndex + uint(light.axis.w)].params.z);
 }
-// With FLAG_CASCADE_EMITTERS: whether a point p is within a light's reach of the cascades (its centre's distance), so
-// light maps at GI's hits leave it to the cascades' own light there (last frame's, the feedback).
+// With FLAG_CASCADE_EMITTERS: whether a point p is within a light's reach of the cascades (its centre's distance; a flat
+// light's toward p, cascadeReachToward at its centre), so light maps at GI's hits leave it to the cascades' own light
+// there (last frame's, the feedback).
 inline bool cascadeLitNear(Light light, float3 p, thread const SceneData& s) {
     float reach = cascadeLitReach(light, s);
-    return reach >= 0.0f && length(p - light.positionRadius.xyz) <= reach;
+    if (reach < 0.0f) return false;
+    float3 w = p - light.positionRadius.xyz;
+    float d = length(w);
+    float cosView = mix(1.0f, abs(dot(light.axis.xyz, w)) / max(d, 1e-6f), light.params.z);   // params.z: its flatness
+    return d <= cascadeReachToward(reach, cosView);
+}
+// With FLAG_CASCADE_EMITTERS: whether all of a flat light is within its reach toward p, so the mesh-light pass need not
+// pick it there. Its points x lie in its plane within its radius R of its centre c, so dot(N, p - x) = dot(N, p - c) and
+// |p - x| <= |p - c| + R: all are within when (|p - c| + R)^2 <= reach x |dot(N, p - c)|. A closed light always has
+// points seen edge-on, whose light the pass samples.
+inline bool cascadeLitWhole(Light light, float3 p, thread const SceneData& s) {
+    float reach = cascadeLitReach(light, s);
+    if (reach < 0.0f || light.params.z < 0.999f) return false;
+    float3 w = p - light.positionRadius.xyz;
+    float far = length(w) + light.positionRadius.w;
+    return far * far <= reach * abs(dot(light.axis.xyz, w));
 }
 // v[g] for a run-time g, without indexing a vector by a run-time value.
 inline uint groupElement(uint4 v, uint g) { uint4 m = select(uint4(0u), v, uint4(g) == uint4(0u, 1u, 2u, 3u)); return m.x | m.y | m.z | m.w; }
@@ -443,20 +459,27 @@ float3 meshLightPointEmission(thread const MeshLightPoint& mp, thread const Scen
 
 // One-sample estimate of a mesh light's diffuse lighting at p, unshadowed, albedo divided out. `target` = the
 // sampled point, pulled 1% toward p, for the shadow ray (so an emitter traced at a coarser level of detail doesn't
-// shadow itself).
-float3 sampleMeshLight(Light light, float3 p, float3 n, float3 ng, float2 u, thread const SceneData& s, thread float3& target) {
+// shadow itself). `cosL`: |cos| between the light's surface there and the way to p (cascadeReachToward).
+float3 sampleMeshLight(Light light, float3 p, float3 n, float3 ng, float2 u, thread const SceneData& s, thread float3& target,
+                       thread float& cosL) {
     target = light.positionRadius.xyz;
+    cosL = 0.0f;
     MeshLightPoint mp = sampleMeshLightPoint(light, u, s);
     if (!mp.valid) return float3(0.0f);
     float3 w = mp.x - p;
     float d2 = dot(w, w);
     float3 l = w * rsqrt(max(d2, 1e-12f));
     target = p + w * 0.99f;
-    float cosP = dot(n, l), cosL = abs(dot(mp.cr, l)) / max(mp.area2, 1e-12f);   // emission is two-sided
+    float cosP = dot(n, l);
+    cosL = abs(dot(mp.cr, l)) / max(mp.area2, 1e-12f);   // emission is two-sided
     if (cosP <= 0.0f || dot(ng, l) <= 0.0f) return float3(0.0f);
     float3 Le = meshLightPointEmission(mp, s);
     // Point pdf (area) = prob / area; to solid angle: d^2 / cosL.
     return Le * (cosP * cosL / max(d2, 1e-6f) * (0.5f * mp.area2 / mp.prob) / M_PI_F);
+}
+float3 sampleMeshLight(Light light, float3 p, float3 n, float3 ng, float2 u, thread const SceneData& s, thread float3& target) {
+    float cosL;
+    return sampleMeshLight(light, p, n, ng, u, s, target, cosL);
 }
 
 // One-sample estimate of a light's diffuse lighting at p, shadowed: lightUnshadowed x the visibility of a random

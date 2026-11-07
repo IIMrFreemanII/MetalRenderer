@@ -7,6 +7,35 @@
 // ---------------------------------------------------------------------------------------------
 
 constant uint VIEW_TRIANGLES = 8, VIEW_CLUSTERS = 9, VIEW_GROUPS = 10, VIEW_LOD = 11, VIEW_TRIANGLE_SIZE = 12, VIEW_COST = 13;
+// Virtual geometry's own (RenderSettings.vgViews): each cluster's projected error against the cut's rule, the
+// instances whose BLAS was just rebuilt, and holes in closed meshes.
+constant uint VIEW_LOD_ERROR = 16, VIEW_REBUILT = 17, VIEW_CRACKS = 18;
+
+// What the virtual-geometry views measure against (GPUVGDebug): the viewpoint the cut was chosen for (Freeze LOD's,
+// if on), its pixel scale and allowed error, this frame, and the pixel the probe reads.
+struct VGDebugArgs {
+    float4 camPos;      // xyz; w = pixel scale (traced height / (2 tan(fovY / 2)))
+    float  tau;
+    uint   frame;
+    uint2  probe;
+};
+
+// What the probe pixel hit (GPUVGProbe): instance (~0: nothing virtual), cluster, group, level; own and parent
+// projected error in pixels, the distance, whether the hit was a back face.
+struct VGProbe {
+    uint4  ids;
+    float4 errors;      // x own, y parent (inf: a root), z distance, w back face (1) or front (0)
+};
+
+// A cluster's error projected from `camPos` as the cut (VirtualBLAS.selection) projects it: error x scale x pixel
+// scale / distance to the sphere. inf where the camera is inside the sphere and the error isn't 0.
+inline float vgProjected(float4 sphere, float error, float4x4 m, float scale, VGDebugArgs a) {
+    float3 c = (m * float4(sphere.xyz, 1.0f)).xyz;
+    float d = length(c - a.camPos.xyz) - sphere.w * scale;
+    if (error == 0.0f) return 0.0f;
+    if (isinf(error)) return INFINITY;
+    return d > 1e-4f ? error * scale * a.camPos.w / d : INFINITY;
+}
 
 inline float3 debugHashColor(uint h) {
     h = pcgHash(h);
@@ -35,11 +64,15 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
                                 device const MeshData*           meshes     [[buffer(5)]],
                                 device const InstanceData*       instances  [[buffer(6)]],
                                 constant SceneShading&           shading    [[buffer(7)]],
+                                constant VGDebugArgs&            vgd        [[buffer(8)]],
+                                device VGProbe*                  probe      [[buffer(9)]],
                                 texture2d<float, access::write>  output     [[texture(0)]],
                                 uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= u.width || tid.y >= u.height) return;
     SceneData s = sceneData(positions, normals, indices, meshes, instances, shading, nullptr, 0u);   // no lights
+    bool probing = all(tid == vgd.probe);
+    if (probing) probe[0] = VGProbe{uint4(~0u, 0u, 0u, 0u), float4(0.0f)};
 
     float3 dir = primaryDirection(u, tid);
     Ray r = makeRay(u.camPos.xyz, dir, 0.0f, INFINITY);
@@ -80,14 +113,32 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
 
     bool isVirtual = false;
     uint cluster = 0, local = 0, group = 0, level = 0;
+    VGBlas e = {};
     if (inst.pad1 != 0) {
-        VGBlas e = accel.vgBlas[inst.pad1 - 1];
+        e = accel.vgBlas[inst.pad1 - 1];
         uint a = as_type<uint>(e.tris[3 * res.primitive + 1].w), b = as_type<uint>(e.tris[3 * res.primitive + 2].w);
         isVirtual = true;
         cluster = a & 0xFFFFFFu;        // cluster | triangle within it << 24
         local = a >> 24;
         group = b & 0xFFFFFFu;          // group | level << 24
         level = b >> 24;
+    }
+    bool backFace = doubleArea > 0.0f && dot(ng, dir) > 0.0f;   // CCW front faces: their normal faces the ray's origin
+    // The cluster's own and its group's (parents') error on screen, as the cut sees them.
+    float ownPx = 0.0f, parentPx = INFINITY;
+    if (isVirtual && e.clusterInfo != nullptr && (u.viewMode == VIEW_LOD_ERROR || probing)) {
+        VGClusterInfo ci = e.clusterInfo[cluster];
+        float4x4 m = inst.transform;
+        float scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));
+        ownPx = vgProjected(ci.selfSphere, ci.selfError, m, scale, vgd);
+        parentPx = vgProjected(ci.parentSphere, ci.parentError, m, scale, vgd);
+    }
+    if (probing && isVirtual) {
+        probe[0] = VGProbe{uint4(res.instance, cluster, group, level), float4(ownPx, parentPx, res.distance, backFace ? 1.0f : 0.0f)};
+    }
+    if (u.viewMode == VIEW_CRACKS && isVirtual && (e.flags & VG_FLAG_WATERTIGHT) != 0u && backFace) {
+        output.write(float4(1.0f, 0.0f, 1.0f, 1.0f), tid);   // exact magenta, unshaded: what the lab's eval counts
+        return;
     }
     // The level of detail, 0 = finest: a virtual triangle's DAG level, else its mesh's (GPUMesh.lod: an open-world
     // tile's ring, a crowd character's detail, a baked plant). A plant's parts are its finest.
@@ -114,6 +165,25 @@ kernel void geometryDebugKernel(constant Uniforms&               u          [[bu
             c = debugHeat((log2(max(px, 1e-4f)) + 3.0f) / 6.0f);
             break;
         }
+        case VIEW_LOD_ERROR:
+            // Green at the allowed error, blue finer; red where a cluster is coarser than allowed, magenta where its
+            // group's error is already fine enough (the cut should have taken the coarser clusters). Only a cut
+            // chosen for another viewpoint shows either: the wait rule's, a background cut not yet in.
+            if (!isVirtual) { c = grey; break; }
+            if (ownPx > 1.05f * vgd.tau) c = float3(1.0f, 0.0f, 0.0f);
+            else if (parentPx <= 0.95f * vgd.tau) c = float3(1.0f, 0.0f, 1.0f);
+            else c = debugHeat(0.5f * ownPx / max(vgd.tau, 1e-6f));
+            break;
+        case VIEW_REBUILT: {
+            // White as an instance's BLAS is swapped in, fading over 60 frames to its clusters' colours.
+            if (!isVirtual) { c = grey; break; }
+            float age = float(vgd.frame - e.rebuiltFrame);
+            c = mix(0.6f * debugHashColor(cluster + instanceSeed), float3(1.0f), saturate(1.0f - age / 60.0f));
+            break;
+        }
+        case VIEW_CRACKS:   // a front face, or a mesh that isn't closed: the triangles, dimmed
+            c = 0.5f * debugHashColor(isVirtual ? local + pcgHash(cluster + instanceSeed) : res.primitive + instanceSeed);
+            break;
         default: break;
     }
     output.write(float4(c * shade, 1.0f), tid);
@@ -464,7 +534,8 @@ inline float3 lightDebugCompose(uint view, float3 lit, float4 dbg) {
 }
 
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || (mode >= VIEW_LIGHT_TILES && mode <= VIEW_LIGHT_BOUNDS));
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || (mode >= VIEW_LOD_ERROR && mode <= VIEW_CRACKS)
+             || (mode >= VIEW_LIGHT_TILES && mode <= VIEW_LIGHT_BOUNDS));
 }
 
 /// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
@@ -670,7 +741,8 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
             c = e.x < 0.0f ? float3(0.5f, 0.0f, 0.5f) : albedo * e;   // magenta: no valid probe there
             break;
         }
-        case 8: case 9: case 10: case 11: case 12: case 13: c = geometryDebug.read(tid).rgb; break;
+        case 8: case 9: case 10: case 11: case 12: case 13:
+        case 16: case 17: case 18: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
         // The light debug views (LightDebug.metal), over the lit frame (tone mapped here: not HDR views). When MetalFX or
         // the temporal AA follows, they get the plain light, and tonemapKernel lays the view over what they make.

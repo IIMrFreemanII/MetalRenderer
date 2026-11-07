@@ -37,14 +37,19 @@ extension Scene {
         var flagged: [Int: Float] = [:]
         var lightMaterials: [Int] = []
         let leastSize = settings.cascadeEmitterSize
+        // Its size is measured at its instance's pose at t = 0: an animated instance is added with a placeholder
+        // transform and posed by update(time: 0) only after this (the Emissive scene's ring of 0.22 m cubes measured as
+        // unit cubes, reached 1.9 m instead of 0.09 and lit the floor in blotches). One whose animation scales it keeps
+        // that size. Each triangle is measured in the world (a quad scaled [1.8, 1, 3.2] in its plane, a thin box).
         func flag(_ material: Int, light: MeshLight, triangles: ArraySlice<GPUEmissiveTriangle>) {
-            let t = instances[light.instance].transform
+            let t = instances[light.instance].animation?(0) ?? instances[light.instance].transform
             let linear = float3x3(SIMD3(t.columns.0.x, t.columns.0.y, t.columns.0.z),
                                   SIMD3(t.columns.1.x, t.columns.1.y, t.columns.1.z),
                                   SIMD3(t.columns.2.x, t.columns.2.y, t.columns.2.z))
             var area: Float = 0
-            for tri in triangles { area += 0.5 * length(cross(SIMD3(tri.e1.x, tri.e1.y, tri.e1.z), SIMD3(tri.e2.x, tri.e2.y, tri.e2.z))) }
-            area *= pow(abs(linear.determinant), 2.0 / 3.0)
+            for tri in triangles {
+                area += 0.5 * length(cross(linear * SIMD3(tri.e1.x, tri.e1.y, tri.e1.z), linear * SIMD3(tri.e2.x, tri.e2.y, tri.e2.z)))
+            }
             let size = Scene.cascadeEmitterSize(area: area, flatness: light.flatness)
             let was = flagged[material] ?? .infinity
             flagged[material] = size >= leastSize && was >= 0 ? min(was, size) : -1

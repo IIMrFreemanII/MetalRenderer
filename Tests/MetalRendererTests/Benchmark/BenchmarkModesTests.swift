@@ -27,6 +27,27 @@ final class BenchmarkModesTests: XCTestCase {
         XCTAssertFalse(Benchmark.configs(for: "1").isEmpty)
     }
 
+    /// The VG lab's modes: unique names starting `vglab`, every bookmark resolves (building the list resolves them), the
+    /// cold step and the fly are in, and the hooks are set.
+    func testTheVGLabModes() {
+        let lab = Benchmark.configs(for: "vglab")
+        XCTAssertEqual(Set(lab.map(\.name)).count, lab.count, "names are unique")
+        XCTAssertTrue(lab.allSatisfy { $0.name.hasPrefix("vglab") && $0.settings.scene.kind == .vgLab })
+        XCTAssertTrue(lab.contains { $0.name == "vglab01 ladder lod error vg" })
+        XCTAssertTrue(lab.contains { $0.name == "vglab02 cracks cracks vg" })
+        XCTAssertEqual(lab.filter { $0.name.hasPrefix("vglab02") }.count, 2 * 10 + 2 * 2)
+        let cold = lab.last
+        XCTAssertEqual(cold?.name, "vglab08 cold fly")
+        XCTAssertNotNil(cold?.cameraFunction)
+        XCTAssertNotNil(cold?.frameHook)
+        XCTAssertTrue(lab.dropLast().allSatisfy { $0.settings.paused && $0.captureHook != nil && !$0.settings.virtualGeometry.waitRule })
+        XCTAssertTrue(lab.filter { !$0.settings.virtualGeometry.enabled }.allSatisfy { [3, 8].contains($0.settings.viewMode) })
+        let fly = Benchmark.configs(for: "vglabfly")
+        XCTAssertEqual(fly.map(\.name), ["vglabfly move"])
+        XCTAssertTrue(fly[0].cameraPath)
+        XCTAssertTrue(fly[0].settings.virtualGeometry.waitRule)
+    }
+
     /// A camera track goes through its keys, looking at their targets, and holds its first and last poses.
     func testCameraTrack() {
         let track = CameraTrack([CameraTrack.Key(time: 0, position: [0, 1, 5], target: [0, 1, 0]),

@@ -208,15 +208,30 @@ inline float3 giEmission(thread const Surface& h) { return h.lightEmitter ? floa
 // the cascades' rays see its emission and carry its light, soft shadows and all; beyond it the mesh-light pass samples
 // it, so between them the light is counted once. A cascade's rays are further apart the further they go (2x per 4x of
 // distance), so the distance out to which they still sample a light finely grows as the light's size squared.
-constant float CASCADE_EMITTER_REACH = 4.0f;   // reach (m) = this x size^2 (m)
+// 3 (Nov 2026; 4 before): at 4 the Emissive scene's 3.2 m screen, 4-5 m away, still lit the back wall in probe-sized
+// patches (seen from inside the ring of cubes: band-passed difference from emitters off 0.027, against 0.011 between
+// two identical frames); at 3 they are gone (0.011), and the room reads 0.779 of path traced against 0.785 at 4 and
+// 0.759 with the emitters sampled (gilevels, one shade mask).
+constant float CASCADE_EMITTER_REACH = 3.0f;   // reach (m) = this x size^2 (m)
 inline float cascadeEmitterReach(float materialZ) {
     float size = materialZ - 2.0f;
     return materialZ > 1.5f ? CASCADE_EMITTER_REACH * size * size : -1.0f;
 }
+// The reach toward a receiver seen at `cosView` (|cos| between the emitter's surface there and the way to the receiver):
+// what the rays see of an emitter is its area x that cosine, so the reach (which grows as the area) shrinks with it. A
+// panel seen edge-on is a sliver the rays hit or miss whole: the Emissive scene's screen, 3.2 m wide, mottled the wall
+// beside it. Both sides use this per point (cascadeEmission, meshLightsKernel's samples), so every point's light is
+// counted once: by the cascades where it is within, by the mesh-light pass where not.
+inline float cascadeReachToward(float reach, float cosView) { return reach * cosView; }
 // What a ray from `origin` sees of what it hit, as GI's light (FLAG_CASCADE_EMITTERS): a cascade-lit emitter's emission
-// within its reach of the origin, any other emitter that is no light, as giEmission.
+// within its reach of the origin (toward it: cascadeReachToward), any other emitter that is no light, as giEmission.
 inline float3 cascadeEmission(thread const Surface& h, float3 origin) {
-    if (h.cascadeReach >= 0.0f) return length(h.position - origin) <= h.cascadeReach ? h.emission : float3(0.0f);
+    if (h.cascadeReach >= 0.0f) {
+        float3 w = origin - h.position;
+        float d = length(w);
+        float cosView = abs(dot(normalize(h.geomNormal), w)) / max(d, 1e-6f);
+        return d <= cascadeReachToward(h.cascadeReach, cosView) ? h.emission : float3(0.0f);
+    }
     return giEmission(h);
 }
 

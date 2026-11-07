@@ -327,7 +327,7 @@ constant uint FLAG_NO_CLAMP      = 32;  // no firefly clamp (reference images)
 constant uint FLAG_LIGHT_MAPS    = 64;  // path tracer: bounce lighting from light-visibility maps
 constant uint FLAG_SUN_VISIBILITY = 128;  // MegaLights wrote the suns' raw visibility (for MetalFX's diffuse guide, sunShadowGuide)
 constant uint FLAG_ALL_LIGHTS    = 256; // accumulated references: one shadow ray per light (traceKernel, meshLightsKernel)
-constant uint FLAG_LIGHT_DEBUG   = 2048; // view modes 16-17 (VIEW_LIGHT_TILES, VIEW_PICKED_LIGHT): Sampled or MegaLights writes what
+constant uint FLAG_LIGHT_DEBUG   = 2048; // view modes 19-20 (VIEW_LIGHT_TILES, VIEW_PICKED_LIGHT): Sampled or MegaLights writes what
                                          // the view shows into the debug texture (LightDebug.metal)
 constant uint FLAG_SPECULAR      = 512; // specular materials present: material G-buffer, reflection pass, specular composite
 constant uint FLAG_REFERENCE     = 1024; // accumulated reference: reflections follow full paths
@@ -349,7 +349,7 @@ constant uint FLAG_PARTICLES     = 67108864; // the composite puts the particles
 constant uint FLAG_CASCADE_EMITTERS = 134217728; // radiance cascades light emissive meshes within their reach (cascadeEmitterReach):
                                                  // their rays see the emission there, direct light samples only beyond it
 // The light debug views (RenderSettings.viewModes; LightDebug.metal), drawn from the geometry debug texture.
-constant uint VIEW_LIGHT_TILES = 16, VIEW_PICKED_LIGHT = 17, VIEW_LIGHT_BOUNDS = 18;
+constant uint VIEW_LIGHT_TILES = 19, VIEW_PICKED_LIGHT = 20, VIEW_LIGHT_BOUNDS = 21;
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;

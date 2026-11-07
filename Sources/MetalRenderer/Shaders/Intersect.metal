@@ -112,17 +112,34 @@ inline bool rtVoxels(device const uint* voxels, RTVoxels g, uint level, float3 o
 inline uint voxelSeed(Ray r, uint id) {
     return pcgHash(as_type<uint>(r.direction.x) ^ pcgHash(as_type<uint>(r.direction.y) ^ pcgHash(as_type<uint>(r.origin.x) + id)));
 }
+// A cluster as the debug views read it (VirtualBLAS.ClusterInfo): its sphere and error, its group's (its parents')
+// sphere and error (infinity for a root), its DAG level.
+struct VGClusterInfo {
+    float4 selfSphere;
+    float4 parentSphere;
+    float  selfError;
+    float  parentError;
+    uint   level;
+    uint   pad;
+};
+static_assert(sizeof(VGClusterInfo) == 48, "VGClusterInfo: VirtualBLAS.ClusterInfo");
+
+constant uint VG_FLAG_WATERTIGHT = 1u;   // VirtualBLAS.flagWatertight
+
 // A virtual instance's BLAS over its current cut (VirtualBLAS.swift): its triangles (p0 p1 p2, w = the debug views'
 // IDs in p1.w and p2.w), which Metal's structure over them was built from, and per triangle 3 octahedral normals +
-// 3 half2 UVs. A hit's primitive is its place here.
+// 3 half2 UVs. A hit's primitive is its place here. Then, for the debug views: the frame the BLAS was swapped in,
+// its mesh's clusters, flags.
 struct VGBlas {
-    device const float4*  tris;
-    device const uint*    attrs;
-    uint                  triangles;   // 0 = no BLAS yet (the instance is masked out)
-    uint                  pad0;
-    uint                  pad1, pad2;
+    device const float4*         tris;
+    device const uint*           attrs;
+    uint                         triangles;   // 0 = no BLAS yet (the instance is masked out)
+    uint                         rebuiltFrame;
+    device const VGClusterInfo*  clusterInfo;
+    uint                         flags;
+    uint                         pad0, pad1, pad2;
 };
-static_assert(sizeof(VGBlas) == 32, "VGBlas: VirtualBLAS.Entry");
+static_assert(sizeof(VGBlas) == 48, "VGBlas: VirtualBLAS.Entry");
 
 // What every ray query and hit reads of the scene (TraceSceneArgs, one per frame slot): Metal's top-level structure
 // over the instances, and what a hit reads besides the instance records.

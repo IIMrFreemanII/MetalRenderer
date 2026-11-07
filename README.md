@@ -57,14 +57,16 @@ below were measured on an M1 Max, which it ran on until October 2026; they say s
   * Scenes load in the background while the old one keeps rendering.
 * **Virtual geometry (Nanite-style, on by default):** meshes of 65k+ triangles become level-of-detail DAGs of 128-triangle clusters.
   * Everything is this project's own code: clustering, quadric simplification with locked group borders, seam- and border-aware collapses, and the DAG.
-  * Each model is built once (about 7 s per 2M triangles) and cached in `Assets/.metalrenderer-cache/`.
+  * Each model is built once (about 7 s per 2M triangles) and cached in `Assets/.metalrenderer-cache/`. No collapse may leave a triangle facing against or across its corners' normals, so coarse levels have no folds (`MeshSimplifier.minFacing`).
   * Every few frames a background thread picks Nanite's cut for each instance: every cluster whose simplification error projects to under 1 traced pixel and whose parent's doesn't.
     * The cut is computed in parallel, tests each group once before its clusters, and skips instances it can prove unchanged. Those are instances that haven't moved, with the camera closer to where it was than any test is to flipping, so a still camera costs nothing.
   * Each instance whose cut changed gets a fresh BLAS over exactly those triangles (`VirtualBLAS.swift`): they are read from the memory-mapped cache, so the OS streams pages from disk (prefetched with `madvise` first), gathered into a buffer, and Metal builds its structure over them on a command queue of its own, so frames never wait behind a build, then compacts it. The virtual instance's descriptor names the new BLAS, and the top-level structure is rebuilt over it (`VirtualTracing.swift`). Triangle buffers are recycled.
   * A cut that changed by under a tenth of its triangles waits, for at most 16 of the worker's passes (`VirtualBLAS.waitShare`, `waitPasses`): every cut is free of cracks, so one a little out of date only has slightly the wrong detail. Moving through the gallery, that is a third of the BLAS builds (see "Hardware ray tracing, MetalFX's denoiser and Metal 4").
   * Rays see one tight structure per model.
   * The gallery's 17.9M triangles trace as a cut of about 0.4M triangles in 60 MB of structures and triangles on an M4 Max, against ~1.5 GB uncompacted at full detail on the M1 Max (see below).
-  * Debug views (key 9) show triangles, clusters, groups, DAG levels, projected triangle size and traversal cost. Freeze LOD (L) keeps the cut chosen for where the camera was, so you can fly up and inspect it.
+  * Debug views (key 9) show triangles, clusters, groups, DAG levels, projected triangle size and traversal cost, then three of virtual geometry's own: LOD error, Rebuilt and Cracks (see "Geometry debug views"). Freeze LOD (L) keeps the cut chosen for where the camera was, so you can fly up and inspect it.
+  * Generated shapes can be virtual too: `Scene.addVirtualMesh` builds a shape's cluster DAG once and caches it under a key, so its instances share it.
+  * The **VG lab** scene is virtual geometry's test scene: booths of shapes whose answer is known, and the gallery's models (see "VG lab").
 * **Physically based materials:** GGX specular with Smith visibility and Schlick Fresnel for glTF materials and the city's glass, metal and stone; the other generated scenes stay diffuse and unchanged.
   * Direct specular is added by the reflection pass, from one light picked per pixel by its specular light (representative-point sphere lights).
   * Indirect specular comes from a reflection pass: one GGX visible-normal ray per pixel, divided by an analytic specular albedo and denoised.
@@ -202,6 +204,9 @@ These variables apply to the gallery and to models in general:
   * `METALRENDERER_VG_SYNC=0|1` forces background or synchronous cut updates; benchmarks run them synchronously.
   * `METALRENDERER_VG_TEST=<model.glb>` builds a model's DAG, checks its invariants, round-trips the cache file and exits.
   * `METALRENDERER_BENCH=vgdebug` renders every geometry debug view at the gallery overview and close-up, with virtual geometry and (for triangles, triangle size and cost) full-detail meshes; set `METALRENDERER_BENCH_DIR` for the PNGs.
+  * `METALRENDERER_VG_WAIT=0` turns the wait rule off: every changed cut is built at once.
+  * `METALRENDERER_BENCH=vglab` and `METALRENDERER_BENCH=vglabfly` run the VG lab (see "VG lab"); run `vglabfly` with `METALRENDERER_VG_SYNC=0`, so the cuts and builds happen in the background, as in the app.
+  * `METALRENDERER_SCENE=vglab,objects=<n>` starts the VG lab with `n` instances in its field.
 * Textures:
   * `METALRENDERER_TEXTURE_STREAMING=0` loads every texture whole, capped at `METALRENDERER_TEXTURE_SIZE` (default 2048).
   * `METALRENDERER_TEXTURE_BUDGET=<MB>` sets the streaming heap.
@@ -382,7 +387,12 @@ I or ⌘I shows it (it reopens at launch if it was open at quit). Everything ref
 * **Frame:** resolution, frame rate and GPU time, and a graph of the last 300 frames' GPU time (blue) and CPU frame interval (orange: the time between frame starts, so it includes waiting for the display), with their current, average and maximum and guides at 60 and 30 fps.
 * **GPU pass timings** lists each pass's GPU time, averaged over half a second. Each pass then gets its own command buffer, as in a benchmark, whose GPU start and end Metal 4 reports, and they run one after another (independent passes such as ReSTIR and fog would overlap and the sum come to more than the frame). The radiance cascades also no longer overlap the denoiser, so the frame is a little slower while it's on. The Metal 3 work between the frame's command buffers (MetalFX, the refits) shows under its own pass's name; what isn't timed (the streamed textures' mapping updates) shows as "other", the frame's GPU time minus the timed passes. It stops while the window is closed.
 * **Scene:** instances (how many are virtual geometry), triangles over the non-virtual instances, lights by kind, whether the light table is on (more than 256 lights), the direct-light method Auto picked and the GI method.
-* **Virtual geometry** (scenes with glTF models). With per-instance BLAS (the default): the meshes, the triangles traced this frame against the finest level's count (the cut's share), the clusters in the cut, the BLAS memory, the rebuilds (total and per second: each happens when an instance's cut changes, on a background thread and Metal's build queue) the last one's time, the last cut's time and how many instances it skipped as unchanged, the pixel error, and whether the LOD is frozen. A popup switches between the final image and the geometry debug views, next to Freeze LOD.
+* **Virtual geometry** (scenes with glTF models). With per-instance BLAS (the default): the meshes, the triangles traced this frame against the finest level's count (the cut's share), the clusters in the cut, the BLAS memory, the rebuilds (total and per second: each happens when an instance's cut changes, on a background thread and Metal's build queue) the last one's time, the last cut's time and how many instances it skipped as unchanged, and whether the LOD is frozen.
+  * A graph of the last 512 frames: the cut's time (line), the BLASes swapped in per frame (bars), the triangles in the cut and the BLAS megabytes (lines), each scaled to its own maximum, which the legend prints.
+  * A probe at the crosshair, while a geometry debug view is shown: the instance, cluster, group and level it hits, the cluster's error and its parent's in pixels against the pixel error, the distance, and whether it is a back face. Aim at virtual geometry to read it.
+  * A table of the nearest 64 instances, one row each: name, distance, clusters, triangles, the finest level's triangles, the levels, waited, slack, rebuilds, BLAS megabytes, gather time and faults. Click a heading to sort.
+  * A "cache resident" line, shown when a mesh's cache pages are under 99.5% in memory (after an eviction, say).
+  * Controls: the Geometry error slider (the pixel error), the Wait rule checkbox with its share and passes, the View popup (the final image and the geometry debug views), and Force re-cut. The lab's own: Booth (a bookmark popup), Instances (the field's count, with a stepper) and Evict cache.
 * **Texture streaming:** resident megabytes against the budget, mip levels mapped, and megabytes uploaded since launch.
 * **Memory:** what the GPU has allocated, and the working-set limit.
 * **Ray queries:** turning the counters on recompiles the shaders with `RT_STATS` (a few seconds in the background, as with R); tracing is slower while they're on, since every triangle is then non-opaque. Then: rays per frame, and per ray the triangle candidates and the box candidates Metal's traversal handed the ray queries. Metal can't count its nodes: the candidates are what the counters can see of its work. They match what a benchmark with `METALRENDERER_RT_STATS=1` prints for the same view. The window reads the GPU's counters every frame and shows the increase, since a reset from the CPU doesn't stick while frames are in flight.
@@ -2654,7 +2664,7 @@ above, with PROC_PERF=1).
 
 ### Geometry debug views
 
-The View popup and key 9 cycle six views of what the primary rays hit. They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
+The View popup and key 9 cycle six views of what the primary rays hit (8 to 13), then the three virtual geometry views (16 to 18). They run as a separate pass (about 2 ms at 1280×800) only while shown, so normal frames don't pay for them. Colours are shaded by the facing ratio so shapes stay readable.
 
 | View | Shows |
 |---|---|
@@ -2664,12 +2674,15 @@ The View popup and key 9 cycle six views of what the primary rays hit. They run 
 | LOD level | The cluster's DAG level on a blue (finest) to red (coarse) scale: finer near the camera, coarser far away. Generated plants: blue where their triangles are traced, green, orange and red for the three voxel levels. |
 | Triangle size | Projected edge length in traced pixels: blue ⅛ px, green 1 px, red 8 px and more. Virtual geometry at the default error is mostly green-yellow; full-detail meshes are blue (sub-pixel triangles). |
 | Traversal cost | The candidates (triangles and boxes) Metal's traversal hands each primary ray's query, log scale: blue few, red ~250. Metal can't count its nodes; the candidates are what can be seen of its work. |
+| LOD error | Each virtual cluster's projected error in traced pixels against the cut's rule: green at the allowed error, blue finer. Red where the cluster is coarser than allowed, magenta where its group is already fine enough (the cut should have taken the coarser clusters). Only a cut chosen for another viewpoint shows either, such as the wait rule's. |
+| Rebuilt | The instances whose BLAS was just swapped in, white, fading to their clusters' colours over 60 frames. |
+| Cracks | The triangles, dimmed, with the back faces of closed meshes magenta: a hole in a closed mesh shows its inside. |
 
 With virtual geometry off, the clusters, groups and LOD views are grey.
 
 ### Light debug views
 
-Three views in the View popup (numbers 16 to 18) show the direct light, in any scene. They cost nothing unless chosen.
+Three views in the View popup (numbers 19 to 21) show the direct light, in any scene. They cost nothing unless chosen.
 
 | View | Shows |
 |---|---|
@@ -2678,6 +2691,48 @@ Three views in the View popup (numbers 16 to 18) show the direct light, in any s
 | Light bounds | The final image with each light's shape and reach drawn over it: spheres in yellow (their great circles and their reach), spots in orange (the cone's edges and its ring at reach), rects in cyan (their outline and a tick on the side they light), tubes in green, meshes in grey (their bounding sphere). Suns have none. |
 
 Under MetalFX or the temporal AA the views are drawn after the upscaler, so they stay sharp.
+
+### VG lab
+
+The VG lab (scene `vglab`, shown as "VG lab" in the scene picker) is virtual geometry's test scene. Eight booths stand 30 m apart along +X on a grid floor under the sun. Each one tests a single thing with shapes whose answer is known, or with the gallery's models. Its signs are posts at the booth's front left, one more a booth, so a booth can be told by count.
+
+| Booth | Bookmarks | What it tests |
+|---|---|---|
+| 1 Ladder | 01 Ladder, 01 Ladder side | A sphere and a golem at 1, 2, 4 … 256 m: every DAG level on screen at once. |
+| 2 Cracks | 02 Cracks, 02 Cracks far | A sphere, a torus knot and a seam cube, closed, against a black wall: the Cracks view. |
+| 3 Seams and thin | 03 Seams, 03 Needles | The seam cube's split normals and UVs, a comb of needles, a 1 cm sheet, and the maiden model. |
+| 4 Grazing | 04 Grazing, 04 Grazing high | A 64 m hilly plane seen from low along it. |
+| 5 Instance field | 05 Field, 05 Field inside | Torus knots on a grid 2 m apart (the instance count), and a row of benches. |
+| 6 Movers | 06 Movers | Torus knots orbiting, spinning, squashed and stretched, one that comes and goes from 2 to 60 m, and an owl turning on the spot. |
+| 7 Real content | 07 Real, 07 Real close | The four gallery models on plinths. |
+| 8 Cold cache | 08 Cold far, 08 Cold near | The owl and the golem 200 m down the booth's line, for the cold-cache flight. |
+
+To go to a booth, pick its bookmark in the settings panel's Bookmarks popup, or in the Debug window's Booth popup. The `go_to_bookmark` tool of the `metalrenderer` MCP server takes a bookmark's name, number or prefix.
+
+The instance count is the field's (`objects`, 0 to 2000; the lab keeps at least one). Set it with `METALRENDERER_SCENE=vglab,objects=<n>`, the Debug window's Instances field, or `vg_set` with `instances`, which rebuilds the scene. The Debug window's Booth, Instances and Evict cache controls are the lab's; `vg_stats` and `vg_set` answer and drive virtual geometry from the MCP server too.
+
+The benchmark: `METALRENDERER_BENCH=vglab` renders every bookmark still, at native resolution, with virtual geometry: Final, the six geometry views, and the three virtual geometry views. Normals and Triangles follow with full-detail meshes. Each setting is 8 frames, and the cold-cache flight ends the run. `METALRENDERER_BENCH_ONLY=vglab02` runs booth 2 only. With `METALRENDERER_BENCH_DIR` set, the PNGs and `vglab.json` go there; `vglab.json` holds each setting's virtual geometry report. `METALRENDERER_BENCH=vglabfly` flies the camera from booth 1 to booth 8 for 600 frames with the wait rule on, and writes `vglabfly.json`.
+
+The eval: `~/.venvs/metalrenderer-eval/bin/python Tools/eval/vglab.py <vglab-run-dir> [--fly <vglabfly-run-dir>] [--json out.json]` prints a table of checks (PASS, FAIL, INFO or SKIP) and exits 1 if one fails. It checks:
+* the Cracks views of booths 2 and 3 (closed shapes up close): at most 8 exact magenta pixels; elsewhere the count is information (see Limits);
+* the LOD error views: the red and magenta share of the image (cut error beyond 1.05 or 0.95 of the pixel error) at most 0.1%;
+* the silhouettes: the Triangles view with virtual geometry against the full-detail one, the pixels whose hit differs per pixel of the full-detail silhouette, within twice the pixel error;
+* the cut's time at the instance field (5 ms at most) and the memory (1024 MB at most; over 512 MB is reported);
+* no BLAS rebuilds in the last 8 history samples of a still setting (not the movers or the cold flight);
+* with `--fly`: at most 1 BLAS rebuild a second per virtual instance over the flight, and the rebuilds a second, the cut's time, triangles and memory as information;
+* the cold-cache flight's residency and fault counts, as information.
+
+* **What it found:** the simplifier let a triangle turn over a few degrees a collapse at a time (each collapse only
+  had to keep it within 87 degrees of where it was), so coarse levels of closed meshes had folds and fins: triangles
+  facing into the mesh or standing across it, whose back faces the Cracks view showed (the field's torus knots, the
+  movers, the grazing booth's view of the field: 91 to 670 magenta pixels). A collapse now also has to leave every
+  triangle within 78 degrees of its corners' normals (`MeshSimplifier.minFacing`; the cache files are version 6, so
+  every model's virtual geometry is built again on its next load). The cuts of the closed shapes are now closed and
+  face out at every distance (`VGFoldTests`); the cut is 7.5% more triangles over the lab's bookmarks (6.6% more MB).
+* **Limits:** a thin shape far away still shows a few back faces (the field's torus knots: 17 to 257 pixels): its
+  tube, a few centimetres thick, simplifies to an error larger than its thickness, and its walls may cross within that
+  error. The eval counts them as information outside booths 2 and 3.
+* **Limits:** eviction (`vg_set` with `evict`, the Debug window's Evict cache, the cold booth) drops the meshes' cache pages with `msync` (MS_INVALIDATE) and `madvise` (MADV_DONTNEED), but not macOS's file cache. Measured: residency stays the same. So the cold step is only cold after `sudo purge`, which is run by hand. The report shows residency, so a warm run is visible.
 
 ### Solid shading
 
@@ -3012,7 +3067,7 @@ git config diff.scenedump.textconv "python3 Tools/scene/scenedump.py"
 * The tests in `Tests/MetalRendererTests` import every module and use the engine's folders.
 
 The core's folders: `Util/` (maths, catalogs, `SourceTree`, `Assets`, the load activity), `Geometry/` (BVH, mesh
-builders and shapes, simplification, clusters; `SDF/` shapes and volumes; `VirtualGeometry/`'s builder), `IO/` (glTF,
+builders and shapes, simplification, clusters; `SDF/` shapes and volumes; `VirtualGeometry/`'s builder and `VGMeshArrays`, a mesh as plain arrays), `IO/` (glTF,
 EXR, cache and section files), `Textures/` (texture sets, streaming, generated textures) and `GPU/` (the shared GPU
 structs, compute passes, kernels and pipelines, the shader source's splicing).
 
@@ -3037,14 +3092,14 @@ The engine's folders:
 | `Scripting/` | Swift scripts in the running app: the source a script is made into, the compiler, the runner, `ScriptRun`, the socket (`ScriptServer`), the typed commands (`SceneCommand`) |
 
 The editors' folders: `App/` (the window, the view, the controller, panels and overlays, the day bar, the graph
-editors' canvas), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,
+editors' canvas, the virtual geometry graph in `VGGraphView.swift`), `Settings/` (the settings panel), and one per editor named as its feature's: `Plants/`,
 `Buildings/` (with the floor plan), `Characters/`, `Terrain/`, `MaterialGraph/`, `Painter/`, `VFX/`,
 `ProjectGraph/`, `Destruction/Fracture/`.
 
-The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland),
+The game's folders follow the engine's: `Scene/Builders/` (the light scenes, the stress test, the showcase, Mireland, the VG lab in `VGLab/`),
 `Physics/Scenes/`, `Buildings/City/`, `Destruction/` (the courtyard, `Demolition/`: the office and its blueprint),
 `Characters/Crowd/`, `Geometry/SDF/`, `Particles/`, `Plants/` (the forest), `IO/` (the gallery), `Settings/`, and
-`Benchmark/` (the modes: `Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`, `+Realism`), with each
+`Benchmark/` (the modes: `Benchmark+Modes` lists them; `+Timing`, `+Quality`, `+Checks`, `+Realism`, `+VGLab` for the lab's modes), with each
 feature's own modes in its folder (`Water/`, `Terrain/`, `Buildings/`, `Destruction/`).
 
 ## How a frame works
@@ -3178,6 +3233,8 @@ With radiance cascades, 2b and 3–4 don't depend on each other. The frame then 
 | `VirtualGeometryBuilder.swift` | The cluster LOD DAG, cluster pages and the cache file format |
 | `VirtualTracing.swift` | Virtual geometry in the top-level structure: the virtual instances' descriptors, each naming its cut's BLAS |
 | `VirtualBLAS.swift` | Virtual geometry at run time (default): the cut per instance on the CPU, its triangles gathered, and Metal's BLAS built over them on a queue of its own |
+| `Scene+VirtualMeshes.swift` | `addVirtualMesh`: a generated shape as virtual geometry, its DAG cached under a key (an ordinary mesh with virtual geometry off) |
+| `Renderer+VGDebug.swift` | Virtual geometry's state for the Debug window, `vg_stats` and the benchmark's `vglab.json`: the report, the crosshair's probe, eviction |
 | `GPUTypes.swift` | Structs shared with the shaders. Their layout must match `Shaders/Types.metal` |
 | `ShaderSource.swift` | Joins the shader files into the one source the runtime compiler takes, with `#line` markers so a compile error names the file and line |
 | `Shaders.metal` | The shaders' entry file: the header and the list of pieces, in the order they build on each other |
