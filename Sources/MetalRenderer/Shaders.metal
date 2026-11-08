@@ -26,14 +26,16 @@ using namespace metal::raytracing;
 #include "Shaders/Fog.metal"               // volumetric fog: fogInject / fogIntegrate / fogReference
 #include "Shaders/Sky.metal"               // atmosphere, clouds, the sky map and its noise
 #include "Shaders/Mips.metal"              // mip chains under Metal 4: 2x2 means (Metal4Frame.generateMipmaps)
-#include "Shaders/Trace.metal"             // traceKernel, many lights, their reuse, mesh lights
+#include "Shaders/Trace.metal"             // traceKernel, the references' mesh lights
 #include "Shaders/Glass.metal"             // glassKernel: window panes over the traced G-buffer
 #include "Shaders/Liquid.metal"            // liquidKernel: camera rays bent through liquids, liquidApplyKernel
 #include "Shaders/Water.metal"             // waterKernel: camera rays bent into water, its surface, waterApplyKernel
 #include "Shaders/SampledLights.metal"     // direct light from sampled lights (above Scene.lightTableThreshold)
+#include "Shaders/MegaLights.metal"        // MegaLights: tile light lists and the light tree, a few shadow rays a pixel
+#include "Shaders/LightDebug.metal"        // the light bounds view: each light's shape and reach as lines
 #include "Shaders/Reflections.metal"       // reflectionKernel (specular materials)
 #include "Shaders/PathTrace.metal"         // pathTraceKernel: the reference path tracer (Reference "Path traced")
-#include "Shaders/Denoise.metal"           // SVGF temporal, a-trous, the shadow denoiser
+#include "Shaders/Denoise.metal"           // SVGF temporal, a-trous
 #include "Shaders/Output.metal"            // geometry debug views, composite, tone map, accumulate
 #include "Shaders/Post.metal"              // the lens and the finish: depth of field, bloom, vignette, grain
 #include "Shaders/WorldCache.metal"        // irradiance probes in world space for the cascades' hidden hits

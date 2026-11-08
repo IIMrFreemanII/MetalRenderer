@@ -25,7 +25,7 @@ package final class Benchmark {
         package var name: String
         /// What it renders with, before the METALRENDERER_* lists override it (`resolvedSettings`).
         package var settings: RenderSettings
-        /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / Auto.
+        /// The direct-light method, for settings that compare them (references use it too); nil = METALRENDERER_DIRECT / the default (MegaLights).
         var directLight: DirectLightMode? = nil
         package var startTime: Float = 0            // the animation clock at the first frame
         var dt: Float = 1.0 / 60.0          // the clock's step a frame (seconds)
@@ -199,7 +199,7 @@ package final class Benchmark {
             }
             for variable in [EnvVariable.fogSet, .skySet, .foliage, .denoise, .post] { SettingsEnv.apply(variable, to: &s, from: env) }
             if !accumulate { SettingsEnv.apply(.gi, to: &s, from: env) }
-            for variable in [EnvVariable.sampledLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
+            for variable in [EnvVariable.sampledLights, .megaLights, .view] { SettingsEnv.apply(variable, to: &s, from: env) }
             if let directLight { s.directLight = directLight }
             return s
         }

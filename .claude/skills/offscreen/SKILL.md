@@ -109,6 +109,15 @@ along it first: run the mode with `render.sh` and Read a few of the JPEGs.
 
 **Time it.** Timings belong to the `performance` skill (`ab.sh`, alternating rounds). Its runs are headless too.
 
+**Render a Light lab booth.** Each booth is a numbered place in the lab (README, "Light lab"). Either start a headless
+app on the lab and jump to the booth (run the app in the background, then the `go_to_bookmark` tool with name `7` and `capture`, or
+`Tools/script.py --send '{"bookmark": "7"}'`), then quit it:
+```bash
+METALRENDERER_BENCH=serve METALRENDERER_SCENE=lightlab .build/release/MetalRenderer   # run_in_background
+```
+Or let a benchmark do it: `METALRENDERER_BENCH=lightlab` (or `lightlabq`) with `METALRENDERER_BENCH_ONLY=labNN` renders
+only booth NN (`lab07`). Its PNGs go to `METALRENDERER_BENCH_DIR`, and the mode's scores are in `Tools/eval/README.md`.
+
 ## What headless changes, and what it doesn't
 
 * The same pixels: a `quick` run with and without the window matched bit for bit in 6 of 7 settings. The first

@@ -22,7 +22,7 @@ extension Benchmark {
         "stressq": stressq, "manylightsq": manylightsq, "marketq": marketq, "shadow": shadow,
         "noise": noise, "denoise": denoise, "quality": quality, "taa": taa,
         "hwrt": hwrt, "hwrtq": hwrtq, "interp": interp,
-        "sampledcheck": sampledcheck, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck, "fogemissive": fogemissive, "emissivemotion": emissivemotion,
+        "sampledcheck": sampledcheck, "lightlab": lightlab, "lightlabq": lightlabq, "lightcheck": lightcheck, "speccheck": speccheck, "fogcheck": fogcheck, "fogemissive": fogemissive, "emissivemotion": emissivemotion,
         "skycheck": skycheck, "vgdebug": vgdebug, "vglab": vglab, "vglabfly": vglabfly, "debugviews": debugViews, "crowd": crowd, "city": city, "world": world, "worldnight": worldNight,
         "worlddusk": worldDusk, "worldground": worldGround, "worldroads": worldRoads,
         "showcase": showcase, "shapes": shapes, "procedural": procedural, "showcasevideo": showcaseVideo, "shapesdemo": shapesDemo, "stressdemo": stressDemo,

@@ -451,8 +451,8 @@ extension Renderer {
         // The workshop edited: the same few plants a little changed, where they were. What the frames gathered of the
         // light mostly holds (the plants are new, but the sky, the ground and the camera aren't).
         let sameWorkshop = change == .continued && scene.settings.isSameWorkshop(as: oldSettings)
-        // What the pixels kept of the lights (a reservoir names its light by its place in the scene's table) is of the
-        // scene before when the table may differ: at night the tiles' lights are other ones, an interior adds its own.
+        // What MegaLights' tiles kept of the lights (its guide names a light by its place in the scene's table) is of
+        // the scene before when the table may differ: at night the tiles' lights are other ones, an interior adds its own.
         let lightsChanged = scene.lights.count != oldLights.count || oldLights.meshes || !scene.meshLights.isEmpty
         var moved = SIMD2<Float>()
         if sameWorld, let was = oldPlace, let now = scene.worldPlace {
@@ -471,9 +471,7 @@ extension Renderer {
             resetReference()
         } else {
             if sameWorkshop { resetReference() }
-            if lightsChanged {
-                reservoirsWritten = false
-            }
+            if lightsChanged { megaLightsLast = nil }
         }
         let resetCamera = change.resetsCamera && !configured
         if resetCamera {

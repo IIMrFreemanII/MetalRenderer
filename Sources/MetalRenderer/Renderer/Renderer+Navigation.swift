@@ -282,8 +282,7 @@ extension Renderer {
         // Exact: one shadow ray per light (references, up to Renderer.exactReferenceLights). Sampled: a kernel of its own.
         switch directMode {
         case .exact: u.flags |= UniformFlags.allLights
-        case .sampled: u.flags |= UniformFlags.sampledLights
-        default: break
+        case .sampled, .megalights: u.flags |= UniformFlags.sampledLights   // (MegaLights writes what Sampled does)
         }
         if settings.lightMaps && giMode == .pathTraced && !accumulating { u.flags |= UniformFlags.lightMaps }
         (u.interiorLo, u.interiorHi) = Renderer.interiorBox(scene)

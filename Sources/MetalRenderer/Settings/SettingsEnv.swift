@@ -22,7 +22,7 @@ package enum SettingsEnv {
     package static func export(_ s: RenderSettings, defaults: RenderSettings) -> String {
         // What a fresh launch would have: the code's defaults (not this process's env-derived ones) and the scene's presets.
         var d = defaults
-        d.directLight = .auto
+        d.directLight = .megalights
         d.specular = true
         d.textureBudgetMB = 1024
         d.virtualGeometry.enabled = true

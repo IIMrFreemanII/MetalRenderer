@@ -25,7 +25,7 @@ package struct Uniforms {
     package var instanceCount: UInt32 = 0
     package var jitter = SIMD4<Float>()          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
     package var denoise = SIMD4<Float>()         // x = luminance sigma, y = max history frames, z = anti-lag strength
-    package var lightGroupEnd = SIMD4<UInt32>()  // lights are sorted by shadow-denoiser group: group g = [end[g-1], end[g])
+    package var lightGroupEnd = SIMD4<UInt32>()  // w = the analytic lights (the mesh lights follow them); xyz = w
     package var lightTable = SIMD4<UInt32>()     // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
     package var post = SIMD4<Float>(1, 0, 0, 0)  // x = exposure (linear scale), y = tone curve (ToneMap's raw value), z = flags
                                          // (gradeOn, meterOn), w = the film curve's white clip
@@ -38,8 +38,7 @@ package struct Uniforms {
 
     /// traceKernel's own flags (MSL tracePassFlags), for the variant with them compiled in.
     package static let traceBounces: UInt32 = 1      // the path tracer's indirect light (`bounces` > 0)
-    package static let traceManyLights: UInt32 = 2   // more analytic lights than shadow-denoiser groups
-    package var tracePassFlags: UInt32 { (bounces > 0 ? Uniforms.traceBounces : 0) | (lightGroupEnd.w > 4 ? Uniforms.traceManyLights : 0) }
+    package var tracePassFlags: UInt32 { bounces > 0 ? Uniforms.traceBounces : 0 }
 
     /// (As the memberwise initializer, for the modules above this one.)
     package init(camPos: SIMD4<Float> = SIMD4<Float>(), camRight: SIMD4<Float> = SIMD4<Float>(), camUp: SIMD4<Float> = SIMD4<Float>(), camForward: SIMD4<Float> = SIMD4<Float>(), prevCamPos: SIMD4<Float> = SIMD4<Float>(), prevCamRight: SIMD4<Float> = SIMD4<Float>(), prevCamUp: SIMD4<Float> = SIMD4<Float>(), prevCamForward: SIMD4<Float> = SIMD4<Float>(), skyColor: SIMD4<Float> = SIMD4<Float>(), width: UInt32 = 0, height: UInt32 = 0, frameIndex: UInt32 = 0, lightCount: UInt32 = 0, bounces: UInt32 = 0, flags: UInt32 = 0, viewMode: UInt32 = 0, instanceCount: UInt32 = 0, jitter: SIMD4<Float> = SIMD4<Float>(), denoise: SIMD4<Float> = SIMD4<Float>(), lightGroupEnd: SIMD4<UInt32> = SIMD4<UInt32>(), lightTable: SIMD4<UInt32> = SIMD4<UInt32>(), post: SIMD4<Float> = SIMD4<Float>(1, 0, 0, 0), grade: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 1), interiorLo: SIMD4<Float> = SIMD4<Float>(1, 1, 1, 0), interiorHi: SIMD4<Float> = SIMD4<Float>(-1, -1, -1, 0), backdrop: SIMD4<Float> = SIMD4<Float>()) {
@@ -80,11 +79,11 @@ package enum UniformFlags {
     package static let separateSignals: UInt32 = 16  // direct and indirect light were denoised separately
     package static let noClamp: UInt32 = 32          // no firefly clamp (reference images)
     package static let lightMaps: UInt32 = 64        // path tracer: bounce lighting from light-visibility maps
-    package static let shadowDenoiser: UInt32 = 128  // direct light = exact unshadowed light x denoised per-group visibility
-    package static let allLights: UInt32 = 256       // one shadow ray per light even with more than 4 (references, baseline)
+    package static let sunVisibility: UInt32 = 128   // MegaLights writes the suns' raw visibility for MetalFX's diffuse guide
+    package static let allLights: UInt32 = 256       // accumulated references: one shadow ray per light
+    package static let lightDebug: UInt32 = 2048     // view modes 16-17: Sampled or MegaLights writes the light debug view
     package static let specular: UInt32 = 512        // specular materials: material G-buffer, reflection pass, specular composite
     package static let reference: UInt32 = 1024      // accumulated reference: reflections follow full paths
-    package static let meshLights: UInt32 = 2048     // with the shadow denoiser: composite adds the denoised mesh-light direct light
     package static let fog: UInt32 = 4096            // composite applies the volumetric fog (froxel grid, or the reference march)
     package static let fogReference: UInt32 = 8192   // with fog: read the per-pixel reference march instead of the froxel grid
     package static let skyMap: UInt32 = 16384        // the sky comes from the sky texture (atmosphere or image), not skyColor
@@ -101,6 +100,34 @@ package enum UniformFlags {
     package static let deepShadowGuide: UInt32 = 33554432   // MetalFX's diffuse guide takes the sun's shadow deep (SUN_GUIDE_SHADE)
     package static let particles: UInt32 = 67108864  // the composite puts the particles' layer over the scene (particleLayerKernel)
     package static let cascadeEmitters: UInt32 = 134217728  // the cascades light the big emissive meshes (CascadeSettings.emitters)
+}
+
+/// The light bounds view's parameters (MSL LightBoundsParams, Shaders/LightDebug.metal): x = the reach's cutoff,
+/// y = how opaque its lines are behind surfaces.
+package struct GPULightBoundsParams {
+    package var tuning: SIMD4<Float>
+    package init(tuning: SIMD4<Float>) { self.tuning = tuning }
+}
+
+/// MegaLights' parameters (MSL MegaLightsParams, Shaders/MegaLights.metal).
+package struct GPUMegaLightsParams {
+    package var config = SIMD4<UInt32>()   // x = list samples per pixel, y = list capacity, z = flags (below), w = tiles across
+    package var tree = SIMD4<UInt32>()     // x = tree samples per pixel, y = light tree nodes
+    package var tuning = SIMD4<Float>()    // x = reach cutoff, y = guide weight, z = firefly clamp (0 = off)
+
+    /// config.z: last frame's visible-light hashes are there to steer the list's picks.
+    package static let guideValid: UInt32 = 1
+    /// config.z: the tile's list owns its lights in reach and the tree the others (else MIS between them).
+    package static let partition: UInt32 = 2
+    /// Pixels a tile is wide and high (ML_TILE).
+    package static let tile = 16
+
+    /// (As the memberwise initializer, for the modules above this one.)
+    package init(config: SIMD4<UInt32> = SIMD4<UInt32>(), tree: SIMD4<UInt32> = SIMD4<UInt32>(), tuning: SIMD4<Float> = SIMD4<Float>()) {
+        self.config = config
+        self.tree = tree
+        self.tuning = tuning
+    }
 }
 
 /// Sampled direct light's parameters (MSL SampledLightParams).

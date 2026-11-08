@@ -22,7 +22,7 @@ struct Uniforms {
     uint instanceCount;
     float4 jitter;          // xy = this frame's sub-pixel jitter, zw = previous frame's (pixels)
     float4 denoise;         // x = luminance sigma, y = max history frames, z = anti-lag strength (0 = off), w = variance scale
-    uint4 lightGroupEnd;    // lights are sorted by shadow-denoiser group: group g = [end[g - 1], end[g])
+    uint4 lightGroupEnd;    // w = the analytic lights (the mesh lights follow them); xyz = w
     uint4 lightTable;       // x = light-table entries (after the lights in their buffer), y = suns, z / w = sun lights
     float4 post;            // x = exposure (linear scale), y = tone curve: 0 ACES, 1 AgX, 2 Reinhard, 3 none, 4 film,
                             // z = flags: 1 the grade below, 2 auto exposure's meter (PostSettings), w = film's white clip
@@ -145,13 +145,13 @@ static_assert(sizeof(SceneShading) == 304 && __builtin_offsetof(SceneShading, ex
 
 constant uint NO_TEXTURE = 0xFFFFFFFFu;
 
-// One light (GPUTypes.swift GPULight). Analytic lights come first, sorted by shadow-denoiser group
-// (u.lightGroupEnd.w of them); emissive-mesh lights follow, up to u.lightCount.
+// One light (GPUTypes.swift GPULight). Analytic lights come first (u.lightGroupEnd.w of them); emissive-mesh lights
+// follow, up to u.lightCount.
 struct Light {
     float4 positionRadius;  // xyz = centre (unused by the sun), w = radius (sphere, spot, tube; mesh: bounding sphere),
                             //   angular radius in radians (sun)
     float4 color;           // rgb = intensity (sphere, spot, tube), irradiance (sun), radiance (rect),
-                            //   sum of radiance x area (mesh); w = shadow-denoiser group + 4 x type (LIGHT_*), so
+                            //   sum of radiance x area (mesh); w = 4 x type (LIGHT_*; the low 2 bits are 0), so
                             //   the per-light weight loops read only the first 32 bytes of a sphere light
     float4 axis;            // xyz = spot axis, rect normal (it emits along it), direction toward the sun,
                             //   tube half axis (centre +- axis), mesh mean normal; w = mesh: its material, from
@@ -325,11 +325,12 @@ constant uint FLAG_BLUE_NOISE    = 8;   // sample with the blue-noise texture in
 constant uint FLAG_SEPARATE      = 16;  // direct and indirect light were denoised separately
 constant uint FLAG_NO_CLAMP      = 32;  // no firefly clamp (reference images)
 constant uint FLAG_LIGHT_MAPS    = 64;  // path tracer: bounce lighting from light-visibility maps
-constant uint FLAG_SHADOW_DENOISER = 128;  // direct light = exact unshadowed light x denoised per-group visibility
-constant uint FLAG_ALL_LIGHTS    = 256; // one shadow ray per light even with more than SHADOW_GROUPS lights (references)
+constant uint FLAG_SUN_VISIBILITY = 128;  // MegaLights wrote the suns' raw visibility (for MetalFX's diffuse guide, sunShadowGuide)
+constant uint FLAG_ALL_LIGHTS    = 256; // accumulated references: one shadow ray per light (traceKernel, meshLightsKernel)
+constant uint FLAG_LIGHT_DEBUG   = 2048; // view modes 19-20 (VIEW_LIGHT_TILES, VIEW_PICKED_LIGHT): Sampled or MegaLights writes what
+                                         // the view shows into the debug texture (LightDebug.metal)
 constant uint FLAG_SPECULAR      = 512; // specular materials present: material G-buffer, reflection pass, specular composite
 constant uint FLAG_REFERENCE     = 1024; // accumulated reference: reflections follow full paths
-constant uint FLAG_MESH_LIGHTS   = 2048; // with the shadow denoiser: the composite adds the denoised mesh-light direct light
 constant uint FLAG_FOG           = 4096; // the composite applies the volumetric fog
 constant uint FLAG_FOG_REFERENCE = 8192; // ...from the per-pixel reference march instead of the froxel grid
 constant uint FLAG_SKY_MAP       = 16384; // the sky comes from the sky texture (atmosphere or image), not skyColor
@@ -346,7 +347,9 @@ constant uint FLAG_DEEP_SHADOW_GUIDE = 33554432; // MetalFX's diffuse guide take
 constant uint FLAG_ENERGY        = 8388608; // specular keeps its energy and takes it from the diffuse (specularMultiscatter)
 constant uint FLAG_PARTICLES     = 67108864; // the composite puts the particles' layer over the scene (particleLayerKernel)
 constant uint FLAG_CASCADE_EMITTERS = 134217728; // radiance cascades light emissive meshes within their reach (cascadeEmitterReach):
-                                                 // their rays see the emission there, the mesh-light pass samples only beyond it
+                                                 // their rays see the emission there, direct light samples only beyond it
+// The light debug views (RenderSettings.viewModes; LightDebug.metal), drawn from the geometry debug texture.
+constant uint VIEW_LIGHT_TILES = 19, VIEW_PICKED_LIGHT = 20, VIEW_LIGHT_BOUNDS = 21;
 // Compiled-in flags. A configuration fixes most of these bits for every frame, so the renderer makes variants of the
 // big kernels with them as function constants (Pipelines.swift, KernelVariants): what a variant doesn't do is not in
 // its code and holds no registers. Constants 1 and 2 are bits of Uniforms.flags and which of them are compiled in;
@@ -366,8 +369,6 @@ inline bool passOn(uint flags, uint bit) { return (((FIXED_PASS_MASK & bit) != 0
 // The wind, for the ray queries and the shading, which see no uniforms: compiled in or out where the kernel's variant
 // fixes FLAG_WIND, else `blowing` (the scene's wind strength, read at run time).
 inline bool windOn(bool blowing) { return (FIXED_FLAG_MASK & FLAG_WIND) != 0 ? (FIXED_FLAGS & FLAG_WIND) != 0 : blowing; }
-constant uint SHADOW_GROUPS      = 4;   // light groups the shadow denoiser handles (one rgba channel each);
-                                        // up to 4 lights, each light is its own group (Light.color.w = group)
 constant uint CACHED_LIGHT_SAMPLES = 4; // lightIllumCached: light-map lookups per hit with more than 8 lights
 
 constant uint MASK_GEOMETRY = 1;     // see Scene.maskGeometry

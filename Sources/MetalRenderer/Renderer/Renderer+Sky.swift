@@ -266,7 +266,8 @@ extension Renderer {
     /// Per slot: the lights, then the light table.
     package func createLightBuffers() throws {
         _ = scene.takeLightTrianglesDirty()   // written here as they are now
-        lightTree = nil                       // the scene's lights: made again from them when the path tracer needs it
+        lightTree = nil                       // the scene's lights: made again from them when the path tracer or MegaLights needs it
+        megaLightsLast = nil                  // (their visible-light hashes name the lights by index)
         lightTreeVersions = [Int](repeating: -1, count: Renderer.maxFramesInFlight)
         lightTrianglesPending = [Range<Int>?](repeating: nil, count: Renderer.maxFramesInFlight)
         for _ in 0..<Renderer.maxFramesInFlight {

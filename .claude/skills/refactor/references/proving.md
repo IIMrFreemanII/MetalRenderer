@@ -20,7 +20,7 @@ Pick the modes by what the change touched. Start with `quick`, then add the ones
 |---|---|
 | Anything in the frame loop | `quick` |
 | GI (path traced, cascades), the denoiser | `gi`, `denoise` |
-| Direct light, many lights, the light grid | `stressq`, `shadow`, `lightcheck`, `sampledcheck` |
+| Direct light, many lights, the light grid | `stressq`, `shadow` (the default direct light, MegaLights), `lightcheck`, `sampledcheck` |
 | Fog, sky, clouds | `fogcheck`, `skycheck` |
 | Reflections, specular light | `speccheck` |
 | The upscaler (MetalFX denoiser), the output path | `quality`, `hwrtq` |

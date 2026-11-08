@@ -100,7 +100,7 @@ package struct GPUInstanceData {
 package struct GPULight {
     var positionRadius: SIMD4<Float>  // xyz = centre, w = radius (sphere, spot, tube, mesh bounds), angular radius (sun)
     var color: SIMD4<Float>           // rgb = intensity / irradiance (sun) / radiance (rect) / sum of L x area (mesh),
-                                      // w = shadow-denoiser group (0...3) + 4 x type (GPULight.sphere...)
+                                      // w = 4 x type (GPULight.sphere...; the low 2 bits are 0)
     var axis: SIMD4<Float>            // xyz = spot axis, rect normal, toward the sun, tube half axis, mesh mean normal;
                                       // w = mesh: its material, from its instance's first
     var params: SIMD4<Float>          // spot: cos outer, cos inner | rect: half-width tangent, half height
@@ -164,6 +164,7 @@ func validateGPULayouts() {
     precondition(MemoryLayout<GPULightTableEntry>.stride == 16, "GPULightTableEntry layout mismatch")
     precondition(MemoryLayout<GPUTriangleInfo>.stride == 8, "GPUTriangleInfo layout mismatch")
     precondition(MemoryLayout<GPUSampledLightParams>.stride == 32, "GPUSampledLightParams layout mismatch")
+    precondition(MemoryLayout<GPUMegaLightsParams>.stride == 48, "GPUMegaLightsParams layout mismatch")
     precondition(MemoryLayout<GPULightTreeNode>.stride == 64, "GPULightTreeNode layout mismatch")
     precondition(MemoryLayout<GPUEmissiveTriangle>.stride == 64, "GPUEmissiveTriangle layout mismatch")
     precondition(MemoryLayout<GPUFogVolume>.stride == 64, "GPUFogVolume layout mismatch")

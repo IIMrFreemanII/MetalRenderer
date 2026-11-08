@@ -63,7 +63,7 @@ fewer threads run at once and memory latency stops being hidden.
 * Avoid dynamically indexed local arrays and run-time vector indices (`v[g]`) **inside a loop over many items**:
   they become stack memory traffic per iteration. Use vector lanes with `select`, and `dot(v, groupMask(g))` /
   `v += groupMask(g) * x` for a channel picked at run time (`groupMask`). Measured (stress hall, 1024
-  lights): manyLightsKernel −8% with one ray, −14% with two; composite −12%.
+  lights, the per-light-group picker removed in November 2026): its kernel −8% with one ray, −14% with two; composite −12%.
 * Outside such loops the same rewrite is neutral: don't bother. A small array written once and read a few times is
   cheaper than reading its contents again from textures: ReSTIR's spatial kernels keep ~1 KB of neighbour surfaces
   and reservoirs in arrays, and re-reading them instead cost +0.1–0.2 ms (DI) and +11% (GI spatial).
@@ -90,7 +90,7 @@ fewer threads run at once and memory latency stops being hidden.
   loop and the per-light shadow rays compiled out −24%; restirTemporalKernel without its visibility ray and
   restirSpatialKernel's merge-only passes −8% together; reflectionKernel without the references' second bounce −7%;
   restirGIInitialKernel with one bounce −13%. A flag that guards a texture read, a clamp or the blue-noise sampler
-  is worth 0–2%: restirGISpatialKernel, rcTraceMergeKernel and meshLightsKernel got no variants for that reason, and
+  is worth 0–2%: restirGISpatialKernel, rcTraceMergeKernel and meshLightsKernel (references only now) got no variants for that reason, and
   a compiled-in bounce count measured the same as the uniform's. Don't give a bit that flips on a history's first
   frame (`*_VALID`) to the masks: its variant would be compiled for one frame.
 * **Threadgroup size.** `Renderer.threadgroupSizes`. The defaults are 8×8, `trace` 16×8 (+2%)

@@ -26,7 +26,7 @@ extension Benchmark {
         scenes += [SceneKind.spots, .tubes, .area, .emissive, .mixed].map { ("\($0)", SceneSettings(kind: $0)) }
         scenes.append(("stress32", stressHall()))
         return scenes.flatMap { tag, scene -> [Config] in
-            [(DirectLightMode.exact, false), (.sampled, false), (.sampled, true)].map { mode, grid in
+            [(DirectLightMode.exact, false), (.sampled, false), (.sampled, true), (.megalights, false)].map { mode, grid in
                 Config("\(tag) \(mode.title.lowercased())" + (grid ? " grid" : ""), gi: nil, scene: scene) {
                     $0.sampledLights.grid.enabled = grid
                     $0.sampledLights.grid.share = 32      // every candidate
@@ -767,17 +767,15 @@ extension Benchmark {
 
     /// Direct specular light is counted once: the glossy light scenes with direct light only (so the reflections see lit
     /// surfaces and nothing else), each direct-light path against the accumulated reference (Tools/eval/specular.py).
-    /// The shadow denoiser adds direct specular in the composite, SVGF and references in the reflection pass, sampled lights
-    /// from its reservoirs. No tone curve and 2 stops down, so highlights compare linearly instead of clipping.
+    /// Sampled lights add direct specular from their reservoirs, MegaLights from its own samples. No tone curve and 2 stops down, so highlights compare linearly instead of clipping.
     static func speccheck() -> [Config] {
         picked([.area, .spots, .tubes]).flatMap { kind -> [Config] in
             let base = Config("", gi: nil, scene: SceneSettings(kind: kind)) { $0.toneMap = .none; $0.exposure = -2 }
                 .sky { $0 = SkySettings() }
             let still = base.still(previous: true).frames(60)
             return references([base.named("\(kind) ref").reference(frames: 1024)]) + [
-                still.named("\(kind) shadow denoiser"),
-                still.named("\(kind) svgf").with { $0.denoiser.shadowDenoiser = false },
                 still.named("\(kind) sampled").direct(.sampled),
+                still.named("\(kind) megalights").direct(.megalights),
             ]
         }
     }
@@ -824,7 +822,7 @@ extension Benchmark {
                 shown.named("cubes indirect still").view(2).still(at: 5).frames(120)]
     }
 
-    /// Cloud shadows through every sun-visibility path (shadow rays, the shadow denoiser, light maps): the valley in
+    /// Cloud shadows through every sun-visibility path (shadow rays, light maps): the valley in
     /// the afternoon, a cloud shadow's edge in view, each GI method against a 4-bounce path-traced reference (512
     /// frames), final image and indirect light, with cloud shadows on and off. Each method's error should not depend
     /// on the shadows.

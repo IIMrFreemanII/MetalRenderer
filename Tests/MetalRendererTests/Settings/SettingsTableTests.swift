@@ -117,6 +117,23 @@ final class SettingsTableTests: XCTestCase {
 
     // MARK: - Tests
 
+    func testTheLightLabRowsReadFromTheEnvironment() {
+        var s = defaults
+        SettingsEnv.apply(.labVariant, to: &s, from: ["METALRENDERER_LAB_VARIANT": "overLimit"])
+        XCTAssertEqual(s.scene.lightLab.variant, .overLimit)
+        SettingsEnv.apply(.labVariant, to: &s, from: ["METALRENDERER_LAB_VARIANT": "2"])
+        XCTAssertEqual(s.scene.lightLab.variant, .dense)
+        SettingsEnv.apply(.labMotion, to: &s, from: ["METALRENDERER_LAB_MOTION": "1"])
+        XCTAssertTrue(s.scene.lightLab.motion)
+        // Only the lab shows the rows; `only` is for benchmarks and isn't saved.
+        GameScenes.register()
+        s.scene.kind = .lightLab
+        XCTAssertTrue(s.scene.kind.definition.hasLightLab)
+        s.scene.lightLab.only = 3
+        let data = try? JSONEncoder().encode(s.scene.lightLab)
+        XCTAssertEqual(data.flatMap { try? JSONDecoder().decode(LightLabSettings.self, from: $0) }?.only, nil)
+    }
+
     func testEnvNamesAreUnique() {
         var seen = Set<String>()
         for env in SettingsTable.named {
@@ -177,7 +194,6 @@ final class SettingsTableTests: XCTestCase {
                 case .slider(let m): m.move(&s, m.range.lowerBound + random() * (m.range.upperBound - m.range.lowerBound))
                 case .checkbox(_, let set): set(&s, random() < 0.5)
                 case .popup(let titles, _, let select): select(&s, min(Int(random() * Double(titles.count)), titles.count - 1))
-                case .custom(.lightRays): s.manyLightRays = pick([1, 2])
                 case .custom(.upscale): s.upscaleFactor = pick([0, 1.5, 2, 3])
                 case .custom(.skyMode):
                     s.sky.mode = pick(SkyMode.allCases)
@@ -290,7 +306,7 @@ final class SettingsTableTests: XCTestCase {
     /// A saved value that no longer decodes (an enum case since removed) takes its default; the other settings stay.
     func testInvalidEnumValuesFallBackToTheirDefaults() throws {
         var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(defaults)) as? [String: Any])
-        saved["directLight"] = 4   // (MegaLights, since removed)
+        saved["directLight"] = 9   // (no such mode)
         saved["giMode"] = 3   // (Lumen, since removed)
         saved["toneMap"] = 99
         var scene = try XCTUnwrap(saved["scene"] as? [String: Any])

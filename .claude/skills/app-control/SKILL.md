@@ -9,8 +9,8 @@ The app takes requests through its script socket (README, "Scripts"). The `metal
 `Tools/mcp/metalrenderer.py`) and `Tools/script.py` both use it. Two kinds of request:
 
 * **Typed tools:** small fixed edits with a JSON schema, done at once with no compile, which can't crash the app:
-  `place_object`, `move_object`, `remove_objects`, `set_camera`, `switch_scene`, `set_settings`, plus `scene_state`
-  and `capture` for reading; `modeller` for the Modeller (steps, then its state and a picture).
+  `place_object`, `move_object`, `remove_objects`, `set_camera`, `go_to_bookmark`, `switch_scene`, `set_settings`, plus
+  `scene_state` and `capture` for reading; `modeller` for the Modeller (steps, then its state and a picture).
 * **Swift scripts** (`run_swift`, `Tools/script.py <file>` or `-e`): any code against the engine's `package` API,
   compiled against the running binary (about 0.5 s, 4 s with a cold cache).
 
@@ -27,6 +27,7 @@ The app takes requests through its script socket (README, "Scripts"). The `metal
    |---|---|
    | One object placed, replaced (same name), moved, turned, scaled or removed | `place_object`, `move_object`, `remove_objects` |
    | The camera somewhere, looking at something | `set_camera` (`lookAt`, or yaw and pitch in degrees) |
+   | A named camera place of the scene (`scene_state` lists them) | `go_to_bookmark` (`name`: the bookmark's name, number or prefix). The Light lab's booths are reached by number: `go_to_bookmark` with name `7` is booth 7, `07 Spot cones` |
    | Another scene | `switch_scene` (a headless app loads it as the window does; to check switching itself, the `scene-switching` skill's `switches.py`) |
    | Settings by their names (`view solid=1`, `gi …`) | `set_settings` (`scene_state` lists the lists and keys) |
    | What is loaded, where things are | `scene_state` |

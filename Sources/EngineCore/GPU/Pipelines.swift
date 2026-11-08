@@ -5,18 +5,21 @@ import QuartzCore
 /// The compute kernels in Shaders/*.metal: case `trace` is the function `traceKernel`.
 package enum Kernel: Int, CaseIterable {
     case trace, glass, liquid, liquidApply, frosted, geometryDebug, lightMap
+    case lightBoundsClear, lightBounds   // the light bounds view (Shaders/LightDebug.metal)
     case solid                  // solid shading: the whole frame (RenderSettings.solid, Output.metal), the classic look
     case solidTrace, solidResolve   // ...the look that tells things apart (RenderSettings.solidLook): its rays, then its picture
     case water, waterApply   // water's surface over the trace (Shaders/Water.metal)
     case waterSpectrum, waterFFT, waterAssemble   // the FFT ocean's waves, every frame
     case waterNear              // the near patch's vertices, moved by the waves
     case waterCaustics          // the sun's caustics under the waves
-    case manyLights, manyLightsReuse, meshLights, regirBuild, sampledLights
+    case meshLights             // the emitters' direct light in accumulated references (every light traced)
+    case regirBuild, sampledLights
+    case megaLightsCull, megaLightsSample   // MegaLights (Shaders/MegaLights.metal): tile lists, then the samples
     case rcProbe, rcTraceMerge, rcFilter, rcSH, rcClearAmbient, rcResolve
     case wrcTrace, wrcBlend     // the world cache's probes (Shaders/WorldCache.metal)
     case reflection
     case pathTrace              // the reference path tracer (Shaders/PathTrace.metal)
-    case temporal, atrous, shadowTemporal, shadowFilter, accumulate
+    case temporal, atrous, accumulate
     case fogInject, fogIntegrate, fogReference
     case sky, skyMean, cloudShadow, cloudNoise, transmittanceLUT, multiScatterLUT
     case mipDown2D, mipDown2DArray   // mip chains under Metal 4 (Shaders/Mips.metal)
@@ -68,9 +71,8 @@ package enum Kernel: Int, CaseIterable {
         switch self {
         // F.wind: every kernel that casts many rays. Their traversal holds the wind's turns only while it blows.
         case .trace: return F.specular | F.upscale | F.blueNoise | F.skyMap | F.lightMaps | F.noClamp | F.sampledLights | F.allLights | F.wind
-        case .manyLights, .manyLightsReuse: return F.blueNoise | F.wind
-        case .sampledLights: return F.specular
-        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.sampledLights | F.shadowDenoiser | F.skyMap | F.wind
+        case .sampledLights, .megaLightsSample: return F.specular
+        case .reflection: return F.blueNoise | F.noClamp | F.reference | F.sampledLights | F.skyMap | F.wind
         case .rcProbe, .rcTraceMerge, .wrcTrace, .lightMap, .solid, .solidTrace: return F.wind
         case .fogInject: return F.blueNoise | F.skyMap
         default: return 0
@@ -81,7 +83,7 @@ package enum Kernel: Int, CaseIterable {
     /// first frame after a reset, so they stay run-time tests: a variant for that one frame would be compiled for nothing.
     package var fixedPassFlags: UInt32 {
         switch self {
-        case .trace: return Uniforms.traceBounces | Uniforms.traceManyLights
+        case .trace: return Uniforms.traceBounces
         case .reflection: return GPUFogParams.reflectionsFogged
         default: return 0
         }

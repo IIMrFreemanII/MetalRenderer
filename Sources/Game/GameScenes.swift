@@ -345,6 +345,14 @@ extension GameScenes {
                 $0.sky = courtyard
                 $0.camera = Scene.camera([0, 4, 14], pitch: -0.2)
             },
+            scene(.lightLab, "Light lab", "buildLightLab", build: { $0.buildLightLab() }) {
+                $0.hasLightLab = true
+                $0.sky = courtyard
+                $0.bookmarks = LightLab.bookmarks()
+                if let start = $0.bookmarks.first, let (yaw, pitch) = SceneCommand.angles(from: start.position, to: start.lookAt) {
+                    $0.camera = Scene.camera(start.position, yaw: yaw, pitch: pitch)
+                }
+            },
             // The stage with procedural assets on it (Assets/Scenes/procedural.scene: `proc:` objects, cooked as it
             // loads; README, "Procedural modelling").
             scene(.procedural, "Procedural (assets)", "buildStage", build: { $0.buildStage() }) {

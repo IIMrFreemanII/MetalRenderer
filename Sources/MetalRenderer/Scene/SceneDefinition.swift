@@ -36,7 +36,7 @@ package struct SceneKind: Hashable, Codable, CustomStringConvertible {
     package static let numbered = ["cornell", "stress", "gallery", "spots", "sun", "area", "tubes", "emissive", "mixed", "fog", "valley",
                            "market", "forest", "crowd", "city", "cityNight", "world", "showcase", "shapes", "physics", "ragdolls",
                            "hair", "softBodies", "muscles", "fluids", "particles", "plants", "buildings", "characters", "vfxStage",
-                           "materials", "mireland", "painter", "terrain", "destruction", "demolition", "stage"]
+                           "materials", "mireland", "painter", "terrain", "destruction", "demolition", "stage", "lightLab"]
 
     package init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
@@ -181,6 +181,8 @@ package final class SceneDefinition {
     package var scope: ((SceneSettings) -> String)? = nil
     /// Its gameplay (SceneBehaviour), made with the scene once it is built.
     package var behaviour: ((Scene) -> SceneBehaviour)? = nil
+    /// It is the light lab: `SceneSettings.lightLab` (its variant and motion) shapes it.
+    package var hasLightLab = false
     /// Its named camera places (the settings panel's Bookmarks popup, `go_to_bookmark`, `Config.at`).
     package var bookmarks: [SceneBookmark] = []
     /// What the benchmark's table adds to its name (the stress test's counts).

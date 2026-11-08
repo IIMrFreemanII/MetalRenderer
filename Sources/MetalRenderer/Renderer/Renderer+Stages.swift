@@ -70,8 +70,8 @@ extension Renderer {
         stages.append(ComputeStage(pass: "trace") { [self] enc in
             bind(enc, .trace, uniforms, pass: uniforms.tracePassFlags, sceneSlot: slot)
             setTextures(enc, [t.normalDepth[cur], t.albedo, t.emission, t.motion, t.direct, t.indirect,
-                              t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap,
-                              t.visibility, t.blocker, t.material])
+                              t.deviceDepth, t.pixelMotion, blueNoiseTexture, t.surfacePos, t.geoNormal, lightMap])
+            enc.setTexture(t.material, index: 14)
             if let liquid = plan.liquid {
                 enc.setTexture(liquid.ray, index: 16)
                 enc.setTexture(liquid.direction, index: 17)
@@ -227,6 +227,7 @@ extension Renderer {
     /// the denoiser.
     package func sampledDirectStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
         guard plan.sampledLights else { return [] }
+        if plan.megaLights { return megaLightsStages(plan, targets: t) }
         let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
         let s = plan.sampledSettings
         let clamp: Float = plan.accumulating ? 0 : 4 * 10   // 4 x the firefly clamp, as the mesh-light pass
@@ -239,74 +240,23 @@ extension Renderer {
             bind(enc, .sampledLights, uniforms, sceneSlot: slot)
             enc.setBytes(&p, length: MemoryLayout<GPUSampledLightParams>.stride, index: 9)
             setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, t.albedo, t.material, t.direct, specular])
+            enc.setTexture(t.anisotropy, index: 8)   // MATERIAL_LOBES
+            enc.setTexture(t.sheen, index: 9)
+            enc.setTexture(t.geometryDebug, index: 10)   // the light debug views (FLAG_LIGHT_DEBUG)
             dispatch(enc, .sampledLights, width: size.width, height: size.height)
         }]
     }
 
-    /// 2c. Direct light that is sampled per pixel: one light per group with more than 4 lights (manyLightsKernel), and
-    /// the emissive-mesh lights. After the trace and before anything that reads direct light or visibility.
-    package func sampledLightStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
-        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, prev = plan.prev, size = plan.size
-        var stages: [ComputeStage] = []
-        if plan.manyLights {
-            let reuse = plan.lightReuse
-            let config = SIMD4<UInt32>(UInt32(plan.manyLightRays), UInt32(max(settings.manyLightReuse, 0)),
-                                       plan.lightPicksValid ? 1 : 0, 0)
-            stages.append(ComputeStage(pass: "many lights") { [self] enc in
-                var config = config
-                bind(enc, reuse ? .manyLightsReuse : .manyLights, uniforms, sceneSlot: slot)
-                enc.setBytes(&config, length: MemoryLayout<SIMD4<UInt32>>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.visibility, t.blocker,
-                                  t.motion, t.normalDepth[prev], t.shadow.reservoir[prev], t.shadow.reservoirWeight[prev],
-                                  t.shadow.reservoir[cur], t.shadow.reservoirWeight[cur], t.albedo])
-                dispatch(enc, .manyLights, width: size.width, height: size.height)
-            })
-        }
-        if plan.meshLights {
-            let shadowDenoiser = plan.shadowDenoiser
-            stages.append(ComputeStage(pass: "mesh lights") { [self] enc in
-                var addToDirect: UInt32 = shadowDenoiser ? 0 : 1
-                bind(enc, .meshLights, uniforms, sceneSlot: slot)
-                enc.setBytes(&addToDirect, length: MemoryLayout<UInt32>.stride, index: 9)
-                setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.meshDirect, t.albedo])
-                dispatch(enc, .meshLights, width: size.width, height: size.height)
-            })
-        }
-        return stages
-    }
-
-    /// 3b. The shadow denoiser: direct light's per-group visibility through its own temporal and spatial filter.
-    package func shadowDenoiseStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
-        guard plan.shadowDenoiser else { return [] }
-        let uniforms = plan.uniforms, cur = plan.cur, prev = plan.prev, size = plan.size
-        let d = settings.denoiser, s = t.shadow
-        let maxHistory = DenoiserSettings.maxHistoryRange.clamp(d.shadowHistory)
-        var stages = [ComputeStage(pass: "shadow temporal") { [self] enc in
-            var params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, 0)
-            bind(enc, .shadowTemporal, uniforms)
-            enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
-            setTextures(enc, [t.visibility, t.blocker, t.motion, t.normalDepth[cur], t.normalDepth[prev], s.history,
-                              s.meta[prev], s.pingA, s.meta[cur], s.penumbra, s.tiles])
-            // Whole 8x8 threadgroups: each one classifies its tile.
-            enc.dispatchThreadgroups(MTLSize(width: (size.width + 7) / 8, height: (size.height + 7) / 8, depth: 1),
-                                     threadsPerThreadgroup: MTLSize(width: 8, height: 8, depth: 1))
+    /// 2c. References (every light traced): the emissive-mesh lights' direct light, added to the trace's. After the
+    /// trace and before anything that reads direct light.
+    package func referenceMeshLightStages(_ plan: FramePlan, targets t: RenderTargets) -> [ComputeStage] {
+        guard plan.meshLights else { return [] }
+        let uniforms = plan.uniforms, slot = plan.slot, cur = plan.cur, size = plan.size
+        return [ComputeStage(pass: "mesh lights") { [self] enc in
+            bind(enc, .meshLights, uniforms, sceneSlot: slot)
+            setTextures(enc, [t.surfacePos, t.normalDepth[cur], t.geoNormal, blueNoiseTexture, t.direct, t.albedo])
+            dispatch(enc, .meshLights, width: size.width, height: size.height)
         }]
-        // Pass 0 writes `history`, which feeds next frame's temporal pass (as in SVGF).
-        let chain: [(src: MTLTexture, dst: MTLTexture)] = [(s.pingA, s.history), (s.history, s.pingB), (s.pingB, s.pingA),
-                                                           (s.pingA, s.pingB), (s.pingB, s.pingA)]
-        let passes = DenoiserSettings.passRange.clamp(d.shadowPasses)
-        for (i, pass) in chain.prefix(passes).enumerated() {
-            stages.append(ComputeStage(pass: "shadow filter") { [self] enc in
-                var params = SIMD4<Float>(maxHistory, d.shadowClamp, d.shadowSigma, Float(1 << i))
-                bind(enc, .shadowFilter, uniforms)
-                enc.setBytes(&params, length: MemoryLayout<SIMD4<Float>>.stride, index: 1)
-                setTextures(enc, [pass.src, t.normalDepth[cur], s.penumbra, s.meta[cur], s.tiles, pass.dst])
-                dispatch(enc, .shadowFilter, width: size.width, height: size.height)
-            })
-        }
-        composite.illumination = [chain[passes - 1].dst]
-        composite.uniforms.flags |= UniformFlags.shadowDenoiser | UniformFlags.separateSignals
-        return stages
     }
 
     /// Reference "Path traced": this frame's paths join the running mean (Shaders/PathTrace.metal), which encodeOutput
@@ -358,12 +308,7 @@ extension Renderer {
         func signal(_ noisy: [MTLTexture], _ d: DenoiseTargets, _ passes: Int) -> DenoiseSignal {
             DenoiseSignal(noisy: noisy, targets: d, passes: passes, uniforms: plan.uniforms)
         }
-        var signals: [DenoiseSignal] = []
-        // First, so the indirect light stays last: the mesh lights'.
-        if plan.denoiseMeshLights { signals.append(signal([t.meshDirect], t.denoise[3], settings.denoiser.passes(for: .pathTraced))) }
-        if !plan.shadowDenoiser {
-            signals.append(signal(plan.separate ? [t.direct] : [t.direct, t.indirect], t.denoise[0], plan.directPasses))
-        }
+        var signals = [signal(plan.separate ? [t.direct] : [t.direct, t.indirect], t.denoise[0], plan.directPasses)]
         if plan.separate && plan.denoiseIndirect { signals.append(signal([t.indirect], t.denoise[1], plan.indirectPasses)) }
         return signals
     }
@@ -372,7 +317,6 @@ extension Renderer {
     package func svgfStages(_ plan: FramePlan, targets t: RenderTargets, composite: inout CompositeInputs) -> [ComputeStage] {
         guard plan.svgf else { return [] }
         let signals = denoiseSignals(plan, targets: t)
-        guard !signals.isEmpty else { return [] }
         let cur = plan.cur, prev = plan.prev, size = plan.size
         var stages = [ComputeStage(pass: "temporal") { [self] enc in
             for s in signals {
@@ -397,12 +341,7 @@ extension Renderer {
                 }
             })
         }
-        composite.illumination = (plan.shadowDenoiser ? composite.illumination : [])
-            + signals.map { $0.targets.atrousPass($0.passes - 1).dst }
-        if plan.denoiseMeshLights {
-            composite.meshDirect = composite.illumination[1]
-            composite.uniforms.flags |= UniformFlags.meshLights
-        }
+        composite.illumination = signals.map { $0.targets.atrousPass($0.passes - 1).dst }
         if plan.separate { composite.uniforms.flags |= UniformFlags.separateSignals }
         return stages
     }

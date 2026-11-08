@@ -42,7 +42,7 @@ extension Renderer {
         var sampledLights: [ComputeStage] = []       // 2e. sampled direct light
         var reflections: [ComputeStage] = []         // 2d. after the GI (they read its result)
         var fog: [ComputeStage] = []                 // 3d. first of the stages below
-        var denoise: [ComputeStage] = []             // 2c, 3. sampled direct light, the denoisers
+        var denoise: [ComputeStage] = []             // 2c, 3. references' mesh lights, the denoisers
         var reflectionDenoise: [ComputeStage] = []
     }
 
@@ -51,7 +51,6 @@ extension Renderer {
         var uniforms: Uniforms            // the frame's, plus the flags that tell the composite how to read the rest
         var illumination: [MTLTexture]    // denoised light: one signal, or direct then indirect (the indirect is last)
         var specular: MTLTexture
-        var meshDirect: MTLTexture
         var fogReference: MTLTexture?
     }
 
@@ -351,7 +350,7 @@ extension Renderer {
             if let drawable, let enc = passes.compute("composite") {
                 bind(enc, .tonemap, c.uniforms)
                 enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
-                setTextures(enc, [pt.accum, drawable.texture])
+                setTextures(enc, [pt.accum, drawable.texture, t.geometryDebug])
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
@@ -374,6 +373,21 @@ extension Renderer {
             if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
         }
 
+        // The light bounds view: the lights' lines into the debug texture, over the frame in the composite.
+        if settings.viewMode == RenderSettings.lightViews.upperBound, scene.lights.count > 0, let enc = passes.compute("light bounds") {
+            bind(enc, .lightBoundsClear, c.uniforms)
+            enc.setTexture(t.geometryDebug, index: 0)
+            dispatch(enc, .lightBoundsClear, width: size.width, height: size.height)
+            enc.memoryBarrier(scope: [.textures])
+            var params = GPULightBoundsParams(tuning: SIMD4(MegaLightsSettings.cutoffRange.clamp(settings.megaLights.cutoff) / max(c.uniforms.post.x, 1e-6),
+                                                            0.3, 0, 0))
+            bind(enc, .lightBounds, c.uniforms, sceneSlot: plan.slot)
+            enc.setBytes(&params, length: MemoryLayout<GPULightBoundsParams>.stride, index: 9)
+            setTextures(enc, [t.normalDepth[plan.cur], t.geometryDebug])
+            dispatch(enc, .lightBounds, width: Int(c.uniforms.lightCount), height: 1)
+            if overlap { enc.memoryBarrier(scope: [.textures]) }   // concurrent encoder: before the composite reads it
+        }
+
         // Indirect light the composite adds when signals are separate: denoised, or raw (GI technique / GI off).
         let compositeIndirect = plan.accumulating || (plan.svgf && plan.separate && plan.denoiseIndirect)
             ? c.illumination.last! : t.indirect
@@ -391,8 +405,8 @@ extension Renderer {
             if (plan.post != nil || plan.taa != nil) && !size.upscaling { uniforms.flags |= UniformFlags.post }
             bind(enc, .composite, uniforms)
             var inputs: [MTLTexture] = [c.illumination[0], t.direct, t.indirect, t.albedo, t.emission, t.normalDepth[cur]]
-            inputs.append(plan.shadowDenoiser ? t.shadow.meta[cur] : t.denoise[0].moments[cur])
-            inputs += [output, compositeIndirect, t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, c.meshDirect]
+            inputs.append(t.denoise[0].moments[cur])
+            inputs += [output, compositeIndirect, t.giDebug, t.surfacePos, t.geoNormal, t.material, c.specular, t.geometryDebug, dummy2D]   // (15: unused)
             inputs += [plan.fog?.grid.integrated ?? dummy3D, c.fogReference ?? dummy2D, t.specularAlbedo, t.roughness]
             inputs += [plan.particles?.color ?? dummy2D, plan.particles?.depth ?? dummy2D, t.visibility, t.diffuseGuide, t.specularHitDistance]
             inputs += [plan.contactAO ? t.contactAO : dummy2D, plan.aerial ? aerialLUT ?? dummy3D : dummy3D, t.sheen, t.anisotropy]
@@ -444,7 +458,7 @@ extension Renderer {
             } else if let enc = passes.compute("taa") {
                 bind(enc, .tonemap, c.uniforms)
                 enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
-                setTextures(enc, [light, drawable.texture])
+                setTextures(enc, [light, drawable.texture, t.geometryDebug])   // (2: the light debug views)
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }
@@ -480,7 +494,7 @@ extension Renderer {
             } else if let enc = passes.compute("upscale") {
                 bind(enc, .tonemap, c.uniforms)
                 enc.setBuffer(exposureMeter.current, offset: 0, index: 1)
-                setTextures(enc, [light, picture])
+                setTextures(enc, [light, picture, t.geometryDebug])   // (2: the light debug views)
                 dispatch(enc, .tonemap, width: size.outWidth, height: size.outHeight)
                 passes.endCompute()
             }

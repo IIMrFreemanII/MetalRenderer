@@ -109,7 +109,7 @@ extension Scene {
     private func gpuLight(_ index: Int) -> GPULight {
         let l = lights[index]
         let p = l.current
-        func color(_ type: Float) -> SIMD4<Float> { SIMD4(l.color * p.scale, Float(l.group) + 4 * type) }
+        func color(_ type: Float) -> SIMD4<Float> { SIMD4(l.color * p.scale, 4 * type) }   // (the low 2 bits: 0)
         switch l.kind {
         case .sphere(let r):
             return GPULight(positionRadius: SIMD4(p.position, r), color: color(GPULight.sphere),

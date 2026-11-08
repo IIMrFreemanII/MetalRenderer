@@ -64,7 +64,7 @@ extension Benchmark {
     /// air), for Tools/eval/gilevels.py, with what tells its shade from its sun and what is sky, and the first bounce of
     /// each apart (`first`, `traced one`).
     static func gilevels() -> [Config] {
-        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .emissive, .gallery, .world].flatMap { kind -> [Config] in
+        [SceneKind.cornell, .level, .sun, .stage, .lobes, .forest, .stress, .valley, .plants, .buildings, .market, .mixed, .emissive, .area, .tubes, .gallery, .world].flatMap { kind -> [Config] in
             func plain(_ c: Config) -> Config {
                 c.appLook().still().fog { $0.enabled = false }.with {
                     $0.toneMap = .none
@@ -229,7 +229,7 @@ extension Benchmark {
     }
 
     /// Frame time against light count for each direct-light method, the stress scene at the default settings
-    /// (cascades, MetalFX denoiser 3x from 0.5x), 1 to 16384 lights (exact up to 256, grouped up to 4096); then the
+    /// (cascades, MetalFX denoiser 3x from 0.5x), 1 to 16384 lights (Sampled and MegaLights); then the
     /// night market.
     /// `METALRENDERER_BENCH_SPLIT=0` for whole-frame times.
     static func manylights() -> [Config] {
@@ -238,12 +238,12 @@ extension Benchmark {
         }
         var out: [Config] = []
         for lights in [1, 4, 32, 256, 1024, 4096, 16384] {
-            let modes: [DirectLightMode] = (lights <= 256 ? [.exact] : []) + (lights <= 4096 ? [.grouped] : []) + [.sampled]
+            let modes: [DirectLightMode] = [.sampled, .megalights]
             out += modes.map { shown("\($0.title.lowercased()), \(lights) lights", stressHall(lights: lights), $0) }
         }
         // The night market (its defaults: cascades, fog), paused so the PNGs compare.
         for lights in [1024, 4096, 16384] {
-            for mode in lights <= 4096 ? [DirectLightMode.grouped, .sampled] : [.sampled] {
+            for mode in [DirectLightMode.sampled, .megalights] {
                 out.append(shown("market \(mode.title.lowercased()), \(lights) bulbs", SceneSettings(kind: .market, lights: lights), mode).still())
             }
         }
@@ -473,7 +473,7 @@ extension Benchmark {
     /// degrees a frame on the 60 Hz clock): round living rooms, through their doors, and round storerooms' racks (one
     /// with a window, one lit only through its door). Recorded.
     /// "user": the look the window ran with (traced at the window's 1280x800, MetalFX 2x); "default": the app's (0.5x,
-    /// MetalFX 3x), both with Auto direct light. The cascades' interior history and the room lights at GI's hits under
+    /// MetalFX 3x), both with the default direct light (MegaLights). The cascades' interior history and the room lights at GI's hits under
     /// the shelves show here.
     static func interiorMotion() -> [Config] {
         var home = BuildingSceneSettings()

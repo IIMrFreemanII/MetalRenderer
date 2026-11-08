@@ -16,8 +16,8 @@ extension Scene {
     /// A light that comes with a borrowed mesh, made already: sampled as the scene's own emissive instances are.
     package func addMeshLight(_ light: BorrowedLight) { borrowedLights.append(light) }
 
-    /// Every geometry instance with an emissive material becomes a mesh light (after the analytic lights, which
-    /// assignLightGroups has sorted): its triangles, each weighted by area x emitted luminance (an emissive texture's
+    /// Every geometry instance with an emissive material becomes a mesh light (after the analytic lights,
+    /// countAnalyticLights): its triangles, each weighted by area x emitted luminance (an emissive texture's
     /// luminance from a small decoded copy), and the bounding sphere / mean normal proxy the shaders weigh it by.
     package func buildMeshLights() {
         cascadeLitMeshLights = 0

@@ -517,8 +517,25 @@ inline float3 filmFilm(float3 linear, float4 film, float white) {
 }
 
 /// Whether view mode `mode` shows light (tone mapped) rather than a value to read as it is (normals, albedo, ...).
+// The light debug views over the lit frame (`lit`: tone mapped), from the debug texture `dbg` (LightDebug.metal):
+// the tiles' heat (a = 0: sky, black), the picked light's colour, or the bounds' lines. In the composite, or after
+// MetalFX's denoising scaler in tonemapKernel, which would smear them (it gets the plain light then).
+inline float3 lightDebugCompose(uint view, float3 lit, float4 dbg) {
+    float shade = 0.35f + 0.65f * saturate(luminance(lit));
+    if (view == VIEW_LIGHT_TILES) {
+        if (dbg.a < 0.5f) return float3(0.0f);
+        return (dbg.g > 0.5f ? float3(1.0f, 0.0f, 1.0f) : debugHeat(dbg.r)) * shade;   // magenta: the list overflowed
+    }
+    if (view == VIEW_PICKED_LIGHT) {
+        uint id = debugUnpackId(dbg);
+        return id == ELEMENT_NONE ? float3(0.04f) : debugHashColor(id) * shade;
+    }
+    return mix(0.6f * lit, dbg.rgb, dbg.a);   // VIEW_LIGHT_BOUNDS
+}
+
 inline bool viewIsHDR(uint mode) {
-    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || (mode >= 16 && mode <= 18));
+    return !(mode == 3 || mode == 4 || mode == 5 || (mode >= 7 && mode <= 13) || (mode >= VIEW_LOD_ERROR && mode <= VIEW_CRACKS)
+             || (mode >= VIEW_LIGHT_TILES && mode <= VIEW_LIGHT_BOUNDS));
 }
 
 /// The colour grade (PostSettings): white balance as red and blue gains, saturation, then contrast about middle grey
@@ -558,32 +575,18 @@ inline void meterExposure(float3 c, uint2 tid, device atomic_uint* histogram) {
 // MetalFX's diffuse guide is the albedo times this: 1 in the sun, SUN_GUIDE_SHADE where its raw shadow falls. MetalFX
 // keeps what its guides show and smooths what they don't, and a shadow is in none of them: a tree's dappled shade came
 // out one soft blob. The sun's visibility is clean (a ray to a point on a disc half a degree across: 0 or 1, 0 to 1 only
-// in a penumbra a few centimetres wide), so it brings the guide no noise. Other lights' would (wide penumbrae, the
-// picks of many lights), and stay out, as does any visibility traceKernel didn't write (many lights, sampled lights).
+// in a penumbra a few centimetres wide), so it brings the guide no noise. Other lights' would (wide penumbrae, sampled
+// picks), and stay out. MegaLights traces each sun once and writes their luminance-weighted visibility
+// (FLAG_SUN_VISIBILITY); sampled lights pick among all lights, so they have none and the guide is flat.
 // How deep, at the denoiser's exposure (AutoExposure.denoiserKey), the forest over the reference: 1, a flat guide, reads
 // 1.00 sunlit and 1.22 in shade with 0.57 of its local contrast; 0.5 reads 0.97, 1.07 and 0.62; 0.15 reads 0.99, 1.05 and 0.67.
 constant float SUN_GUIDE_SHADE = 0.15f;
 constant float SUN_GUIDE_SHADE_CLASSIC = 0.5f;   // the classic look's, with MetalFX's own exposure (RenderSettings.denoiserMetered)
 
-inline float sunShadowGuide(constant Uniforms& u, device const Light* lights, texture2d<float, access::read> visibility,
-                            texture2d<float, access::read> surfacePos, texture2d<float, access::read> nd,
-                            texture2d<float, access::read> geoNormal, texture2d<float, access::read> albedoTex, uint2 tid) {
-    bool traced = !((passOn(tracePassFlags(u), TRACE_MANY_LIGHTS) || flagOn(u.flags, FLAG_SAMPLED_LIGHTS)) && !flagOn(u.flags, FLAG_ALL_LIGHTS));
-    float4 ndc = nd.read(tid);
-    if (!traced || ndc.w <= 0.0f) return 1.0f;
-    float3 sp = surfacePos.read(tid).xyz;
-    float4 g = geoNormal.read(tid);
-    float3 n = ndc.xyz, ng = g.xyz, p = sp + ng * RAY_EPSILON;
-    HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp));
-    float4 vis = visibility.read(tid);
-    float sun = 0.0f, lit = 0.0f;
-    for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
-        if (lightType(lights[l]) != LIGHT_SUN) continue;
-        float w = luminance(litUnshadowed(lights[l], p, n, ng, hp));
-        sun += w;
-        lit += w * dot(vis, groupMask(lightGroup(lights[l])));
-    }
-    return sun > 0.0f ? mix(flagOn(u.flags, FLAG_DEEP_SHADOW_GUIDE) ? SUN_GUIDE_SHADE : SUN_GUIDE_SHADE_CLASSIC, 1.0f, saturate(lit / sun)) : 1.0f;
+inline float sunShadowGuide(constant Uniforms& u, texture2d<float, access::read> visibility, texture2d<float, access::read> nd, uint2 tid) {
+    if (!flagOn(u.flags, FLAG_SUN_VISIBILITY) || nd.read(tid).w <= 0.0f) return 1.0f;
+    float sun = visibility.read(tid).x;   // 1 where no sun lights the pixel
+    return mix(flagOn(u.flags, FLAG_DEEP_SHADOW_GUIDE) ? SUN_GUIDE_SHADE : SUN_GUIDE_SHADE_CLASSIC, 1.0f, saturate(sun));
 }
 
 kernel void compositeKernel(constant Uniforms&              u          [[buffer(0)]],
@@ -597,26 +600,25 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
                             texture2d<float, access::write> output     [[texture(7)]],
                             texture2d<float, access::read>  denoisedIndirect [[texture(8)]],  // with FLAG_SEPARATE
                             texture2d<float, access::read>  giDebug    [[texture(9)]],   // written by cascade GI
-                            texture2d<float, access::read>  surfacePos [[texture(10)]],  // with FLAG_SHADOW_DENOISER
-                            texture2d<float, access::read>  geoNormal  [[texture(11)]],  // with FLAG_SHADOW_DENOISER
+                            texture2d<float, access::read>  surfacePos [[texture(10)]],
+                            texture2d<float, access::read>  geoNormal  [[texture(11)]],
                             texture2d<float, access::read>  material   [[texture(12)]],  // with FLAG_SPECULAR: F0, roughness
                             texture2d<float, access::read>  specularTex [[texture(13)]], // with FLAG_SPECULAR: specular light / specular albedo
                             texture2d<float, access::read>  geometryDebug [[texture(14)]], // view modes 8-13 (geometryDebugKernel)
-                            texture2d<float, access::read>  meshDirect [[texture(15)]],   // with FLAG_MESH_LIGHTS: denoised mesh-light direct light
                             texture3d<float>                fogGrid    [[texture(16)]],   // with FLAG_FOG: integrated froxels
                             texture2d<float, access::read>  fogReference [[texture(17)]], // with FLAG_FOG_REFERENCE
                             texture2d<float, access::write> outSpecularAlbedo [[texture(18)]], // with FLAG_HDR_OUTPUT: MetalFX's guides
                             texture2d<float, access::write> outRoughness [[texture(19)]],
                             texture2d<float, access::read>  particles  [[texture(20)]],  // with FLAG_PARTICLES: their layer
                             texture2d<float, access::read>  particleDepth [[texture(21)]], // ...and its surfaces' depths
-                            texture2d<float, access::read>  visibilityTex [[texture(22)]], // with FLAG_HDR_OUTPUT: the lights' raw visibility
+                            texture2d<float, access::read>  visibilityTex [[texture(22)]], // with FLAG_SUN_VISIBILITY: x = the suns' raw visibility
                             texture2d<float, access::write> outDiffuseGuide [[texture(23)]], // ...and MetalFX's diffuse guide
                             texture2d<float, access::write> outHitDistance [[texture(24)]],  // ...its reflections' hit distance, without FLAG_SPECULAR
                             texture2d<float, access::read>  contactAO  [[texture(25)]],  // with FLAG_CONTACT_AO
                             texture3d<float>                aerial     [[texture(26)]],  // with FLAG_AERIAL
                             texture2d<float, access::read>  sheenTex   [[texture(27)]],  // MATERIAL_LOBES
                             texture2d<float, access::read>  anisotropyTex [[texture(28)]],
-                            device const Light*             lights     [[buffer(1)]],    // with FLAG_SHADOW_DENOISER
+                            device const Light*             lights     [[buffer(1)]],    // with WATER: the sun's direction
                             constant FogParams&             fog        [[buffer(2)]],    // with FLAG_FOG
                             constant SceneShading&          shading    [[buffer(7)]],    // with WATER: the water's caustics
                             uint2 tid [[thread_position_in_grid]])
@@ -634,48 +636,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
     float3 illumination = d + i;
     float3 finalIndirect = i;   // what view mode 6 shows: denoised when indirect light is denoised on its own
     float3 directSpecular = float3(0.0f);
-    bool sunCaustics = false;   // WATER: the sun's light here took the water's caustics already
-    if (flagOn(u.flags, FLAG_SHADOW_DENOISER)) {
-        // `denoised` holds each light group's filtered visibility: multiply it onto the group's exact unshadowed light.
-        float4 vis = denoised.read(tid);
-        float4 sp = surfacePos.read(tid);
-        float3 n = nd.read(tid).xyz, ng = geoNormal.read(tid).xyz;
-        float3 p = sp.xyz + ng * RAY_EPSILON;
-        illumination = float3(0.0f);
-        float4 g = geoNormal.read(tid);
-        HairPoint hp = hairFromGBuffer(albedoTex.read(tid), g.w, n, normalize(u.camPos.xyz - sp.xyz));
-        sunCaustics = true;
-        for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
-            float3 e = litUnshadowed(lights[l], p, n, ng, hp) * dot(vis, groupMask(lightGroup(lights[l])));
-            // Under water the sun's light comes through its waves: their caustics (after the shadows' filter, which
-            // would smear their moving lines).
-            if (WATER && lightType(lights[l]) == LIGHT_SUN && sp.w > 0.0f)
-                e *= waterCaustic(shading.water, sp.xyz, lights[l].axis.xyz, abs(nd.read(tid).w) * 2.0f * u.camUp.w / float(u.height));
-            illumination += e;
-        }
-        if (flagOn(u.flags, FLAG_MESH_LIGHTS)) illumination += meshDirect.read(tid).rgb;   // denoised on its own
-        if (flagOn(u.flags, FLAG_SPECULAR)) {
-            // Direct specular the same way: exact unshadowed GGX light x the group's denoised visibility.
-            float4 m = material.read(tid);
-            if (any(m.rgb > 0.0f)) {
-                float3 v = normalize(u.camPos.xyz - sp.xyz);
-                float4 lobe = MATERIAL_LOBES ? anisotropyTex.read(tid) : float4(0.0f);
-                float3 tangent = lobe.w > 0.0f ? normalize(lobe.xyz - n * dot(n, lobe.xyz)) : float3(0.0f);
-                for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
-                    float3 lit = lightSpecularLobe(lights[l], p, n, ng, v, m.rgb, m.a, tangent, lobe.w);
-                    if (MATERIAL_LOBES) {
-                        float4 sheen = sheenTex.read(tid);
-                        if (any(sheen.rgb > 0.0f)) lit += lightSheen(lights[l], p, n, ng, v, sheen);
-                    }
-                    directSpecular += lit * dot(vis, groupMask(lightGroup(lights[l])));
-                }
-            }
-        }
-        if (flagOn(u.flags, FLAG_SEPARATE)) {
-            finalIndirect = denoisedIndirect.read(tid).rgb;
-            illumination += finalIndirect;
-        }
-    } else if (flagOn(u.flags, FLAG_DENOISE)) {
+    if (flagOn(u.flags, FLAG_DENOISE)) {
         illumination = denoised.read(tid).rgb;
         if (flagOn(u.flags, FLAG_SEPARATE)) {
             finalIndirect = denoisedIndirect.read(tid).rgb;
@@ -683,9 +644,9 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         }
     }
 
-    // Where the sun's light isn't a term of its own here (sampled lights, no shadow filter), the caustics go on
-    // most of the light under the water (the sun's is most of it there).
-    if (WATER && !sunCaustics) {
+    // The sun's light isn't a term of its own here: the caustics go on most of the light under the water (the sun's is
+    // most of it there).
+    if (WATER) {
         float4 sp = surfacePos.read(tid);
         if (sp.w > 0.0f) {
             for (uint l = 0; l < u.lightGroupEnd.w; ++l) {
@@ -783,6 +744,12 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         case 8: case 9: case 10: case 11: case 12: case 13:
         case 16: case 17: case 18: c = geometryDebug.read(tid).rgb; break;
         case 14: c = fogged.rgb; break;                           // fog scattering alone
+        // The light debug views (LightDebug.metal), over the lit frame (tone mapped here: not HDR views). When MetalFX or
+        // the temporal AA follows, they get the plain light, and tonemapKernel lays the view over what they make.
+        case VIEW_LIGHT_TILES: case VIEW_PICKED_LIGHT: case VIEW_LIGHT_BOUNDS:
+            c = albedo * illumination + specular + emission;
+            if (!flagOn(u.flags, FLAG_HDR_OUTPUT) && !flagOn(u.flags, FLAG_POST)) c = lightDebugCompose(u.viewMode, toneMap(c, u), geometryDebug.read(tid));
+            break;
         default: {
             c = albedo * illumination + specular + emission;
             float depth = nd.read(tid).w;
@@ -812,7 +779,7 @@ kernel void compositeKernel(constant Uniforms&              u          [[buffer(
         // An emitter (albedo 0, its light all its own) is guided by its own colour: with its albedo, a black guide
         // under bright light, MetalFX smeared the spinning cubes' light over the frames and left dark copies of them
         // where they had been.
-        float3 guide = albedo * sunShadowGuide(u, lights, visibilityTex, surfacePos, nd, geoNormal, albedoTex, tid);
+        float3 guide = albedo * sunShadowGuide(u, visibilityTex, nd, tid);
         float em = max(emission.x, max(emission.y, emission.z));
         if (em > 0.0f) guide = max(guide, emission / em);
         outDiffuseGuide.write(float4(guide, 1.0f), tid);
@@ -836,11 +803,20 @@ kernel void tonemapKernel(constant Uniforms&              u         [[buffer(0)]
                           device atomic_uint*             histogram [[buffer(1)]],   // with the meter on
                           texture2d<float, access::read>  upscaled  [[texture(0)]],
                           texture2d<float, access::write> output    [[texture(1)]],
+                          texture2d<float, access::read>  lightDebug [[texture(2)]],   // the light debug views (render size)
                           uint2 tid [[thread_position_in_grid]])
 {
     if (tid.x >= output.get_width() || tid.y >= output.get_height()) return;
     float3 c = max(upscaled.read(tid).rgb, 0.0f);
     if ((uint(u.post.z) & 2u) != 0u) meterExposure(c, tid, histogram);
+    if (u.viewMode >= VIEW_LIGHT_TILES && u.viewMode <= VIEW_LIGHT_BOUNDS) {
+        // The nearest of the debug texture's pixels (it is the frame's size before the upscale).
+        uint2 src = min(uint2(float2(tid) * float2(lightDebug.get_width(), lightDebug.get_height())
+                              / float2(output.get_width(), output.get_height())),
+                        uint2(lightDebug.get_width() - 1, lightDebug.get_height() - 1));
+        output.write(float4(saturate(lightDebugCompose(u.viewMode, toneMap(c, u), lightDebug.read(src))), 1.0f), tid);
+        return;
+    }
     if (viewIsHDR(u.viewMode)) c = toneMap(c, u);
     output.write(float4(saturate(c), 1.0f), tid);
 }
